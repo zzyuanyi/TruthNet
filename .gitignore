@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+.conda/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# ChromaDB persistence
+chroma_db/
+chroma_data/
+*.chroma/
+
+# Data files (keep .gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Model files
+*.pkl
+*.bin
+*.pt
+*.h5
+*.onnx
+models/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Large files
+*.xlsx
+*.xls
+*.pdf
+*.parquet
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pre-commit
+.pre-commit-hooks.yaml
+
+# Claude Code local settings
+.claude/settings.local.json

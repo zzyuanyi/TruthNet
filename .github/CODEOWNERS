@@ -1,0 +1,20 @@
+# CODEOWNERS — 代码归属与审阅分配
+# 当对应路径有 PR 时，自动请求指定的 GitHub 用户审阅。
+# 请将注释替换为团队成员的 GitHub 用户名。
+
+# 后端代码
+# /backend/ @backend-owner
+
+# 前端代码
+# /frontend/ @frontend-owner
+
+# 数据目录
+# /data/ @data-owner
+
+# 项目文档与工程配置（全局影响）
+# /docs/ @project-owner
+# /.claude/ @project-owner
+# /.github/ @project-owner
+# /requirements.txt @project-owner
+# /docs/API_CONTRACT.md @project-owner
+# /docs/DATA_CONTRACT.md @project-owner

@@ -1,0 +1,61 @@
+# Prompt2 命令执行日志
+
+## 环境创建
+
+$ conda create -n truthnet python=3.11 -y
+[PASS] 环境创建成功，Python 3.11.15
+
+## 环境验证
+
+$ E:/anaconda/envs/truthnet/python.exe --version
+Python 3.11.15
+
+$ E:/anaconda/envs/truthnet/python.exe -c "import sys; print(sys.executable)"
+E:\anaconda\envs\truthnet\python.exe
+
+$ E:/anaconda/envs/truthnet/python.exe -m pip --version
+pip 26.1.2 from E:\anaconda\envs\truthnet\Lib\site-packages\pip (python 3.11)
+
+## 依赖安装
+
+$ E:/anaconda/envs/truthnet/python.exe -m pip install --upgrade pip
+[PASS]
+
+$ E:/anaconda/envs/truthnet/python.exe -m pip install -r requirements.txt
+[PASS] 全部安装成功
+
+## 环境检测
+
+$ E:/anaconda/envs/truthnet/python.exe scripts/doctor.py
+[PASS] 31 PASS, 2 WARN, 0 FAIL
+
+$ E:/anaconda/envs/truthnet/python.exe scripts/doctor.py --ci
+[PASS] 33 PASS, 0 WARN, 0 FAIL
+
+## 测试
+
+$ E:/anaconda/envs/truthnet/python.exe -m pytest backend/tests -v
+[PASS] 14 passed in 3.94s
+
+## 代码质量
+
+$ E:/anaconda/envs/truthnet/python.exe -m ruff check backend/ scripts/
+[PASS] All checks passed
+
+$ E:/anaconda/envs/truthnet/python.exe -m ruff format --check backend/ scripts/
+[PASS] 17 files already formatted
+
+## Pre-commit
+
+$ E:/anaconda/envs/truthnet/python.exe -m pre_commit run --all-files
+[PASS] trim trailing whitespace: Passed
+[PASS] fix end of files: Passed
+[PASS] check for merge conflicts: Passed
+[PASS] check for added large files: Passed
+[SKIP] yaml/json/toml: no files to check
+[SKIP] ruff/ruff-format: no files to check (Python files not staged)
+
+## Pip Freeze
+
+$ E:/anaconda/envs/truthnet/python.exe -m pip freeze > reports/prompt2/pip_freeze_truthnet.txt
+[PASS]
