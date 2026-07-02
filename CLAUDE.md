@@ -112,6 +112,8 @@ TruthNet/
 11. 每次编辑完成后：展示改动，询问是否保存/提交。
 12. 个人化内容不提交；共同开发可复用内容才提交。
 13. main 受保护，合并必须通过 PR。
+14. **每次 push 后必须检查 CI 状态**：如果 CI 失败，Claude Code 必须读取失败日志并给出修复建议或直接修复。不得在 CI 失败时声称任务完成。
+15. Claude Code 不得自动 merge PR，不得直接向 main push。
 
 ### 接口与架构
 
@@ -136,6 +138,7 @@ TruthNet/
 - 不要把本地路径、密钥、代理地址写死进任何代码。
 - 不要在 `main.py` 中堆砌业务逻辑。
 - **不要自动执行 git commit、git push、git merge、gh pr create。**
+- **当用户要求提交、push 或修复 CI 时，Claude Code 必须在 push 后主动检查当前分支的 GitHub Actions 状态。若 CI 失败，必须读取失败日志并给出修复建议或直接修复。不得在 CI 失败时声称任务完成。**
 
 ## 常用命令
 

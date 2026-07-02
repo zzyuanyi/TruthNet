@@ -62,7 +62,9 @@ class TimelineEvent(BaseModel):
     title: str = Field(..., description="事件标题")
     category: str = Field(default="其他", description="事件类别")
     summary: str = Field(default="", description="事件摘要")
-    sentiment: str = Field(default="neutral", description="情感倾向: positive/negative/neutral")
+    sentiment: str = Field(
+        default="neutral", description="情感倾向: positive/negative/neutral"
+    )
     sources: list[str] = Field(default_factory=list, description="信息来源")
 
 
@@ -119,6 +121,7 @@ class EnhancedChatData(ChatData):
 # ============================================================
 # WebSocket 消息 Schema
 # ============================================================
+
 
 class WSMessage(BaseModel):
     """WebSocket 消息基类。"""

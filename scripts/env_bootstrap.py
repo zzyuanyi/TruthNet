@@ -223,100 +223,106 @@ def print_conda_install_guide(system_info: dict):
     print("     如需自动下载，请加 --download-miniconda 参数并再次确认。")
 
 
-def check_only(system_info: dict, conda_info: dict, venv_info: dict,
-               node_info: dict, git_info: dict, args) -> int:
+def check_only(
+    system_info: dict,
+    conda_info: dict,
+    venv_info: dict,
+    node_info: dict,
+    git_info: dict,
+    args,
+) -> int:
     """仅执行环境检测，输出报告."""
     print("=" * 60)
     print("  TruthNet — 环境引导检测 (env_bootstrap.py)")
     print("=" * 60)
 
     # 系统信息
-    print(f"\n--- 系统 ---")
+    print("\n--- 系统 ---")
     print(f"  操作系统: {system_info['system']} {system_info['release']}")
     print(f"  架构: {system_info['arch']} ({system_info['machine']})")
     print(f"  Python: {system_info['python_version']}")
     print(f"  Python 路径: {system_info['python_executable']}")
 
     # Python 版本检查
-    is_py311 = (
-        sys.version_info.major == 3 and sys.version_info.minor == 11
-    )
+    is_py311 = sys.version_info.major == 3 and sys.version_info.minor == 11
     if is_py311:
         print(f"  [PASS] Python 版本: {system_info['python_version']}")
     else:
-        print(f"  [FAIL] Python 版本需为 3.11.x，当前为 {system_info['python_version']}")
+        print(
+            f"  [FAIL] Python 版本需为 3.11.x，当前为 {system_info['python_version']}"
+        )
 
     # Conda
-    print(f"\n--- Conda ---")
+    print("\n--- Conda ---")
     if conda_info["available"]:
         print(f"  [PASS] conda 已安装: {conda_info['version']}")
         print(f"  路径: {conda_info['path']}")
         if conda_info["in_conda"]:
             print(f"  [PASS] 当前在 conda 环境: {conda_info['current_env']}")
         else:
-            print(f"  [WARN] conda 已安装但未激活任何环境")
+            print("  [WARN] conda 已安装但未激活任何环境")
 
         if conda_info["truthnet_exists"]:
-            print(f"  [PASS] truthnet 环境已存在")
+            print("  [PASS] truthnet 环境已存在")
         else:
-            print(f"  [INFO] truthnet 环境不存在，运行 --apply 可创建")
+            print("  [INFO] truthnet 环境不存在，运行 --apply 可创建")
 
         print(f"  已有环境: {', '.join(conda_info['envs']) or '(无)'}")
     else:
-        print(f"  [WARN] conda 未安装")
+        print("  [WARN] conda 未安装")
         if not args.ci:
             print_conda_install_guide(system_info)
 
     # venv
-    print(f"\n--- venv ---")
+    print("\n--- venv ---")
     if venv_info["in_venv"]:
         print(f"  [PASS] 当前在 venv: {venv_info['venv_path']}")
     elif venv_info["local_venv_exists"]:
-        print(f"  [INFO] .venv 目录存在但未激活")
+        print("  [INFO] .venv 目录存在但未激活")
     else:
-        print(f"  [INFO] .venv 不存在")
+        print("  [INFO] .venv 不存在")
 
     # Node / pnpm
-    print(f"\n--- Node.js / pnpm ---")
+    print("\n--- Node.js / pnpm ---")
     if node_info["node_available"]:
         print(f"  [PASS] Node.js: {node_info['node_version']}")
     else:
-        print(f"  [WARN] Node.js 未安装（前端开发需要）")
+        print("  [WARN] Node.js 未安装（前端开发需要）")
 
     if node_info["pnpm_available"]:
         print(f"  [PASS] pnpm: {node_info['pnpm_version']}")
     else:
-        print(f"  [WARN] pnpm 未安装（前端开发需要，不影响后端）")
+        print("  [WARN] pnpm 未安装（前端开发需要，不影响后端）")
 
     # Git
-    print(f"\n--- Git ---")
+    print("\n--- Git ---")
     if git_info["git_available"]:
         print(f"  [PASS] Git: {git_info['git_version']}")
     else:
-        print(f"  [FAIL] Git 未安装")
+        print("  [FAIL] Git 未安装")
 
     # 虚拟环境配置建议
-    print(f"\n--- 建议 ---")
+    print("\n--- 建议 ---")
     if conda_info["available"]:
         if conda_info["truthnet_exists"]:
-            print(f"  ✅ conda 环境 'truthnet' 已就绪")
+            print("  ✅ conda 环境 'truthnet' 已就绪")
             if not conda_info["in_conda"]:
-                print(f"  激活: conda activate truthnet")
+                print("  激活: conda activate truthnet")
         else:
-            print(f"  创建环境: conda create -n truthnet python=3.11 -y")
-            print(f"  激活: conda activate truthnet")
-            print(f"  安装依赖: pip install -r requirements.txt")
+            print("  创建环境: conda create -n truthnet python=3.11 -y")
+            print("  激活: conda activate truthnet")
+            print("  安装依赖: pip install -r requirements.txt")
     else:
-        print(f"  方案 A: 安装 Miniconda（推荐）")
-        print(f"  方案 B: 使用 venv fallback:")
-        print(f"    python -m venv .venv")
+        print("  方案 A: 安装 Miniconda（推荐）")
+        print("  方案 B: 使用 venv fallback:")
+        print("    python -m venv .venv")
         if system_info["system"] == "Windows":
-            print(f"    .venv\\Scripts\\Activate.ps1")
+            print("    .venv\\Scripts\\Activate.ps1")
         else:
-            print(f"    source .venv/bin/activate")
-        print(f"    pip install -r requirements.txt")
+            print("    source .venv/bin/activate")
+        print("    pip install -r requirements.txt")
 
-    print(f"\n  运行 --apply 执行实际配置（不会自动下载 conda）")
+    print("\n  运行 --apply 执行实际配置（不会自动下载 conda）")
 
     return 0
 
@@ -332,30 +338,30 @@ def apply_config(system_info: dict, conda_info: dict, venv_info: dict, args) -> 
     if conda_info["available"] and not use_venv:
         # 使用 conda
         if not conda_info["truthnet_exists"]:
-            print(f"\n  正在创建 conda 环境 'truthnet' (Python 3.11)...")
+            print("\n  正在创建 conda 环境 'truthnet' (Python 3.11)...")
             code, out, err = run_cmd(
                 ["conda", "create", "-n", "truthnet", "python=3.11", "-y"],
                 timeout=120,
             )
             if code != 0:
                 print(f"  [FAIL] conda 环境创建失败: {err}")
-                print(f"  尝试使用 venv fallback...")
+                print("  尝试使用 venv fallback...")
                 use_venv = True
             else:
-                print(f"  [OK] truthnet 环境已创建")
+                print("  [OK] truthnet 环境已创建")
         else:
-            print(f"\n  [OK] truthnet 环境已存在，跳过创建")
+            print("\n  [OK] truthnet 环境已存在，跳过创建")
 
         if not use_venv:
-            print(f"\n  请在终端中手动激活环境:")
-            print(f"    conda activate truthnet")
-            print(f"    pip install -r requirements.txt")
+            print("\n  请在终端中手动激活环境:")
+            print("    conda activate truthnet")
+            print("    pip install -r requirements.txt")
 
     if use_venv or not conda_info["available"]:
         # 使用 venv
         venv_dir = REPO_ROOT / ".venv"
         if not venv_dir.exists():
-            print(f"\n  正在创建 venv 环境...")
+            print("\n  正在创建 venv 环境...")
             code, out, err = run_cmd(
                 [sys.executable, "-m", "venv", str(venv_dir)],
                 timeout=60,
@@ -363,52 +369,65 @@ def apply_config(system_info: dict, conda_info: dict, venv_info: dict, args) -> 
             if code != 0:
                 print(f"  [FAIL] venv 创建失败: {err}")
                 return 1
-            print(f"  [OK] .venv 已创建")
+            print("  [OK] .venv 已创建")
         else:
-            print(f"\n  [OK] .venv 已存在")
+            print("\n  [OK] .venv 已存在")
 
-        print(f"\n  请手动激活 venv:")
+        print("\n  请手动激活 venv:")
         if system_info["system"] == "Windows":
-            print(f"    .venv\\Scripts\\Activate.ps1")
+            print("    .venv\\Scripts\\Activate.ps1")
         else:
-            print(f"    source .venv/bin/activate")
-        print(f"    pip install -r requirements.txt")
+            print("    source .venv/bin/activate")
+        print("    pip install -r requirements.txt")
 
     # pip 镜像提示
     pip_index = getattr(args, "pip_index_url", None)
     if pip_index:
         print(f"\n  pip 镜像已指定: {pip_index}")
         print(f"  安装命令: pip install -r requirements.txt -i {pip_index}")
-        print(f"  ⚠️  镜像配置仅用于本次会话，不写入仓库文件。")
+        print("  ⚠️  镜像配置仅用于本次会话，不写入仓库文件。")
 
     # npm 镜像提示
     npm_registry = getattr(args, "npm_registry", None)
     if npm_registry:
         print(f"\n  npm registry 已指定: {npm_registry}")
         print(f"  配置命令: pnpm config set registry {npm_registry}")
-        print(f"  ⚠️  registry 配置仅用于本机，不写入仓库文件。")
+        print("  ⚠️  registry 配置仅用于本机，不写入仓库文件。")
 
-    print(f"\n  [OK] 环境配置完成。")
-    print(f"  运行验证: python scripts/doctor.py")
+    print("\n  [OK] 环境配置完成。")
+    print("  运行验证: python scripts/doctor.py")
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description="TruthNet 环境引导脚本")
-    parser.add_argument("--check", action="store_true", default=True,
-                        help="仅检测环境状态（默认）")
-    parser.add_argument("--apply", action="store_true",
-                        help="执行环境创建和依赖安装")
-    parser.add_argument("--ci", action="store_true",
-                        help="CI 模式：不阻塞，不输出安装引导")
-    parser.add_argument("--use-venv", action="store_true",
-                        help="强制使用 venv 而非 conda")
-    parser.add_argument("--download-miniconda", action="store_true",
-                        help="下载 Miniconda 安装器（需再次确认）")
-    parser.add_argument("--pip-index-url", type=str, default=None,
-                        help="pip 镜像 URL（仅本机使用，不写入仓库）")
-    parser.add_argument("--npm-registry", type=str, default=None,
-                        help="npm registry URL（仅本机使用，不写入仓库）")
+    parser.add_argument(
+        "--check", action="store_true", default=True, help="仅检测环境状态（默认）"
+    )
+    parser.add_argument("--apply", action="store_true", help="执行环境创建和依赖安装")
+    parser.add_argument(
+        "--ci", action="store_true", help="CI 模式：不阻塞，不输出安装引导"
+    )
+    parser.add_argument(
+        "--use-venv", action="store_true", help="强制使用 venv 而非 conda"
+    )
+    parser.add_argument(
+        "--download-miniconda",
+        action="store_true",
+        help="下载 Miniconda 安装器（需再次确认）",
+    )
+    parser.add_argument(
+        "--pip-index-url",
+        type=str,
+        default=None,
+        help="pip 镜像 URL（仅本机使用，不写入仓库）",
+    )
+    parser.add_argument(
+        "--npm-registry",
+        type=str,
+        default=None,
+        help="npm registry URL（仅本机使用，不写入仓库）",
+    )
 
     args = parser.parse_args()
 

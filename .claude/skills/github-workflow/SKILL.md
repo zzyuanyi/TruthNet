@@ -260,6 +260,80 @@ git config --global --unset https.proxy
 
 ---
 
+## 提交/推送后 CI 自检（硬性流程）
+
+> **每次 push 当前工作分支后，必须检查该分支对应的 GitHub Actions 是否通过。**
+
+### 标准流程
+
+```bash
+# 1. push 代码
+git push origin <your-branch>
+
+# 2. 检查 CI 状态
+python scripts/ci_status.py --branch <your-branch>
+
+# 3. 持续监控直到完成（推荐）
+python scripts/ci_status.py --branch <your-branch> --watch
+```
+
+### 如果 CI 失败
+
+```bash
+# 拉取失败日志
+python scripts/ci_status.py --branch <your-branch> --failed-logs
+
+# 或使用 gh CLI 直接查看
+gh run view <run-id> --log-failed
+```
+
+**失败修复循环：**
+
+```text
+push branch
+→ check Actions (python scripts/ci_status.py --watch)
+→ if failed: fetch failed logs
+→ classify failure: dependency / lint / test / frontend / platform-specific
+→ fix locally
+→ run full local checks:
+    ruff check . && ruff format --check .
+    python -m pytest backend/tests -v
+    python scripts/doctor.py
+    pre-commit run --all-files
+→ commit fix
+→ push same branch
+→ check Actions again
+→ only request PR review when CI passed
+```
+
+### 硬性规则
+
+- ❌ 不得在 CI 未通过时请求合并到 main
+- ❌ 不得在 CI 失败时声称任务完成
+- ❌ 不得自动 merge
+- ✅ CI 通过后再请求 PR review
+- ✅ CI 失败必须读取日志并修复
+
+### 没有 gh CLI？
+
+```bash
+# 安装 GitHub CLI
+# Windows: winget install GitHub.cli
+# macOS: brew install gh
+# Linux: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+
+# 首次使用需登录
+gh auth login
+```
+
+如果暂时无法安装 gh CLI，手动检查：
+1. 打开 https://github.com/zzyuanyi/TruthNet/actions
+2. 选择你的分支查看最近运行
+3. 红叉 = 失败，点击查看失败步骤
+4. 把失败日志复制给 Claude Code 请求帮助
+
+---
+
 ## 严禁
 
 - ❌ 直接 push 到 `main`
@@ -270,3 +344,4 @@ git config --global --unset https.proxy
 - ❌ 代理地址写入仓库
 - ❌ Claude Code 自动 commit/push/merge
 - ❌ 多人共用一个 feature 分支
+- ❌ CI 未通过时请求 merge

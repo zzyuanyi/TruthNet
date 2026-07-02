@@ -112,7 +112,6 @@ def main():
     # ===== UTF-8 控制台支持 =====
     print("\n--- UTF-8 控制台 ---")
     stdout_ok = True
-    stderr_ok = True
     try:
         test_str = "✓ UTF-8 测试"
         print(f"  {test_str}")
@@ -137,10 +136,7 @@ def main():
         actual_full = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
         # 精确 3.11 检查
-        is_311 = (
-            sys.version_info.major == 3
-            and sys.version_info.minor == 11
-        )
+        is_311 = sys.version_info.major == 3 and sys.version_info.minor == 11
         if is_311:
             r = check(
                 f"Python 版本: {actual_full} (期望 3.11.x)",
@@ -280,9 +276,7 @@ def main():
     print("\n--- 编码与路径审计 ---")
     audit_script = repo_root / "scripts" / "encoding_path_audit.py"
     if audit_script.exists():
-        code, out, err = run_cmd(
-            [sys.executable, str(audit_script), "--ci"]
-        )
+        code, out, err = run_cmd([sys.executable, str(audit_script), "--ci"])
         if code == 0:
             r = check("encoding_path_audit.py --ci 通过", True)
         else:
@@ -395,9 +389,7 @@ def main():
     print("\n--- Git 安全检查 ---")
     safety_script = repo_root / "scripts" / "git_safety_check.py"
     if safety_script.exists():
-        code, out, err = run_cmd(
-            [sys.executable, str(safety_script), "--ci"]
-        )
+        code, out, err = run_cmd([sys.executable, str(safety_script), "--ci"])
         if code == 0:
             r = check("git_safety_check.py --ci 通过", True)
         else:
@@ -408,9 +400,36 @@ def main():
                 failures += 1
         results.append(r)
     else:
-        r = check("git_safety_check.py 不存在 (Prompt3 新增)", False, "将在 Prompt3 中创建")
+        r = check(
+            "git_safety_check.py 不存在 (Prompt3 新增)", False, "将在 Prompt3 中创建"
+        )
         warnings += 1
         results.append(r)
+
+    # ===== CI 状态脚本 =====
+    print("\n--- CI 状态检查 ---")
+    ci_status_script = repo_root / "scripts" / "ci_status.py"
+    if ci_status_script.exists():
+        r = check("scripts/ci_status.py 存在", True)
+    else:
+        r = fail("scripts/ci_status.py 缺失", "请创建 CI 状态检查脚本")
+        failures += 1
+    results.append(r)
+
+    # gh CLI 检查
+    import shutil
+
+    gh_available = bool(shutil.which("gh"))
+    if gh_available:
+        r = check("GitHub CLI (gh) 已安装", True)
+    else:
+        r = check(
+            "GitHub CLI (gh) 未安装",
+            False,
+            "建议安装 gh CLI 以便自动检查 CI 状态。安装: https://cli.github.com",
+        )
+        warnings += 1
+    results.append(r)
 
     # ===== 前端工具 (optional) =====
     print("\n--- 前端工具 (optional) ---")

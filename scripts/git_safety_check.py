@@ -129,9 +129,13 @@ def main():
         fails += 1
     elif status_out:
         lines = status_out.strip().split("\n")
-        staged = [l for l in lines if l[0] != " " and l[1] != "?"]  # M, A, D in index
-        unstaged = [l for l in lines if l[0] == " " and l[1] != "?"]  # modified but not staged
-        untracked = [l for l in lines if l.startswith("??")]
+        staged = [
+            ln for ln in lines if ln[0] != " " and ln[1] != "?"
+        ]  # M, A, D in index
+        unstaged = [
+            ln for ln in lines if ln[0] == " " and ln[1] != "?"
+        ]  # modified but not staged
+        untracked = [ln for ln in lines if ln.startswith("??")]
 
         print(f"  已暂存 (staged): {len(staged)} 个文件")
         print(f"  已修改未暂存: {len(unstaged)} 个文件")
@@ -155,7 +159,7 @@ def main():
             print("\n  ⚠️  检测到疑似不应提交的文件:")
             for fpath, desc in dangerous_found:
                 print(f"    - {fpath} ({desc})")
-                print(f"      建议: 确保已在 .gitignore 中，或不要 git add 此文件")
+                print("      建议: 确保已在 .gitignore 中，或不要 git add 此文件")
             warns += len(dangerous_found)
     else:
         print("  [PASS] 工作区干净，无未提交文件")

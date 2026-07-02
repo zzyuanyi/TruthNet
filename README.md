@@ -71,8 +71,20 @@ python scripts/doctor.py
 python scripts/encoding_path_audit.py
 python scripts/git_safety_check.py
 python -m pytest backend/tests -v
+ruff check .
+ruff format --check .
 pre-commit run --all-files
 cd frontend && pnpm build
+```
+
+## Push 后 CI 检查
+
+```bash
+# 检查当前分支 CI 状态
+python scripts/ci_status.py --branch <your-branch> --watch
+
+# 如果失败，拉取日志
+python scripts/ci_status.py --branch <your-branch> --failed-logs
 ```
 
 ## 目录结构

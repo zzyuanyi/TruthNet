@@ -15,7 +15,6 @@
 import json
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 
@@ -23,9 +22,6 @@ from app.main import app
 @pytest.mark.asyncio
 async def test_websocket_endpoint_rejects_non_ws():
     """WebSocket 端点拒绝非 WebSocket HTTP 请求."""
-    from fastapi.testclient import TestClient
-
-    client = TestClient(app)
     # 普通 HTTP GET 应该返回 400/426 或 WebSocket 相关错误
     # 注意：TestClient 对 WebSocket 路径使用 websocket_connect
     # 用普通 GET 访问 WS 端点会触发 FastAPI 的 WebSocket 路由匹配失败
@@ -39,10 +35,6 @@ async def test_websocket_status_message():
     """WebSocket status 消息包含正确字段."""
     # 使用 TestClient 直接调用 websocket 端点需要 WebSocket test client
     # httpx 的 WebSocket 支持有限，这里验证应用可启动且路由已注册
-    from fastapi.testclient import TestClient
-
-    client = TestClient(app)
-
     # 验证 WebSocket 路由已注册
     routes = [r.path for r in app.routes]
     assert "/api/v1/chat/ws" in routes, "WebSocket 路由未注册"
@@ -58,13 +50,14 @@ async def test_websocket_route_format():
 
     # 验证路由以 /api/v1/ 开头
     for route in ws_routes:
-        assert route.startswith("/api/v1/"), f"WebSocket 路由 '{route}' 不符合 /api/v1/ 前缀规范"
+        assert route.startswith(
+            "/api/v1/"
+        ), f"WebSocket 路由 '{route}' 不符合 /api/v1/ 前缀规范"
 
 
 @pytest.mark.asyncio
 async def test_websocket_error_on_invalid_json():
     """WebSocket 收到无效 JSON 时返回 error 消息."""
-    import asyncio
 
     from fastapi.testclient import TestClient
     from fastapi.websockets import WebSocketDisconnect
@@ -89,7 +82,6 @@ async def test_websocket_error_on_invalid_json():
 @pytest.mark.asyncio
 async def test_websocket_error_on_missing_question():
     """WebSocket 收到无 question 的消息时返回 error."""
-    import asyncio
 
     from fastapi.testclient import TestClient
     from fastapi.websockets import WebSocketDisconnect
@@ -113,7 +105,6 @@ async def test_websocket_error_on_missing_question():
 @pytest.mark.asyncio
 async def test_websocket_full_flow_with_real_client():
     """完整 WebSocket 流程测试（使用 TestClient websocket_connect）."""
-    import asyncio
 
     from fastapi.testclient import TestClient
 
@@ -121,13 +112,15 @@ async def test_websocket_full_flow_with_real_client():
 
     with client.websocket_connect("/api/v1/chat/ws") as websocket:
         # 发送正常问题
-        websocket.send_json({
-            "type": "question",
-            "data": {
-                "question": "请分析贵州茅台2023年营收与现金流量表的勾稽关系",
-                "context": {"company_code": "600519"},
-            },
-        })
+        websocket.send_json(
+            {
+                "type": "question",
+                "data": {
+                    "question": "请分析贵州茅台2023年营收与现金流量表的勾稽关系",
+                    "context": {"company_code": "600519"},
+                },
+            }
+        )
 
         messages_received: list[dict] = []
         try:
@@ -143,7 +136,9 @@ async def test_websocket_full_flow_with_real_client():
         # 验证至少收到了 status 和 final_answer
         msg_types = [m["type"] for m in messages_received]
         assert "status" in msg_types, f"未收到 status 消息，收到的类型: {msg_types}"
-        assert "final_answer" in msg_types, f"未收到 final_answer 消息，收到的类型: {msg_types}"
+        assert (
+            "final_answer" in msg_types
+        ), f"未收到 final_answer 消息，收到的类型: {msg_types}"
 
         # 验证 final_answer 包含核心字段
         final_msgs = [m for m in messages_received if m["type"] == "final_answer"]
@@ -151,8 +146,14 @@ async def test_websocket_full_flow_with_real_client():
         final = final_msgs[0]
 
         required_fields = [
-            "answer", "evidence", "graph", "timeline",
-            "risk_score", "warnings", "missing_modules", "trace_id",
+            "answer",
+            "evidence",
+            "graph",
+            "timeline",
+            "risk_score",
+            "warnings",
+            "missing_modules",
+            "trace_id",
         ]
         for field in required_fields:
             assert field in final["data"], f"final_answer 缺少字段: {field}"
@@ -174,5 +175,6 @@ async def test_websocket_full_flow_with_real_client():
         # 验证所有消息都有 trace_id（status/partial_answer 在 data 中）
         for msg in messages_received:
             if msg["type"] in ("status", "partial_answer"):
-                assert "trace_id" in msg.get("data", {}), \
-                    f"{msg['type']} 消息缺少 trace_id"
+                assert "trace_id" in msg.get(
+                    "data", {}
+                ), f"{msg['type']} 消息缺少 trace_id"

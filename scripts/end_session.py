@@ -68,7 +68,7 @@ def is_ci() -> bool:
 
 def detect_change_type(status_lines: list[str]) -> str:
     """根据文件变更推测 commit 类型."""
-    files = [l[3:].strip() for l in status_lines]
+    files = [sl[3:].strip() for sl in status_lines]
 
     has_feat = False
     has_fix = False
@@ -156,7 +156,10 @@ def main():
             )
             # 只打印关键行
             for line in result.stdout.splitlines():
-                if any(tag in line for tag in ["[PASS]", "[WARN]", "[FAIL]", "✅", "⚠️", "❌"]):
+                if any(
+                    tag in line
+                    for tag in ["[PASS]", "[WARN]", "[FAIL]", "✅", "⚠️", "❌"]
+                ):
                     print(f"  {line.strip()}")
         except Exception:
             print("  [WARN] 无法运行 git_safety_check.py")
@@ -165,7 +168,7 @@ def main():
 
     # CI 模式到此为止
     if ci_mode:
-        print(f"\n  [CI] 检查完成。")
+        print("\n  [CI] 检查完成。")
         return 0
 
     # ============================================================
@@ -212,7 +215,7 @@ def main():
     change_type = detect_change_type(status_lines)
 
     # 推测 scope
-    all_files = [l[3:].strip() for l in status_lines]
+    all_files = [sl[3:].strip() for sl in status_lines]
     scopes = set()
     for f in all_files:
         parts = Path(f).parts
@@ -225,18 +228,18 @@ def main():
 
     print(f"  推荐 commit 类型: {change_type}")
     print(f"  推荐 scope: {scope}")
-    print(f"  推荐 commit message:")
-    print(f'    {change_type}({scope}): <描述你的改动>')
+    print("  推荐 commit message:")
+    print(f"    {change_type}({scope}): <描述你的改动>")
     print()
     print("  示例:")
     if change_type == "feat":
-        print(f'    {change_type}({scope}): 添加 WebSocket 最小 mock 端点')
+        print(f"    {change_type}({scope}): 添加 WebSocket 最小 mock 端点")
     elif change_type == "docs":
-        print(f'    {change_type}({scope}): 更新编码规范与 Git 协作流程文档')
+        print(f"    {change_type}({scope}): 更新编码规范与 Git 协作流程文档")
     elif change_type == "test":
-        print(f'    {change_type}({scope}): 添加 WebSocket smoke 测试')
+        print(f"    {change_type}({scope}): 添加 WebSocket smoke 测试")
     else:
-        print(f'    {change_type}({scope}): 更新项目配置与工具脚本')
+        print(f"    {change_type}({scope}): 更新项目配置与工具脚本")
 
     # 8. 询问下一步操作
     print("\n--- 下一步操作 ---")
@@ -275,6 +278,11 @@ def main():
     print("  ✅ 确认所有路径使用 pathlib.Path")
     print("  ✅ 确认所有文本文件使用 UTF-8 + LF")
     print("  ✅ 确认未硬编码盘符、用户名、绝对路径")
+    print()
+    print("  如果你已经 push，请运行:")
+    print("    python scripts/ci_status.py --watch")
+    print("  如果 CI 失败，请运行:")
+    print("    python scripts/ci_status.py --failed-logs")
     print()
 
     return 0

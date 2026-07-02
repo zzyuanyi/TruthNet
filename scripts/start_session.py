@@ -148,7 +148,7 @@ def main():
         code, _, err = run_git(["fetch", "origin"])
         if code == 0:
             print("  [OK] fetch 完成")
-            print(f"\n  远程 dev 最新状态: origin/main")
+            print("\n  远程 dev 最新状态: origin/main")
             print(f"  本地分支: {branch}")
             if ask_yes_no("  是否需要将 origin/main 合并到当前分支？", default=False):
                 code, _, err = run_git(["merge", "origin/main"])

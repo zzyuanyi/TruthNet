@@ -279,6 +279,46 @@ git config --global --unset https.proxy
 
 ---
 
+## 提交后怎么确认有没有跑通？（CI 自检）
+
+如果你刚 push 了代码，需要确认 CI（自动检查）是否通过。
+
+### 使用脚本（推荐）
+
+```bash
+# 检查当前分支 CI 状态
+python scripts/ci_status.py --branch <your-branch>
+
+# 持续监控直到完成
+python scripts/ci_status.py --branch <your-branch> --watch
+
+# 如果失败，拉取失败日志
+python scripts/ci_status.py --branch <your-branch> --failed-logs
+```
+
+### 手动检查
+
+1. 打开 https://github.com/zzyuanyi/TruthNet/actions
+2. 找到你的分支最近一次运行
+3. **绿色勾** ✅ = 通过，可以提 PR 或请求合并
+4. **红色叉** ❌ = 失败，**不要合并**
+5. 点击失败的 job → 看哪个 step 红了
+6. 把失败日志复制下来，交给 Claude Code 请求帮助
+
+### 失败后怎么做
+
+```text
+看日志 → 定位失败步骤 → 本地修复 → 运行检查 → commit → push → 再看 Actions
+↓
+直到变绿 ✅
+↓
+再提 PR 或请求合并
+```
+
+**记住**：红叉时不要合并，先修到变绿。
+
+---
+
 ## 常见错误排查
 
 ### "Permission denied" / 没有权限

@@ -75,8 +75,18 @@ async def chat():
             ],
             graph={
                 "nodes": [
-                    {"id": "600519", "label": "贵州茅台", "type": "company", "depth": 0},
-                    {"id": "mt_group", "label": "茅台集团", "type": "controller", "depth": 1},
+                    {
+                        "id": "600519",
+                        "label": "贵州茅台",
+                        "type": "company",
+                        "depth": 0,
+                    },
+                    {
+                        "id": "mt_group",
+                        "label": "茅台集团",
+                        "type": "controller",
+                        "depth": 1,
+                    },
                 ],
                 "edges": [
                     {"source": "mt_group", "target": "600519", "relation": "54%控股"},
@@ -139,39 +149,44 @@ async def websocket_chat(ws: WebSocket):
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await ws.send_json({
-                    "type": "error",
-                    "data": {
-                        "code": 400,
-                        "message": "无效的 JSON 格式",
-                        "trace_id": trace_id,
-                    },
-                })
+                await ws.send_json(
+                    {
+                        "type": "error",
+                        "data": {
+                            "code": 400,
+                            "message": "无效的 JSON 格式",
+                            "trace_id": trace_id,
+                        },
+                    }
+                )
                 continue
 
-            msg_type = msg.get("type", "")
             msg_data = msg.get("data", {})
             question = msg_data.get("question", "")
 
             if not question:
-                await ws.send_json({
-                    "type": "error",
-                    "data": {
-                        "code": 400,
-                        "message": "question 字段为必填项",
-                        "trace_id": trace_id,
-                    },
-                })
+                await ws.send_json(
+                    {
+                        "type": "error",
+                        "data": {
+                            "code": 400,
+                            "message": "question 字段为必填项",
+                            "trace_id": trace_id,
+                        },
+                    }
+                )
                 continue
 
             # 1. status
-            await ws.send_json({
-                "type": "status",
-                "data": {
-                    "message": f"正在分析: {question[:50]}...",
-                    "trace_id": trace_id,
-                },
-            })
+            await ws.send_json(
+                {
+                    "type": "status",
+                    "data": {
+                        "message": f"正在分析: {question[:50]}...",
+                        "trace_id": trace_id,
+                    },
+                }
+            )
 
             # 2. partial_answer（模拟流式输出）
             mock_answer = (
@@ -181,52 +196,58 @@ async def websocket_chat(ws: WebSocket):
             partial_texts = mock_answer.split("。")
             for i, text in enumerate(partial_texts):
                 if text.strip():
-                    await ws.send_json({
-                        "type": "partial_answer",
-                        "data": {
-                            "text": text.strip() + "。",
-                            "sequence": i + 1,
-                            "trace_id": trace_id,
-                        },
-                    })
+                    await ws.send_json(
+                        {
+                            "type": "partial_answer",
+                            "data": {
+                                "text": text.strip() + "。",
+                                "sequence": i + 1,
+                                "trace_id": trace_id,
+                            },
+                        }
+                    )
 
             # 3. final_answer（data 结构与 HTTP ChatData 一致）
-            await ws.send_json({
-                "type": "final_answer",
-                "data": {
-                    "answer": mock_answer,
-                    "evidence": [],
-                    "graph": {"nodes": [], "edges": []},
-                    "timeline": [],
-                    "risk_score": {
-                        "overall": 0.0,
-                        "financial": 0.0,
-                        "ownership": 0.0,
-                        "sentiment": 0.0,
+            await ws.send_json(
+                {
+                    "type": "final_answer",
+                    "data": {
+                        "answer": mock_answer,
+                        "evidence": [],
+                        "graph": {"nodes": [], "edges": []},
+                        "timeline": [],
+                        "risk_score": {
+                            "overall": 0.0,
+                            "financial": 0.0,
+                            "ownership": 0.0,
+                            "sentiment": 0.0,
+                        },
+                        "warnings": [],
+                        "missing_modules": [
+                            "编排Agent",
+                            "财务勾稽Agent",
+                            "股权穿透Skill",
+                            "舆情事件Skill",
+                        ],
+                        "trace_id": trace_id,
                     },
-                    "warnings": [],
-                    "missing_modules": [
-                        "编排Agent",
-                        "财务勾稽Agent",
-                        "股权穿透Skill",
-                        "舆情事件Skill",
-                    ],
-                    "trace_id": trace_id,
-                },
-            })
+                }
+            )
 
     except WebSocketDisconnect:
         pass
     except Exception as exc:
         try:
-            await ws.send_json({
-                "type": "error",
-                "data": {
-                    "code": 500,
-                    "message": f"内部错误: {str(exc)}",
-                    "trace_id": trace_id,
-                },
-            })
+            await ws.send_json(
+                {
+                    "type": "error",
+                    "data": {
+                        "code": 500,
+                        "message": f"内部错误: {str(exc)}",
+                        "trace_id": trace_id,
+                    },
+                }
+            )
         except Exception:
             pass
 

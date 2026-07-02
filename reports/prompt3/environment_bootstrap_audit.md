@@ -13,7 +13,7 @@
 
 ### 2. 当前是否有 conda？
 
-✅ **是。** 
+✅ **是。**
 - conda 版本：24.9.2
 - conda 路径：`E:\anaconda\Scripts\conda.EXE`
 
@@ -53,7 +53,7 @@
 
 ### 9. 是否支持 venv fallback？
 
-✅ **是。** 
+✅ **是。**
 - `scripts/env_bootstrap.py` 支持 `--use-venv` 参数
 - 自动检测 conda 不存在时建议 venv
 - `docs/ENVIRONMENT.md` 有完整 venv fallback 章节
@@ -62,7 +62,7 @@
 
 ### 10. 镜像/代理配置是否只保存在本地？
 
-✅ **是。** 
+✅ **是。**
 - `--pip-index-url` 参数只用于当前命令
 - `--npm-registry` 参数只用于当前命令
 - 不写入 `requirements.txt`

@@ -67,7 +67,7 @@
 
 ### 9. 是否会在 main 分支开发时报错？
 
-✅ **是。** 
+✅ **是。**
 - `scripts/git_safety_check.py` — main 分支返回 FAIL
 - `scripts/start_session.py` — main 分支给出警告并提供切换选项
 - `scripts/doctor.py` — main 分支给出 WARN
@@ -82,7 +82,7 @@
 
 ## 硬性禁止项验证
 
-| 禁止项 | 已写入位置 | 脚本强制 | 
+| 禁止项 | 已写入位置 | 脚本强制 |
 |--------|-----------|---------|
 | 自动 commit | CLAUDE.md, github-workflow SKILL.md, GIT_WORKFLOW.md, README.md | end_session.py 只建议不执行 |
 | 自动 push | CLAUDE.md, github-workflow SKILL.md, GIT_WORKFLOW.md, README.md | end_session.py 只建议不执行 |

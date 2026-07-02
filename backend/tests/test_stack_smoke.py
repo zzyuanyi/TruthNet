@@ -42,7 +42,9 @@ def test_pydantic_chat_schema_roundtrip():
         evidence=[],
         graph={},
         timeline=[],
-        risk_score=RiskScore(overall=0.15, financial=0.10, ownership=0.20, sentiment=0.05),
+        risk_score=RiskScore(
+            overall=0.15, financial=0.10, ownership=0.20, sentiment=0.05
+        ),
         warnings=[],
         missing_modules=[],
         trace_id="trace-001",

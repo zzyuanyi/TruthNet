@@ -62,10 +62,30 @@ LARGE_FILE_THRESHOLD: int = 500 * 1024  # 500KB
 
 # 文本文件扩展名 (尝试 UTF-8 解码检查)
 TEXT_EXTENSIONS: set[str] = {
-    ".py", ".md", ".txt", ".yml", ".yaml", ".json", ".toml",
-    ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".xml",
-    ".csv", ".cfg", ".ini", ".env", ".env.example",
-    ".sh", ".ps1", ".gitignore", ".gitattributes", ".editorconfig",
+    ".py",
+    ".md",
+    ".txt",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".toml",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".css",
+    ".html",
+    ".xml",
+    ".csv",
+    ".cfg",
+    ".ini",
+    ".env",
+    ".env.example",
+    ".sh",
+    ".ps1",
+    ".gitignore",
+    ".gitattributes",
+    ".editorconfig",
 }
 
 
@@ -117,6 +137,7 @@ def iter_python_files(repo_root: Path) -> list[Path]:
 # 辅助判断函数
 # ============================================================
 
+
 def _is_doc_example(line: str) -> bool:
     """判断是否为文档中的反例示例（标记为错误示范的行）."""
     stripped = line.strip()
@@ -139,9 +160,11 @@ def _is_pattern_definition(line: str) -> bool:
     """判断是否为搜索模式定义（非实际使用）."""
     stripped = line.strip()
     # 模式定义行：drive_patterns = [...], path_patterns = [...]
-    if re.match(r'^(drive_patterns|path_patterns|pat\d*|.*_pattern)\s*=\s*\[', stripped):
+    if re.match(
+        r"^(drive_patterns|path_patterns|pat\d*|.*_pattern)\s*=\s*\[", stripped
+    ):
         return True
-    if re.match(r'^(drive_pattern|.*_pattern)\s*=\s*re\.', stripped):
+    if re.match(r"^(drive_pattern|.*_pattern)\s*=\s*re\.", stripped):
         return True
     return False
 
@@ -152,7 +175,7 @@ def _is_audit_self_diagnostic(line: str) -> bool:
     # 诊断字符串包含 "裸 open()" 或 "硬编码盘符" 等
     if "裸 open()" in stripped or "bare_open" in stripped:
         return True
-    if "f\"硬编码" in stripped or "f'硬编码" in stripped:
+    if 'f"硬编码' in stripped or "f'硬编码" in stripped:
         return True
     return False
 
@@ -160,6 +183,7 @@ def _is_audit_self_diagnostic(line: str) -> bool:
 # ============================================================
 # 检查函数
 # ============================================================
+
 
 def check_utf8_decodable(files: list[Path]) -> list[str]:
     """检查文本文件是否可用 UTF-8 解码."""
@@ -239,9 +263,7 @@ def check_hardcoded_drive_letters(files: list[Path]) -> list[str]:
                 continue
 
             for match in drive_pattern.finditer(line):
-                issues.append(
-                    f"硬编码盘符: {fp}:{lineno}: {stripped[:80]}"
-                )
+                issues.append(f"硬编码盘符: {fp}:{lineno}: {stripped[:80]}")
     return issues
 
 
@@ -274,9 +296,7 @@ def check_hardcoded_personal_paths(files: list[Path]) -> list[str]:
 
             for pat in path_patterns:
                 if pat.search(line):
-                    issues.append(
-                        f"硬编码个人路径: {fp}:{lineno}: {stripped[:80]}"
-                    )
+                    issues.append(f"硬编码个人路径: {fp}:{lineno}: {stripped[:80]}")
                     break
     return issues
 
@@ -337,6 +357,7 @@ def check_crlf_files(files: list[Path]) -> list[str]:
 # ============================================================
 # 主逻辑
 # ============================================================
+
 
 def main():
     parser = argparse.ArgumentParser(description="编码与路径跨平台审计")
