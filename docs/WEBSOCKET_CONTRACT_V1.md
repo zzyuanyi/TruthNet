@@ -1,14 +1,11 @@
 # WebSocket 契约 V1 — V12 Baseline
 
-> **版本**: 1.0
-> **基线**: V12 (2026-07-17)
-> **端点**: `ws://localhost:8000/api/v1/chat/ws`
+> **版本**: 1.0 | **基线**: V12 (2026-07-15) | **端点**: `ws://localhost:8000/api/v1/chat/ws`
+> 设计依据: `TruthNet_综合设计方案_V12(2).md` §12 WebSocket 契约
 
 ---
 
-## V12 Event Envelope
-
-所有 WebSocket 消息使用统一 envelope：
+## V12 统一事件信封
 
 ```json
 {
@@ -27,125 +24,100 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `schema_version` | string | 固定 `"1.0"` |
-| `event_id` | string | 事件唯一 ID（`evt_` 前缀 + 8 位 hex） |
-| `event_type` | string | 事件类型（见下表） |
-| `session_id` | string | 会话 ID（`ses_` 前缀 + UUID4） |
-| `turn_id` | string | 轮次 ID（`turn_` 前缀 + UUID4） |
+| `event_id` | string | 事件唯一 ID |
+| `event_type` | string | 事件类型 |
+| `session_id` | string | 会话 ID |
+| `turn_id` | string | 轮次 ID |
 | `sequence` | int | 单调递增序号 |
 | `timestamp` | string | ISO 8601 时间戳 |
-| `trace_id` | string | 追踪 ID（UUID4） |
+| `trace_id` | string | 追踪 ID (UUID4) |
 | `payload` | object | 事件数据 |
 
 ---
 
-## 事件类型
+## Client → Server 事件
 
-### `turn.accepted`
-用户问题已接收。
+| `event_type` | Payload | 说明 |
+|------|------|------|
+| `chat.query` | text, session_id, 可选 as_of | 发起问答 |
+| `company.confirm` | company_ref, session_id, turn_id | 确认候选公司 |
+| `chat.follow_up` | text, session_id | 追问 |
+| `turn.cancel` | turn_id | 取消当前轮次 |
+| `stream.resume` | turn_id, last_received_sequence | 断线重连 |
+| `ping` | client_time | 心跳 |
 
-```json
-{
-  "event_type": "turn.accepted",
-  "payload": {
-    "message": "已收到问题: ..."
-  }
-}
+## Server → Client 事件
+
+| `event_type` | 说明 | 状态 |
+|------|------|:---:|
+| `turn.accepted` | 请求已接收，分配 turn_id | ✅ |
+| `company.candidates` | 候选公司列表 | 🔸 |
+| `module.started` | 模块开始执行 | ✅ |
+| `module.completed` | 模块终态和耗时 | 🔸 |
+| `answer.delta` | 文本增量 | ✅ |
+| `artifact.upsert` | 结构化产物更新 (规则/图/时间线/证据) | ✅ |
+| `warning.raised` | 数据不足/超时/降级 | 🔸 |
+| `turn.completed` | 最终结果 + 追问建议 | ✅ |
+| `turn.failed` | 本轮无法继续 | ✅ |
+| `heartbeat` | 服务端心跳 | 🔸 |
+
+---
+
+## 完整时序
+
+```text
+Client → chat.query
+Server → turn.accepted
+Server → company.candidates                // 需要消歧时
+Client → company.confirm
+Server → module.started(finance)
+Server → module.started(equity)
+Server → module.started(events)
+Server → answer.delta
+Server → artifact.upsert(finance_rules)
+Server → module.completed(finance)
+Server → artifact.upsert(equity_graph)
+Server → module.completed(equity)
+Server → warning.raised(events_partial)     // 可选
+Server → artifact.upsert(event_timeline)
+Server → answer.delta
+Server → turn.completed
 ```
 
-### `module.started`
-模块开始执行。
+---
 
-```json
-{
-  "event_type": "module.started",
-  "payload": {
-    "module": "orchestrator",
-    "status": "running"
-  }
-}
-```
-
-### `answer.delta`
-流式回答片段。
-
-```json
-{
-  "event_type": "answer.delta",
-  "payload": {
-    "text": "部分回答文本...",
-    "index": 0
-  }
-}
-```
-
-### `artifact.upsert`
-结构化产物更新。
+## artifact.upsert
 
 ```json
 {
   "event_type": "artifact.upsert",
   "payload": {
-    "artifact_type": "risk_score",
-    "data": {"overall": 0.15}
+    "artifact_type": "finance_rules",
+    "artifact_id": "finance_600518_2026Q2",
+    "revision": 2,
+    "operation": "replace",
+    "data": {}
   }
 }
 ```
 
-### `turn.completed`
-轮次成功完成。
-
-```json
-{
-  "event_type": "turn.completed",
-  "payload": {
-    "answer": "完整回答...",
-    "evidence": [],
-    "graph": {},
-    "timeline": [],
-    "risk_score": {},
-    "warnings": [],
-    "missing_modules": []
-  }
-}
-```
-
-### `turn.failed`
-轮次执行失败。
-
-```json
-{
-  "event_type": "turn.failed",
-  "payload": {
-    "error_code": "INVALID_JSON",
-    "message": "无效的 JSON 格式"
-  }
-}
-```
-
-### `heartbeat`
-心跳（可选，用于 keepalive）。
-
-```json
-{
-  "event_type": "heartbeat",
-  "payload": {}
-}
-```
+支持的 `artifact_type`: `finance_rules`, `equity_graph`, `event_timeline`, `risk_assessment`, `evidence_chain`, `industry_benchmark`, `follow_up_suggestions`
 
 ---
 
-## 客户端发送
-
-客户端发送简化的请求格式（不需要 envelope）：
+## 重连恢复
 
 ```json
 {
-  "question": "请分析贵州茅台2023年营收",
-  "context": {"company_code": "600519"}
+  "event_type": "stream.resume",
+  "payload": {
+    "turn_id": "turn_01",
+    "last_received_sequence": 17
+  }
 }
 ```
 
-服务端负责包装为 V12 event envelope。
+服务端可补发则从 18 开始；执行已完成则返回最终事件。
 
 ---
 

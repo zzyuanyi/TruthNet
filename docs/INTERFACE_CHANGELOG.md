@@ -86,6 +86,22 @@
 
 ---
 
+## 2026-07-17 — V12 文档对齐更新
+
+### Changed
+- `docs/API_CONTRACT_V1.md`: 更新为 V12 完整端点列表（18 个端点）、部分成功格式、公共查询参数
+- `docs/ARCHITECTURE.md`: 更新为 V12 完整架构（Agent 节点流程、Evidence/Claim 体系、分层职责）
+- `docs/WEBSOCKET_CONTRACT_V1.md`: 更新为 V12 完整 WS 契约（Client→Server 事件、artifact.upsert、重连恢复）
+- `docs/DATA_CONTRACT.md`: 更新为 V12 数据架构（分层模型、MySQL 表结构、Neo4j 图模型、ChromaDB Collections）
+- `docs/FRONTEND_DESIGN.md`: 更新为 V12 前端设计（页面路由、组件树、响应式、风险视觉规范、WS Reducer、无障碍）
+- `CLAUDE.md`: 更新引用最新设计文档
+
+### Design Baseline
+- 设计依据: `TruthNet_综合设计方案_V12(2).md` (2026-07-15)
+- 覆盖: §1 产品概述, §4-5 前端设计, §6 系统架构, §7 Agent 设计, §8 业务设计, §9 证据体系, §10 数据架构, §11-12 REST/WS 契约, §14 安全, §15 可观测性, §16 测试与 CI, §19 迁移策略
+
+---
+
 ## 2026-07-17 — V12：设计对齐与增量重构基线
 
 ### Changed
