@@ -1,4 +1,13 @@
-"""TruthNet FastAPI 应用入口."""
+"""TruthNet FastAPI 应用入口 · V12 baseline.
+
+V12 增量变更：
+- 新增 /healthz, /readyz 端点
+- 新增 GET /api/v1/companies 端点
+- POST /api/v1/chat 和 WS /api/v1/chat/ws 保留兼容，同时注册 V12 路由
+- 旧 /health 端点保留兼容（deprecated）
+- 新增 V12 response envelope (data/meta/warnings)
+- 新增 Problem Details 错误格式
+"""
 
 import json
 import uuid
@@ -8,9 +17,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.exception_handlers import general_exception_handler, not_found_handler
+from app.api.v1.routers import chat as chat_v1
+from app.api.v1.routers import companies as companies_v1
+from app.api.v1.routers import health as health_v1
 from app.core.config import settings
-from app.schemas.common import HealthResponse, UnifiedResponse
 from app.schemas.chat import ChatData, RiskScore
+from app.schemas.common import HealthResponse, UnifiedResponse
 
 # 加载 .env
 env_path = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -18,8 +31,8 @@ load_dotenv(env_path)
 
 app = FastAPI(
     title="TruthNet API",
-    description="织网鉴真 — 财报反欺诈智能问答系统",
-    version="0.1.0",
+    description="织网鉴真 — 财报反欺诈智能问答系统 (V12 baseline)",
+    version="0.2.0",
 )
 
 # CORS（开发阶段允许所有来源）
@@ -31,10 +44,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ===== V12 异常处理器 =====
+app.add_exception_handler(Exception, general_exception_handler)
+app.add_exception_handler(404, not_found_handler)
+
+# ===== V12 路由注册（legacy 优先，V12 router 次之）=====
+# 注意：legacy 路由定义在前，V12 include_router 在后
+# 这样 legacy POST /api/v1/chat 和 WS /api/v1/chat/ws 优先匹配
+# V12 healthz/readyz/companies 通过 router 注册
+
+# ===== 兼容路由（先注册，优先匹配）=====
+
 
 @app.get("/health", response_model=UnifiedResponse[HealthResponse])
 async def health_check():
-    """健康检查接口。"""
+    """健康检查接口（deprecated — 请使用 /api/v1/healthz）。
+
+    保留兼容，不立即删除。
+    """
     return UnifiedResponse(
         code=0,
         data=HealthResponse(
@@ -47,26 +74,19 @@ async def health_check():
 
 
 @app.post("/api/v1/chat", response_model=UnifiedResponse)
-async def chat():
-    """对话接口（MVP mock 占位 · Prompt4 冻结）。
+async def chat_legacy():
+    """对话接口（兼容旧格式 · Prompt4 冻结）。
 
-    TODO: 接入编排 Agent 后替换为真实实现。
-
-    返回结构与 docs/API_CONTRACT.md 严格一致。
-    risk_score 已冻结为 RiskScore 对象（overall/financial/ownership/sentiment）。
+    返回旧 UnifiedResponse 格式，保持现有测试通过。
     """
     trace_id = str(uuid.uuid4())
 
     return UnifiedResponse(
         code=0,
         data=ChatData(
-            answer="Mock 回答：该功能正在开发中。当前为 Prompt4 冻结的 MVP mock 接口。",
+            answer="Mock 回答：该功能正在开发中。当前为 V12 兼容接口（旧格式）。",
             evidence=[
-                {
-                    "source": "利润表",
-                    "field": "营业收入",
-                    "value": "1505.60亿（mock）",
-                },
+                {"source": "利润表", "field": "营业收入", "value": "1505.60亿（mock）"},
                 {
                     "source": "现金流量表",
                     "field": "销售商品收到的现金",
@@ -89,7 +109,7 @@ async def chat():
                     },
                 ],
                 "edges": [
-                    {"source": "mt_group", "target": "600519", "relation": "54%控股"},
+                    {"source": "mt_group", "target": "600519", "relation": "54%控股"}
                 ],
             },
             timeline=[
@@ -101,20 +121,9 @@ async def chat():
                     "sentiment": "neutral",
                     "sources": ["上交所公告", "财经媒体转载"],
                 },
-                {
-                    "date": "2023-08-02",
-                    "title": "发布2023半年报",
-                    "category": "公告",
-                    "summary": "公司发布2023年半年度报告（mock）",
-                    "sentiment": "neutral",
-                    "sources": ["上交所公告"],
-                },
             ],
             risk_score=RiskScore(
-                overall=0.15,
-                financial=0.10,
-                ownership=0.20,
-                sentiment=0.05,
+                overall=0.15, financial=0.10, ownership=0.20, sentiment=0.05
             ),
             warnings=["mock 预警：关联交易占比略高"],
             missing_modules=[
@@ -131,13 +140,10 @@ async def chat():
 
 
 @app.websocket("/api/v1/chat/ws")
-async def websocket_chat(ws: WebSocket):
-    """WebSocket 对话端点（最小 mock 实现 · Prompt4 冻结）。
+async def websocket_chat_legacy(ws: WebSocket):
+    """WebSocket 对话端点（兼容旧格式 · Prompt4 冻结）。
 
-    接收用户消息 JSON，返回 status → partial_answer → final_answer 三类消息。
-    不调用真实 LLM，不访问真实数据，仅验证消息格式与交互流程。
-
-    final_answer.data 复用 ChatData 字段结构。
+    保留旧格式兼容。
     """
     await ws.accept()
     trace_id = str(uuid.uuid4())
@@ -161,9 +167,7 @@ async def websocket_chat(ws: WebSocket):
                 )
                 continue
 
-            msg_data = msg.get("data", {})
-            question = msg_data.get("question", "")
-
+            question = msg.get("data", {}).get("question", "")
             if not question:
                 await ws.send_json(
                     {
@@ -177,7 +181,6 @@ async def websocket_chat(ws: WebSocket):
                 )
                 continue
 
-            # 1. status
             await ws.send_json(
                 {
                     "type": "status",
@@ -188,10 +191,9 @@ async def websocket_chat(ws: WebSocket):
                 }
             )
 
-            # 2. partial_answer（模拟流式输出）
             mock_answer = (
                 f"Mock 回答：关于「{question[:30]}...」的分析正在开发中。"
-                "当前 WebSocket mock 端点已就绪（Prompt4 冻结）。"
+                "当前 WebSocket 端点已就绪（V12 兼容，旧格式）。"
             )
             partial_texts = mock_answer.split("。")
             for i, text in enumerate(partial_texts):
@@ -207,7 +209,6 @@ async def websocket_chat(ws: WebSocket):
                         }
                     )
 
-            # 3. final_answer（data 结构与 HTTP ChatData 一致）
             await ws.send_json(
                 {
                     "type": "final_answer",
@@ -250,6 +251,14 @@ async def websocket_chat(ws: WebSocket):
             )
         except Exception:
             pass
+
+
+# ===== V12 路由注册（次优先）=====
+# healthz, readyz, companies 等新端点
+app.include_router(health_v1.router, prefix="/api/v1")
+app.include_router(companies_v1.router, prefix="/api/v1")
+# V12 chat router 也注册，但 legacy 路由优先匹配
+app.include_router(chat_v1.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

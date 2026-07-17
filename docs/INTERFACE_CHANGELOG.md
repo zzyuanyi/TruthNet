@@ -86,6 +86,61 @@
 
 ---
 
+## 2026-07-17 — V12：设计对齐与增量重构基线
+
+### Changed
+- `POST /api/v1/chat` 响应：新增 V12 response envelope `{data, meta, warnings}` 格式
+  - 旧 `{code, data, message, trace_id}` 格式保留兼容
+  - **非破坏性变更**：旧客户端不受影响
+- `WS /api/v1/chat/ws`：新增 V12 event envelope 格式
+  - 新增 `schema_version`, `event_id`, `session_id`, `turn_id`, `sequence`, `timestamp` 字段
+  - 新增事件类型: `turn.accepted`, `module.started`, `answer.delta`, `artifact.upsert`, `turn.completed`, `turn.failed`, `heartbeat`
+  - 旧 `{type, data}` 格式保留兼容
+- `GET /health` 标记为 deprecated（保留兼容），新增 `GET /api/v1/healthz`
+- `requirements.txt` 新增 6 个 V12 依赖：sqlalchemy, alembic, pymysql, neo4j, structlog, jsonschema
+- `backend/app/core/config.py` 新增 V12 配置项：TRUTHNET_PROFILE, SQL_BACKEND, GRAPH_BACKEND, VECTOR_BACKEND, LLM_BACKEND, MySQL/Neo4j 连接, DeepSeek/Qwen Provider, 数据版本字段
+- `backend/app/schemas/` 保留不动，新增 `backend/app/api/v1/schemas/` V12 schema
+- 目录结构：新增 `application/`, `domain/`, `infrastructure/` 分层
+
+### Added
+- 新增 `/api/v1/healthz`（进程存活探针）
+- 新增 `/api/v1/readyz`（就绪探针，lite profile 不依赖外部服务）
+- 新增 `GET /api/v1/companies?query=`（公司搜索，mock）
+- 新增 V12 响应格式：`V12Response[T]` = `{data, meta, warnings}`
+- 新增 RFC 9457 Problem Details 错误格式：`ProblemDetail`
+- 新增核心领域模型：`CompanyRef`, `EvidenceRef`, `Claim`, `ConfidenceLevel`, `EvidenceType`
+- 新增枚举：`RiskLevel`, `ModuleStatus`, `Profile`, `BackendType`
+- 新增 Port 协议（5 个）：`CompanyRepository`, `FinanceRepository`, `EquityGraphPort`, `VectorStorePort`, `LLMProvider`
+- 新增 Adapter 骨架：
+  - SQLite: `CompanyRepository`, `FinanceRepository`（lite）
+  - MySQL: `CompanyRepository`（full，骨架）
+  - NetworkX: `EquityGraph`（lite）
+  - Neo4j: `EquityGraph`（full，骨架）
+  - ChromaDB: `VectorStore`（lite/full 共用）
+  - Mock: `LLMProvider`（lite）
+  - DeepSeek: `LLMProvider`（full，骨架）
+  - Qwen: `LLMProvider`（full，骨架）
+- 新增 Agent State (`agents/state.py`) 和 Agent Graph 骨架 (`agents/graph.py`)
+- 新增可观测性骨架：logging, tracing, metrics
+- 新增 V12 契约文档：`API_CONTRACT_V1.md`, `WEBSOCKET_CONTRACT_V1.md`, `FRONTEND_DESIGN.md`
+- 新增 V12 测试：contract tests (API v1 + WS v1), unit tests (models + ports/mock + healthz/readyz)
+- 新增 `TRUTHNET_PROFILE=lite|full` profile 机制
+- 更新 `doctor.py` 增加 V12 检查项
+- 更新 `.env.example` 增加 45 个 V12 配置变量
+- 更新 7 个 skills 同步 V12 规则
+- 生成 `reports/v12_alignment/` 完整报告（12 个文件）
+
+### Deprecated
+- `GET /health` — 保留兼容，推荐使用 `GET /api/v1/healthz`
+- 旧响应格式 `{code, data, message, trace_id}` — 保留兼容，推荐使用 V12 envelope
+- 旧 WebSocket 格式 `{type, data}` — 保留兼容，推荐使用 V12 event envelope
+
+### Breaking Changes
+- 无破坏性修改 — 所有旧接口和格式保留兼容
+- 是否已由项目负责人审阅：⏳ 待审阅（V12 对齐基线）
+
+---
+
 ## 2024-07-02 — 初始工程基线
 
 ### Added

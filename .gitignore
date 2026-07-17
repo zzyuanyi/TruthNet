@@ -82,3 +82,11 @@ htmlcov/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# V12 Full Profile - local data (not committed)
+.local/
+*.pem
+*.key
+*.crt
+.gguf
+.safetensors

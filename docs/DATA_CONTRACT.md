@@ -1,168 +1,97 @@
-# 数据契约
+# 数据契约 — V12 Baseline
 
-本文档定义前后端数据交互的边界和格式，以及数据组/后端组的协作规范。
+> **版本**: 2.0
+> **基线**: V12 (2026-07-17)
 
 ---
 
-## 数据存储边界
+## 存储架构 (V12)
 
-### SQLite（关系型数据）
+| 层级 | lite profile | full profile | 用途 |
+|------|-------------|-------------|------|
+| 关系数据 | SQLite | MySQL 8.0 | 公司信息、财务数据 |
+| 图数据 | NetworkX | Neo4j | 股权穿透、关联方分析 |
+| 向量数据 | ChromaDB (local) | ChromaDB (persistent) | 财报语义搜索 |
+| LLM | Mock | DeepSeek / Qwen | 对话生成 |
+| ORM | SQLAlchemy (SQLite) | SQLAlchemy (MySQL) | 统一数据访问 |
+| Migration | Alembic (SQLite) | Alembic (MySQL) | Schema 版本管理 |
+
+## SQLite（lite 默认）
 
 **路径**：`data/truthnet.db`（不提交到 Git）
 
-**草案表结构**：
+草案表结构（SQLAlchemy ORM 定义在 `backend/app/infrastructure/persistence/`）：
 
-```sql
--- 公司基本信息
-CREATE TABLE companies (
-    id TEXT PRIMARY KEY,          -- 股票代码，如 "600519"
-    name TEXT NOT NULL,           -- 公司全称
-    short_name TEXT,              -- 简称
-    industry TEXT,                -- 行业分类
-    listing_date TEXT,            -- 上市日期
-    status TEXT DEFAULT 'active'  -- 状态
-);
-
--- 财务报表（简化版，按科目存储）
-CREATE TABLE financial_statements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_id TEXT NOT NULL,
-    report_type TEXT NOT NULL,    -- 'balance_sheet' / 'income' / 'cash_flow'
-    fiscal_year INTEGER NOT NULL,
-    fiscal_period TEXT,           -- 'Q1' / 'Q2' / 'Q3' / 'Q4' / 'FY'
-    item_name TEXT NOT NULL,      -- 科目名称
-    item_value REAL,              -- 金额（亿元）
-    FOREIGN KEY (company_id) REFERENCES companies(id)
-);
-
--- 股权关系
-CREATE TABLE ownership_relations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_entity TEXT NOT NULL,
-    to_entity TEXT NOT NULL,
-    stake_ratio REAL,             -- 持股比例 0-1
-    relation_type TEXT,           -- 'direct' / 'indirect' / 'concerted'
-    data_source TEXT,             -- 数据来源
-    updated_at TEXT
-);
+```text
+companies          — 公司基本信息
+financial_items    — 财务报表科目
+ownership_relations — 股权关系
+conversations      — 对话记录
 ```
 
-> 实际建表 SQL 放在 `backend/app/core/schema.sql`（后续创建），本文档仅定义契约。
+## MySQL（full 目标）
 
----
+**配置**：见 `.env.example`
+**ORM**：SQLAlchemy 2.0+
+**Migration**：Alembic
+**Driver**：PyMySQL（纯 Python，Windows 兼容）
 
-### NetworkX（图数据）
+## NetworkX（lite 默认）
 
-**使用场景**：股权穿透、关联方网络分析
+内存图分析，无需外部服务。
 
-**节点类型**：
+- 节点类型: company, person, entity, controller
+- 边类型: holds, controls, related
 
-| 类型 | 说明 | 属性 |
-|------|------|------|
-| `company` | 公司节点 | `name`, `code`, `listed(true/false)`, `industry` |
-| `person` | 自然人 | `name`, `role` (董事/监事/高管) |
-| `entity` | 其他实体 | `name`, `type` (政府/投资机构/基金会) |
+## Neo4j（full 目标）
 
-**边类型**：
+**配置**：见 `.env.example`
+**Driver**：neo4j Python driver 5.26+
+**URI**：`bolt://localhost:7687`
 
-| 类型 | 说明 | 属性 |
-|------|------|------|
-| `owns` | 持股关系 | `ratio` (0-1), `level` (直接/间接) |
-| `controls` | 实际控制 | `path`, `total_stake` |
-| `related` | 关联关系 | `type` (同控/同董事/担保) |
+## ChromaDB（lite/full 共用）
 
----
+**lite**：本地文件持久化（`data/chroma_db`）
+**full**：可扩展为 ChromaDB Server
 
-### ChromaDB（向量数据）
+Collection 草案：
 
-**使用场景**：财报片段检索、舆情语义搜索
+| Collection | 用途 |
+|------------|------|
+| `financial_reports` | 财报文本片段 |
+| `news_events` | 舆情新闻 |
+| `regulations` | 会计准则、法规 |
 
-**Collection 草案**：
+## EvidenceRef / Claim 数据契约
 
-| Collection | 用途 | 元数据字段 |
-|------------|------|------------|
-| `financial_reports` | 财报文本片段 | `company_id`, `year`, `section`, `page` |
-| `news_events` | 舆情新闻 | `company_id`, `date`, `source`, `sentiment` |
-| `regulations` | 会计准则、法规 | `title`, `chapter`, `category` |
-
----
-
-## 数据组 → 后端组交付格式
-
-### 财务报表数据
+V12 核心证据模型：
 
 ```json
 {
-  "company_id": "600519",
-  "company_name": "贵州茅台酒股份有限公司",
-  "reports": {
-    "2023": {
-      "balance_sheet": [
-        {"item": "货币资金", "value": 690.07, "unit": "亿元"},
-        {"item": "应收账款", "value": 0.58, "unit": "亿元"}
-      ],
-      "income": [
-        {"item": "营业收入", "value": 1505.60, "unit": "亿元"},
-        {"item": "营业成本", "value": 317.24, "unit": "亿元"}
-      ],
-      "cash_flow": [
-        {"item": "销售商品收到的现金", "value": 1652.35, "unit": "亿元"}
-      ]
-    }
-  }
+  "id": "ev_001",
+  "type": "financial_statement",
+  "source": "2023年报 利润表",
+  "field": "营业收入",
+  "value": "1505.60亿",
+  "page": "第45页",
+  "retrieval_score": 0.95
 }
 ```
-
-### 股权关系数据
 
 ```json
 {
-  "company_id": "600519",
-  "relations": [
-    {
-      "from": "贵州省国资委",
-      "to": "茅台集团",
-      "stake": 1.0,
-      "type": "direct",
-      "source": "企查查/天眼查"
-    },
-    {
-      "from": "茅台集团",
-      "to": "贵州茅台酒股份有限公司",
-      "stake": 0.54,
-      "type": "direct",
-      "source": "2023年报"
-    }
-  ]
+  "id": "cl_001",
+  "statement": "营业收入与现金流匹配良好",
+  "confidence": "high",
+  "evidence": ["ev_001", "ev_002"],
+  "counter_evidence": [],
+  "generated_at": "2026-07-15T10:00:00"
 }
 ```
-
----
-
-## 后端 → 前端 Mock 数据
-
-Mock JSON 格式与 `docs/API_CONTRACT.md` 中响应示例一致，前端可直接将其作为 stub server 返回。
-
-前端 mock 开发建议：
-1. 复制 API_CONTRACT.md 中的响应 JSON
-2. 使用 `msw`（Mock Service Worker）或 `json-server` 搭建 mock 服务
-3. 接口字段变更时必须同步更新 mock
-
----
-
-## 数据变更流程
-
-1. 数据组在 `data/raw/` 目录下更新源数据
-2. 如需修改数据结构，先更新本文档的对应章节
-3. 通知后端组更新 schema 和数据处理管道
-4. 后端组更新 `backend/app/schemas/` 中的 Pydantic 模型
-5. 更新 `docs/INTERFACE_CHANGELOG.md`
-
----
 
 ## 禁止事项
 
-- 禁止在 `data/raw/` 和 `data/processed/` 提交真实大文件（PDF > 1MB, Excel > 500KB）
-- 禁止在仓库中提交 `.db` / `.sqlite` 文件
-- 禁止在 ChromaDB 持久化目录中提交向量数据
+- 禁止提交 `.db` / `.sqlite` 文件
+- 禁止提交 ChromaDB 持久化数据
+- 禁止在 `data/raw/` 和 `data/processed/` 提交大文件
 - 前端不得私自修改后端定义的字段名和类型

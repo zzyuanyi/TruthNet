@@ -1,64 +1,72 @@
-# 架构设计
+# 架构设计 — V12 Baseline
 
-## 概述
+> **版本**: 2.0
+> **基线**: V12 (2026-07-17)
 
-TruthNet 采用分层 Agent 架构，后端基于 FastAPI + LangGraph，前端基于 React。
-
-## 系统分层
+## 系统分层 (V12)
 
 ```text
-┌─────────────────────────────────────────┐
-│              前端 (React)               │
-│    shadcn/ui / Recharts / d3-visx      │
-├─────────────────────────────────────────┤
-│          API 层 (FastAPI)               │
-│    REST: /api/v1/*                      │
-│    WebSocket: /api/v1/chat/ws          │
-├─────────────────────────────────────────┤
-│        编排 Agent (Orchestrator)        │
-│    意图识别 → 工具路由 → 并行调度       │
-├──────────┬──────────┬──────────────────┤
-│ 记忆     │ 财务勾稽 │ 问答生成         │
-│ Agent    │ Agent    │ Agent            │
-├──────────┴──────────┴──────────────────┤
-│          Skill 层 (确定性工具)          │
-│  股权穿透 Skill  │  舆情事件 Skill     │
-├─────────────────────────────────────────┤
-│          Service 层 (业务服务)          │
-│   SQLite  │  NetworkX  │  ChromaDB     │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│               前端 (React 18)                     │
+│    shadcn/ui / Tailwind / Recharts / D3.js       │
+├──────────────────────────────────────────────────┤
+│           API 层 (FastAPI)                        │
+│    REST: /api/v1/*          (V12 envelope)       │
+│    WebSocket: /api/v1/chat/ws  (V12 event env)   │
+│    兼容: /health, 旧格式保留                      │
+├──────────────────────────────────────────────────┤
+│         Application 层                            │
+│    Use Cases / Ports (Protocol) / DTOs            │
+│    不依赖 FastAPI，不依赖具体数据库                │
+├──────────────────────────────────────────────────┤
+│           Domain 层 (纯 Pydantic V2)              │
+│    Company / Finance / Equity / Events            │
+│    Risk / Evidence / Conversation                 │
+├──────────────────────────────────────────────────┤
+│         Agent 层 (LangGraph StateGraph)           │
+│    Orchestrator / Memory / Finance / QA           │
+│    State (AgentState) / Graph / Reducers          │
+├──────────────────────────────────────────────────┤
+│        Infrastructure 层 (Adapters)               │
+│    ┌──────────┬──────────┬────────────────────┐  │
+│    │ SQLite   │ MySQL    │ Persistence         │  │
+│    │ NetworkX │ Neo4j    │ Graph               │  │
+│    │ ChromaDB │          │ Vector              │  │
+│    │ Mock     │ DeepSeek │ Qwen   LLM          │  │
+│    │ Logging  │ Tracing  │ Metrics  Observ.    │  │
+│    └──────────┴──────────┴────────────────────┘  │
+└──────────────────────────────────────────────────┘
 ```
 
-## Agent 执行流程
-
-1. **记忆 Agent** 先运行，加载对话历史和关键上下文。
-2. **编排 Agent** 识别意图，决定调用哪些工具：
-   - 股权穿透 → 调用股权穿透 Skill
-   - 舆情查询 → 调用舆情事件 Skill
-   - 财务分析 → 调用财务勾稽 Agent
-3. **财务勾稽 Agent** 和 **Skill 层** 可以并行执行。
-4. **问答生成 Agent** 最后运行，组装最终回答。
-5. 任一模块失败不导致全链路崩溃，在 `missing_modules` 中标注。
-
-## 自纠错流程
-
-1. 参数缺失检测 → 提示用户补全
-2. 数据为空检测 → 使用备选数据源
-3. 返回格式校验 → Pydantic 严格校验
-4. 一次重试或降级路径
-
-## 关键技术决策
+## V12 关键架构决策
 
 | 决策 | 选择 | 原因 |
 |------|------|------|
-| 图数据库 | NetworkX（MVP） | 内存图分析，无需部署外部服务 |
-| 关系数据库 | SQLite（MVP） | 零配置，适合原型阶段 |
-| 向量数据库 | ChromaDB | 轻量，支持本地持久化 |
-| Agent 框架 | LangGraph | 支持复杂状态图和条件路由 |
-| Python 版本 | 3.11 | 稳定且兼容所有依赖 |
+| 分层模式 | Application / Domain / Infrastructure | 端口-适配器，可测试，可替换 |
+| Adapter 策略 | lite (SQLite/NetworkX/Mock) + full (MySQL/Neo4j/DeepSeek) | 渐进式迁移，不阻塞本地开发 |
+| Profile 机制 | TRUTHNET_PROFILE=lite\|full | 环境切换，CI 不依赖外部服务 |
+| Agent 状态 | LangGraph StateGraph + AgentState | 类型安全，支持条件路由 |
+| 响应格式 | V12 envelope {data, meta, warnings} | 向后兼容旧 {code, data, message} |
+| 错误格式 | RFC 9457 Problem Details | 标准化，可恢复标记 |
+| 证据模型 | EvidenceRef + Claim | 回答可信性核心边界 |
+| 测试分层 | contract / unit | 契约验证 + 单元隔离 |
 
-## 后续演进
+## Port 协议（5 个）
 
-- NetworkX → Neo4j：当图规模增长到需要持久化查询时
-- SQLite → PostgreSQL：当需要并发写入和更复杂查询时
-- Skill → 独立微服务：当某个 Skill 需要独立扩展时
+| Port | lite Adapter | full Adapter |
+|------|-------------|-------------|
+| `CompanyRepository` | SQLite | MySQL |
+| `FinanceRepository` | SQLite | MySQL |
+| `EquityGraphPort` | NetworkX | Neo4j |
+| `VectorStorePort` | ChromaDB | ChromaDB |
+| `LLMProvider` | Mock | DeepSeek / Qwen |
+
+## 兼容策略
+
+| 维度 | 旧 | 新 | 策略 |
+|------|----|----|------|
+| 健康检查 | GET /health | GET /api/v1/healthz | 旧保留，标记 deprecated |
+| 就绪检查 | 无 | GET /api/v1/readyz | 新增 |
+| 响应格式 | {code, data, message, trace_id} | {data, meta, warnings} | 共存，旧测试不回归 |
+| WebSocket | {type, data} | V12 event envelope | 共存 |
+| 错误格式 | {code, message, trace_id} | RFC 9457 Problem Details | 新增 |
