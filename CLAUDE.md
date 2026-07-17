@@ -30,76 +30,57 @@
 - **财报跨科目勾稽**：输出预警点、数据对比、可能造假模式或业务风险
 - 交付：源码、部署说明、Web 演示平台、技术白皮书、答辩 PPT
 
-## 技术栈
+## 技术栈 (V12)
 
-| 层级 | 技术 |
-|------|------|
-| 后端框架 | Python 3.11 / FastAPI / WebSocket |
-| Agent 编排 | LangGraph |
-| 对话记忆 | LangGraph + 自定义 Memory Agent |
-| 财务勾稽 | 自定义 Agent + 规则引擎 |
-| 图谱分析 | NetworkX（MVP），后续可升级 Neo4j |
-| 向量检索 | ChromaDB |
-| 数据库 | SQLite（MVP） |
-| 前端 | React 18 / Vite 6 / TypeScript 5.6 |
-| 协作 | Git / GitHub / Claude Code |
+| 层级 | 技术 | Profile |
+|------|------|:---:|
+| 后端框架 | Python 3.11 / FastAPI / WebSocket | 通用 |
+| Agent 编排 | LangGraph StateGraph | 通用 |
+| 数据契约 | Pydantic V2 | 通用 |
+| 对话记忆 | LangGraph checkpointer + ChromaDB 语义记忆 | 通用 |
+| 财务勾稽 | 规则引擎 (7 条规则族) + Agent | 通用 |
+| 图谱分析 | Neo4j 2025.06 (full) / NetworkX (lite) | 双模式 |
+| 向量检索 | ChromaDB 0.5.23 persistent | 通用 |
+| 关系数据库 | MySQL 8.4 (full) / SQLite (lite) | 双模式 |
+| ORM & 迁移 | SQLAlchemy 2.0 + Alembic | 通用 |
+| LLM Provider | DeepSeek (主) / Qwen (备) / Mock (lite) | Adapter |
+| 前端 | React 18 / Vite 6 / TypeScript 5.6 | 通用 |
+| UI | shadcn/ui + Tailwind CSS | 🔸 待接入 |
+| 图表 | Recharts | 🔸 待接入 |
+| 图谱可视化 | D3.js | 🔸 待接入 |
+| 测试 | pytest / Ruff / pre-commit / CI (3 OS) | 通用 |
+| 协作 | Git / GitHub / Claude Code | 通用 |
 
-## 目录结构
+## 目录结构 (V12)
 
 ```text
 TruthNet/
   README.md            — 项目介绍
   CLAUDE.md            — 本文档：AI 开发上下文
-  requirements.txt     — 唯一 Python 依赖文件（固定版本）
+  requirements.txt     — 唯一 Python 依赖文件（固定版本，25 包）
   .python-version      — Python 3.11
-  .gitignore
-  .gitattributes       — 换行符 LF 强制
-  .editorconfig        — 编辑器配置
-  .pre-commit-config.yaml
-  .env.example         — 环境变量模板
+  alembic.ini          — Alembic 迁移配置
   backend/
     app/
-      main.py          — FastAPI 入口（HTTP + WebSocket）
-      api/             — 路由层
-      agents/          — Agent 层（编排、记忆、勾稽、问答）
-      skills/          — Skill 层（股权穿透、舆情事件等）
-      services/        — 业务服务层
-      schemas/         — Pydantic 数据契约（接口事实来源 · Prompt4 冻结）
-      core/            — 配置、日志等
-    tests/             — 后端测试
-  frontend/            — React 前端（Vite + TypeScript · Prompt4 初始化）
-    src/
-      main.tsx
-      App.tsx
-      api/client.ts    — HTTP + WebSocket 客户端
-      types/api.ts     — TypeScript 类型（与 backend schema 一致）
-      components/      — ChatPanel, RiskPanel, EvidenceList, TimelinePanel, GraphPanel
-  data/
-    raw/               — 原始数据（不提交大文件）
-    processed/         — 处理后数据（不提交大文件）
-  docs/
-    ARCHITECTURE.md
-    ENVIRONMENT.md
-    GIT_WORKFLOW.md
-    API_CONTRACT.md
-    DATA_CONTRACT.md
-    INTERFACE_CHANGELOG.md
-    SKILL_INDEX.md
-    SOFTWARE_ENGINEERING.md
-    adr/
-  scripts/
-    doctor.py               — 跨平台环境检测
-    check_env.py            — 轻量环境检查
-    encoding_path_audit.py  — 编码/路径审计
-    git_safety_check.py     — Git 安全检查
-    start_session.py        — 开发会话开始
-    end_session.py          — 开发会话结束
-    env_bootstrap.py        — 环境引导
-    init_dev_env.ps1        — Windows 初始化
-    init_dev_env.sh         — macOS/Linux 初始化
-  reports/                  — 各阶段报告
-  .github/workflows/ci.yml  — CI（Python 3.11×3平台 + 前端）
-  .claude/skills/           — 项目级 Claude Code skills (8个)
+      main.py          — FastAPI 入口（HTTP + WebSocket · V12）
+      api/v1/          — V12 路由层（routers / schemas / deps / exception_handlers）
+      application/     — 应用层（use_cases / ports / services / dto）
+      domain/          — 领域层（company / finance / equity / events / risk / evidence / conversation）
+      agents/          — LangGraph Agent（state / graph / reducers / nodes）
+      infrastructure/  — 基础设施层（persistence / graph / vector / llm / observability）
+      schemas/         — 旧 Pydantic Schema（兼容保留 · Prompt4 冻结）
+      core/            — 配置 / 枚举 / 错误模型
+    tests/
+      unit/            — 单元测试
+      contract/        — Port / API / OpenAPI 契约测试
+      integration/     — 外部服务集成测试（需显式启用）
+      websocket/       — WebSocket 测试
+  frontend/            — React 前端（Vite + TypeScript）
+  docs/                — 项目文档（11 个 V12 文档）
+  scripts/             — 工具脚本（含 verify_v12_stack / verify_full_stack / services）
+  reports/             — 各阶段报告
+  .github/workflows/ci.yml — CI（Python 3.11 × 3 OS + 前端）
+  .claude/skills/      — 项目级 Claude Code skills（8 个, V12 已更新）
 ```
 
 ## 开发总规则
@@ -113,7 +94,7 @@ TruthNet/
 5. 禁止硬编码盘符、用户名、绝对路径。
 6. 写入文件时使用 `newline="\n"` 确保 LF。
 
-### Git 协作（简化版 · Prompt4）
+### Git 协作（V12）
 
 7. **Claude Code 不得自动 commit/push/merge。**
 8. 每位开发者创建自己的分支：`feature/<github-username>-<module>`
@@ -125,19 +106,22 @@ TruthNet/
 14. **每次 push 后必须检查 CI 状态**：如果 CI 失败，Claude Code 必须读取失败日志并给出修复建议或直接修复。不得在 CI 失败时声称任务完成。
 15. Claude Code 不得自动 merge PR，不得直接向 main push。
 
-### 接口与架构
+### 接口与架构 (V12)
 
-14. **接口先行**：Pydantic schema → 文档 → mock JSON → 实现。
-15. **单一 requirements.txt**：所有包用 `==` 固定版本。
-16. **密钥不提交**：`.env` 在 `.gitignore`，只提交 `.env.example`。
-17. **Pydantic schema 是后端接口事实来源**。
-18. **前端 types/api.ts 与 backend schema 严格一致**。
-19. **接口一旦冻结，只能追加字段，不得删除/重命名**。
+16. **接口先行**：Pydantic schema → 文档 → mock JSON → 实现。
+17. **单一 requirements.txt**：所有包用 `==` 固定版本。
+18. **密钥不提交**：`.env` 在 `.gitignore`，只提交 `.env.example`。
+19. **Pydantic schema 是后端接口事实来源**。
+20. **前端 types/api.ts 与 backend schema 严格一致**。
+21. **接口一旦冻结，只能追加字段，不得删除/重命名**。
+22. **V12 分层架构**：API → Application → Domain → Agent → Infrastructure (Port/Adapter)
+23. **Profile 双模式**：lite (SQLite+NetworkX+Mock) / full (MySQL+Neo4j+DeepSeek)
+24. **外部服务不阻塞 CI**：MySQL/Neo4j 测试需 `TRUTHNET_RUN_EXTERNAL_TESTS=1` 显式启用
 
 ### 虚拟环境
 
-20. 无 conda 时提供安全安装引导，不得无确认自动下载安装器。
-21. 镜像/代理配置只保存在本地，不写入仓库。
+25. 无 conda 时提供安全安装引导，不得无确认自动下载安装器。
+26. 镜像/代理配置只保存在本地，不写入仓库。
 
 ## Claude Code 工作规则
 
@@ -154,19 +138,20 @@ TruthNet/
 
 ```bash
 # ===== 环境 =====
-python scripts/env_bootstrap.py --check
-python scripts/env_bootstrap.py --apply
 conda activate truthnet
 pip install -r requirements.txt
+python scripts/env_bootstrap.py --check
+python scripts/doctor.py
 
-# ===== 会话 =====
-python scripts/start_session.py
-python scripts/end_session.py
+# ===== V12 验证 =====
+python scripts/verify_v12_stack.py
+python scripts/verify_full_stack.py --profile lite
+python scripts/verify_full_stack.py --profile full --check-external --write-smoke --cleanup
 
 # ===== 检测 =====
-python scripts/doctor.py
 python scripts/encoding_path_audit.py
 python scripts/git_safety_check.py
+ruff check . && ruff format --check .
 python -m pytest backend/tests -v
 pre-commit run --all-files
 
@@ -177,19 +162,20 @@ uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 cd frontend && pnpm install && pnpm dev
 cd frontend && pnpm build && pnpm typecheck
 
-# ===== 代码质量 =====
-ruff check backend/
-ruff format backend/
+# ===== Full Profile 外部测试 =====
+$env:TRUTHNET_RUN_EXTERNAL_TESTS="1"
+python -m pytest backend/tests/integration -v -m "integration and external"
 ```
 
 ## 分支与提交规范
 
-### 分支模型（Prompt4 简化版）
+### 分支模型（V12）
 
 ```text
 main ← Pull Request ← feature/<github-username>-<task>
                      ← fix/<github-username>-<bug>
                      ← docs/<github-username>-<topic>
+                     ← chore/<github-username>-<task>
 ```
 
 ### Conventional Commits
@@ -209,10 +195,12 @@ chore(scope): 描述
 4. `python scripts/git_safety_check.py`
 5. `python -m pytest backend/tests -v`
 6. `cd frontend && pnpm build`
-7. `pre-commit run --all-files`
+7. `ruff check . && ruff format --check .`
+8. `pre-commit run --all-files`
 
 ### 禁止事项
 - 禁止直接 push 到 `main`
 - 禁止提交 `.env`、数据库文件、模型权重、大文件
+- 禁止提交 `.local/` 目录内容
 - 禁止不看 diff 就全量提交
 - **禁止 Claude Code 自动 commit/push/merge**
