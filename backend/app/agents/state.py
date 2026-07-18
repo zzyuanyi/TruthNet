@@ -3,7 +3,7 @@
 基于 LangGraph StateGraph 的 Agent 状态定义。
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.conversation.models import ChatContext
 from app.domain.evidence.models import Claim
@@ -46,5 +46,4 @@ class AgentState(BaseModel):
     trace_id: str = Field(default="", description="追踪 ID")
     errors: list[dict] = Field(default_factory=list, description="错误列表")
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
