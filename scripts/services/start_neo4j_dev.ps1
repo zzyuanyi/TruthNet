@@ -1,6 +1,6 @@
 # TruthNet V12 - Start Neo4j in console mode (dev, no admin)
 param(
-    [string]$Neo4jHome = "E:\project\TruthNet\.local\neo4j\neo4j-community-2025.06.0",
+    [string]$Neo4jHome = "E:\project\TruthNet\.local\neo4j\neo4j-community-2025.06.1",
     [string]$JavaHome = "C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot"
 )
 

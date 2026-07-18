@@ -50,7 +50,7 @@ mkdir E:\project\TruthNet\.local\neo4j
 
 ```powershell
 $env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot"
-$env:NEO4J_HOME="E:\project\TruthNet\.local\neo4j\neo4j-community-2025.06.0"
+$env:NEO4J_HOME="E:\project\TruthNet\.local\neo4j\neo4j-community-2025.06.1"
 & "$env:NEO4J_HOME\bin\neo4j.bat" console
 ```
 
