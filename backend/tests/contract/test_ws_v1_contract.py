@@ -28,12 +28,21 @@ async def test_ws_v1_event_envelope_format():
         websocket.send_json({"question": "测试 V12 event envelope"})
 
         messages = []
+        max_messages = 30  # safety limit to prevent infinite loops
         try:
-            while True:
+            while len(messages) < max_messages:
                 raw = websocket.receive_text()
                 msg = json.loads(raw)
                 messages.append(msg)
+                # Break on V12 turn.completed OR legacy final_answer
                 if msg.get("event_type") == "turn.completed":
+                    break
+                if msg.get("type") == "final_answer":
+                    break
+                # Also break on error messages
+                if msg.get("event_type") == "turn.failed":
+                    break
+                if msg.get("type") == "error":
                     break
         except Exception:
             pass

@@ -123,12 +123,15 @@ async def test_websocket_full_flow_with_real_client():
         )
 
         messages_received: list[dict] = []
+        max_messages = 30
         try:
-            while True:
+            while len(messages_received) < max_messages:
                 raw = websocket.receive_text()
                 msg = json.loads(raw)
                 messages_received.append(msg)
                 if msg["type"] == "final_answer":
+                    break
+                if msg["type"] == "error":
                     break
         except Exception:
             pass
