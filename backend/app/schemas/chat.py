@@ -36,7 +36,7 @@ class GraphNode(BaseModel):
 
     id: str = Field(..., description="节点唯一标识")
     label: str = Field(..., description="节点显示名称")
-    type: str = Field(..., description="节点类型: company / controller / subsidiary")
+    type: str = Field(..., description="节点类型: listed_company / person / company")
     depth: int | None = Field(None, description="在图中的深度（从目标公司起算）")
 
 

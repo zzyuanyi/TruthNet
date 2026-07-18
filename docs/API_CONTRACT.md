@@ -60,7 +60,7 @@
   "question": "请分析贵州茅台2023年营收与现金流量表的勾稽关系",
   "session_id": "sess_abc123",
   "context": {
-    "company_code": "600519",
+    "company_code": "300838.SZ",
     "fiscal_year": 2023
   }
 }
@@ -260,7 +260,7 @@ ws://localhost:8000/api/v1/chat/ws
 
 | 参数 | 说明 |
 |------|------|
-| `company_id` | 公司唯一标识（如股票代码 "600519"） |
+| `company_id` | 公司唯一标识（Wind 代码，如 "300838.SZ"） |
 
 #### 响应
 
