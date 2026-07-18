@@ -47,6 +47,7 @@ pre-commit==3.8.0
 sqlalchemy==2.0.35
 alembic==1.13.2
 pymysql==1.1.1
+cryptography==49.0.0
 
 # === V12 Additions: Graph Database ===
 neo4j==5.26.0
