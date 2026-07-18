@@ -1,168 +1,182 @@
-# 数据契约
+# 数据契约 — V12 Baseline
 
-本文档定义前后端数据交互的边界和格式，以及数据组/后端组的协作规范。
+> **版本**: 2.0 | **基线**: V12 (2026-07-15)
+> 设计依据: `TruthNet_综合设计方案_V12(2).md` §10 数据架构
 
 ---
 
-## 数据存储边界
+## 数据分层 (V12)
 
-### SQLite（关系型数据）
-
-**路径**：`data/truthnet.db`（不提交到 Git）
-
-**草案表结构**：
-
-```sql
--- 公司基本信息
-CREATE TABLE companies (
-    id TEXT PRIMARY KEY,          -- 股票代码，如 "600519"
-    name TEXT NOT NULL,           -- 公司全称
-    short_name TEXT,              -- 简称
-    industry TEXT,                -- 行业分类
-    listing_date TEXT,            -- 上市日期
-    status TEXT DEFAULT 'active'  -- 状态
-);
-
--- 财务报表（简化版，按科目存储）
-CREATE TABLE financial_statements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_id TEXT NOT NULL,
-    report_type TEXT NOT NULL,    -- 'balance_sheet' / 'income' / 'cash_flow'
-    fiscal_year INTEGER NOT NULL,
-    fiscal_period TEXT,           -- 'Q1' / 'Q2' / 'Q3' / 'Q4' / 'FY'
-    item_name TEXT NOT NULL,      -- 科目名称
-    item_value REAL,              -- 金额（亿元）
-    FOREIGN KEY (company_id) REFERENCES companies(id)
-);
-
--- 股权关系
-CREATE TABLE ownership_relations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_entity TEXT NOT NULL,
-    to_entity TEXT NOT NULL,
-    stake_ratio REAL,             -- 持股比例 0-1
-    relation_type TEXT,           -- 'direct' / 'indirect' / 'concerted'
-    data_source TEXT,             -- 数据来源
-    updated_at TEXT
-);
+```text
+raw_*        原始数据，追加写，不覆盖
+canonical_*  字段、代码、日期、单位和口径统一
+normalized_* 实体对齐、去重和质量标记
+derived_*    增速、分位、规则结果、风险快照
+serving_*    面向 API 和前端的聚合缓存
 ```
 
-> 实际建表 SQL 放在 `backend/app/core/schema.sql`（后续创建），本文档仅定义契约。
+## 公共系统字段
+
+所有业务记录建议包含:
+
+```text
+id, source_record_id, source_file, source_row, source_type,
+dataset_version, revision_no, is_latest,
+ingested_at, updated_at, quality_flags, checksum
+```
 
 ---
 
-### NetworkX（图数据）
+## 存储架构
 
-**使用场景**：股权穿透、关联方网络分析
+| 层级 | lite profile | full profile | 用途 |
+|------|-------------|-------------|------|
+| 关系数据 | SQLite | MySQL 8.0 | 公司、财务、会话、报告 |
+| 图数据 | NetworkX | Neo4j | 股权穿透、关联方分析 |
+| 向量数据 | ChromaDB local | ChromaDB persistent | 公告/研报语义检索、会话记忆 |
+| LLM | Mock | DeepSeek / Qwen | 对话生成 |
+| ORM | SQLAlchemy (SQLite) | SQLAlchemy (MySQL) | 统一数据访问 |
+| Migration | Alembic (SQLite) | Alembic (MySQL) | Schema 版本管理 |
 
-**节点类型**：
+---
 
-| 类型 | 说明 | 属性 |
+## MySQL 核心表 (V12)
+
+### companies
+
+| 字段 | 类型 | 说明 |
 |------|------|------|
-| `company` | 公司节点 | `name`, `code`, `listed(true/false)`, `industry` |
-| `person` | 自然人 | `name`, `role` (董事/监事/高管) |
-| `entity` | 其他实体 | `name`, `type` (政府/投资机构/基金会) |
+| `entity_id` | VARCHAR PK | 内部稳定实体 ID |
+| `wind_code` | VARCHAR UNIQUE | 如 `600519.SH` |
+| `sec_name` | VARCHAR | 证券简称 |
+| `aliases` | JSON/TEXT | 曾用名和别名 |
+| `exchange_code` | VARCHAR | XSHG/XSHE |
+| `industry_l1` | VARCHAR | 申万一级行业 |
+| `industry_l2` | VARCHAR | 申万二级行业 |
+| `listing_date` | DATE | 上市日期 |
+| `industry_source` | VARCHAR | 行业来源 |
+| `industry_as_of` | DATE | 行业分类有效日期 |
 
-**边类型**：
+### 财务报表 (balance_sheet / income_statement / cash_flow)
 
-| 类型 | 说明 | 属性 |
-|------|------|------|
-| `owns` | 持股关系 | `ratio` (0-1), `level` (直接/间接) |
-| `controls` | 实际控制 | `path`, `total_stake` |
-| `related` | 关联关系 | `type` (同控/同董事/担保) |
+唯一约束: `(wind_code, report_period, statement_type, ann_dt, revision_no)`
 
----
+不要只用 `(wind_code, report_period)`，因为同一报告期可能存在更正和重述。
 
-### ChromaDB（向量数据）
+### top_shareholders
 
-**使用场景**：财报片段检索、舆情语义搜索
-
-**Collection 草案**：
-
-| Collection | 用途 | 元数据字段 |
-|------------|------|------------|
-| `financial_reports` | 财报文本片段 | `company_id`, `year`, `section`, `page` |
-| `news_events` | 舆情新闻 | `company_id`, `date`, `source`, `sentiment` |
-| `regulations` | 会计准则、法规 | `title`, `chapter`, `category` |
-
----
-
-## 数据组 → 后端组交付格式
-
-### 财务报表数据
-
-```json
-{
-  "company_id": "600519",
-  "company_name": "贵州茅台酒股份有限公司",
-  "reports": {
-    "2023": {
-      "balance_sheet": [
-        {"item": "货币资金", "value": 690.07, "unit": "亿元"},
-        {"item": "应收账款", "value": 0.58, "unit": "亿元"}
-      ],
-      "income": [
-        {"item": "营业收入", "value": 1505.60, "unit": "亿元"},
-        {"item": "营业成本", "value": 317.24, "unit": "亿元"}
-      ],
-      "cash_flow": [
-        {"item": "销售商品收到的现金", "value": 1652.35, "unit": "亿元"}
-      ]
-    }
-  }
-}
+```text
+wind_code, ann_dt, s_holder_enddate, s_holder_name,
+s_holder_pct, s_holder_quantity, s_holder_holdercategory,
+report_period, holder_entity_id, entity_match_confidence
 ```
 
-### 股权关系数据
+### announcements / research_reports
 
-```json
-{
-  "company_id": "600519",
-  "relations": [
-    {
-      "from": "贵州省国资委",
-      "to": "茅台集团",
-      "stake": 1.0,
-      "type": "direct",
-      "source": "企查查/天眼查"
-    },
-    {
-      "from": "茅台集团",
-      "to": "贵州茅台酒股份有限公司",
-      "stake": 0.54,
-      "type": "direct",
-      "source": "2023年报"
-    }
-  ]
-}
+公告和研报表，含 `sentiment`, `rating_change`, `source_uri`, `content_hash`。
+
+### 派生与运行表
+
+```text
+rule_definitions, rule_evaluations, risk_policies, risk_assessments,
+event_clusters, event_relations, claims, evidence_refs,
+conversation_sessions, conversation_turns, module_executions,
+report_jobs, data_quality_reports
 ```
 
 ---
 
-## 后端 → 前端 Mock 数据
+## Neo4j 图数据
 
-Mock JSON 格式与 `docs/API_CONTRACT.md` 中响应示例一致，前端可直接将其作为 stub server 返回。
+### 节点
 
-前端 mock 开发建议：
-1. 复制 API_CONTRACT.md 中的响应 JSON
-2. 使用 `msw`（Mock Service Worker）或 `json-server` 搭建 mock 服务
-3. 接口字段变更时必须同步更新 mock
+```text
+Entity (entity_id, entity_type, canonical_name, aliases[], wind_code?)
+标签: ListedCompany, Company, Person, Plan
+```
+
+### 关系类型
+
+```text
+HOLDS, CONTROLS, ACTS_IN_CONCERT_WITH, RELATED_TO, GUARANTEES
+```
+
+公共属性: `pct, quantity, effective_from, effective_to, report_period, source_id, source_type, confidence, verification_status, graph_version`
+
+### LLM 候选关系
+
+```text
+verification_status=pending, extraction_method=llm, confidence=<score>
+```
+
+结构化数据、多源一致或规则验证通过后，才升级为 verified。
 
 ---
 
-## 数据变更流程
+## ChromaDB Collections
 
-1. 数据组在 `data/raw/` 目录下更新源数据
-2. 如需修改数据结构，先更新本文档的对应章节
-3. 通知后端组更新 schema 和数据处理管道
-4. 后端组更新 `backend/app/schemas/` 中的 Pydantic 模型
-5. 更新 `docs/INTERFACE_CHANGELOG.md`
+| Collection | 内容 | 状态 |
+|------|------|:---:|
+| `announcement_chunks` | 公告标题/摘要/正文块 | 🔸 |
+| `research_report_chunks` | 研报摘要分块 | 🔸 |
+| `evidence_text_chunks` | 可定位原文片段 | 🔸 |
+| `conversation_memory` | 长期可检索事实 | 🔸 |
+
+Metadata: `chunk_index, chunker_version, embedding_model, text_hash, dataset_version, language`
+
+---
+
+## EvidenceRef / Claim 数据契约
+
+### EvidenceRef
+
+```python
+class EvidenceRef(BaseModel):
+    evidence_id: str
+    source_type: str          # financial_statement / ownership_record / news_article / regulation
+    source_record_id: str
+    company_code: str | None
+    field_path: str | None
+    period: str | None
+    value: Decimal | str | None
+    unit: str | None
+    statement_scope: str | None  # parent_company / consolidated
+    source_title: str
+    source_uri: str | None
+    source_excerpt: str | None
+    dataset_version: str
+    checksum: str | None
+    retrieved_at: datetime
+```
+
+### Claim
+
+```python
+class Claim(BaseModel):
+    claim_id: str
+    text: str
+    claim_type: str
+    severity: RiskLevel
+    confidence: Confidence | None
+    rule_id: str | None
+    rule_version: str | None
+    evidence_ids: list[str]
+    verification_status: str
+    limitations: list[str]
+```
+
+规则:
+- 事实型 Claim 至少一个 Evidence
+- LLM 只能引用已提供的 `evidence_id`
+- 无证据内容只能作为解释、假设或追问建议
+- 证据失效或被新修订替代时，旧分析仍可重现
 
 ---
 
 ## 禁止事项
 
-- 禁止在 `data/raw/` 和 `data/processed/` 提交真实大文件（PDF > 1MB, Excel > 500KB）
-- 禁止在仓库中提交 `.db` / `.sqlite` 文件
-- 禁止在 ChromaDB 持久化目录中提交向量数据
+- 禁止提交 `.db` / `.sqlite` / `.env` / 真实密钥
+- 禁止提交 ChromaDB/Neo4j/MySQL 数据目录
+- 禁止在 `data/raw/` 和 `data/processed/` 提交大文件
 - 前端不得私自修改后端定义的字段名和类型
+- MySQL 不使用 ENUM，使用 VARCHAR + CHECK 或字典表

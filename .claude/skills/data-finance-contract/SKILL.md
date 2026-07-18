@@ -105,3 +105,32 @@ data/
 - ❌ 标注规则不经试算直接批量使用
 - ❌ 前后端各自维护不同的字段名
 - ❌ 评测集与训练集混用
+
+---
+
+## V12 更新（2026-07-17）
+
+### V12 数据存储架构
+
+| 层级 | lite | full |
+|------|------|------|
+| 关系数据 | SQLite | MySQL 8.0 + SQLAlchemy |
+| 图数据 | NetworkX | Neo4j |
+| 向量数据 | ChromaDB local | ChromaDB persistent |
+| Migration | Alembic (SQLite) | Alembic (MySQL) |
+
+### V12 新增数据模型
+
+- `EvidenceRef`: 证据引用（id, type, source, field, value, page, retrieval_score）
+- `Claim`: 结论声明（id, statement, confidence, evidence, counter_evidence）
+- `EvidenceType`: financial_statement / ownership_record / news_article / regulation / calculation / expert_opinion
+- `ConfidenceLevel`: high / medium / low / unverified
+
+### 数据契约文档
+
+V12 数据契约主文档：`docs/DATA_CONTRACT.md`
+旧文档保留作为历史参考。
+
+### 禁止额外 requirements 文件
+
+所有依赖仍写入唯一 `requirements.txt`。

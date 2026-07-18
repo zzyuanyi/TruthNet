@@ -143,3 +143,79 @@ class ChatResponse(BaseModel):
 - ❌ 后端在 API 中直接暴露数据库字段
 - ❌ 错误响应让前端"猜字段"
 - ❌ 接口进入 dev 分支后再做破坏性修改（除非走完整流程）
+
+---
+
+## V12 更新（2026-07-17）
+
+### V12 响应格式
+
+新接口使用 V12 envelope：`{data, meta, warnings}`
+
+```json
+{
+  "data": {},
+  "meta": {
+    "request_id": "req_01",
+    "trace_id": "trace_01",
+    "schema_version": "1.0",
+    "generated_at": "2026-07-17T10:00:00+08:00",
+    "data_as_of": "2026-06-30",
+    "dataset_version": "mock-v12",
+    "rule_set_version": "finance-rules-1.0.0",
+    "graph_version": "equity-mock-v12"
+  },
+  "warnings": []
+}
+```
+
+旧格式 `{code, data, message, trace_id}` 保留兼容。
+
+### V12 错误格式
+
+使用 RFC 9457 Problem Details：
+
+```json
+{
+  "type": "https://truthnet/errors/module-timeout",
+  "title": "Module execution timed out",
+  "status": 503,
+  "detail": "...",
+  "instance": "/api/v1/companies/600518/risk",
+  "error_code": "EQUITY_TIMEOUT",
+  "trace_id": "trace_01",
+  "recoverable": true
+}
+```
+
+### V12 WebSocket Event Envelope
+
+```json
+{
+  "schema_version": "1.0",
+  "event_id": "evt_01",
+  "event_type": "answer.delta",
+  "session_id": "ses_01",
+  "turn_id": "turn_01",
+  "sequence": 8,
+  "timestamp": "2026-07-17T10:00:05+08:00",
+  "trace_id": "trace_01",
+  "payload": {}
+}
+```
+
+### V12 契约文档
+
+- API: `docs/API_CONTRACT_V1.md`
+- WebSocket: `docs/WEBSOCKET_CONTRACT_V1.md`
+- Data: `docs/DATA_CONTRACT.md`
+- 旧文档保留不删除
+
+### 接口变更必须同步更新
+
+1. Pydantic schema（`backend/app/api/v1/schemas/`）
+2. `docs/API_CONTRACT_V1.md`
+3. `docs/WEBSOCKET_CONTRACT_V1.md`
+4. `docs/INTERFACE_CHANGELOG.md`
+5. 后端测试
+6. 前端 types

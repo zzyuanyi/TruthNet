@@ -106,3 +106,37 @@ class LLMAdapter(ABC):
 ```
 
 工具调用必须记录：输入摘要、输出摘要、耗时、错误。
+
+---
+
+## V12 更新（2026-07-17）
+
+### V12 分层架构（更新）
+
+```text
+API Layer        ← HTTP/WS 请求/响应、V12 envelope、Problem Details
+Application      ← Use Cases、Port (Protocol)、DTO
+Domain           ← 纯 Pydantic V2 模型（Company/Finance/Equity/Events/Risk/Evidence/Conversation）
+Agent            ← LangGraph StateGraph + AgentState
+Infrastructure   ← Adapters (SQLite/MySQL, NetworkX/Neo4j, ChromaDB, Mock/DeepSeek/Qwen)
+```
+
+### Adapter + Profile 策略
+
+- lite profile: SQLite + NetworkX + Mock LLM（默认开发/CI）
+- full profile: MySQL + Neo4j + DeepSeek/Qwen（正式演示）
+- 所有 Adapter 实现对应 Port 协议
+- 不强制 MySQL/Neo4j 作为基础测试前置条件
+
+### Evidence/Claim 核心边界
+
+- `EvidenceRef`: 证据引用（来源→字段→值→置信度）
+- `Claim`: 结论声明（statement + confidence + evidence + counter_evidence）
+- 每条回答由若干 Claim 组成，每个 Claim 有独立证据链
+
+### 关键规则
+
+- 不全面重建，同仓库增量重构
+- 先保留已��测试和工程基线
+- 新增依赖写入唯一 `requirements.txt`
+- 外部服务通过 Adapter 和 profile 管理

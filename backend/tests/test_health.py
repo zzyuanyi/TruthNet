@@ -18,6 +18,6 @@ async def test_health_check():
     body = response.json()
     assert body["code"] == 0
     assert body["data"]["status"] == "healthy"
-    assert body["data"]["version"] == "0.1.0"
+    assert body["data"]["version"] == "0.2.0"
     assert body["message"] == "ok"
     assert "trace_id" in body

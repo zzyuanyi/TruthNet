@@ -138,3 +138,40 @@ def self_correct(self, error: Exception, context: dict) -> dict:
     # 其他错误：降级
     return {"degraded": True, "partial_result": ...}
 ```
+
+---
+
+## V12 更新（2026-07-17）
+
+### V12 为当前最高设计基线
+
+TruthNet V12 采用 LangGraph StateGraph 作为 Agent 编排框架。
+Agent State 定义在 `backend/app/agents/state.py`（`AgentState` Pydantic 模型）。
+
+### Port / Adapter 分层
+
+所有 Agent 不直接访问数据库/图/向量/LLM，而是通过 Port 协议：
+
+| Port | 用途 |
+|------|------|
+| `CompanyRepository` | 公司数据访问 |
+| `FinanceRepository` | 财务数据访问 |
+| `EquityGraphPort` | 股权图谱分析 |
+| `VectorStorePort` | 向量检索 |
+| `LLMProvider` | LLM 对话 |
+
+### lite/full profile
+
+- lite: Mock LLM + SQLite + NetworkX
+- full: DeepSeek/Qwen + MySQL + Neo4j
+
+### Evidence/Claim 核心边界
+
+- 每个回答由若干 `Claim` 组成
+- 每个 `Claim` 有独立的 `EvidenceRef` 证据链和 `ConfidenceLevel`
+- 这是 V12 回答可信性的核心边界
+
+### 模块状态追踪
+
+使用 `ModuleStatus` 枚举追踪各模块执行状态：
+`not_started → running → completed / failed / degraded / skipped`

@@ -345,3 +345,31 @@ gh auth login
 - ❌ Claude Code 自动 commit/push/merge
 - ❌ 多人共用一个 feature 分支
 - ❌ CI 未通过时请求 merge
+
+---
+
+## V12 更新（2026-07-17）
+
+### V12 为当前最高设计基线
+
+- TruthNet V12 采用增量重构策略，不全面推倒重建
+- 所有改动必须在同仓库内完成
+- 先保留已有测试和工程基线，再增量添加
+
+### 提交前 V12 检查
+
+```bash
+python scripts/doctor.py           # 含 V12 profile 检查
+python scripts/env_bootstrap.py --check
+python scripts/encoding_path_audit.py
+python scripts/git_safety_check.py
+ruff check . && ruff format --check .
+python -m pytest backend/tests -v
+```
+
+### CI 规则（不变）
+
+- push 后必须检查 GitHub Actions
+- CI 失败不得请求合并
+- 不得自动 merge
+- 不得直接 push main

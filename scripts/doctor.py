@@ -431,6 +431,131 @@ def main():
         warnings += 1
     results.append(r)
 
+    # ===== V12 Profile 检查 =====
+    print("\n--- V12 Profile ---")
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(repo_root / ".env.example")
+    except Exception:
+        pass
+
+    profile = os.environ.get("TRUTHNET_PROFILE", "lite")
+    r = check(f"TRUTHNET_PROFILE = {profile}", True, "lite=默认开发/CI, full=正式演示")
+    results.append(r)
+
+    sql_backend = os.environ.get("SQL_BACKEND", "sqlite")
+    r = check(f"SQL_BACKEND = {sql_backend}", True)
+    results.append(r)
+
+    graph_backend = os.environ.get("GRAPH_BACKEND", "networkx")
+    r = check(f"GRAPH_BACKEND = {graph_backend}", True)
+    results.append(r)
+
+    vector_backend = os.environ.get("VECTOR_BACKEND", "chroma")
+    r = check(f"VECTOR_BACKEND = {vector_backend}", True)
+    results.append(r)
+
+    llm_backend = os.environ.get("LLM_BACKEND", "mock")
+    r = check(f"LLM_BACKEND = {llm_backend}", True)
+    results.append(r)
+
+    # ===== V12 新增依赖检查 =====
+    print("\n--- V12 新增依赖 ---")
+    v12_packages = [
+        "sqlalchemy",
+        "alembic",
+        "pymysql",
+        "neo4j",
+        "structlog",
+        "jsonschema",
+    ]
+
+    for pkg in v12_packages:
+        try:
+            mod = importlib.import_module(pkg)
+            version = getattr(mod, "__version__", "unknown")
+            r = check(f"{pkg} ({version})", True)
+        except ImportError:
+            r = check(
+                f"{pkg} 未安装",
+                False,
+                "V12 新增依赖，运行: pip install -r requirements.txt",
+            )
+            if not ci_mode:
+                warnings += 1
+        except Exception as e:
+            r = check(f"{pkg} 导入异常", False, str(e)[:60])
+            warnings += 1
+        results.append(r)
+
+    # MySQL driver import 检查（不要求服务在线）
+    try:
+        import pymysql  # noqa: F401 — 导入检查
+
+        r = check("PyMySQL driver 可用", True)
+    except ImportError:
+        r = check("PyMySQL driver 未安装", False, "full profile 需要")
+        if not ci_mode:
+            warnings += 1
+    results.append(r)
+
+    # Neo4j driver import 检查（不要求服务在线）
+    try:
+        import neo4j
+
+        neo4j_ver = getattr(neo4j, "__version__", "unknown")
+        r = check(f"Neo4j driver ({neo4j_ver})", True)
+    except ImportError:
+        r = check("Neo4j driver 未安装", False, "full profile 需要")
+        if not ci_mode:
+            warnings += 1
+    results.append(r)
+
+    # ===== V12 契约文件检查 =====
+    print("\n--- V12 契约文件 ---")
+    v12_contract_files = [
+        "docs/API_CONTRACT_V1.md",
+        "docs/WEBSOCKET_CONTRACT_V1.md",
+        "docs/FRONTEND_DESIGN.md",
+    ]
+    for f in v12_contract_files:
+        exists = (repo_root / f).exists()
+        r = check(f"存在 {f}", exists, "V12 契约文件缺失")
+        results.append(r)
+        if not exists:
+            warnings += 1
+
+    # ===== V12 路由检查 =====
+    print("\n--- V12 路由 ---")
+    try:
+        main_py = repo_root / "backend" / "app" / "main.py"
+        if main_py.exists():
+            content = main_py.read_text(encoding="utf-8")
+            has_healthz = "/healthz" in content or "healthz" in content.lower()
+            has_readyz = "/readyz" in content or "readyz" in content.lower()
+            has_companies = "/companies" in content
+            r = check("/healthz 路由存在", has_healthz, "V12 健康检查端点")
+            results.append(r)
+            if not has_healthz:
+                warnings += 1
+            r = check("/readyz 路由存在", has_readyz, "V12 就绪检查端点")
+            results.append(r)
+            if not has_readyz:
+                warnings += 1
+            r = check("/api/v1/companies 路由存在", has_companies, "V12 公司搜索端点")
+            results.append(r)
+            if not has_companies:
+                warnings += 1
+        else:
+            r = fail("backend/app/main.py 缺失", "无法检查 V12 路由")
+            results.append(r)
+            failures += 1
+    except Exception as e:
+        r = fail("V12 路由检查异常", str(e)[:60])
+        results.append(r)
+        failures += 1
+
     # ===== 前端工具 (optional) =====
     print("\n--- 前端工具 (optional) ---")
     frontend_initialized = (repo_root / "frontend" / "package.json").exists()

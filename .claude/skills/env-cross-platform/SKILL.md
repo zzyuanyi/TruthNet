@@ -243,3 +243,26 @@ pnpm config set registry https://registry.npmmirror.com
 - [ ] 代理配置未写死？
 - [ ] `.env` 未被 Git track？
 - [ ] 脚本入口有 Windows UTF-8 输出保护？
+
+---
+
+## V12 更新（2026-07-17）
+
+### Profile 机制
+
+- `TRUTHNET_PROFILE=lite` — 默认开发/CI，使用 SQLite + NetworkX + Mock LLM
+- `TRUTHNET_PROFILE=full` — 正式演示，使用 MySQL + Neo4j + DeepSeek/Qwen
+- 新增依赖仍写入唯一 `requirements.txt`
+- 外部服务通过 Adapter 和 profile 管理
+
+### lite profile 规则
+
+- 不要求 MySQL/Neo4j 服务在线
+- 使用 SQLite/NetworkX/Mock 作为 lite adapter
+- CI 基础 job 不依赖外部服务
+
+### full profile 规则
+
+- 使用 MySQL/Neo4j/DeepSeek 或 Qwen
+- 通过 `check_connection()` 检测服务可用性
+- 不可用时降级并返回 warning

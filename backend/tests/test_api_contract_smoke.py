@@ -28,7 +28,7 @@ async def test_health_check_contract():
 
     # data 内容
     assert body["data"]["status"] == "healthy"
-    assert body["data"]["version"] == "0.1.0"
+    assert body["data"]["version"] == "0.2.0"
 
 
 @pytest.mark.asyncio
