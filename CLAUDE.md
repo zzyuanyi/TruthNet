@@ -6,21 +6,23 @@
 
 ## 设计文档
 
-> 设计方案、API 契约、数据模型、开发计划等权威文档在竞赛管理仓库，不在本仓库。
+> 权威方案在竞赛管理仓库。本仓库 `docs/` 下同步了开发必备的设计文档。
 
 | 文档 | 路径 | 用途 |
 |------|------|------|
-| **综合设计方案 V12** | `../竞赛管理/docs/design/TruthNet_综合设计方案_V12.md` | 产品、前端、Agent、数据、API、工程统一基线 |
-| **开发实践手册** | `../竞赛管理/docs/开发实践手册.md` | 每阶段每组任务、交付物、验收标准 |
-| **数据文档** | `../竞赛管理/data/README.md` | 数据目录、字段说明、覆盖率 |
-| **规则公式** | `../竞赛管理/docs/design/data-computation-checklist.md` | 7 条勾稽规则公式+阈值+字段 |
+| **综合设计方案 V12** | `docs/DESIGN_V12.md` | 产品、前端、Agent、数据、API、工程统一基线（26章） |
+| **产品方案设计文档** | `docs/产品方案设计文档.md` | 4 页面原型 + API 参数 + 导航关系 + 技术选型 |
+| **开发手册 Phase0+B** | `docs/开发手册_Phase0+B.md` | 环境搭建 + Phase B 22 任务 + Git 工作流 |
+| **API 契约** | `docs/API_CONTRACT.md` | REST + WebSocket 完整契约 |
+| **数据核验清单** | `docs/DATA_CHECKLIST.md` | 7 条勾稽规则公式+阈值+字段覆盖率 |
 
-## 当前状态（V12 基线 · 2026-07-15）
+## 当前状态（V12 基线 · 2026-07-19）
 
-- 设计文档 V12 定稿，API 契约、WS 事件、Evidence/Claim 模型已冻结
-- Phase A 契约统一阶段（7/15-7/18）：后端产出 OpenAPI，前端生成类型
-- 后端：FastAPI 骨架就绪，29/29 测试通过，需按 V12 重构 Pydantic DTO 和 API 路径
-- 前端：React + Vite + TypeScript 最小项目已初始化，`pnpm build` 通过
+- 设计阶段结束，V12 定稿，API 契约/WS 事件/Evidence 模型已冻结
+- **Phase B 启动（7/20）**：三组并行，康美 E2E 打通
+- 后端：FastAPI 骨架就绪，29/29 测试通过，待出 MySQL 建表脚本
+- 前端：React + Vite + TypeScript 已初始化，`pnpm build` 通过
+- 数据组：待出康美 fixture
 - 协作：`main ← PR ← feature/<user>-<task>`
 
 ## 技术栈
@@ -29,8 +31,8 @@
 |------|------|------|
 | 后端框架 | Python 3.11 / FastAPI / WebSocket | REST + WS 统一入口 |
 | Agent 编排 | LangGraph StateGraph | 条件路由、并行节点、checkpoint 持久化 |
-| 结构化存储 | MySQL 8.0 | 三表+公司+股东+公告+研报 |
-| 图存储 | Neo4j 5.x | 股权穿透、关联方查询 |
+| 结构化存储 | MySQL 8.4 | 三表+公司+股东+公告+研报 |
+| 图存储 | Neo4j 2025.06.1 | 股权穿透、关联方查询（注意禁止 2025.06.0） |
 | 向量存储 | ChromaDB | 研报/公告语义检索 |
 | 嵌入模型 | BGE-small-zh-v1.5 | 中文向量化 |
 | LLM | DeepSeek V4（主）/ Qwen（备） | Provider 模式，不绑定单一模型 |
@@ -164,13 +166,13 @@ TruthNet/
 
 ### 环境
 
-21. **每人本地安装 MySQL 8.0 + Neo4j 5.x**，连接配置写入本地 `.env`。
+21. **每人本地安装 MySQL 8.4 + Neo4j 2025.06.1**（禁止 2025.06.0），连接配置写入本地 `.env`。
 22. 无 conda 时提供安全安装引导，不得无确认自动下载安装器。
 23. 镜像/代理配置只保存在本地，不写入仓库。
 
 ## Claude Code 工作规则
 
-- 动手前先读竞赛管理仓库的 V12 相关章节 + 本仓库 `docs/` 下对应文档。
+- 动手前先读本仓库 `docs/DESIGN_V12.md` 相关章节 + `docs/` 下对应文档。
 - 先计划再改文件。
 - 每次改动后运行：`python scripts/doctor.py` 或 `python -m pytest backend/tests`。
 - 不要跳过失败测试，不要删除重要逻辑。
