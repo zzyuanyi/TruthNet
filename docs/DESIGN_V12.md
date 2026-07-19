@@ -1,10 +1,11 @@
 # 织网鉴真 · 财报反欺诈智能问答系统
+
 ## 综合设计方案 V12（产品、前端、Agent、数据与工程统一基线）
 
-> 第五届中国研究生金融科技创新大赛 · 东吴证券赛题  
-> 文档日期：2026-07-15  
-> 文档状态：接口冻结前的统一设计基线  
-> 合并来源：`design-v9`、`前端设计_v3`、`TruthNet_design_v10_reviewed`  
+> 第五届中国研究生金融科技创新大赛 · 东吴证券赛题
+> 文档日期：2026-07-15
+> 文档状态：接口冻结前的统一设计基线
+> 合并来源：`design-v9`、`前端设计_v3`、`TruthNet_design_v10_reviewed`
 > 适用对象：产品组、前端组、后端组、数据组、测试与答辩材料编写人员
 
 ---
@@ -13,13 +14,13 @@
 
 > **不要全读。** 找到你的角色，只读对应章节。
 
-| 角色 | 必读章节 | 页数参考 |
-|------|------|:--:|
-| **前端组** | §1 产品概述 → §4-5 前端设计 → §11-12 REST/WS 契约 → 附录A 类型 | ~200 行 |
-| **后端组** | §1 产品概述 → §6-9 架构+Agent+证据 → §10 数据架构 → §11-13 REST/WS/性能 | ~350 行 |
-| **数据组** | §1 产品概述 → §1.4 数据全景 → §8.1 规则引擎 → §10 数据架构 | ~150 行 |
-| **全组** | §1-3 产品概述+创新点+功能清单 | ~80 行 |
-| **队长/答辩** | §2 核心创新 + §26 最终结论 | ~20 行 |
+| 角色                | 必读章节                                                                       | 页数参考 |
+| ------------------- | ------------------------------------------------------------------------------ | :------: |
+| **前端组**    | §1 产品概述 → §4-5 前端设计 → §11-12 REST/WS 契约 → 附录A 类型           | ~200 行 |
+| **后端组**    | §1 产品概述 → §6-9 架构+Agent+证据 → §10 数据架构 → §11-13 REST/WS/性能 | ~350 行 |
+| **数据组**    | §1 产品概述 → §1.4 数据全景 → §8.1 规则引擎 → §10 数据架构              | ~150 行 |
+| **全组**      | §1-3 产品概述+创新点+功能清单                                                 |  ~80 行  |
+| **队长/答辩** | §2 核心创新 + §26 最终结论                                                   |  ~20 行  |
 
 > 各阶段具体任务、交付物、验收标准见 [开发实践手册.md](../../开发实践手册.md)。
 
@@ -49,7 +50,7 @@
 | Web 后端 | FastAPI | REST、WebSocket、OpenAPI 和依赖注入入口 |
 | Agent 编排 | LangGraph StateGraph | 条件路由、并行节点、持久化和可恢复执行 |
 | 数据契约 | Pydantic V2 | API、Agent State、Port 和 Adapter 的统一类型边界 |
-| 正式结构化存储 | MySQL 8.0 | 完整数据、多用户查询和正式演示 |
+| 正式结构化存储 | MySQL 8.4 | 完整数据、多用户查询和正式演示 |
 | 正式图存储 | Neo4j | 持久化股权图、多跳穿透和图查询 |
 | 向量存储 | ChromaDB | 公告、研报和证据文本的语义检索 |
 | LLM | Provider Adapter；DeepSeek 为主、Qwen/Mock 备选 | 不将业务代码绑定单一模型 |
@@ -119,25 +120,25 @@
 
 ## 1.3 赛题痛点与系统映射
 
-| 赛题痛点 | 问题表现 | 系统能力 | 前端体现 |
-|---|---|---|---|
-| 长对话记忆遗忘 | 超过 10 轮后主体、指标和时间范围丢失 | 记忆节点、服务端会话、LangGraph checkpoint | 会话列表、上下文恢复、主体提示 |
-| 工具路由困难 | 不知道何时查询财务、图谱或舆情 | Planner + 条件编排 + 结果级交叉验证 | 实时展示模块进度 |
-| 隐性资本关系穿透难 | 间接控股、交叉持股、资管计划链路复杂 | Neo4j 多跳路径、权重连乘、实体对齐 | 可拖拽股权穿透图和路径高亮 |
-| 财报粉饰隐蔽 | 单表正常但跨科目矛盾 | 7 条财务勾稽规则、行业分位、历史趋势 | 规则卡、折线图、风险等级 |
-| 舆情碎片化 | 公告和研报缺乏事件脉络 | 事件聚类、时间线和评级拐点 | 事件时间线和筛选器 |
-| 分析缺乏证据 | 回答不可核验 | Claim–Evidence 模型和数据血缘 | 证据折叠、来源跳转、字段定位 |
+| 赛题痛点           | 问题表现                             | 系统能力                                   | 前端体现                       |
+| ------------------ | ------------------------------------ | ------------------------------------------ | ------------------------------ |
+| 长对话记忆遗忘     | 超过 10 轮后主体、指标和时间范围丢失 | 记忆节点、服务端会话、LangGraph checkpoint | 会话列表、上下文恢复、主体提示 |
+| 工具路由困难       | 不知道何时查询财务、图谱或舆情       | Planner + 条件编排 + 结果级交叉验证        | 实时展示模块进度               |
+| 隐性资本关系穿透难 | 间接控股、交叉持股、资管计划链路复杂 | Neo4j 多跳路径、权重连乘、实体对齐         | 可拖拽股权穿透图和路径高亮     |
+| 财报粉饰隐蔽       | 单表正常但跨科目矛盾                 | 7 条财务勾稽规则、行业分位、历史趋势       | 规则卡、折线图、风险等级       |
+| 舆情碎片化         | 公告和研报缺乏事件脉络               | 事件聚类、时间线和评级拐点                 | 事件时间线和筛选器             |
+| 分析缺乏证据       | 回答不可核验                         | Claim–Evidence 模型和数据血缘             | 证据折叠、来源跳转、字段定位   |
 
 ## 1.4 数据全景
 
-| 数据集 | 当前规模 | 主要用途 | 关键限制 |
-|---|---:|---|---|
-| 问答测试集 | 35 会话、1,410 问；77 深度题、1,333 简单题 | 多轮和复杂 Query 评测 | 无固定标准答案 |
-| 股东数据 | 6,161 只股票、约 646K 条 | 股权穿透、一致行动人、持股变化 | 名称实体对齐存在噪声 |
-| 公司公告 | 2,585 只股票、7,311 条、33 类 | 舆情、监管、风险事件 | 标题粒度有限，部分需补正文 |
-| 三表 CSV | 约 6,700 只股票、3.5 年、10 季度 | 财务规则和趋势 | 当前主要为母公司口径 |
-| 研报 | 55,214 篇 | RAG、评级拐点、行业分类 | `rating_change` 约 87.5% 覆盖 |
-| 行业分类 | 三表股票 45.6% 可匹配到研报行业分类（研报字段覆盖率 99.3%） | 行业分位和同行比较 | 需通过 akshare 补全至 ≥90% |
+| 数据集     |                                                    当前规模 | 主要用途                       | 关键限制                        |
+| ---------- | ----------------------------------------------------------: | ------------------------------ | ------------------------------- |
+| 问答测试集 |                  35 会话、1,410 问；77 深度题、1,333 简单题 | 多轮和复杂 Query 评测          | 无固定标准答案                  |
+| 股东数据   |                                    6,161 只股票、约 646K 条 | 股权穿透、一致行动人、持股变化 | 名称实体对齐存在噪声            |
+| 公司公告   |                               2,585 只股票、7,311 条、33 类 | 舆情、监管、风险事件           | 标题粒度有限，部分需补正文      |
+| 三表 CSV   |                            约 6,700 只股票、3.5 年、10 季度 | 财务规则和趋势                 | 当前主要为母公司口径            |
+| 研报       |                                                   55,214 篇 | RAG、评级拐点、行业分类        | `rating_change` 约 87.5% 覆盖 |
+| 行业分类   | 三表股票 45.6% 可匹配到研报行业分类（研报字段覆盖率 99.3%） | 行业分位和同行比较             | 需通过 akshare 补全至 ≥90%     |
 
 **数据口径约束**：三表当前主要为 `statement_type=408006000` 的母公司报表口径。商誉、固定资产、在建工程等字段覆盖率不足时，不进入依赖这些字段的规则；任何“不适用”必须与“未触发”分开显示。
 
@@ -300,24 +301,24 @@ red / orange / yellow / blue / green / unknown
 
 # 3. 功能范围与优先级
 
-| 编号 | 功能 | 优先级 | 交付标准 |
-|---|---|:---:|---|
-| F1 | 自然语言反欺诈问答 | P0 | 支持简单查询和综合诊断；流式输出 |
-| F2 | 多轮会话记忆 | P0 | 10 轮以上主体、指标和时间引用可恢复 |
-| F3 | 公司主体消歧 | P0 | 名称或代码模糊搜索、候选确认 |
-| F4 | 股权穿透 | P0 | 支持 3 层以上、最大深度 10、路径与权重 |
-| F5 | 财务异常检测 | P0 | 7 条规则、适用性、趋势、行业分位 |
-| F6 | 舆情事件溯源 | P0 | 事件簇、时间线、关系类型、评级变化 |
-| F7 | 企业画像页 | P0 | 摘要首屏 + 子资源按需加载 |
-| F8 | 证据链 | P0 | Claim 至少挂载一个 Evidence |
-| F9 | 数据与规则版本 | P0 | 每次结果含 `as_of`、数据和规则版本 |
-| F10 | 模块降级和部分成功 | P0 | 单模块失败不阻塞已有结果 |
-| F11 | 跨公司比较 | P1 | 2–5 家公司，指标表、分位图和风险对比 |
-| F12 | WebSocket 重连与取消 | P1 | 序号恢复、取消轮次、幂等 |
-| F13 | PDF 报告任务 | P1 | 创建任务、查询状态、下载文件 |
-| F14 | 响应式和无障碍 | P1 | 桌面、平板、手机；WCAG 2.2 AA 目标 |
-| F15 | 行情查询 | P2 | 作为辅助信息，不参与核心造假评分 |
-| F16 | 暗色模式 | P2 | 保证风险颜色和对比度一致 |
+| 编号 | 功能                 | 优先级 | 交付标准                               |
+| ---- | -------------------- | :----: | -------------------------------------- |
+| F1   | 自然语言反欺诈问答   |   P0   | 支持简单查询和综合诊断；流式输出       |
+| F2   | 多轮会话记忆         |   P0   | 10 轮以上主体、指标和时间引用可恢复    |
+| F3   | 公司主体消歧         |   P0   | 名称或代码模糊搜索、候选确认           |
+| F4   | 股权穿透             |   P0   | 支持 3 层以上、最大深度 10、路径与权重 |
+| F5   | 财务异常检测         |   P0   | 7 条规则、适用性、趋势、行业分位       |
+| F6   | 舆情事件溯源         |   P0   | 事件簇、时间线、关系类型、评级变化     |
+| F7   | 企业画像页           |   P0   | 摘要首屏 + 子资源按需加载              |
+| F8   | 证据链               |   P0   | Claim 至少挂载一个 Evidence            |
+| F9   | 数据与规则版本       |   P0   | 每次结果含`as_of`、数据和规则版本    |
+| F10  | 模块降级和部分成功   |   P0   | 单模块失败不阻塞已有结果               |
+| F11  | 跨公司比较           |   P1   | 2–5 家公司，指标表、分位图和风险对比  |
+| F12  | WebSocket 重连与取消 |   P1   | 序号恢复、取消轮次、幂等               |
+| F13  | PDF 报告任务         |   P1   | 创建任务、查询状态、下载文件           |
+| F14  | 响应式和无障碍       |   P1   | 桌面、平板、手机；WCAG 2.2 AA 目标     |
+| F15  | 行情查询             |   P2   | 作为辅助信息，不参与核心造假评分       |
+| F16  | 暗色模式             |   P2   | 保证风险颜色和对比度一致               |
 
 ---
 
@@ -357,13 +358,13 @@ red / orange / yellow / blue / green / unknown
 
 ## 4.2 路由设计
 
-| 路由 | 页面 | 优先级 | 数据策略 |
-|---|---|:---:|---|
-| `/` | 对话主页 | P0 | WebSocket 主通道 + 会话 REST |
-| `/company/:code` | 企业画像页 | P0 | 摘要接口首屏，子资源并行加载 |
-| `/compare?codes=...` | 跨公司对比页 | P1 | 2–5 家公司按需请求 |
-| `/reports/:reportId` | 报告任务页 | P1 | 轮询或事件更新任务状态 |
-| `/settings` | 本地展示设置 | P2 | 主题、动画、默认回溯范围 |
+| 路由                   | 页面         | 优先级 | 数据策略                     |
+| ---------------------- | ------------ | :----: | ---------------------------- |
+| `/`                  | 对话主页     |   P0   | WebSocket 主通道 + 会话 REST |
+| `/company/:code`     | 企业画像页   |   P0   | 摘要接口首屏，子资源并行加载 |
+| `/compare?codes=...` | 跨公司对比页 |   P1   | 2–5 家公司按需请求          |
+| `/reports/:reportId` | 报告任务页   |   P1   | 轮询或事件更新任务状态       |
+| `/settings`          | 本地展示设置 |   P2   | 主题、动画、默认回溯范围     |
 
 ---
 
@@ -407,15 +408,15 @@ red / orange / yellow / blue / green / unknown
 
 ### 5.1.2 会话侧边栏
 
-| 元素 | 行为 |
-|---|---|
-| 新建会话 | 创建空会话并生成服务端 `session_id` |
-| 会话名称 | 默认取首轮问题前 15 字；允许手动重命名 |
+| 元素     | 行为                                       |
+| -------- | ------------------------------------------ |
+| 新建会话 | 创建空会话并生成服务端`session_id`       |
+| 会话名称 | 默认取首轮问题前 15 字；允许手动重命名     |
 | 会话摘要 | 显示目标公司、风险等级、异常数量、更新时间 |
-| 活跃状态 | 高亮当前会话，设置 `aria-current` |
-| 删除会话 | 二次确认；服务端软删除，支持短时间撤销 |
+| 活跃状态 | 高亮当前会话，设置`aria-current`         |
+| 删除会话 | 二次确认；服务端软删除，支持短时间撤销     |
 | 会话切换 | 立即恢复本地缓存，同时从服务端校验最新状态 |
-| 搜索会话 | P1；按公司、标题和消息内容过滤 |
+| 搜索会话 | P1；按公司、标题和消息内容过滤             |
 
 会话列表不把红色 Badge 当作唯一信息，必须同时显示“3 条异常”等文本。
 
@@ -423,15 +424,15 @@ red / orange / yellow / blue / green / unknown
 
 **消息类型**：
 
-| 类型 | 展示 |
-|---|---|
-| 用户消息 | 右对齐气泡；保留原问题文本 |
-| Assistant 文本 | 左对齐 Markdown；支持列表、表格和引用 |
-| 模块进度 | 小型步骤条，不展示模型内部思维过程，只展示可公开执行状态 |
-| 候选公司 | 可键盘选择的候选卡片 |
-| 结构化卡片 | 规则摘要、图谱入口、时间线摘要、证据摘要 |
-| 警告 | 数据不足、超时、降级和时间口径提示 |
-| 追问建议 | 可点击发送；允许编辑后再发 |
+| 类型           | 展示                                                     |
+| -------------- | -------------------------------------------------------- |
+| 用户消息       | 右对齐气泡；保留原问题文本                               |
+| Assistant 文本 | 左对齐 Markdown；支持列表、表格和引用                    |
+| 模块进度       | 小型步骤条，不展示模型内部思维过程，只展示可公开执行状态 |
+| 候选公司       | 可键盘选择的候选卡片                                     |
+| 结构化卡片     | 规则摘要、图谱入口、时间线摘要、证据摘要                 |
+| 警告           | 数据不足、超时、降级和时间口径提示                       |
+| 追问建议       | 可点击发送；允许编辑后再发                               |
 
 **标准对话流程**：
 
@@ -728,12 +729,12 @@ explicitly_caused_by
 
 ## 5.5 响应式设计
 
-| 断点 | 布局 |
-|---|---|
-| ≥1920px | 三栏；侧栏 240px；面板约 420px |
-| 1200–1919px | 三栏；面板 36–40%，可折叠 |
-| 768–1199px | 会话栏 + 对话区；分析面板为右侧抽屉 |
-| <768px | 单栏；会话栏为顶部抽屉；分析面板为底部 Sheet |
+| 断点         | 布局                                         |
+| ------------ | -------------------------------------------- |
+| ≥1920px     | 三栏；侧栏 240px；面板约 420px               |
+| 1200–1919px | 三栏；面板 36–40%，可折叠                   |
+| 768–1199px  | 会话栏 + 对话区；分析面板为右侧抽屉          |
+| <768px       | 单栏；会话栏为顶部抽屉；分析面板为底部 Sheet |
 
 ### 平板预览
 
@@ -772,21 +773,21 @@ explicitly_caused_by
 
 ### 5.6.1 基础组件
 
-| 组件 | 用途 |
-|---|---|
-| Button | 主操作、次操作、危险操作、链接操作 |
-| Badge | 风险等级、异常数、模块状态 |
-| Card | 规则、公司、候选主体和摘要容器 |
-| Collapsible/Accordion | 证据和规则明细 |
-| ScrollArea | 会话和长列表 |
-| Dialog/AlertDialog | 删除确认、风险说明 |
-| Sheet/Drawer | 平板和手机分析面板 |
-| Toast | 短时错误和成功提示 |
-| Skeleton | 页面和卡片加载 |
-| Progress | 报告任务和模块执行进度 |
-| Tabs | 图谱/列表、趋势/表格切换 |
-| Tooltip | 图标和缩写解释 |
-| Table | 比较、关联方和证据列表 |
+| 组件                  | 用途                               |
+| --------------------- | ---------------------------------- |
+| Button                | 主操作、次操作、危险操作、链接操作 |
+| Badge                 | 风险等级、异常数、模块状态         |
+| Card                  | 规则、公司、候选主体和摘要容器     |
+| Collapsible/Accordion | 证据和规则明细                     |
+| ScrollArea            | 会话和长列表                       |
+| Dialog/AlertDialog    | 删除确认、风险说明                 |
+| Sheet/Drawer          | 平板和手机分析面板                 |
+| Toast                 | 短时错误和成功提示                 |
+| Skeleton              | 页面和卡片加载                     |
+| Progress              | 报告任务和模块执行进度             |
+| Tabs                  | 图谱/列表、趋势/表格切换           |
+| Tooltip               | 图标和缩写解释                     |
+| Table                 | 比较、关联方和证据列表             |
 
 ### 5.6.2 业务组件
 
@@ -1221,15 +1222,15 @@ LLM 失败策略：
 
 首期规则族建议如下，最终公式、阈值和适用条件以版本化规则定义为准：
 
-| 规则 | 规则族 | 核心信号 | 适用性要求 |
-|---|---|---|---|
-| R1 | 应收–营收背离 | 应收增速显著高于营收增速 | 至少连续两期可比数据 |
-| R2 | 现金流–利润背离 | 净利润为正但经营现金流弱或持续为负 | 利润和现金流同口径 |
-| R3 | 存贷双高 | 货币资金和有息负债同时较高 | 货币资金、借款字段有效 |
-| R4 | 存货–营收背离 | 存货增速或存货周转显著恶化 | 存货字段可用；行业可比 |
-| R5 | 毛利率/费用率异常 | 毛利率、销售费用率或管理费用率偏离历史及行业 | 成本和费用字段完整 |
-| R6 | 其他应收款与关联占用风险 | 其他应收款异常增长并存在关联关系信号 | 其他应收款和关联方数据可用 |
-| R7 | 盈利质量与非经常性依赖 | 利润增长与现金、主营收入或扣非利润不一致 | 扣非字段不足时标记不适用 |
+| 规则 | 规则族                   | 核心信号                                     | 适用性要求                 |
+| ---- | ------------------------ | -------------------------------------------- | -------------------------- |
+| R1   | 应收–营收背离           | 应收增速显著高于营收增速                     | 至少连续两期可比数据       |
+| R2   | 现金流–利润背离         | 净利润为正但经营现金流弱或持续为负           | 利润和现金流同口径         |
+| R3   | 存贷双高                 | 货币资金和有息负债同时较高                   | 货币资金、借款字段有效     |
+| R4   | 存货–营收背离           | 存货增速或存货周转显著恶化                   | 存货字段可用；行业可比     |
+| R5   | 毛利率/费用率异常        | 毛利率、销售费用率或管理费用率偏离历史及行业 | 成本和费用字段完整         |
+| R6   | 其他应收款与关联占用风险 | 其他应收款异常增长并存在关联关系信号         | 其他应收款和关联方数据可用 |
+| R7   | 盈利质量与非经常性依赖   | 利润增长与现金、主营收入或扣非利润不一致     | 扣非字段不足时标记不适用   |
 
 每条规则配置：
 
@@ -1418,7 +1419,6 @@ normalized_* 实体对齐、去重和质量标记
 ```
 
 ## 10.2 公共系统字段
-
 
 ## 10.2 公共系统字段
 
@@ -1653,38 +1653,38 @@ language
 
 ## 11.2 端点总览
 
-| 能力 | 方法 | 端点 | 优先级 |
-|---|:---:|---|:---:|
-| 存活检查 | GET | `/healthz` | P0 |
-| 就绪检查 | GET | `/readyz` | P0 |
-| 公司搜索 | GET | `/api/v1/companies?query=康美&limit=10` | P0 |
-| 企业画像摘要 | GET | `/api/v1/companies/{code}` | P0 |
-| 财务分析 | GET | `/api/v1/companies/{code}/finance` | P0 |
-| 股权穿透 | GET | `/api/v1/companies/{code}/equity` | P0 |
-| 舆情事件 | GET | `/api/v1/companies/{code}/events` | P0 |
-| 综合风险 | GET | `/api/v1/companies/{code}/risk` | P0 |
-| 行业对标 | GET | `/api/v1/companies/{code}/benchmarks` | P0 |
-| 会话列表 | GET | `/api/v1/sessions` | P0 |
-| 创建会话 | POST | `/api/v1/sessions` | P0 |
-| 会话详情 | GET | `/api/v1/sessions/{session_id}` | P0 |
-| 非流式问答 | POST | `/api/v1/chat` | P0 |
-| 流式问答 | WS | `/api/v1/chat/ws` | P0 |
-| 创建比较 | POST | `/api/v1/comparisons` | P1 |
-| 创建报告 | POST | `/api/v1/reports` | P1 |
-| 报告状态 | GET | `/api/v1/reports/{report_id}` | P1 |
-| 报告下载 | GET | `/api/v1/reports/{report_id}/file` | P1 |
+| 能力         | 方法 | 端点                                      | 优先级 |
+| ------------ | :--: | ----------------------------------------- | :----: |
+| 存活检查     | GET | `/healthz`                              |   P0   |
+| 就绪检查     | GET | `/readyz`                               |   P0   |
+| 公司搜索     | GET | `/api/v1/companies?query=康美&limit=10` |   P0   |
+| 企业画像摘要 | GET | `/api/v1/companies/{code}`              |   P0   |
+| 财务分析     | GET | `/api/v1/companies/{code}/finance`      |   P0   |
+| 股权穿透     | GET | `/api/v1/companies/{code}/equity`       |   P0   |
+| 舆情事件     | GET | `/api/v1/companies/{code}/events`       |   P0   |
+| 综合风险     | GET | `/api/v1/companies/{code}/risk`         |   P0   |
+| 行业对标     | GET | `/api/v1/companies/{code}/benchmarks`   |   P0   |
+| 会话列表     | GET | `/api/v1/sessions`                      |   P0   |
+| 创建会话     | POST | `/api/v1/sessions`                      |   P0   |
+| 会话详情     | GET | `/api/v1/sessions/{session_id}`         |   P0   |
+| 非流式问答   | POST | `/api/v1/chat`                          |   P0   |
+| 流式问答     |  WS  | `/api/v1/chat/ws`                       |   P0   |
+| 创建比较     | POST | `/api/v1/comparisons`                   |   P1   |
+| 创建报告     | POST | `/api/v1/reports`                       |   P1   |
+| 报告状态     | GET | `/api/v1/reports/{report_id}`           |   P1   |
+| 报告下载     | GET | `/api/v1/reports/{report_id}/file`      |   P1   |
 
 ## 11.3 公共查询参数
 
-| 参数 | 用途 |
-|---|---|
-| `as_of` | 指定数据快照日期 |
+| 参数                | 用途                                     |
+| ------------------- | ---------------------------------------- |
+| `as_of`           | 指定数据快照日期                         |
 | `statement_scope` | `parent_company / consolidated / auto` |
-| `include` | 指定摘要接口包含的可选区域 |
-| `periods` | 财务历史期数 |
-| `months` | 事件回溯月数 |
-| `depth` | 股权穿透深度，1–10 |
-| `include_related` | 是否包含关联方 |
+| `include`         | 指定摘要接口包含的可选区域               |
+| `periods`         | 财务历史期数                             |
+| `months`          | 事件回溯月数                             |
+| `depth`           | 股权穿透深度，1–10                      |
+| `include_related` | 是否包含关联方                           |
 
 ## 11.4 成功响应
 
@@ -1746,17 +1746,17 @@ language
 
 ### 错误码
 
-| HTTP | `error_code` | 含义 |
-|---:|---|---|
-| 400 | `INVALID_ARGUMENT` | 参数格式错误 |
-| 404 | `COMPANY_NOT_COVERED` | 公司不在数据覆盖范围 |
-| 409 | `TURN_ALREADY_RUNNING` | 同会话已有互斥轮次 |
-| 422 | `SCHEMA_VALIDATION_FAILED` | 请求或模型输出校验失败 |
-| 429 | `RATE_LIMITED` | 频率受限 |
-| 503 | `LLM_TIMEOUT` | 模型超时 |
-| 503 | `GRAPH_UNAVAILABLE` | 图服务不可用 |
-| 503 | `DATASTORE_UNAVAILABLE` | 结构化存储不可用 |
-| 500 | `INTERNAL_ERROR` | 未预期错误 |
+| HTTP | `error_code`               | 含义                   |
+| ---: | ---------------------------- | ---------------------- |
+|  400 | `INVALID_ARGUMENT`         | 参数格式错误           |
+|  404 | `COMPANY_NOT_COVERED`      | 公司不在数据覆盖范围   |
+|  409 | `TURN_ALREADY_RUNNING`     | 同会话已有互斥轮次     |
+|  422 | `SCHEMA_VALIDATION_FAILED` | 请求或模型输出校验失败 |
+|  429 | `RATE_LIMITED`             | 频率受限               |
+|  503 | `LLM_TIMEOUT`              | 模型超时               |
+|  503 | `GRAPH_UNAVAILABLE`        | 图服务不可用           |
+|  503 | `DATASTORE_UNAVAILABLE`    | 结构化存储不可用       |
+|  500 | `INTERNAL_ERROR`           | 未预期错误             |
 
 ## 11.7 公司搜索
 
@@ -1940,29 +1940,29 @@ POST /api/v1/reports
 
 ## 12.2 Client → Server
 
-| `event_type` | Payload |
-|---|---|
-| `chat.query` | text、session_id、可选 as_of |
+| `event_type`      | Payload                          |
+| ------------------- | -------------------------------- |
+| `chat.query`      | text、session_id、可选 as_of     |
 | `company.confirm` | company_ref、session_id、turn_id |
-| `chat.follow_up` | text、session_id |
-| `turn.cancel` | turn_id |
-| `stream.resume` | turn_id、last_received_sequence |
-| `ping` | client_time |
+| `chat.follow_up`  | text、session_id                 |
+| `turn.cancel`     | turn_id                          |
+| `stream.resume`   | turn_id、last_received_sequence  |
+| `ping`            | client_time                      |
 
 ## 12.3 Server → Client
 
-| `event_type` | 说明 |
-|---|---|
-| `turn.accepted` | 请求已接收，分配 turn_id |
-| `company.candidates` | 候选公司 |
-| `module.started` | 模块开始 |
-| `module.completed` | 模块终态和耗时 |
-| `answer.delta` | 文本增量 |
-| `artifact.upsert` | 规则、图、时间线、证据等结构化更新 |
-| `warning.raised` | 数据不足、超时、降级 |
-| `turn.completed` | 最终结果、追问建议和快照信息 |
-| `turn.failed` | 本轮无法继续 |
-| `heartbeat` | 服务端心跳 |
+| `event_type`         | 说明                               |
+| ---------------------- | ---------------------------------- |
+| `turn.accepted`      | 请求已接收，分配 turn_id           |
+| `company.candidates` | 候选公司                           |
+| `module.started`     | 模块开始                           |
+| `module.completed`   | 模块终态和耗时                     |
+| `answer.delta`       | 文本增量                           |
+| `artifact.upsert`    | 规则、图、时间线、证据等结构化更新 |
+| `warning.raised`     | 数据不足、超时、降级               |
+| `turn.completed`     | 最终结果、追问建议和快照信息       |
+| `turn.failed`        | 本轮无法继续                       |
+| `heartbeat`          | 服务端心跳                         |
 
 ## 12.4 artifact.upsert
 
@@ -2022,16 +2022,16 @@ Server → turn.completed
 
 ## 13.1 目标
 
-| 场景 | 目标 |
-|---|---:|
-| 公司搜索 | P95 ≤ 500ms |
-| 企业摘要 | P95 ≤ 1s |
-| 单模块查询 | P95 ≤ 2s；复杂图查询允许 ≤4s |
-| Chat 请求接收事件 | P95 ≤ 1s |
-| Chat 首文本 | P95 ≤ 3s |
-| Chat 完整结果 | P95 ≤ 8s，允许 partial |
-| 页面切换缓存命中 | ≤200ms |
-| 报告创建 | ≤500ms 返回 202 |
+| 场景              |                           目标 |
+| ----------------- | -----------------------------: |
+| 公司搜索          |                   P95 ≤ 500ms |
+| 企业摘要          |                      P95 ≤ 1s |
+| 单模块查询        | P95 ≤ 2s；复杂图查询允许 ≤4s |
+| Chat 请求接收事件 |                      P95 ≤ 1s |
+| Chat 首文本       |                      P95 ≤ 3s |
+| Chat 完整结果     |        P95 ≤ 8s，允许 partial |
+| 页面切换缓存命中  |                        ≤200ms |
+| 报告创建          |               ≤500ms 返回 202 |
 
 ## 13.2 模块 deadline
 
@@ -2483,14 +2483,13 @@ docs/FRONTEND_DESIGN.md
 
 ## 20.2 重新基线后的阶段计划
 
-| 阶段 | 时间建议 | 后端 | 前端 | 数据 | 验收 |
-|---|---|---|---|---|---|
-| Phase A 契约统一 | 7/15–7/18 | V1 DTO、Port、WS、错误 | 类型生成、mock 对齐 | 字段与版本确认 | 契约评审通过 |
-| Phase B 最小 E2E | 7/19–7/30 | MySQL/Neo4j/ChromaDB/DeepSeek 搜索/画像/股权/WS | 三页面动态+WS 对接 | 全量入库、全量图谱、行业补全 | E2E 对话闭环 |
-| Phase C 核心业务 | 7/31–8/9 | 7 规则、事件、交叉验证、Claim/Evidence、风险评分 | 面板联动、证据链、对比页 | 事件聚类、评级拐点、分位计算、造假模式库、评测框架 | 真实公司全量分析 |
-| Phase D 稳定联调 | 8/10–8/14 | 降级、幂等、性能、PDF、Docker | 错误状态、重连、响应式、报告页 | 评测脚本、白皮书初稿 | 可部署可演示 |
-| Phase E 交付 | 8/15–8/20 | Bug 修复、部署 | UI 打磨、视频 | 跑分、白皮书终稿、PPT | 全部交付物齐 |
-
+| 阶段             | 时间建议   | 后端                                             | 前端                           | 数据                                               | 验收             |
+| ---------------- | ---------- | ------------------------------------------------ | ------------------------------ | -------------------------------------------------- | ---------------- |
+| Phase A 契约统一 | 7/15–7/18 | V1 DTO、Port、WS、错误                           | 类型生成、mock 对齐            | 字段与版本确认                                     | 契约评审通过     |
+| Phase B 最小 E2E | 7/19–7/30 | MySQL/Neo4j/ChromaDB/DeepSeek 搜索/画像/股权/WS  | 三页面动态+WS 对接             | 全量入库、全量图谱、行业补全                       | E2E 对话闭环     |
+| Phase C 核心业务 | 7/31–8/9  | 7 规则、事件、交叉验证、Claim/Evidence、风险评分 | 面板联动、证据链、对比页       | 事件聚类、评级拐点、分位计算、造假模式库、评测框架 | 真实公司全量分析 |
+| Phase D 稳定联调 | 8/10–8/14 | 降级、幂等、性能、PDF、Docker                    | 错误状态、重连、响应式、报告页 | 评测脚本、白皮书初稿                               | 可部署可演示     |
+| Phase E 交付     | 8/15–8/20 | Bug 修复、部署                                   | UI 打磨、视频                  | 跑分、白皮书终稿、PPT                              | 全部交付物齐     |
 
 ---
 
@@ -2506,7 +2505,7 @@ docs/FRONTEND_DESIGN.md
 
 ## 21.2 前端验收
 
-- 桌面三栏、平板抽屉、手机单栏；
+- 桌面三栏；
 - WebSocket 流式、取消和重连；
 - 图谱支持筛选、拖拽、缩放和列表替代视图；
 - 对比页统一口径；
@@ -2545,22 +2544,22 @@ docs/FRONTEND_DESIGN.md
 
 # 22. 风险与应对
 
-| 风险 | 应对 |
-|---|---|
-| 母公司报表字段缺失 | 适用性 Gate、数据质量、口径提示，不适用与未触发分开 |
-| 行业分类覆盖不足 | 多来源补全、版本记录、样本不足降级 |
-| LLM 结构化输出不稳 | Pydantic 校验、Evidence 白名单、重试、模板降级 |
-| LLM 限流或故障 | Provider Adapter、缓存和备选 Provider |
-| Agent 并发复杂 | 命名空间 State、Reducer、task_key、节点单测 |
-| API 漂移 | OpenAPI/AsyncAPI、生成类型、breaking change CI |
-| 图谱实体错配 | 稳定 entity_id、别名、置信度和候选审核 |
-| LLM 抽取污染正式图谱 | CandidateRelation → Verification → VerifiedRelation |
-| 图节点过多导致卡顿 | 节点上限、聚合、按需展开、Canvas/列表模式 |
-| 报告生成超时 | 202 长任务、状态页和重试 |
-| Windows 外部服务安装阻塞 | Docker Compose 统一环境 |
-| 数据修订无法追踪 | revision_no、is_latest、dataset_version |
-| 事件误标因果 | 关系枚举和明确来源 Gate |
-| 误报导致用户过度依赖 | 风险说明、替代解释、证据和免责声明 |
+| 风险                     | 应对                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| 母公司报表字段缺失       | 适用性 Gate、数据质量、口径提示，不适用与未触发分开   |
+| 行业分类覆盖不足         | 多来源补全、版本记录、样本不足降级                    |
+| LLM 结构化输出不稳       | Pydantic 校验、Evidence 白名单、重试、模板降级        |
+| LLM 限流或故障           | Provider Adapter、缓存和备选 Provider                 |
+| Agent 并发复杂           | 命名空间 State、Reducer、task_key、节点单测           |
+| API 漂移                 | OpenAPI/AsyncAPI、生成类型、breaking change CI        |
+| 图谱实体错配             | 稳定 entity_id、别名、置信度和候选审核                |
+| LLM 抽取污染正式图谱     | CandidateRelation → Verification → VerifiedRelation |
+| 图节点过多导致卡顿       | 节点上限、聚合、按需展开、Canvas/列表模式             |
+| 报告生成超时             | 202 长任务、状态页和重试                              |
+| Windows 外部服务安装阻塞 | Docker Compose 统一环境                               |
+| 数据修订无法追踪         | revision_no、is_latest、dataset_version               |
+| 事件误标因果             | 关系枚举和明确来源 Gate                               |
+| 误报导致用户过度依赖     | 风险说明、替代解释、证据和免责声明                    |
 
 ---
 
@@ -2642,39 +2641,23 @@ Mock 数据必须带 `mock=true` 或独立 fixture，不得进入正式数据库
 
 # 25. 附录 C：参考标准与设计资料
 
-1. OpenAPI Specification：项目 REST 契约采用 FastAPI 可直接生成的 OpenAPI 3.1.x。  
-   https://spec.openapis.org/oas/v3.1.0.html
-2. FastAPI OpenAPI 与客户端生成说明。  
-   https://fastapi.tiangolo.com/advanced/generate-clients/
-3. AsyncAPI：用于 WebSocket/异步事件契约。  
-   https://www.asyncapi.com/docs/reference/specification/latest
-4. RFC 9457 Problem Details for HTTP APIs。  
-   https://www.rfc-editor.org/rfc/rfc9457
-5. AWS Prescriptive Guidance：Hexagonal Architecture / Ports and Adapters。  
-   https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/hexagonal-architecture.html
-6. LangGraph Persistence：thread、checkpointer 和 checkpoint。  
-   https://docs.langchain.com/oss/python/langgraph/persistence
-7. W3C PROV-O：数据与结论血缘的概念参考。  
-   https://www.w3.org/TR/prov-o/
-8. NIST AI RMF 与 Generative AI Profile。  
-   https://www.nist.gov/itl/ai-risk-management-framework
-9. OWASP API Security Top 10 2023。  
-   https://owasp.org/API-Security/editions/2023/en/0x11-t10/
-10. OpenTelemetry：日志、指标和 trace 的统一上下文。  
-    https://opentelemetry.io/docs/
-11. WCAG 2.2。  
-    https://www.w3.org/TR/WCAG22/
-12. Alembic：SQLAlchemy 数据库迁移。  
-    https://alembic.sqlalchemy.org/
-13. FinQA：带可执行推理程序的金融数值问答数据集。  
-    https://arxiv.org/abs/2109.00122
-14. TAT-QA：表格与文本联合金融问答。  
-    https://aclanthology.org/2021.acl-long.254/
-15. DocFinQA：长上下文金融推理数据集。  
-    https://arxiv.org/abs/2401.06915
-16. FinRobot：面向金融应用的开源 Agent 平台。  
-    https://arxiv.org/abs/2405.14767
-17. Temporal Provenance Model：时间感知的数据血缘模型。  
+1. OpenAPI Specification：项目 REST 契约采用 FastAPI 可直接生成的 OpenAPI 3.1.x。https://spec.openapis.org/oas/v3.1.0.html
+2. FastAPI OpenAPI 与客户端生成说明。https://fastapi.tiangolo.com/advanced/generate-clients/
+3. AsyncAPI：用于 WebSocket/异步事件契约。https://www.asyncapi.com/docs/reference/specification/latest
+4. RFC 9457 Problem Details for HTTP APIs。https://www.rfc-editor.org/rfc/rfc9457
+5. AWS Prescriptive Guidance：Hexagonal Architecture / Ports and Adapters。https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/hexagonal-architecture.html
+6. LangGraph Persistence：thread、checkpointer 和 checkpoint。https://docs.langchain.com/oss/python/langgraph/persistence
+7. W3C PROV-O：数据与结论血缘的概念参考。https://www.w3.org/TR/prov-o/
+8. NIST AI RMF 与 Generative AI Profile。https://www.nist.gov/itl/ai-risk-management-framework
+9. OWASP API Security Top 10 2023。https://owasp.org/API-Security/editions/2023/en/0x11-t10/
+10. OpenTelemetry：日志、指标和 trace 的统一上下文。https://opentelemetry.io/docs/
+11. WCAG 2.2。https://www.w3.org/TR/WCAG22/
+12. Alembic：SQLAlchemy 数据库迁移。https://alembic.sqlalchemy.org/
+13. FinQA：带可执行推理程序的金融数值问答数据集。https://arxiv.org/abs/2109.00122
+14. TAT-QA：表格与文本联合金融问答。https://aclanthology.org/2021.acl-long.254/
+15. DocFinQA：长上下文金融推理数据集。https://arxiv.org/abs/2401.06915
+16. FinRobot：面向金融应用的开源 Agent 平台。https://arxiv.org/abs/2405.14767
+17. Temporal Provenance Model：时间感知的数据血缘模型。
     https://arxiv.org/abs/1211.5009
 
 ---
