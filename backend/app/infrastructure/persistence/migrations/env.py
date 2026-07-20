@@ -16,13 +16,17 @@ from sqlalchemy.engine import URL as EngineURL
 from alembic import context
 
 # Load .env file before any settings resolution
-_repo_root = Path(__file__).resolve().parents[5]  # migrations -> persistence -> infrastructure -> app -> backend -> repo
+_repo_root = (
+    Path(__file__).resolve().parents[5]
+)  # migrations -> persistence -> infrastructure -> app -> backend -> repo
 _env_path = _repo_root / ".env"
 if _env_path.exists():
     load_dotenv(_env_path)
 
 # Ensure backend/ is on sys.path
-_src = Path(__file__).resolve().parents[4]  # migrations -> persistence -> infrastructure -> app -> backend
+_src = (
+    Path(__file__).resolve().parents[4]
+)  # migrations -> persistence -> infrastructure -> app -> backend
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
