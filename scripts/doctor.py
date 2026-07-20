@@ -44,7 +44,7 @@ def run_cmd(cmd: list[str]) -> tuple[int, str, str]:
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            shell=False,
+            shell=True if sys.platform == "win32" else False,
         )
         stdout = result.stdout.strip() if result.stdout else ""
         stderr = result.stderr.strip() if result.stderr else ""
@@ -53,6 +53,9 @@ def run_cmd(cmd: list[str]) -> tuple[int, str, str]:
         return -1, "", "command not found"
     except subprocess.TimeoutExpired:
         return -2, "", "timeout"
+    except OSError:
+        # Windows: some commands (e.g. pnpm.CMD) fail with CreateProcess
+        return -1, "", "command not found"
 
 
 def check(label: str, passed: bool, detail: str = "") -> str:

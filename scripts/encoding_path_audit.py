@@ -48,13 +48,21 @@ IGNORE_DIRS: set[str] = {
     ".tox",
     ".eggs",
     "*.egg-info",
+    ".local",  # 本地环境数据目录（MySQL/Neo4j/JDK 等）
 }
 
 # 可忽略目录内的子路径前缀 (glob 风格)
 IGNORE_PATH_PREFIXES: list[str] = [
     "reports/prompt",
+    "reports/",  # 报告文件可能包含本机路径引用
     "data/raw/",
     "data/processed/",
+    "scripts/services/",  # 本地服务启动脚本（含本机路径）
+    ".claude/skills/",  # Skill 文档中的示例代码
+    "docs/ENVIRONMENT_REPRODUCTION.md",  # 环境复现文档（含示例路径）
+    "docs/SETUP_FULL_PROFILE_WINDOWS.md",  # Windows 部署文档（含示例路径）
+    "docs/SOFTWARE_ENGINEERING.md",  # 软件工程规范文档（含反例示例）
+    "backend/tests/test_encoding_path_policy.py",  # 编码策略测试（含模式定义）
 ]
 
 # 大文件阈值 (字节)

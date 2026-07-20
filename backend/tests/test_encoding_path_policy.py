@@ -112,14 +112,8 @@ def test_no_hardcoded_drive_letters_in_backend():
     backend_dir = repo_root / "backend"
 
     drive_patterns = [
-        "C:\\\\",
-        "D:\\\\",
-        "E:\\\\",
-        "F:\\\\",
-        "C:/",
-        "D:/",
-        "E:/",
-        "F:/",
+        r"[A-Za-z]:\\\\",
+        r"[A-Za-z]:/",
     ]
 
     for py_file in backend_dir.rglob("*.py"):
