@@ -16,6 +16,7 @@ Create Date: 2026-07-19
 财务表唯一约束：(wind_code, report_period, statement_type, ann_dt, revision_no)
 statement_type 说明：408001000=合并报表，408006000=母公司报表（V12 §1.4 当前数据主口径）
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -437,12 +438,8 @@ def upgrade() -> None:
         mysql_charset="utf8mb4",
         mysql_collate="utf8mb4_0900_ai_ci",
     )
-    op.create_index(
-        "ix_is_wind_code", "income_statement", ["wind_code"]
-    )
-    op.create_index(
-        "ix_is_report_period", "income_statement", ["report_period"]
-    )
+    op.create_index("ix_is_wind_code", "income_statement", ["wind_code"])
+    op.create_index("ix_is_report_period", "income_statement", ["report_period"])
 
     # ================================================================
     # 4. cash_flow  — V12 §10.4
@@ -658,15 +655,9 @@ def upgrade() -> None:
         mysql_charset="utf8mb4",
         mysql_collate="utf8mb4_0900_ai_ci",
     )
-    op.create_index(
-        "ix_ts_wind_code", "top_shareholders", ["wind_code"]
-    )
-    op.create_index(
-        "ix_ts_holder_name", "top_shareholders", ["s_holder_name"]
-    )
-    op.create_index(
-        "ix_ts_enddate", "top_shareholders", ["s_holder_enddate"]
-    )
+    op.create_index("ix_ts_wind_code", "top_shareholders", ["wind_code"])
+    op.create_index("ix_ts_holder_name", "top_shareholders", ["s_holder_name"])
+    op.create_index("ix_ts_enddate", "top_shareholders", ["s_holder_enddate"])
 
     # ================================================================
     # 6. announcements  — V12 §10.6
@@ -764,15 +755,9 @@ def upgrade() -> None:
         mysql_charset="utf8mb4",
         mysql_collate="utf8mb4_0900_ai_ci",
     )
-    op.create_index(
-        "ix_ann_wind_code", "announcements", ["wind_code"]
-    )
-    op.create_index(
-        "ix_ann_dt", "announcements", ["ann_dt"]
-    )
-    op.create_index(
-        "ix_ann_fcode", "announcements", ["n_info_fcode"]
-    )
+    op.create_index("ix_ann_wind_code", "announcements", ["wind_code"])
+    op.create_index("ix_ann_dt", "announcements", ["ann_dt"])
+    op.create_index("ix_ann_fcode", "announcements", ["n_info_fcode"])
 
     # ================================================================
     # 7. research_reports  — V12 §10.7
@@ -901,15 +886,9 @@ def upgrade() -> None:
         mysql_charset="utf8mb4",
         mysql_collate="utf8mb4_0900_ai_ci",
     )
-    op.create_index(
-        "ix_rr_wind_code", "research_reports", ["wind_code"]
-    )
-    op.create_index(
-        "ix_rr_publish_date", "research_reports", ["publish_date"]
-    )
-    op.create_index(
-        "ix_rr_org_name", "research_reports", ["org_name"]
-    )
+    op.create_index("ix_rr_wind_code", "research_reports", ["wind_code"])
+    op.create_index("ix_rr_publish_date", "research_reports", ["publish_date"])
+    op.create_index("ix_rr_org_name", "research_reports", ["org_name"])
 
 
 def downgrade() -> None:
