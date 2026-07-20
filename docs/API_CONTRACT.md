@@ -1,5 +1,9 @@
 # API 接口契约
 
+> ⚠️ **文档版本说明**：本文档描述当前运行中的 mock 端点格式（`{code, data, message}` 响应信封）。
+> 新开发请参考 [API_CONTRACT_V1.md](API_CONTRACT_V1.md)，该文档使用 V12 `{data, meta, warnings}` 信封格式。
+> 迁移完成后本文档将归档。
+
 > **接口先行原则**：后端必须先定 Pydantic schema → 更新本文档 → 提供 mock JSON → 再写实现。
 > 前端依据此文档和 mock JSON 独立并行开发。
 
@@ -60,7 +64,7 @@
   "question": "请分析贵州茅台2023年营收与现金流量表的勾稽关系",
   "session_id": "sess_abc123",
   "context": {
-    "company_code": "600519",
+    "company_code": "300838.SZ",
     "fiscal_year": 2023
   }
 }
@@ -260,7 +264,7 @@ ws://localhost:8000/api/v1/chat/ws
 
 | 参数 | 说明 |
 |------|------|
-| `company_id` | 公司唯一标识（如股票代码 "600519"） |
+| `company_id` | 公司唯一标识（Wind 代码，如 "300838.SZ"） |
 
 #### 响应
 
