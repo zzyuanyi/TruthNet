@@ -36,6 +36,7 @@ class TestAgentState:
         )
         state: AgentState = {"evidence": [ev]}
         assert len(state["evidence"]) == 1
+        assert state["evidence"][0].evidence_id == "ev_001"
 
     def test_agent_state_module_status(self):
         st = ModuleStatus(state="success", duration_ms=100)
@@ -56,13 +57,6 @@ class TestClaimModel:
     """Claim 模型测试."""
 
     def test_claim_with_evidence(self):
-        ev = EvidenceRef(
-            evidence_id="ev_001",
-            source_type="financial_statement",
-            source_title="2023年报",
-            field_path="营业收入",
-            value="1505.60亿",
-        )
         claim = Claim(
             claim_id="cl_001",
             text="营业收入1505.60亿",
