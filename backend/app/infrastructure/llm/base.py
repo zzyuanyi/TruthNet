@@ -33,7 +33,9 @@ def _is_transient_error(exception: BaseException) -> bool:
     try:
         from openai import APIStatusError, APITimeoutError, APIConnectionError
 
-        return isinstance(exception, (APIStatusError, APITimeoutError, APIConnectionError))
+        return isinstance(
+            exception, (APIStatusError, APITimeoutError, APIConnectionError)
+        )
     except ImportError:
         return False
 
@@ -97,9 +99,7 @@ class BaseOpenAICompatibleProvider:
                 temperature=0,
             )
             self._available = True
-            logger.info(
-                "%s: 连接检查成功 (model=%s)", self.provider_name, self._model
-            )
+            logger.info("%s: 连接检查成功 (model=%s)", self.provider_name, self._model)
             return True
         except Exception as e:
             self._available = False
@@ -177,9 +177,7 @@ class BaseOpenAICompatibleProvider:
         if self._client is None:
             return self._degraded_structured(output_schema, "Provider 不可用")
 
-        schema_json = json.dumps(
-            output_schema.model_json_schema(), ensure_ascii=False
-        )
+        schema_json = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
 
         system_msg = {
             "role": "system",
@@ -206,7 +204,9 @@ class BaseOpenAICompatibleProvider:
                 content = content.strip()
                 if content.startswith("```"):
                     lines = content.split("\n")
-                    content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+                    content = "\n".join(
+                        lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+                    )
 
                 try:
                     return output_schema.model_validate_json(content)
@@ -218,13 +218,15 @@ class BaseOpenAICompatibleProvider:
                             ve.errors(),
                         )
                         # 在重试时加强系统提示
-                        augmented.append({
-                            "role": "user",
-                            "content": (
-                                f"上次输出解析失败：{json.dumps(ve.errors(), ensure_ascii=False)}。"
-                                "请确保你的回复严格符合 JSON Schema。"
-                            ),
-                        })
+                        augmented.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"上次输出解析失败：{json.dumps(ve.errors(), ensure_ascii=False)}。"
+                                    "请确保你的回复严格符合 JSON Schema。"
+                                ),
+                            }
+                        )
                         continue
                     else:
                         logger.error(

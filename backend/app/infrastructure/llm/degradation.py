@@ -36,7 +36,9 @@ _DEGRADATION_TEXT_TEMPLATES: dict[str, str] = {
 }
 
 
-def create_degradation_response(task_type: str = "general", context: dict | None = None) -> str:
+def create_degradation_response(
+    task_type: str = "general", context: dict | None = None
+) -> str:
     """返回降级的文本回答.
 
     Args:

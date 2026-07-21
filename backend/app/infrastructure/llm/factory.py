@@ -36,9 +36,7 @@ def create_llm_provider(backend: str | None = None) -> LLMProvider:
     backend = backend or settings.LLM_BACKEND
     provider_cls = _PROVIDER_CLASSES.get(backend)
     if provider_cls is None:
-        logger.warning(
-            "未知 LLM_BACKEND=%s，回退到 MockLLMProvider", backend
-        )
+        logger.warning("未知 LLM_BACKEND=%s，回退到 MockLLMProvider", backend)
         return MockLLMProvider()
     logger.info("创建 LLM Provider: %s", backend)
     return provider_cls()
@@ -90,7 +88,9 @@ class FallbackLLMProvider:
                 yield chunk
             return
         except Exception as e:
-            logger.warning("主 Provider (%s) chat_stream 失败: %s", self.provider_name, e)
+            logger.warning(
+                "主 Provider (%s) chat_stream 失败: %s", self.provider_name, e
+            )
 
         if self._fallback is not None:
             try:
@@ -102,9 +102,7 @@ class FallbackLLMProvider:
 
         yield create_degradation_response(self._task_type)
 
-    async def structured_chat(
-        self, messages: list[dict], output_schema, **kwargs
-    ):
+    async def structured_chat(self, messages: list[dict], output_schema, **kwargs):
         """带降级的 structured_chat."""
         try:
             return await self._primary.structured_chat(
@@ -132,7 +130,9 @@ class FallbackLLMProvider:
         return await self._primary.check_connection()
 
 
-def create_llm_provider_with_fallback(task_type: str = "general") -> FallbackLLMProvider:
+def create_llm_provider_with_fallback(
+    task_type: str = "general",
+) -> FallbackLLMProvider:
     """创建带降级链的 Provider 包装.
 
     根据 LLM_FALLBACK_BACKEND 配置自动选择备选 Provider。

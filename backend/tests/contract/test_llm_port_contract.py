@@ -29,9 +29,9 @@ class TestLLMPortContract:
     ):
         """每个 Provider 都满足 LLMProvider 协议."""
         provider = provider_cls()
-        assert isinstance(provider, LLMProvider), (
-            f"{provider_cls.__name__} 不满足 LLMProvider 协议"
-        )
+        assert isinstance(
+            provider, LLMProvider
+        ), f"{provider_cls.__name__} 不满足 LLMProvider 协议"
 
     @pytest.mark.parametrize(
         "provider_cls,expected_name,backend_type",

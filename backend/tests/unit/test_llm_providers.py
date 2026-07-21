@@ -34,6 +34,7 @@ from app.infrastructure.llm.qwen.provider import QwenProvider
 
 # ── 测试用 Schema ─────────────────────────────────────────
 
+
 class OutputFixture(BaseModel):
     answer: str = ""
     confidence: float = 0.0
@@ -160,9 +161,7 @@ class TestDeepSeekProviderChatStream:
         # 此处不直接测真实 API，只测 client=None 时的行为
         provider._client = None
         chunks = []
-        async for chunk in provider.chat_stream(
-            [{"role": "user", "content": "测试"}]
-        ):
+        async for chunk in provider.chat_stream([{"role": "user", "content": "测试"}]):
             chunks.append(chunk)
         assert len(chunks) == 1
         assert "未激活" in chunks[0] or "API_KEY" in chunks[0]
@@ -191,9 +190,7 @@ class TestDeepSeekProviderChatStream:
         provider._available = True
 
         result = []
-        async for chunk in provider.chat_stream(
-            [{"role": "user", "content": "测试"}]
-        ):
+        async for chunk in provider.chat_stream([{"role": "user", "content": "测试"}]):
             result.append(chunk)
 
         assert "".join(result) == "DeepSeek 回答"
@@ -344,7 +341,9 @@ class TestProviderFactory:
     def test_create_llm_provider_satisfies_protocol(self):
         for backend in ["mock", "deepseek", "qwen"]:
             provider = create_llm_provider(backend)
-            assert isinstance(provider, LLMProvider), f"{backend} not satisfying protocol"
+            assert isinstance(
+                provider, LLMProvider
+            ), f"{backend} not satisfying protocol"
 
 
 # ── 降级模板测试 ──────────────────────────────────────────
