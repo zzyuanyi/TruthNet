@@ -2,10 +2,14 @@
 
 实现 LLMProvider Port 协议。
 返回结构化 mock 数据，不调用真实 LLM。
+支持 structured_chat（从 chat 文本中解析 JSON 或回退默认值）。
 """
 
+import json
 import logging
 from typing import AsyncIterator
+
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,35 @@ class MockLLMProvider:
         answer = await self.chat(messages, **kwargs)
         for i in range(0, len(answer), 10):
             yield answer[i : i + 10]
+
+    async def structured_chat(
+        self,
+        messages: list[dict],
+        output_schema: type[BaseModel],
+        **kwargs,
+    ) -> BaseModel:
+        """结构化的 mock 回答.
+
+        尝试从 chat() 响应中解析 JSON；失败则返回 output_schema 默认实例。
+        """
+        text = await self.chat(messages, **kwargs)
+
+        # 尝试从文本中提取 JSON 片段
+        try:
+            # 查找可能的 JSON 块
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                json_str = text[start : end + 1]
+                return output_schema.model_validate_json(json_str)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.debug("MockLLMProvider.structured_chat: JSON 解析失败: %s", e)
+
+        # 回退：使用模型默认值
+        try:
+            return output_schema()
+        except Exception:
+            return output_schema.model_validate({})
 
     async def check_connection(self) -> bool:
         """Mock 始终可用."""
