@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.exception_handlers import general_exception_handler, not_found_handler
 from app.api.v1.routers import chat as chat_v1
 from app.api.v1.routers import companies as companies_v1
+from app.api.v1.routers import equity as equity_v1
 from app.api.v1.routers import health as health_v1
 from app.core.config import settings
 from app.schemas.chat import ChatData, RiskScore
@@ -257,6 +258,7 @@ async def websocket_chat_legacy(ws: WebSocket):
 # healthz, readyz, companies 等新端点
 app.include_router(health_v1.router, prefix="/api/v1")
 app.include_router(companies_v1.router, prefix="/api/v1")
+app.include_router(equity_v1.router, prefix="/api/v1")
 # V12 chat router 也注册，但 legacy 路由优先匹配
 app.include_router(chat_v1.router, prefix="/api/v1")
 
