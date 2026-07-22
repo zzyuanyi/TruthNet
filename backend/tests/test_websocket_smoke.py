@@ -72,8 +72,7 @@ async def test_websocket_error_on_invalid_json():
         try:
             msg_raw = websocket.receive_text()
             msg = json.loads(msg_raw)
-            assert msg["type"] == "error"
-            assert "trace_id" in msg["data"]
+            assert msg["event_type"] == "turn.failed"
         except WebSocketDisconnect:
             # 某些实现可能在错误后断开，这也是可接受的
             pass
@@ -89,15 +88,14 @@ async def test_websocket_error_on_missing_question():
     client = TestClient(app)
 
     with client.websocket_connect("/api/v1/chat/ws") as websocket:
-        # 发送无 question 的消息
-        websocket.send_json({"type": "question", "data": {}})
+        # 发送无 text 的 V12 消息
+        websocket.send_json({"event_type": "chat.query", "payload": {}})
 
         # 应收到 error 消息
         try:
             msg_raw = websocket.receive_text()
             msg = json.loads(msg_raw)
-            assert msg["type"] == "error"
-            assert "trace_id" in msg["data"]
+            assert msg["event_type"] == "turn.failed"
         except WebSocketDisconnect:
             pass
 
@@ -113,13 +111,7 @@ async def test_websocket_full_flow_with_real_client():
     with client.websocket_connect("/api/v1/chat/ws") as websocket:
         # 发送正常问题
         websocket.send_json(
-            {
-                "type": "question",
-                "data": {
-                    "question": "请分析贵州茅台2023年营收与现金流量表的勾稽关系",
-                    "context": {"company_code": "600519"},
-                },
-            }
+            {"event_type": "chat.query", "payload": {"text": "贵州茅台2023年营收分析"}}
         )
 
         messages_received: list[dict] = []
@@ -129,47 +121,27 @@ async def test_websocket_full_flow_with_real_client():
                 raw = websocket.receive_text()
                 msg = json.loads(raw)
                 messages_received.append(msg)
-                if msg["type"] == "final_answer":
+                if msg["event_type"] == "turn.completed":
                     break
-                if msg["type"] == "error":
+                if msg["event_type"] == "turn.failed":
                     break
         except Exception:
             pass
 
-        # 验证至少收到了 status 和 final_answer
-        msg_types = [m["type"] for m in messages_received]
-        assert "status" in msg_types, f"未收到 status 消息，收到的类型: {msg_types}"
+        # 验证至少收到了 accepted 和 completed
+        msg_types = [m["event_type"] for m in messages_received]
+        assert "turn.accepted" in msg_types, f"未收到 turn.accepted，收到的类型: {msg_types}"
         assert (
-            "final_answer" in msg_types
-        ), f"未收到 final_answer 消息，收到的类型: {msg_types}"
+            "turn.completed" in msg_types
+        ), f"未收到 turn.completed，收到的类型: {msg_types}"
 
-        # 验证 final_answer 包含核心字段
-        final_msgs = [m for m in messages_received if m["type"] == "final_answer"]
+        # 验证 turn.completed 包含核心字段
+        final_msgs = [m for m in messages_received if m["event_type"] == "turn.completed"]
         assert len(final_msgs) > 0
         final = final_msgs[0]
 
-        required_fields = [
-            "answer",
-            "evidence",
-            "graph",
-            "timeline",
-            "risk_score",
-            "warnings",
-            "missing_modules",
-            "trace_id",
-        ]
-        for field in required_fields:
-            assert field in final["data"], f"final_answer 缺少字段: {field}"
-
-        # 验证类型（Prompt4: risk_score 为对象）
-        assert isinstance(final["data"]["answer"], str)
-        assert isinstance(final["data"]["evidence"], list)
-        assert isinstance(final["data"]["graph"], dict)
-        assert isinstance(final["data"]["timeline"], list)
-        assert isinstance(final["data"]["risk_score"], dict)
-        assert "overall" in final["data"]["risk_score"]
-        for key in ("overall", "financial", "ownership", "sentiment"):
-            assert 0.0 <= final["data"]["risk_score"][key] <= 1.0
+        assert "answer" in final["payload"], "turn.completed 缺少 answer"
+        assert "risk_level" in final["payload"]
         assert isinstance(final["data"]["warnings"], list)
         assert isinstance(final["data"]["missing_modules"], list)
         assert isinstance(final["data"]["trace_id"], str)

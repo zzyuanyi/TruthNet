@@ -71,9 +71,9 @@ async def test_companies_search_returns_v12_envelope():
     assert "warnings" in body
 
     data = body["data"]
-    assert "companies" in data
+    assert "candidates" in data
     assert "total" in data
-    assert isinstance(data["companies"], list)
+    assert isinstance(data["candidates"], list)
     assert data["total"] >= 0
 
 
@@ -86,7 +86,7 @@ async def test_companies_empty_query_returns_all():
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["data"]["companies"]) > 0
+    assert len(body["data"]["candidates"]) > 0
 
 
 @pytest.mark.asyncio

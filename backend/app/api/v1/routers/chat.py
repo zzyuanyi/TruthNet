@@ -207,6 +207,7 @@ async def websocket_chat_v1(ws: WebSocket):
             try:
                 # TODO(Phase C): state 应累积同一会话的 messages，支持多轮记忆
                 state = {
+                    "messages": [],
                     "user_query": question,
                     "company": None,
                     "plan": None,
