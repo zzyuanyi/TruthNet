@@ -1,4 +1,4 @@
 """DeepSeek Provider — full profile 主 LLM.
 
-当前为骨架占位，不调用真实 API。
+通过 OpenAI 兼容 API 调用 DeepSeek，支持 chat、流式输出、结构化输出和自动重试。
 """
