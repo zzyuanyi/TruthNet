@@ -15,6 +15,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -89,13 +90,14 @@ class SystemFieldsMixin:
 
 class Company(Base):
     __tablename__ = "companies"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     # ――― 业务字段 ―――
     entity_id: Mapped[str] = mapped_column(
         String(64),
         primary_key=True,
         default=lambda: f"ent_{uuid.uuid4().hex[:12]}",
-        comment="内部稳定实体 ID",
+        comment="内部稳定实体 ID（主键）",
     )
     wind_code: Mapped[str] = mapped_column(
         String(32),
@@ -191,6 +193,7 @@ class BalanceSheet(Base, SystemFieldsMixin):
             "revision_no",
             name="uq_bs_report",
         ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
     )
 
     wind_code: Mapped[str] = mapped_column(
@@ -200,7 +203,9 @@ class BalanceSheet(Base, SystemFieldsMixin):
         String(10), nullable=False, index=True, comment="报告期 (YYYY-MM-DD)"
     )
     statement_type: Mapped[str] = mapped_column(
-        String(32), default="408006000", comment="报表类型代码"
+        String(32),
+        default="408006000",
+        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径) (详见 domain/finance/statement_type.py)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期 (YYYY-MM-DD)"
@@ -266,6 +271,7 @@ class IncomeStatement(Base, SystemFieldsMixin):
             "revision_no",
             name="uq_is_report",
         ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
     )
 
     wind_code: Mapped[str] = mapped_column(
@@ -275,7 +281,9 @@ class IncomeStatement(Base, SystemFieldsMixin):
         String(10), nullable=False, index=True, comment="报告期"
     )
     statement_type: Mapped[str] = mapped_column(
-        String(32), default="408006000", comment="报表类型代码"
+        String(32),
+        default="408006000",
+        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期"
@@ -331,6 +339,7 @@ class CashFlow(Base, SystemFieldsMixin):
             "revision_no",
             name="uq_cf_report",
         ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
     )
 
     wind_code: Mapped[str] = mapped_column(
@@ -340,7 +349,9 @@ class CashFlow(Base, SystemFieldsMixin):
         String(10), nullable=False, index=True, comment="报告期"
     )
     statement_type: Mapped[str] = mapped_column(
-        String(32), default="408006000", comment="报表类型代码"
+        String(32),
+        default="408006000",
+        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期"
@@ -372,6 +383,7 @@ class CashFlow(Base, SystemFieldsMixin):
 
 class TopShareholder(Base, SystemFieldsMixin):
     __tablename__ = "top_shareholders"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     wind_code: Mapped[str] = mapped_column(
         String(32), nullable=False, index=True, comment="Wind 代码"
@@ -389,10 +401,10 @@ class TopShareholder(Base, SystemFieldsMixin):
         String(256), nullable=True, comment="股东别名（用于实体对齐）"
     )
     s_holder_pct: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="持股比例 (%)"
+        Numeric(10, 4), nullable=True, comment="持股比例 (%) — 精度 10 位，4 位小数"
     )
     s_holder_quantity: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="持股数量"
+        Numeric(20, 2), nullable=True, comment="持股数量"
     )
     s_holder_holdercategory: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="股东类别"
@@ -424,6 +436,7 @@ class TopShareholder(Base, SystemFieldsMixin):
 
 class Announcement(Base, SystemFieldsMixin):
     __tablename__ = "announcements"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     object_id: Mapped[str] = mapped_column(
         String(128), unique=True, nullable=False, comment="公告源 ID"
@@ -464,6 +477,7 @@ class Announcement(Base, SystemFieldsMixin):
 
 class ResearchReport(Base, SystemFieldsMixin):
     __tablename__ = "research_reports"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     report_id: Mapped[str] = mapped_column(
         String(128), unique=True, nullable=False, comment="研报唯一 ID"
@@ -520,6 +534,7 @@ class ResearchReport(Base, SystemFieldsMixin):
 
 class ConversationSession(Base):
     __tablename__ = "conversation_sessions"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     session_id: Mapped[str] = mapped_column(
         String(64),
@@ -560,6 +575,7 @@ class ConversationSession(Base):
 
 class ConversationTurn(Base):
     __tablename__ = "conversation_turns"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     turn_id: Mapped[str] = mapped_column(
         String(64),
@@ -604,6 +620,7 @@ class ConversationTurn(Base):
 
 class RuleDefinition(Base):
     __tablename__ = "rule_definitions"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     rule_id: Mapped[str] = mapped_column(
         String(64), primary_key=True, comment="规则唯一 ID"
@@ -643,6 +660,7 @@ class RuleDefinition(Base):
 
 class RuleEvaluation(Base):
     __tablename__ = "rule_evaluations"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     rule_id: Mapped[str] = mapped_column(
@@ -683,6 +701,7 @@ class RuleEvaluation(Base):
 
 class EvidenceRef(Base):
     __tablename__ = "evidence_refs"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     evidence_id: Mapped[str] = mapped_column(
         String(64), primary_key=True, comment="证据唯一 ID"
@@ -741,6 +760,7 @@ class EvidenceRef(Base):
 
 class Claim(Base):
     __tablename__ = "claims"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     claim_id: Mapped[str] = mapped_column(
         String(64), primary_key=True, comment="声明唯一 ID"
@@ -785,6 +805,7 @@ class Claim(Base):
 
 class RiskAssessment(Base):
     __tablename__ = "risk_assessments"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     assessment_id: Mapped[str] = mapped_column(
