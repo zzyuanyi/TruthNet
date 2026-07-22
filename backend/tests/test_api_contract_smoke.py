@@ -33,19 +33,20 @@ async def test_health_check_contract():
 
 @pytest.mark.asyncio
 async def test_chat_mock_contract():
-    """POST /api/v1/chat mock 返回正确的响应结构。"""
+    """POST /api/v1/chat V12 返回 {data, meta, warnings} 格式。"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/chat", json={})
+        response = await client.post("/api/v1/chat", json={"question": "test"})
 
     assert response.status_code == 200
     body = response.json()
 
-    # 统一响应结构
-    assert body["code"] == 0
-    assert body["message"] == "ok"
+    # V12 response envelope
+    assert "data" in body
+    assert "meta" in body
+    assert "warnings" in body
+    assert body["meta"]["schema_version"] == "1.0"
 
-    # data 核心字段 (与 API_CONTRACT.md 一致)
     data = body["data"]
     required_fields = [
         "answer",

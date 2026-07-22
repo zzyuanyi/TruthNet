@@ -1,7 +1,7 @@
 """对话路由 — V12 baseline.
 
 POST /api/v1/chat — V12 response envelope 格式。
-WS /api/v1/chat/ws — V12 event envelope 格式。
+WS /api/v1/chat/ws — V12 event envelope + Agent graph。
 """
 
 import json
@@ -10,9 +10,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.agents.graph import create_agent_graph
+from app.agents.state import ModuleResults, RuntimeState
 from app.api.v1.schemas.chat import ChatDataV1, ChatRequestV1
 from app.api.v1.schemas.common import ApiMeta, V12Response
 
+_compiled_graph = create_agent_graph().compile()
 router = APIRouter(tags=["chat"])
 
 
@@ -134,90 +137,167 @@ async def websocket_chat_v1(ws: WebSocket):
                 )
                 continue
 
-            question = msg.get("question", "") or msg.get("data", {}).get(
-                "question", ""
-            )
+            event_type = msg.get("event_type", "")
+            payload = msg.get("payload", {})
 
+            # backward compat: old {question, data.question} format
+            if not event_type:
+                question = msg.get("question", "") or msg.get("data", {}).get(
+                    "question", ""
+                )
+                if question:
+                    event_type = "chat.query"
+                    payload = {"text": question}
+
+            # dispatch
+            if event_type == "ping":
+                await ws.send_json(
+                    _envelope(
+                        "heartbeat",
+                        {"server_time": datetime.now(timezone.utc).isoformat()},
+                    )
+                )
+                continue
+
+            if event_type == "turn.cancel":
+                await ws.send_json(_envelope("turn.completed", {"message": "已取消"}))
+                continue
+
+            if event_type not in ("chat.query", "chat.follow_up", "company.confirm"):
+                await ws.send_json(
+                    _envelope(
+                        "turn.failed",
+                        {
+                            "error_code": "UNKNOWN_EVENT",
+                            "message": f"未知事件类型: {event_type}",
+                        },
+                    )
+                )
+                continue
+
+            if event_type == "company.confirm":
+                await ws.send_json(
+                    _envelope("turn.accepted", {"message": "已确认公司"})
+                )
+                await ws.send_json(
+                    _envelope("turn.completed", {"message": "公司确认完成 (mock)"})
+                )
+                continue
+
+            question = payload.get("text", "")
             if not question:
                 await ws.send_json(
                     _envelope(
                         "turn.failed",
                         {
                             "error_code": "MISSING_QUESTION",
-                            "message": "question 字段为必填项",
+                            "message": "payload.text 为必填项",
                         },
                     )
                 )
                 continue
 
-            # 1. turn.accepted
+            # turn.accepted
             await ws.send_json(
                 _envelope(
                     "turn.accepted", {"message": f"已收到问题: {question[:50]}..."}
                 )
             )
 
-            # 2. module.started
-            await ws.send_json(
-                _envelope(
-                    "module.started",
-                    {"module": "orchestrator", "status": "running"},
-                )
-            )
+            try:
+                # TODO(Phase C): state 应累积同一会话的 messages，支持多轮记忆
+                state = {
+                    "user_query": question,
+                    "company": None,
+                    "plan": None,
+                    "module_status": {},
+                    "results": ModuleResults(),
+                    "evidence": [],
+                    "claims": [],
+                    "final_response": None,
+                    "runtime": RuntimeState(trace_id=trace_id, session_id=session_id),
+                }
+                result = _compiled_graph.invoke(state)
 
-            # 3. answer.delta (mock streaming)
-            mock_answer = (
-                f"Mock V12 回答：关于「{question[:30]}...」的分析正在开发中。"
-                "当前 WebSocket V12 event envelope 端点已就绪。"
-            )
-            for i, chunk in enumerate(
-                mock_answer[i : i + 20] for i in range(0, len(mock_answer), 20)
-            ):
-                if chunk:
+                # TODO(Phase C): 当搜索返回多候选时，发送 company.candidates 事件等待用户确认
+                module_status = result.get("module_status", {})
+                final_response = result.get("final_response")
+
+                if not final_response:
                     await ws.send_json(
-                        _envelope("answer.delta", {"text": chunk, "index": i})
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "NO_RESPONSE",
+                                "message": "Agent 未返回结果",
+                            },
+                        )
+                    )
+                    continue
+
+                # 3. module.started + module.completed
+                for name, ms in module_status.items():
+                    await ws.send_json(
+                        _envelope(
+                            "module.started", {"module": name, "status": "running"}
+                        )
+                    )
+                for name, ms in module_status.items():
+                    await ws.send_json(
+                        _envelope(
+                            "module.completed",
+                            {
+                                "module": name,
+                                "status": ms.state,
+                                "duration_ms": ms.duration_ms,
+                            },
+                        )
                     )
 
-            # 4. artifact.upsert
-            await ws.send_json(
-                _envelope(
-                    "artifact.upsert",
-                    {
-                        "artifact_type": "risk_score",
-                        "data": {
-                            "overall": 0.15,
-                            "financial": 0.10,
-                            "ownership": 0.20,
-                            "sentiment": 0.05,
-                        },
-                    },
-                )
-            )
+                # 4. answer.delta
+                # TODO(Phase C): 替换为 graph.astream() 实现真流式输出
+                chunks = final_response.answer.split("。")
+                for chunk in chunks:
+                    if chunk.strip():
+                        await ws.send_json(
+                            _envelope("answer.delta", {"text": chunk.strip() + "。"})
+                        )
 
-            # 5. turn.completed
-            await ws.send_json(
-                _envelope(
-                    "turn.completed",
-                    {
-                        "answer": mock_answer,
-                        "evidence": [],
-                        "graph": {"nodes": [], "edges": []},
-                        "timeline": [],
-                        "risk_score": {
-                            "overall": 0.0,
-                            "financial": 0.0,
-                            "ownership": 0.0,
-                            "sentiment": 0.0,
+                # 5. artifact.upsert — risk_score
+                await ws.send_json(
+                    _envelope(
+                        "artifact.upsert",
+                        {
+                            "artifact_type": "risk_assessment",
+                            "artifact_id": f"risk_{session_id}",
+                            "revision": 1,
+                            "operation": "replace",
+                            "data": {"risk_level": final_response.risk_level},
                         },
-                        "warnings": [],
-                        "missing_modules": [
-                            "编排Agent",
-                            "财务勾稽Agent",
-                            "股权穿透Skill",
-                        ],
-                    },
+                    )
                 )
-            )
+
+                # 6. turn.completed
+                await ws.send_json(
+                    _envelope(
+                        "turn.completed",
+                        {
+                            "answer": final_response.answer,
+                            "risk_level": final_response.risk_level,
+                            "claims_count": len(result.get("claims", [])),
+                            "follow_ups": final_response.follow_ups,
+                            "evidence_count": len(result.get("evidence", [])),
+                        },
+                    )
+                )
+
+            except Exception:
+                await ws.send_json(
+                    _envelope(
+                        "turn.failed",
+                        {"error_code": "AGENT_ERROR", "message": "Agent 执行异常"},
+                    )
+                )
 
     except WebSocketDisconnect:
         pass
