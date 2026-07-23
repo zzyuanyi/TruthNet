@@ -1,0 +1,154 @@
+{
+  "integration": {
+    "branch": "integration/pr9-pr10-pr11-harmonization",
+    "base_main_sha": "3e45048",
+    "created_at": "2026-07-23T13:45:00+08:00",
+    "status": "passed_with_limitations",
+    "merge_ready": false
+  },
+  "prs": {
+    "9": {
+      "number": 9,
+      "title": "feat(api): WS 接入 Agent 图 + 公司搜索画像 + 清理 legacy",
+      "head_ref": "feature/zhiyuhan0703-github-skill-test",
+      "head_sha": "064688ab20d3c9a20d054ec56564451d67623230",
+      "author": "zhiyuhan0703",
+      "ci_status": "FAILURE",
+      "files_changed": 9,
+      "accepted": [
+        "V12 WS 信封格式",
+        "Agent 图接入意图",
+        "CompanyRef 字段对齐",
+        "/{code} 画像端点",
+        "事件 dispatch (5类型)",
+        "ping/heartbeat",
+        "旧格式兼容"
+      ],
+      "reworked": [
+        "模块级 graph 编译 → 延迟初始化",
+        "sync invoke → asyncio.to_thread",
+        "bare except → 结构化日志",
+        "路由重复注册 → 统一 router"
+      ],
+      "rejected": []
+    },
+    "10": {
+      "number": 10,
+      "title": "feat(data): 成员A数据流水线完成",
+      "head_ref": "feature/xingran-taro-workspace",
+      "head_sha": "0de6e7eadffac2d8457206958ffef3016ca4df99",
+      "author": "xingran-taro",
+      "ci_status": "FAILURE",
+      "files_changed": 5,
+      "accepted": [
+        "比赛数据读取逻辑",
+        "行业覆盖率补全",
+        "七表入库流程",
+        "康美验证数据",
+        "研报分块 ChromaDB"
+      ],
+      "reworked": [
+        "硬编码凭据 → 环境变量",
+        "硬编码路径 → CLI args + Settings",
+        "import 副作用 → main() 入口",
+        "if_exists='append' → staging + upsert",
+        "entity_id 格式 → company_{code}_{exchange}",
+        "DROP TABLE fixture → Python loader"
+      ],
+      "rejected": []
+    },
+    "11": {
+      "number": 11,
+      "title": "feat(data): 数据组成员B Phase B 交付",
+      "head_ref": "feature/2659856590-svg-workspace",
+      "head_sha": "c36a8962f9204f821d6f8eef30fbcbd481f2c6dc",
+      "author": "2659856590-svg",
+      "ci_status": "SUCCESS",
+      "files_changed": 5,
+      "accepted": [
+        "Neo4j 全量图谱构建",
+        "批量 UNWIND 思路",
+        "实体标准化复用",
+        "一致行动人分析",
+        "康美/裕兴/茅台验证链",
+        "公告情绪映射",
+        "RULES_SPEC 详细规格"
+      ],
+      "reworked": [
+        "Wind Code 后缀 → 统一 normalizer",
+        "DETACH DELETE 默认 → --replace-graph-version",
+        "MERGE 覆盖历史 → relationship_id 快照",
+        "entity_type SASAC → Government",
+        "29→33 类公告覆盖",
+        "RULES_SPEC 一致性审核"
+      ],
+      "rejected": []
+    }
+  },
+  "files": {
+    "new": [
+      "backend/app/infrastructure/graph/normalizer.py",
+      "backend/tests/unit/test_normalizer.py",
+      "scripts/task1_mysql_import.py",
+      "scripts/task3_chromadb_import.py",
+      "scripts/load_kangmei_fixture.py",
+      "scripts/neo4j_full_import.py",
+      "scripts/announcement_sentiment.py",
+      "reports/pr9_pr10_pr11_integration/00_summary.md",
+      "reports/pr9_pr10_pr11_integration/01_pr_decision_matrix.md",
+      "reports/pr9_pr10_pr11_integration/10_merge_plan.md",
+      "reports/pr9_pr10_pr11_integration/manifest.json"
+    ],
+    "modified": [
+      "backend/app/core/config.py",
+      ".env.example",
+      "backend/app/infrastructure/graph/neo4j/equity_graph.py",
+      "backend/app/api/v1/routers/chat.py",
+      "backend/app/api/v1/routers/companies.py",
+      "backend/app/main.py"
+    ],
+    "deleted": []
+  },
+  "blockers": [
+    {
+      "id": "B1",
+      "severity": "HIGH",
+      "description": "MySQL 数据未实际导入验证",
+      "resolution": "运行 scripts/task1_mysql_import.py"
+    },
+    {
+      "id": "B2",
+      "severity": "HIGH",
+      "description": "Neo4j 未启动/未导入数据",
+      "resolution": "启动 Neo4j 2025.06.1 + 运行 scripts/neo4j_full_import.py"
+    },
+    {
+      "id": "B3",
+      "severity": "HIGH",
+      "description": "ChromaDB 研报未向量化入库",
+      "resolution": "运行 scripts/task3_chromadb_import.py"
+    },
+    {
+      "id": "B4",
+      "severity": "MEDIUM",
+      "description": "康美 E2E 未实际运行验证",
+      "resolution": "完整流水线就绪后执行端到端测试"
+    },
+    {
+      "id": "B5",
+      "severity": "MEDIUM",
+      "description": "numpy 2.1.1 导致 pytest 崩溃",
+      "resolution": "pip install 'numpy<2'"
+    }
+  ],
+  "recommended_merge_order": ["PR10", "PR11", "PR9"],
+  "fail_closed": {
+    "modified_main": false,
+    "committed": false,
+    "pushed": false,
+    "merged": false,
+    "deleted_user_changes": false,
+    "committed_secrets_or_paths": false,
+    "skipped_tests_for_success": false
+  }
+}

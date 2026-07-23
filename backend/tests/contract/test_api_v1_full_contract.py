@@ -43,7 +43,7 @@ async def test_companies_search():
     body = response.json()
     assert "data" in body
     assert "meta" in body
-    assert len(body["data"]["companies"]) >= 1
+    assert len(body["data"]["candidates"]) >= 1
 
 
 @pytest.mark.asyncio
