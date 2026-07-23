@@ -1,44 +1,36 @@
-"""Qwen LLM Provider — full profile 备选 (骨架).
+"""Qwen LLM Provider — full profile 备选 LLM.
 
 实现 LLMProvider Port 协议。
-当前为空实现，不调用真实 Qwen API。
+通过阿里云 DashScope OpenAI 兼容 API 调用通义千问。
 """
 
 import logging
-from typing import AsyncIterator
 
 from app.core.config import settings
+from app.infrastructure.llm.base import BaseOpenAICompatibleProvider
 
 logger = logging.getLogger(__name__)
 
+# Qwen DashScope 兼容端点默认值
+_QWEN_DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-class QwenProvider:
+
+class QwenProvider(BaseOpenAICompatibleProvider):
     """Qwen (通义千问) LLM Provider — full profile 备选.
 
-    TODO: 接入 Qwen API (OpenAI 兼容接口)。
+    使用 DashScope OpenAI 兼容 API。
+    当 DeepSeek 不可用时作为降级备选。
     """
 
     def __init__(self):
-        self._available = False
-        logger.info("QwenProvider: 骨架已加载，API 未激活")
+        base_url = settings.QWEN_BASE_URL or _QWEN_DEFAULT_BASE_URL
+        super().__init__(
+            api_key=settings.QWEN_API_KEY,
+            base_url=base_url,
+            model=settings.QWEN_MODEL,
+            timeout=settings.LLM_REQUEST_TIMEOUT,
+        )
 
     @property
     def provider_name(self) -> str:
         return "qwen"
-
-    async def check_connection(self) -> bool:
-        """检查 Qwen API 连接."""
-        if not settings.QWEN_API_KEY:
-            logger.warning("Qwen API key 未配置")
-            return False
-        return False
-
-    async def chat(self, messages: list[dict], **kwargs) -> str:
-        """对话 (空实现)."""
-        logger.warning("QwenProvider.chat: 未实现")
-        return "Qwen Provider 未激活，请在 full profile 下配置 QWEN_API_KEY。"
-
-    async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
-        """流式对话 (空实现)."""
-        logger.warning("QwenProvider.chat_stream: 未实现")
-        yield "Qwen Provider 未激活。"

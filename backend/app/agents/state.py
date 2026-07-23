@@ -1,49 +1,145 @@
-"""Agent State — V12 baseline.
+"""Agent State — V12 §7.3.
 
-基于 LangGraph StateGraph 的 Agent 状态定义。
+TypedDict + Annotated reducer pattern for LangGraph StateGraph.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import date
+from typing import Annotated, Any, Literal, TypedDict
 
-from app.domain.conversation.models import ChatContext
-from app.domain.evidence.models import Claim
+from langgraph.graph import add_messages
+from pydantic import BaseModel, Field
 
 
-class AgentState(BaseModel):
-    """LangGraph Agent 全局状态 — V12 baseline.
+# ── V12 §7.3 模型 ──────────────────────────────────────────
 
-    贯穿整个编排流程的共享状态。
-    使用 LangGraph 的 Annotated reducer 机制合并增量更新。
-    """
 
-    # 输入
-    question: str = Field(default="", description="用户问题")
-    session_id: str | None = Field(default=None, description="会话 ID")
-    context: ChatContext | None = Field(default=None, description="对话上下文")
+class CompanyRef(BaseModel):
+    """公司引用 — V12 §7.3."""
 
-    # 编排
-    intent: str = Field(default="", description="识别的意图")
-    execution_plan: list[str] = Field(default_factory=list, description="执行计划")
+    entity_id: str
+    wind_code: str
+    sec_name: str
+    exchange: str
+    industry_l1: str | None = None
 
-    # 模块状态
-    module_status: dict[str, str] = Field(
-        default_factory=dict, description="各模块执行状态"
-    )
-    missing_modules: list[str] = Field(default_factory=list, description="暂缺模块")
 
-    # 中间结果
-    evidence: list[dict] = Field(default_factory=list, description="证据列表")
-    claims: list[Claim] = Field(default_factory=list, description="结论声明")
-    graph: dict = Field(default_factory=dict, description="图谱数据")
-    timeline: list[dict] = Field(default_factory=list, description="事件时间线")
-    risk_score: dict = Field(default_factory=dict, description="风险评分")
+class ExecutionPlan(BaseModel):
+    """执行计划 — V12 §7.3."""
 
-    # 输出
-    answer: str = Field(default="", description="最终回答")
-    warnings: list[str] = Field(default_factory=list, description="预警")
+    intent: str = ""
+    requested_modules: list[str] = Field(default_factory=list)
+    cross_checks: list[str] = Field(default_factory=list)
+    as_of: date | None = None
+    deadline_ms: int = 8000
 
-    # 追踪
-    trace_id: str = Field(default="", description="追踪 ID")
-    errors: list[dict] = Field(default_factory=list, description="错误列表")
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class ModuleStatus(BaseModel):
+    """模块状态 — V12 §7.3."""
+
+    state: Literal[
+        "pending", "running", "success", "partial", "failed", "skipped", "cancelled"
+    ] = "pending"
+    error_code: str | None = None
+    recoverable: bool = False
+    duration_ms: int | None = None
+
+
+class RuntimeState(BaseModel):
+    """运行上下文 — V12 §7.3."""
+
+    request_id: str = ""
+    trace_id: str = ""
+    session_id: str = ""
+    thread_id: str = ""
+    turn_id: str = ""
+    sequence: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class EvidenceRef(BaseModel):
+    """证据引用 — V12 §9.1（精简，Phase B mock 用）."""
+
+    evidence_id: str
+    source_type: str = ""
+    source_record_id: str = ""
+    field_path: str | None = None
+    period: str | None = None
+    value: str | None = None
+    source_title: str = ""
+
+
+class Claim(BaseModel):
+    """结论声明 — V12 §9.2."""
+
+    claim_id: str
+    text: str
+    claim_type: str = ""
+    severity: str = "unknown"
+    confidence: float | None = None
+    rule_id: str | None = None
+    rule_version: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    verification_status: str = "pending"
+    limitations: list[str] = Field(default_factory=list)
+
+
+class FinalResponse(BaseModel):
+    """最终响应 — V12 §11.4."""
+
+    answer: str = ""
+    risk_level: str = "unknown"
+    claims: list[Claim] = Field(default_factory=list)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
+
+
+# ── 模块结果（并行写入，各自隔离） ─────────────────────────
+
+
+class FinanceResult(BaseModel):
+    rule_statuses: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+
+
+class EquityResult(BaseModel):
+    graph: dict = Field(default_factory=dict)
+    chains: list[dict] = Field(default_factory=list)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+
+
+class EventsResult(BaseModel):
+    timeline: list[dict] = Field(default_factory=list)
+    clusters: list[dict] = Field(default_factory=list)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+
+
+class ModuleResults(BaseModel):
+    """三模块结果容器。None 表示该模块未执行。"""
+
+    finance: FinanceResult | None = None
+    equity: EquityResult | None = None
+    events: EventsResult | None = None
+
+
+# ── AgentState (TypedDict + Annotated) — V12 §7.3 ──────────
+
+
+class AgentState(TypedDict, total=False):
+    user_query: str
+    messages: Annotated[list[Any], add_messages]
+    company: CompanyRef | None
+    plan: ExecutionPlan | None
+    module_status: Annotated[dict[str, ModuleStatus], lambda a, b: {**a, **b}]
+    results: Annotated[
+        ModuleResults,
+        lambda a, b: ModuleResults(
+            finance=b.finance or (a and a.finance),
+            equity=b.equity or (a and a.equity),
+            events=b.events or (a and a.events),
+        ),
+    ]
+    evidence: Annotated[list[EvidenceRef], lambda a, b: a + b]
+    claims: Annotated[list[Claim], lambda a, b: a + b]
+    final_response: FinalResponse | None
+    runtime: RuntimeState

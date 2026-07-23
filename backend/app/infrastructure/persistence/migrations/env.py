@@ -1,29 +1,79 @@
-from logging.config import fileConfig
+"""Alembic migration environment -- V12 baseline.
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+Supports lite (SQLite) and full (MySQL) dual profiles.
+Database URL is built from env vars; falls back to alembic.ini.
+"""
+
+import os
+import sys
+from logging.config import fileConfig
+from pathlib import Path
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, pool
+from sqlalchemy.engine import URL as EngineURL
 
 from alembic import context
+
+# Load .env file before any settings resolution
+_repo_root = (
+    Path(__file__).resolve().parents[5]
+)  # migrations -> persistence -> infrastructure -> app -> backend -> repo
+_env_path = _repo_root / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+
+# Ensure backend/ is on sys.path
+_src = (
+    Path(__file__).resolve().parents[4]
+)  # migrations -> persistence -> infrastructure -> app -> backend
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+from app.infrastructure.persistence.models import Base  # noqa: E402
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+target_metadata = Base.metadata
+
+
+def _build_database_url():
+    """Build database URL from environment variables.
+
+    TRUTHNET_PROFILE=lite  -> SQLite
+    TRUTHNET_PROFILE=full  -> MySQL
+    Env vars take priority over alembic.ini.
+    """
+    profile = os.getenv("TRUTHNET_PROFILE", "lite")
+    sql_backend = os.getenv("SQL_BACKEND", "sqlite")
+
+    if profile == "full" or sql_backend == "mysql":
+        host = os.getenv("MYSQL_HOST", "localhost")
+        port = int(os.getenv("MYSQL_PORT", "3306"))
+        database = os.getenv("MYSQL_DATABASE", "truthnet")
+        user = os.getenv("MYSQL_USER", "truthnet")
+        password = os.getenv("MYSQL_PASSWORD", "")
+
+        return EngineURL.create(
+            "mysql+pymysql",
+            username=user,
+            password=password,
+            host=host,
+            port=port,
+            database=database,
+            query={"charset": "utf8mb4"},
+        )
+    else:
+        # lite/sqlite -- fall back to sqlalchemy.url in alembic.ini
+        return config.get_main_option("sqlalchemy.url", "sqlite:///data/truthnet.db")
 
 
 def run_migrations_offline() -> None:
@@ -36,9 +86,8 @@ def run_migrations_offline() -> None:
 
     Calls to context.execute() here emit the given string to the
     script output.
-
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = _build_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -55,13 +104,13 @@ def run_migrations_online() -> None:
 
     In this scenario we need to create an Engine
     and associate a connection with the context.
-
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    url = _build_database_url()
+    engine_kwargs = {"poolclass": pool.NullPool}
+    # connect_timeout is MySQL-only; SQLite rejects it
+    if "mysql" in str(url):
+        engine_kwargs["connect_args"] = {"connect_timeout": 5}
+    connectable = create_engine(url, **engine_kwargs)
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

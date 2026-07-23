@@ -1,4 +1,5 @@
 """Qwen Provider — full profile 备选 LLM.
 
-当前为骨架占位，不调用真实 API。
+通过 DashScope OpenAI 兼容 API 调用通义千问。
+当 DeepSeek 不可用时作为降级备选。
 """

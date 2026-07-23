@@ -23,8 +23,9 @@ def mysql_config():
     from app.core.config import Settings
 
     s = Settings()
-    if not s.MYSQL_PASSWORD:
-        pytest.skip("MYSQL_PASSWORD not configured")
+    # Allow empty password (local dev with no-password root)
+    if s.MYSQL_PASSWORD is None:
+        pytest.skip("MYSQL_PASSWORD is None")
     return s
 
 

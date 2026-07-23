@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     QWEN_BASE_URL: str = ""
     QWEN_MODEL: str = "qwen-max"
 
+    # LLM 回退与重试
+    LLM_FALLBACK_BACKEND: str = ""  # 空 = 无回退；"qwen" | "mock"
+    LLM_RETRY_MAX_ATTEMPTS: int = 2  # 共 2 次尝试 = 1 次重试
+    LLM_RETRY_MIN_WAIT: float = 1.0  # 秒
+    LLM_RETRY_MAX_WAIT: float = 5.0  # 秒
+    LLM_REQUEST_TIMEOUT: int = 30  # 秒
+
     # ===== 嵌入模型（兼容旧字段）=====
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = ""
