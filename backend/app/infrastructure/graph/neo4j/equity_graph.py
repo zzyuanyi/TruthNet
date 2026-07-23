@@ -138,15 +138,15 @@ class Neo4jEquityGraph:
         resolved_code = code_6 if code_6 else company_code
         if not suffix:
             # 推断后缀: 6 开头→沪市, 0/3 开头→深市, 9 开头→北交所
-            if resolved_code.startswith('6'):
-                suffix = '.SH'
-            elif resolved_code.startswith('0') or resolved_code.startswith('3'):
-                suffix = '.SZ'
-            elif resolved_code.startswith('8') or resolved_code.startswith('9'):
+            if resolved_code.startswith("6"):
+                suffix = ".SH"
+            elif resolved_code.startswith("0") or resolved_code.startswith("3"):
+                suffix = ".SZ"
+            elif resolved_code.startswith("8") or resolved_code.startswith("9"):
                 # 北交所 (.BJ) 或新三板，使用原始格式匹配
-                suffix = ''  # 在 entity 中 wind_code 存储的就是原始格式
+                suffix = ""  # 在 entity 中 wind_code 存储的就是原始格式
             else:
-                suffix = '.SH'  # fallback
+                suffix = ".SH"  # fallback
 
         depth = max(1, min(10, depth))
 
