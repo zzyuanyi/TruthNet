@@ -90,3 +90,4 @@ htmlcov/
 *.crt
 .gguf
 .safetensors
+data/model_cache/

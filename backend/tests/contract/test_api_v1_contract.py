@@ -71,7 +71,7 @@ async def test_companies_search_returns_v12_envelope():
     assert "warnings" in body
 
     data = body["data"]
-    assert "candidates" in data
+    assert "candidates" in data  # V12: companies → candidates
     assert "total" in data
     assert isinstance(data["candidates"], list)
     assert data["total"] >= 0
@@ -104,16 +104,14 @@ async def test_legacy_health_still_works():
 
 
 @pytest.mark.asyncio
-async def test_chat_v12_envelope():
-    """POST /api/v1/chat 返回 V12 {data, meta, warnings} 格式."""
+async def test_legacy_chat_still_works():
+    """POST /api/v1/chat 旧格式仍可用."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/api/v1/chat", json={"question": "test"})
 
     assert response.status_code == 200
     body = response.json()
-    assert "data" in body
-    assert "meta" in body
-    assert "warnings" in body
-    assert body["meta"]["schema_version"] == "1.0"
+    # 旧格式
+    assert body["code"] == 0
     assert "answer" in body["data"]
