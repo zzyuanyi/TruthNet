@@ -10,8 +10,8 @@ import type {
   HealthData,
   ChatRequest,
   ChatData,
-  WSMessage,
-  WSQuestionRequest,
+  WSEventEnvelope,
+  WSClientEvent,
 } from '../types/api';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -31,7 +31,7 @@ export async function healthCheck(): Promise<UnifiedResponse<HealthData>> {
 
 export async function sendChat(
   request: ChatRequest
-): Promise<UnifiedResponse<ChatData>> {
+): Promise<{ data: ChatData | null }> {
   const res = await fetch(`${API_BASE}/api/v1/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -44,15 +44,15 @@ export async function sendChat(
 }
 
 // ============================================================
-// WebSocket
+// WebSocket — V12 event envelope
 // ============================================================
 
-export type WSMessageHandler = (msg: WSMessage) => void;
+export type WSEventHandler = (msg: WSEventEnvelope) => void;
 export type WSErrorHandler = (err: Event) => void;
 export type WSCloseHandler = () => void;
 
 export function connectWebSocket(
-  onMessage: WSMessageHandler,
+  onEvent: WSEventHandler,
   onError?: WSErrorHandler,
   onClose?: WSCloseHandler
 ): WebSocket {
@@ -64,8 +64,8 @@ export function connectWebSocket(
 
   ws.onmessage = (event: MessageEvent) => {
     try {
-      const msg: WSMessage = JSON.parse(event.data as string);
-      onMessage(msg);
+      const msg: WSEventEnvelope = JSON.parse(event.data as string);
+      onEvent(msg);
     } catch {
       console.error('[WS] Failed to parse message:', event.data);
     }
@@ -84,8 +84,16 @@ export function connectWebSocket(
   return ws;
 }
 
-export function sendWSQuestion(ws: WebSocket, request: WSQuestionRequest): void {
+export function sendWSEvent(ws: WebSocket, event: WSClientEvent): void {
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(request));
+    ws.send(JSON.stringify(event));
   }
+}
+
+/** 向后兼容别名 */
+export function sendWSQuestion(ws: WebSocket, question: string): void {
+  sendWSEvent(ws, {
+    event_type: 'chat.query',
+    payload: { text: question },
+  });
 }
