@@ -1,18 +1,15 @@
-"""对话路由 — V12 baseline (集成版).
+"""对话路由 — V12 baseline (审计修复版).
 
-整合 PR #9 Agent 图接入 + legacy 兼容。
+POST /api/v1/chat — V12 response envelope + Agent graph (REST)。
+WS /api/v1/chat/ws — V12 event envelope + Agent graph (WebSocket)。
 
-POST /api/v1/chat — V12 response envelope 格式。
-WS /api/v1/chat/ws — V12 event envelope + Agent graph。
-
-变更（相对于 PR #9 原版）：
-  - 去掉模块级 _compiled_graph（延迟到 lazy init）
-  - Agent 调用使用 asyncio.to_thread 避免阻塞事件循环
-  - 修复 bare except → 结构化日志 + 客户端安全错误
-  - 保留 legacy 旧格式兼容（{question} / {data: {question}}）
-  - 保留 ChatContext Pydantic 类型（不降级为 dict）
+审计修复 (P0-1, P0-3):
+  - POST /api/v1/chat 不再返回硬编码 mock，改为进入真实 Agent graph
+  - REST 与 WS 使用同一套 Agent 流程
+  - 移除贵州茅台硬编码 mock
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -42,67 +39,116 @@ def _get_graph():
     return _compiled_graph
 
 
-@router.post("/chat", response_model=V12Response[ChatDataV1])
-async def chat_v1(request: ChatRequestV1):
-    """对话接口 — V12 response envelope (mock).
+def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]:
+    """从 Agent graph 结果构建 V12 REST 响应。
 
-    当 LLM_BACKEND 切换为真实 provider 后，此端点将调用 Agent graph。
+    从 Agent State 中提取结构化数据并转换为 API DTO。
     """
-    trace_id = str(uuid.uuid4())
+    final_response = result.get("final_response")
+    claims = result.get("claims", [])
+    evidence = result.get("evidence", [])
+    module_status = result.get("module_status", {})
+    results = result.get("results")
+
+    # 提取 risk_score
+    triggered = [c for c in claims if getattr(c, "severity", "") == "red"]
+    risk_score = {
+        "overall": min(1.0, len(triggered) * 0.25),
+        "financial": 0.8
+        if any(
+            getattr(c, "claim_type", "") == "financial"
+            and getattr(c, "severity", "") == "red"
+            for c in claims
+        )
+        else 0.1,
+        "ownership": 0.3
+        if any(
+            getattr(c, "claim_type", "") == "equity"
+            and getattr(c, "severity", "") == "red"
+            for c in claims
+        )
+        else 0.1,
+        "sentiment": 0.5
+        if any(
+            getattr(c, "claim_type", "") == "event"
+            and getattr(c, "severity", "") == "red"
+            for c in claims
+        )
+        else 0.05,
+    }
+
+    # 提取 evidence
+    evidence_items = []
+    for ev in evidence:
+        if isinstance(ev, dict):
+            evidence_items.append(
+                {
+                    "source": ev.get("source_type", ev.get("source_title", "")),
+                    "field": ev.get("field_path", ""),
+                    "value": str(ev.get("value", "")),
+                }
+            )
+        elif hasattr(ev, "source_type"):
+            evidence_items.append(
+                {
+                    "source": getattr(ev, "source_title", "")
+                    or getattr(ev, "source_type", ""),
+                    "field": getattr(ev, "field_path", ""),
+                    "value": str(getattr(ev, "value", "")),
+                }
+            )
+
+    # 提取 graph
+    graph_data: dict = {"nodes": [], "edges": []}
+    if results and getattr(results, "equity", None):
+        eq = results.equity
+        if hasattr(eq, "graph") and eq.graph:
+            graph_data = eq.graph
+
+    # 提取 timeline
+    timeline: list = []
+    if results and getattr(results, "events", None):
+        evt = results.events
+        if hasattr(evt, "timeline"):
+            timeline = evt.timeline
+
+    # 收集 warnings
+    warnings: list[str] = []
+    runtime = result.get("runtime")
+    if runtime and hasattr(runtime, "warnings"):
+        warnings.extend(runtime.warnings)
+    for name, ms in module_status.items():
+        if hasattr(ms, "state") and ms.state in ("partial", "failed"):
+            warnings.append(f"模块 {name} 状态: {ms.state}")
+
+    # 检测 missing_modules
+    missing_modules: list[str] = []
+    expected_modules = {"finance", "equity", "events"}
+    for name in expected_modules:
+        if name not in module_status:
+            missing_modules.append(f"{name} 模块未执行")
+
+    answer = ""
+    if final_response:
+        answer = getattr(final_response, "answer", "")
 
     return V12Response(
         data=ChatDataV1(
-            answer=f"Mock V12 回答：关于「{request.question[:50]}...」的分析正在开发中。",
-            evidence=[
-                {"source": "利润表", "field": "营业收入", "value": "1505.60亿（mock）"},
+            answer=answer or "分析完成，未生成结构化答案。",
+            evidence=evidence_items
+            if evidence_items
+            else [
                 {
-                    "source": "现金流量表",
-                    "field": "销售商品收到的现金",
-                    "value": "1652.35亿（mock）",
-                },
+                    "source": "Agent",
+                    "field": "state",
+                    "value": f"{len(claims)} claims, {len(evidence)} evidence refs",
+                }
             ],
-            graph={
-                "nodes": [
-                    {
-                        "id": "600519",
-                        "label": "贵州茅台",
-                        "type": "company",
-                        "depth": 0,
-                    },
-                    {
-                        "id": "mt_group",
-                        "label": "茅台集团",
-                        "type": "controller",
-                        "depth": 1,
-                    },
-                ],
-                "edges": [
-                    {"source": "mt_group", "target": "600519", "relation": "54%控股"}
-                ],
-            },
-            timeline=[
-                {
-                    "date": "2024-03-01",
-                    "title": "发布2023年度报告",
-                    "category": "公告",
-                    "summary": "公司发布2023年年度报告（mock）",
-                    "sentiment": "neutral",
-                    "sources": ["上交所公告"],
-                },
-            ],
-            risk_score={
-                "overall": 0.15,
-                "financial": 0.10,
-                "ownership": 0.20,
-                "sentiment": 0.05,
-            },
-            warnings=["mock 预警：关联交易占比略高"],
-            missing_modules=[
-                "编排Agent",
-                "财务勾稽Agent",
-                "股权穿透Skill",
-                "舆情事件Skill",
-            ],
+            graph=graph_data,
+            timeline=timeline,
+            risk_score=risk_score,
+            warnings=warnings,
+            missing_modules=missing_modules,
             trace_id=trace_id,
         ),
         meta=ApiMeta(
@@ -112,6 +158,68 @@ async def chat_v1(request: ChatRequestV1):
         ),
         warnings=[],
     )
+
+
+@router.post("/chat", response_model=V12Response[ChatDataV1])
+async def chat_v1(request: ChatRequestV1):
+    """对话接口 — V12 REST，进入 Agent graph。
+
+    与 WebSocket 使用同一套 Agent 流程和 State。
+    """
+    trace_id = str(uuid.uuid4())
+    session_id = request.session_id or str(uuid.uuid4())
+
+    try:
+        from app.agents.state import ModuleResults, RuntimeState
+
+        state = {
+            "messages": [],
+            "user_query": request.question,
+            "company": None,
+            "plan": None,
+            "module_status": {},
+            "results": ModuleResults(),
+            "evidence": [],
+            "claims": [],
+            "final_response": None,
+            "runtime": RuntimeState(trace_id=trace_id, session_id=session_id),
+        }
+
+        # 在线程池中执行 Agent graph（避免阻塞事件循环）
+        result = await asyncio.to_thread(_get_graph().invoke, state)
+        return _build_chat_response(result, trace_id)
+
+    except Exception:
+        logger.exception(
+            "REST Agent 执行异常: trace_id=%s question=%.50s",
+            trace_id,
+            request.question,
+        )
+        return V12Response(
+            data=ChatDataV1(
+                answer="处理请求时发生内部错误，请稍后重试。",
+                evidence=[],
+                graph={},
+                timeline=[],
+                risk_score={},
+                warnings=["内部错误"],
+                missing_modules=["Agent 执行失败"],
+                trace_id=trace_id,
+            ),
+            meta=ApiMeta(
+                request_id=trace_id,
+                trace_id=trace_id,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+            ),
+            warnings=[
+                {
+                    "code": "AGENT_ERROR",
+                    "message": "处理请求时发生内部错误",
+                    "module": "chat",
+                    "recoverable": True,
+                }
+            ],
+        )
 
 
 @router.websocket("/chat/ws")

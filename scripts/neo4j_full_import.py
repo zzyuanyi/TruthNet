@@ -293,13 +293,17 @@ def main() -> int:
             )
             ann_dt = str(row.get("ann_dt", ""))
 
+            # 使用稳定行标识符（非随机 UUID）确保重复导入幂等
+            row_key = f"{normalized_code}|{holder_name}|{report_period}|{ann_dt}"
+            stable_row_id = hashlib.sha256(row_key.encode()).hexdigest()[:16]
+
             rel_id = make_relationship_id(
                 source_entity_id=src_id,
                 target_entity_id=tgt_id,
                 relation_type="OWNS",
                 report_period=report_period,
                 ann_dt=ann_dt,
-                source_record_id=str(uuid.uuid4()),
+                source_record_id=stable_row_id,
             )
 
             relationships.append(

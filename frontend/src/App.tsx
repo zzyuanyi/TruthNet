@@ -4,7 +4,7 @@ import RiskPanel from './components/RiskPanel';
 import EvidenceList from './components/EvidenceList';
 import TimelinePanel from './components/TimelinePanel';
 import GraphPanel from './components/GraphPanel';
-import type { ChatData, WSMessage, RiskScore } from './types/api';
+import type { ChatData, WSEventEnvelope, RiskScore } from './types/api';
 import { sendChat, connectWebSocket, sendWSQuestion } from './api/client';
 
 const emptyRisk: RiskScore = { overall: 0, financial: 0, ownership: 0, sentiment: 0 };
@@ -50,18 +50,18 @@ export default function App() {
     setLoading(true);
     try {
       const resp = await sendChat({ question: question.trim() });
-      if (resp.code === 0 && resp.data) {
-        const d = resp.data;
-        setAnswer(d.answer);
-        setRiskScore(d.risk_score);
+      // V12 format: { data, meta, warnings }
+      if (resp.data) {
+        const d = resp.data as unknown as ChatData;
+        setAnswer(d.answer || '');
+        setRiskScore(d.risk_score || emptyRisk);
         setEvidence(d.evidence || []);
         setTimeline(d.timeline || []);
         setGraph(d.graph || { nodes: [], edges: [] });
         setWarnings(d.warnings || []);
         setMissingModules(d.missing_modules || []);
-        setTraceId(d.trace_id);
+        setTraceId(d.trace_id || '');
       }
-      if (resp.trace_id) setTraceId(resp.trace_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -78,30 +78,48 @@ export default function App() {
     setWsConnected(false);
 
     const ws = connectWebSocket(
-      (msg: WSMessage) => {
-        switch (msg.type) {
-          case 'status':
-            setPartialText(msg.data.message as string);
+      (msg: WSEventEnvelope) => {
+        switch (msg.event_type) {
+          case 'turn.accepted':
+            setPartialText((msg.payload?.message as string) || '已收到问题');
             break;
-          case 'partial_answer':
-            setPartialText((prev) => prev + (msg.data.text as string));
+          case 'module.started': {
+            const modName = (msg.payload?.module as string) || '';
+            setPartialText(`正在分析: ${modName}...`);
             break;
-          case 'final_answer': {
-            const d = msg.data as ChatData;
-            setAnswer(d.answer);
-            setRiskScore(d.risk_score);
-            setEvidence(d.evidence || []);
-            setTimeline(d.timeline || []);
-            setGraph(d.graph || { nodes: [], edges: [] });
-            setWarnings(d.warnings || []);
-            setMissingModules(d.missing_modules || []);
-            setTraceId(d.trace_id);
+          }
+          case 'module.completed': {
+            const modName = (msg.payload?.module as string) || '';
+            const status = (msg.payload?.status as string) || '';
+            setPartialText(`模块 ${modName} 完成 (${status})`);
+            break;
+          }
+          case 'answer.delta': {
+            const text = (msg.payload?.text as string) || '';
+            setPartialText((prev) => prev + text);
+            break;
+          }
+          case 'turn.completed': {
+            const answerText = (msg.payload?.answer as string) || '';
+            const riskLvl = (msg.payload?.risk_level as string) || 'unknown';
+            const claimsCnt = (msg.payload?.claims_count as number) || 0;
+            const evidenceCnt = (msg.payload?.evidence_count as number) || 0;
+            setAnswer(answerText || `分析完成。${claimsCnt} 条结论，${evidenceCnt} 条证据。`);
             setLoading(false);
             break;
           }
-          case 'error':
-            setError(`[WS Error] ${msg.data.message}`);
+          case 'turn.failed':
+            setError(`[WS Error] ${(msg.payload?.message as string) || '请求失败'}`);
             setLoading(false);
+            break;
+          case 'turn.cancelled':
+            setLoading(false);
+            break;
+          case 'heartbeat':
+            break; // 忽略心跳
+          default:
+            // 未知事件类型 — 安全忽略
+            console.log('[WS] Unknown event:', msg.event_type);
             break;
         }
       },
@@ -117,15 +135,12 @@ export default function App() {
     setWsRef(ws);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // WebSocket send
+  // WebSocket send — 使用 V12 格式
   const handleWSSend = useCallback(() => {
     if (!question.trim() || !wsRef) return;
     resetState();
     setLoading(true);
-    sendWSQuestion(wsRef, {
-      type: 'question',
-      data: { question: question.trim() },
-    });
+    sendWSQuestion(wsRef, question.trim());
   }, [question, wsRef]);
 
   // Disconnect
