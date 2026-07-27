@@ -97,61 +97,86 @@ export interface ChatData {
 }
 
 // ============================================================
-// WebSocket 消息
+// WebSocket 消息 — V12 event envelope
 // ============================================================
 
+/** V12 统一事件信封 */
+export interface WSEventEnvelope {
+  schema_version: string;
+  event_id: string;
+  event_type: string;
+  session_id: string;
+  turn_id: string;
+  sequence: number;
+  timestamp: string;
+  trace_id: string;
+  payload: Record<string, unknown>;
+}
+
+/** 服务端事件类型 */
+export type WSServerEventType =
+  | 'turn.accepted'
+  | 'turn.completed'
+  | 'turn.failed'
+  | 'turn.cancelled'
+  | 'module.started'
+  | 'module.completed'
+  | 'answer.delta'
+  | 'artifact.upsert'
+  | 'heartbeat';
+
+/** 客户端发送事件 */
+export interface WSClientEvent {
+  event_type: string;
+  payload: Record<string, unknown>;
+}
+
+// ============================================================
+// 旧格式兼容（已废弃）
+// ============================================================
+
+/** @deprecated 请使用 WSEventEnvelope */
 export type WSMessageType = 'status' | 'partial_answer' | 'final_answer' | 'error';
 
+/** @deprecated 请使用 WSEventEnvelope */
 export interface WSMessageBase {
   type: WSMessageType;
   data: Record<string, unknown>;
 }
 
+/** @deprecated 请使用 WSEventEnvelope */
 export interface WSStatusMessage {
   type: 'status';
-  data: {
-    message: string;
-    trace_id: string;
-  };
+  data: { message: string; trace_id: string; };
 }
 
+/** @deprecated 请使用 WSEventEnvelope */
 export interface WSPartialAnswerMessage {
   type: 'partial_answer';
-  data: {
-    text: string;
-    sequence: number;
-    trace_id: string;
-  };
+  data: { text: string; sequence: number; trace_id: string; };
 }
 
+/** @deprecated 请使用 WSEventEnvelope */
 export interface WSFinalAnswerMessage {
   type: 'final_answer';
   data: ChatData;
 }
 
+/** @deprecated 请使用 WSEventEnvelope */
 export interface WSErrorMessage {
   type: 'error';
-  data: {
-    code: number;
-    message: string;
-    trace_id: string;
-  };
+  data: { code: number; message: string; trace_id: string; };
 }
 
+/** @deprecated 请使用 WSEventEnvelope */
 export type WSMessage =
   | WSStatusMessage
   | WSPartialAnswerMessage
   | WSFinalAnswerMessage
   | WSErrorMessage;
 
-// ============================================================
-// 客户端发送的 WebSocket 消息
-// ============================================================
-
+/** @deprecated 请使用 WSClientEvent */
 export interface WSQuestionRequest {
   type: 'question';
-  data: {
-    question: string;
-    context?: ChatContext;
-  };
+  data: { question: string; context?: ChatContext; };
 }

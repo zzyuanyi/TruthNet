@@ -46,7 +46,7 @@ async def get_company_equity(
     from app.api.v1.routers.companies import _MOCK_COMPANIES
 
     company = next(
-        (c for c in _MOCK_COMPANIES if c["code"] == resolved_code),
+        (c for c in _MOCK_COMPANIES if resolved_code in c["wind_code"]),
         None,
     )
     if company is None:
@@ -156,7 +156,7 @@ async def get_company_equity(
             edges=edges,
             paths=paths,
             as_of=as_of,
-            graph_version="equity-mock-v12",
+            graph_version=settings.GRAPH_VERSION,
             partial=partial,
             warnings=data_warnings,
         ),

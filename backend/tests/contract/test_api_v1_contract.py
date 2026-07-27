@@ -105,13 +105,16 @@ async def test_legacy_health_still_works():
 
 @pytest.mark.asyncio
 async def test_legacy_chat_still_works():
-    """POST /api/v1/chat 旧格式仍可用."""
+    """POST /api/v1/chat 返回 V12 格式（旧格式已移除）."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/chat", json={"question": "test"})
+        response = await client.post(
+            "/api/v1/chat", json={"question": "康美药业有造假风险吗"}
+        )
 
     assert response.status_code == 200
     body = response.json()
-    # 旧格式
-    assert body["code"] == 0
+    # V12 格式
+    assert "data" in body
+    assert "meta" in body
     assert "answer" in body["data"]
