@@ -13,7 +13,7 @@ dist-ssr
 *.local
 
 # Data files (runtime generated)
-data/
+/data/
 
 # Editor directories and files
 .vscode/*
