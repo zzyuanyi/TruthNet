@@ -29,13 +29,17 @@ def _after_resolve(state: AgentState) -> str:
 
 
 def _after_plan(state: AgentState) -> str:
-    """PlanModules 条件路由。"""
+    """PlanModules 条件路由 — 按 requested_modules 决定。
+
+    requested_modules 为空 → 直接生成回答（公司未收录等）
+    否则进入模块链，各模块节点自行检查是否在 requested_modules 中。
+    """
     plan = state.get("plan")
     if plan is None:
         return "no_plan"
-    if plan.intent == "simple_query":
-        return "simple"
-    return "diagnose"
+    if not plan.requested_modules:
+        return "skip_modules"
+    return "run_modules"
 
 
 def create_agent_graph() -> StateGraph:
@@ -67,7 +71,7 @@ def create_agent_graph() -> StateGraph:
     graph.add_conditional_edges(
         "plan_modules",
         _after_plan,
-        {"diagnose": "finance", "simple": "build_claims", "no_plan": "generate_answer"},
+        {"run_modules": "finance", "skip_modules": "build_claims", "no_plan": "generate_answer"},
     )
 
     # serial for Phase B; Phase C fan-out with Send

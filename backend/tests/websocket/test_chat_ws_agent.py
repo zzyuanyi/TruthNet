@@ -109,3 +109,68 @@ def test_missing_text():
 
     assert event["event_type"] == "turn.failed"
     assert event["payload"]["error_code"] == "MISSING_QUESTION"
+
+
+def test_risk_diagnosis_runs_all_modules():
+    """综合风险问题 → finance + equity + events 全部执行。"""
+    client = TestClient(app)
+    with client.websocket_connect("/api/v1/chat/ws") as ws:
+        ws.send_json({
+            "event_type": "chat.query",
+            "payload": {"text": "康美药业有造假风险吗"}
+        })
+        events = _collect(ws)
+
+    # 收集模块事件
+    started_modules = {
+        e["payload"]["module"]
+        for e in events
+        if e["event_type"] == "module.started"
+    }
+    completed_modules = {
+        e["payload"]["module"]
+        for e in events
+        if e["event_type"] == "module.completed"
+    }
+
+    expected = {"finance", "equity", "events"}
+    assert started_modules == expected, (
+        f"module.started 应为 {expected}，实际 {started_modules}"
+    )
+    assert completed_modules == expected, (
+        f"module.completed 应为 {expected}，实际 {completed_modules}"
+    )
+
+
+def test_finance_only_query_runs_finance():
+    """纯财务问题 → 只执行 finance，claims_count > 0。"""
+    client = TestClient(app)
+    with client.websocket_connect("/api/v1/chat/ws") as ws:
+        ws.send_json({
+            "event_type": "chat.query",
+            "payload": {"text": "康美药业应收账款情况如何"}
+        })
+        events = _collect(ws)
+
+    started_modules = {
+        e["payload"]["module"]
+        for e in events
+        if e["event_type"] == "module.started"
+    }
+    completed_modules = {
+        e["payload"]["module"]
+        for e in events
+        if e["event_type"] == "module.completed"
+    }
+
+    assert started_modules == {"finance"}, (
+        f"纯财务问题应只执行 finance，实际 started: {started_modules}"
+    )
+    assert completed_modules == {"finance"}, (
+        f"纯财务问题应只完成 finance，实际 completed: {completed_modules}"
+    )
+
+    tc = next(e for e in events if e["event_type"] == "turn.completed")
+    assert tc["payload"]["claims_count"] > 0, (
+        f"至少 1 条 Claim，实际 claims_count={tc['payload']['claims_count']}"
+    )

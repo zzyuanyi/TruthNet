@@ -70,10 +70,6 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
-    EMBEDDING_API_KEY: str = ""
-    EMBEDDING_BASE_URL: str = ""
-    EMBEDDING_MODEL: str = ""
-
     # ===== API 版本控制 =====
     API_V1_ENABLED: bool = True
     LEGACY_API_ENABLED: bool = True

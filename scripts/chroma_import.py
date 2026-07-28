@@ -2,6 +2,7 @@
 """Step 2: Import pre-computed embeddings into ChromaDB (NO sentence-transformers).
 
 Reads data/processed/embeddings.npy + chunks_meta.json → upsert to ChromaDB.
+持久化目录和集合名与 vector_store.py 统一。
 """
 
 import sys
@@ -11,16 +12,24 @@ import argparse
 from pathlib import Path
 import numpy as np
 
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+from backend.app.core.config import settings  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 log = logging.getLogger(__name__)
 
+COLLECTION_NAME = "research_report_chunks"
+
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--input-dir", default="data/processed")
-    p.add_argument("--chroma-dir", default="data/chroma_db")
+    p.add_argument("--chroma-dir", default=None, help="默认读取 CHROMA_PERSIST_DIR")
     p.add_argument("--collection", default="research_report_chunks")
     p.add_argument("--batch-size", type=int, default=5000)
     p.add_argument(
@@ -61,7 +70,9 @@ def main():
     # Connect ChromaDB
     import chromadb
 
-    client = chromadb.PersistentClient(path=args.chroma_dir)
+    chroma_dir = args.chroma_dir or settings.CHROMA_PERSIST_DIR
+    client = chromadb.PersistentClient(path=chroma_dir)
+    log.info("ChromaDB 目录: %s", chroma_dir)
 
     if args.rebuild:
         try:
@@ -75,7 +86,8 @@ def main():
         log.info("Existing collection: %s (%d chunks)", args.collection, col.count())
     except Exception:
         col = client.create_collection(
-            args.collection, metadata={"description": "Research report chunks"}
+            args.collection,
+            metadata={"hnsw:space": "cosine", "description": "Research report chunks"},
         )
         log.info("Created collection: %s", args.collection)
 
@@ -92,7 +104,7 @@ def main():
         end = min(i + bs, total)
         batch_ids = [m["chunk_id"] for m in metas[i:end]]
         batch_emb = embeddings[i:end].tolist()
-        batch_docs = [m["title"] for m in metas[i:end]]
+        batch_docs = [m.get("chunk_text", m.get("title", "")) for m in metas[i:end]]
         batch_meta = [{k: str(v) for k, v in m.items()} for m in metas[i:end]]
         col.upsert(
             ids=batch_ids,

@@ -87,6 +87,7 @@ def main():
                     "char_start": ci * 350,
                     "char_end": min(ci * 350 + 400, len(content)),
                     "content_hash": hashlib.sha256(chunk.encode()).hexdigest()[:16],
+                    "chunk_text": chunk,
                 }
             )
 
@@ -99,7 +100,7 @@ def main():
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(
-        "BAAI/bge-small-zh-v1.5", cache_folder="data/model_cache", device="cpu"
+        settings.EMBEDDING_MODEL, cache_folder=settings.EMBEDDING_CACHE_DIR, device="cpu"
     )
     log.info("Model loaded, embedding %d chunks...", len(texts))
 

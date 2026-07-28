@@ -1,102 +1,137 @@
 """ResolveEntity — V12 §7.2. 从 user_query 解析公司实体。
 
-Bug fix: 不再无条件返回康美药业。根据用户输入中的公司名称/代码查找。
-未知公司返回 None，进入 short-circuit → 提示用户提供完整名称。
+Phase B→C 过渡：原 5 家 mock 公司 → MySQL companies 表查询。
 """
 
+from __future__ import annotations
+
+import logging
+import re
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+
 from app.agents.state import AgentState, CompanyRef
+from app.core.config import settings
 from app.infrastructure.graph.normalizer import normalize_wind_code
 
-# Phase B mock 公司注册表（与 companies router 共享数据源）
-_MOCK_ENTITY_MAP: dict[str, CompanyRef] = {
-    "600518": CompanyRef(
-        entity_id="company_600518_SH",
-        wind_code="600518.SH",
-        sec_name="康美药业",
-        exchange="XSHG",
-        industry_l1="中药",
-    ),
-    "600519": CompanyRef(
-        entity_id="company_600519_SH",
-        wind_code="600519.SH",
-        sec_name="贵州茅台",
-        exchange="XSHG",
-        industry_l1="白酒",
-    ),
-    "000858": CompanyRef(
-        entity_id="company_000858_SZ",
-        wind_code="000858.SZ",
-        sec_name="五粮液",
-        exchange="XSHE",
-        industry_l1="白酒",
-    ),
-    "300750": CompanyRef(
-        entity_id="company_300750_SZ",
-        wind_code="300750.SZ",
-        sec_name="宁德时代",
-        exchange="XSHE",
-        industry_l1="电池",
-    ),
-    "002415": CompanyRef(
-        entity_id="company_002415_SZ",
-        wind_code="002415.SZ",
-        sec_name="海康威视",
-        exchange="XSHE",
-        industry_l1="安防",
-    ),
-}
+logger = logging.getLogger(__name__)
 
-# 公司名称别名映射
-_NAME_ALIASES: dict[str, str] = {
-    "康美": "600518",
-    "康美药业": "600518",
-    "茅台": "600519",
-    "贵州茅台": "600519",
-    "五粮液": "000858",
-    "宁德时代": "300750",
-    "宁德": "300750",
-    "海康威视": "002415",
-    "海康": "002415",
-}
+_engine: Engine | None = None
+
+
+def _get_engine() -> Engine:
+    """惰性缓存 MySQL engine。"""
+    global _engine
+    if _engine is None:
+        url = (
+            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
+            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+        )
+        _engine = create_engine(url, echo=False)
+    return _engine
 
 
 def _find_company(query: str) -> CompanyRef | None:
-    """从用户输入中查找公司。先尝试代码匹配，再尝试名称匹配。"""
-    import re
+    """从用户输入中查找公司：先 Wind Code 匹配，再名称模糊匹配。"""
+    if settings.SQL_BACKEND != "mysql":
+        return None
 
-    # 1. 查找 Wind Code 模式（6位数字，可选 .SH/.SZ/.BJ 后缀）
-    wind_match = re.search(
-        r"\b(\d{6}(?:\.(?:S[HZ]|BJ|XSHG|XSHE))?)\b", query, re.IGNORECASE
-    )
-    if wind_match:
-        code = wind_match.group(1).upper()
-        try:
-            normalized = normalize_wind_code(code)
-            digits, _suffix = normalized.split(".")
-            if digits in _MOCK_ENTITY_MAP:
-                return _MOCK_ENTITY_MAP[digits]
-        except (ValueError, KeyError):
-            pass
+    try:
+        with _get_engine().connect() as conn:
+            # 1. 查找 Wind Code 模式（6位数字，可选后缀）
+            wind_match = re.search(
+                r"\b(\d{6}(?:\.(?:S[HZ]|BJ|XSHG|XSHE))?)\b", query, re.IGNORECASE
+            )
+            if wind_match:
+                raw_code = wind_match.group(1).upper()
+                try:
+                    normalized = normalize_wind_code(raw_code)
+                except ValueError:
+                    normalized = raw_code
 
-    # 2. 查找名称别名（模糊子串匹配）
-    for name, code in _NAME_ALIASES.items():
-        if name in query:
-            if code in _MOCK_ENTITY_MAP:
-                return _MOCK_ENTITY_MAP[code]
+                row = conn.execute(
+                    text(
+                        "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
+                        "FROM companies WHERE wind_code = :code AND is_latest = 1 LIMIT 1"
+                    ),
+                    {"code": normalized},
+                ).mappings().first()
+
+                if row:
+                    return CompanyRef(
+                        entity_id=str(row["entity_id"]),
+                        wind_code=str(row["wind_code"]),
+                        sec_name=str(row["sec_name"]),
+                        exchange=str(row.get("exchange_code", "") or ""),
+                        industry_l1=str(row.get("industry_l1", "") or ""),
+                    )
+
+            # 2. 完整名称匹配：LOCATE(sec_name, query)
+            row = conn.execute(
+                text(
+                    "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
+                    "FROM companies "
+                    "WHERE is_latest = 1 AND sec_name IS NOT NULL "
+                    "AND LOCATE(sec_name, :query) > 0 "
+                    "ORDER BY CHAR_LENGTH(sec_name) DESC LIMIT 1"
+                ),
+                {"query": query},
+            ).mappings().first()
+
+            if row:
+                return CompanyRef(
+                    entity_id=str(row["entity_id"]),
+                    wind_code=str(row["wind_code"]),
+                    sec_name=str(row["sec_name"]),
+                    exchange=str(row.get("exchange_code", "") or ""),
+                    industry_l1=str(row.get("industry_l1", "") or ""),
+                )
+
+            # 3. 简称匹配：检查 query 子串是否命中 aliases 中存储的简称
+            row = conn.execute(
+                text(
+                    "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1, aliases "
+                    "FROM companies "
+                    "WHERE is_latest = 1 AND aliases IS NOT NULL "
+                    "ORDER BY CHAR_LENGTH(sec_name) DESC"
+                ),
+            ).mappings().all()
+
+            # 收集所有别名命中的公司，仅唯一命中时返回
+            alias_hits: list[dict] = []
+            for r in row:
+                aliases = r.get("aliases")
+                if not aliases or not isinstance(aliases, list):
+                    continue
+                for alias in aliases:
+                    a = str(alias).strip()
+                    if not a:
+                        continue
+                    if a in query:
+                        alias_hits.append({
+                            "entity_id": str(r["entity_id"]),
+                            "wind_code": str(r["wind_code"]),
+                            "sec_name": str(r["sec_name"]),
+                            "exchange": str(r.get("exchange_code", "") or ""),
+                            "industry_l1": str(r.get("industry_l1", "") or ""),
+                        })
+                        break  # 每条公司只命中一次
+
+            if len(alias_hits) == 1:
+                return CompanyRef(**alias_hits[0])
+
+    except Exception:
+        logger.exception("实体解析查询失败: query=%.50s", query)
 
     return None
 
 
 def resolve_entity_node(state: AgentState) -> dict:
     user_query = state.get("user_query", "")
-
     company = _find_company(user_query)
 
     if company is None:
-        return {
-            "company": None,
-        }
+        return {"company": None}
 
-    return {
-        "company": company,
-    }
+    return {"company": company}

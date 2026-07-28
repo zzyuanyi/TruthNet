@@ -418,8 +418,14 @@ async def websocket_chat_v1(ws: WebSocket):
                     )
                     continue
 
-                # module.started + module.completed（真实串行顺序）
-                for name, ms in module_status.items():
+                # module.started + module.completed（仅已执行模块，跳过 no-op）
+                active_modules = {
+                    name: ms
+                    for name, ms in module_status.items()
+                    if getattr(ms, "state", "pending") != "skipped"
+                }
+
+                for name, ms in active_modules.items():
                     if not cancelled:
                         await ws.send_json(
                             _envelope(
@@ -427,7 +433,7 @@ async def websocket_chat_v1(ws: WebSocket):
                             )
                         )
 
-                for name, ms in module_status.items():
+                for name, ms in active_modules.items():
                     if not cancelled:
                         await ws.send_json(
                             _envelope(
