@@ -30,6 +30,20 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def _load_embedding_model(model_name: str, cache_dir: str):
+    """加载 BGE 模型，优先通过 ModelScope 下载（国内可达）。"""
+    from sentence_transformers import SentenceTransformer
+
+    try:
+        from modelscope import snapshot_download
+        model_dir = snapshot_download(model_name, cache_dir=cache_dir)
+        log.info("ModelScope 模型路径: %s", model_dir)
+        return SentenceTransformer(model_dir, device="cpu")
+    except Exception:
+        log.warning("ModelScope 下载失败，尝试 HuggingFace 直连")
+        return SentenceTransformer(model_name, cache_folder=cache_dir, device="cpu")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--batch-size", type=int, default=1000)
@@ -96,11 +110,9 @@ def main():
         log.warning("No chunks generated!")
         return 1
 
-    # Load model and embed in batches
-    from sentence_transformers import SentenceTransformer
-
-    model = SentenceTransformer(
-        settings.EMBEDDING_MODEL, cache_folder=settings.EMBEDDING_CACHE_DIR, device="cpu"
+    # Load model（优先 ModelScope 国内镜像，被墙时 huggingface 不可达）
+    model = _load_embedding_model(
+        settings.EMBEDDING_MODEL, settings.EMBEDDING_CACHE_DIR
     )
     log.info("Model loaded, embedding %d chunks...", len(texts))
 
