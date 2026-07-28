@@ -21,26 +21,27 @@ _embedding_model = None
 
 
 def _get_embedding_model():
-    """惰性加载 BGE 嵌入模型，优先 ModelScope 国内镜像。"""
+    """惰性加载 BGE 嵌入模型（优先本地缓存，其次 ModelScope）。"""
     global _embedding_model
     if _embedding_model is None:
         try:
             from sentence_transformers import SentenceTransformer
 
-            # 优先 ModelScope（国内可达），失败回退 HuggingFace
             try:
                 from modelscope import snapshot_download
                 model_dir = snapshot_download(
                     settings.EMBEDDING_MODEL, cache_dir=settings.EMBEDDING_CACHE_DIR
                 )
                 _embedding_model = SentenceTransformer(model_dir, device="cpu")
+                logger.info("BGE 模型已通过 ModelScope 加载")
             except Exception:
+                # 回退：从本地缓存加载
                 _embedding_model = SentenceTransformer(
                     settings.EMBEDDING_MODEL,
                     cache_folder=settings.EMBEDDING_CACHE_DIR,
                     device="cpu",
                 )
-            logger.info("BGE 嵌入模型已加载")
+                logger.info("BGE 模型已从本地缓存加载")
         except Exception:
             logger.exception("BGE 嵌入模型加载失败")
             return None

@@ -31,17 +31,21 @@ log = logging.getLogger(__name__)
 
 
 def _load_embedding_model(model_name: str, cache_dir: str):
-    """加载 BGE 模型，优先通过 ModelScope 下载（国内可达）。"""
+    """加载 BGE 模型（优先本地缓存，其次 ModelScope 国内镜像）。"""
     from sentence_transformers import SentenceTransformer
 
+    # 尝试 ModelScope 国内镜像下载
     try:
         from modelscope import snapshot_download
         model_dir = snapshot_download(model_name, cache_dir=cache_dir)
-        log.info("ModelScope 模型路径: %s", model_dir)
+        log.info("模型已通过 ModelScope 就绪: %s", model_dir)
         return SentenceTransformer(model_dir, device="cpu")
     except Exception:
-        log.warning("ModelScope 下载失败，尝试 HuggingFace 直连")
-        return SentenceTransformer(model_name, cache_folder=cache_dir, device="cpu")
+        pass
+
+    # 回退：从本地缓存加载（首次由 HuggingFace 缓存，后续秒加载）
+    log.info("从本地缓存加载模型")
+    return SentenceTransformer(model_name, cache_folder=cache_dir, device="cpu")
 
 
 def main():
