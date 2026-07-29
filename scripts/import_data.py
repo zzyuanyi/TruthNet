@@ -42,13 +42,31 @@ BATCH_SIZE = 5000
 
 # 各表用于 ON DUPLICATE KEY UPDATE 的唯一键（对应数据库实际唯一约束）
 _UNIQUE_KEYS: dict[str, list[str]] = {
-    "companies":         ["entity_id"],
-    "balance_sheet":     ["wind_code", "report_period", "statement_type", "ann_dt", "revision_no"],
-    "income_statement":  ["wind_code", "report_period", "statement_type", "ann_dt", "revision_no"],
-    "cash_flow":         ["wind_code", "report_period", "statement_type", "ann_dt", "revision_no"],
-    "top_shareholders":  ["source_record_id"],
-    "announcements":     ["object_id"],
-    "research_reports":  ["report_id"],
+    "companies": ["entity_id"],
+    "balance_sheet": [
+        "wind_code",
+        "report_period",
+        "statement_type",
+        "ann_dt",
+        "revision_no",
+    ],
+    "income_statement": [
+        "wind_code",
+        "report_period",
+        "statement_type",
+        "ann_dt",
+        "revision_no",
+    ],
+    "cash_flow": [
+        "wind_code",
+        "report_period",
+        "statement_type",
+        "ann_dt",
+        "revision_no",
+    ],
+    "top_shareholders": ["source_record_id"],
+    "announcements": ["object_id"],
+    "research_reports": ["report_id"],
 }
 
 
@@ -103,7 +121,9 @@ def _batch_upsert(
     columns = list(df.columns)
     placeholders = ", ".join([f":{c}" for c in columns])
     if update_columns is not None:
-        update_cols = [c for c in update_columns if c in columns and c not in unique_keys]
+        update_cols = [
+            c for c in update_columns if c in columns and c not in unique_keys
+        ]
     else:
         update_cols = [c for c in columns if c not in unique_keys]
     if not update_cols:
@@ -121,7 +141,7 @@ def _batch_upsert(
     failed = 0
     with engine.connect() as conn:
         for start in range(0, len(df), BATCH_SIZE):
-            batch = df.iloc[start:start + BATCH_SIZE]
+            batch = df.iloc[start : start + BATCH_SIZE]
             rows = batch.to_dict(orient="records")
             try:
                 conn.execute(text(sql), rows)
@@ -131,7 +151,10 @@ def _batch_upsert(
                 conn.rollback()
                 failed += len(rows)
                 logger.exception(
-                    "batch upsert failed: %s rows %d-%d", table, start, start + len(rows)
+                    "batch upsert failed: %s rows %d-%d",
+                    table,
+                    start,
+                    start + len(rows),
                 )
 
     logger.info("  %s: processed=%d failed=%d", table, processed, failed)
@@ -189,31 +212,45 @@ def import_companies(
             except ValueError:
                 normalized = wc
             entity_id = _resolve_entity_id({"wind_code": normalized}, "wind_code")
-            rows.append({
-                "entity_id": entity_id,
-                "wind_code": normalized,
-                "sec_name": str(r.get("stock_name", r.get("sec_name", ""))),
-                "exchange_code": _exchange_from_wind(normalized),
-                "industry_l1": r.get("industry_l1") if pd.notna(r.get("industry_l1")) else None,
-                "industry_l2": r.get("industry_l2") if pd.notna(r.get("industry_l2")) else None,
-                "industry_source": str(r.get("source", "")),
-                "industry_as_of": NOW.date(),
-                "source_file": "industry_mapping.csv",
-                "source_row": i,
-                "source_type": "industry_mapping",
-                "dataset_version": ds_ver,
-                "revision_no": 1,
-                "is_latest": 1,
-                "ingested_at": NOW,
-                "updated_at": NOW,
-            })
+            rows.append(
+                {
+                    "entity_id": entity_id,
+                    "wind_code": normalized,
+                    "sec_name": str(r.get("stock_name", r.get("sec_name", ""))),
+                    "exchange_code": _exchange_from_wind(normalized),
+                    "industry_l1": r.get("industry_l1")
+                    if pd.notna(r.get("industry_l1"))
+                    else None,
+                    "industry_l2": r.get("industry_l2")
+                    if pd.notna(r.get("industry_l2"))
+                    else None,
+                    "industry_source": str(r.get("source", "")),
+                    "industry_as_of": NOW.date(),
+                    "source_file": "industry_mapping.csv",
+                    "source_row": i,
+                    "source_type": "industry_mapping",
+                    "dataset_version": ds_ver,
+                    "revision_no": 1,
+                    "is_latest": 1,
+                    "ingested_at": NOW,
+                    "updated_at": NOW,
+                }
+            )
 
         companies_df = pd.DataFrame(rows)
         if dry_run:
             logger.info("[dry-run] companies: %d 行待导入", len(companies_df))
             v = _validate_table("companies", companies_df)
-            return {"source_rows": len(df), "valid_rows": len(companies_df) - v["invalid_rows"], "invalid_rows": v["invalid_rows"], "processed": 0, "failed": 0}
-        result = _batch_upsert(engine, "companies", companies_df, _UNIQUE_KEYS["companies"])
+            return {
+                "source_rows": len(df),
+                "valid_rows": len(companies_df) - v["invalid_rows"],
+                "invalid_rows": v["invalid_rows"],
+                "processed": 0,
+                "failed": 0,
+            }
+        result = _batch_upsert(
+            engine, "companies", companies_df, _UNIQUE_KEYS["companies"]
+        )
         return {"source_rows": len(df), "valid_rows": len(companies_df), **result}
 
     # Fallback: 从三表提取唯一 wind_code
@@ -235,35 +272,55 @@ def import_companies(
             normalized = normalize_wind_code(str(wc))
         except ValueError:
             normalized = str(wc)
-        rows.append({
-            "entity_id": _resolve_entity_id({"wind_code": normalized}, "wind_code"),
-            "wind_code": normalized,
-            "sec_name": str(wc),
-            "exchange_code": _exchange_from_wind(normalized),
-            "source_file": "derived_from_financials",
-            "source_row": i,
-            "source_type": "financial_statements",
-            "dataset_version": ds_ver,
-            "revision_no": 1,
-            "is_latest": 1,
-            "ingested_at": NOW,
-            "updated_at": NOW,
-        })
+        rows.append(
+            {
+                "entity_id": _resolve_entity_id({"wind_code": normalized}, "wind_code"),
+                "wind_code": normalized,
+                "sec_name": str(wc),
+                "exchange_code": _exchange_from_wind(normalized),
+                "source_file": "derived_from_financials",
+                "source_row": i,
+                "source_type": "financial_statements",
+                "dataset_version": ds_ver,
+                "revision_no": 1,
+                "is_latest": 1,
+                "ingested_at": NOW,
+                "updated_at": NOW,
+            }
+        )
 
     companies_df2 = pd.DataFrame(rows)
     if dry_run:
         logger.info("[dry-run] companies: %d 行待导入 (从三表)", len(companies_df2))
         v = _validate_table("companies", companies_df2)
-        return {"source_rows": len(codes), "valid_rows": len(companies_df2) - v["invalid_rows"], "invalid_rows": v["invalid_rows"], "processed": 0, "failed": 0}
+        return {
+            "source_rows": len(codes),
+            "valid_rows": len(companies_df2) - v["invalid_rows"],
+            "invalid_rows": v["invalid_rows"],
+            "processed": 0,
+            "failed": 0,
+        }
 
     # 回退导入：仅更新 exchange_code、industry_l1、source_file 等审计字段，
     # 不覆盖已有的 sec_name、aliases（P0 修复）
     result = _batch_upsert(
-        engine, "companies", companies_df2, _UNIQUE_KEYS["companies"],
-        update_columns=["exchange_code", "industry_l1", "industry_l2",
-                        "source_file", "source_row", "source_type",
-                        "dataset_version", "revision_no", "is_latest",
-                        "ingested_at", "updated_at"],
+        engine,
+        "companies",
+        companies_df2,
+        _UNIQUE_KEYS["companies"],
+        update_columns=[
+            "exchange_code",
+            "industry_l1",
+            "industry_l2",
+            "source_file",
+            "source_row",
+            "source_type",
+            "dataset_version",
+            "revision_no",
+            "is_latest",
+            "ingested_at",
+            "updated_at",
+        ],
     )
     return {"source_rows": len(codes), "valid_rows": len(companies_df2), **result}
 
@@ -281,7 +338,13 @@ def import_financial_table(
     logger.info("=== Import %s (dry_run=%s) ===", table_name, dry_run)
     if not csv_path.exists():
         logger.warning("%s 不存在: %s", table_name, csv_path)
-        return {"source_rows": 0, "valid_rows": 0, "invalid_rows": 1, "processed": 0, "failed": 0}
+        return {
+            "source_rows": 0,
+            "valid_rows": 0,
+            "invalid_rows": 1,
+            "processed": 0,
+            "failed": 0,
+        }
 
     df = pd.read_csv(csv_path, low_memory=False, usecols=usecols)
     source_rows = len(df)
@@ -303,8 +366,19 @@ def import_financial_table(
 
     if dry_run:
         v = _validate_table(table_name, df)
-        logger.info("[dry-run] %s: %d 行待导入, invalid=%d", table_name, source_rows, v["invalid_rows"])
-        return {"source_rows": source_rows, "valid_rows": source_rows - v["invalid_rows"], "invalid_rows": v["invalid_rows"], "processed": 0, "failed": 0}
+        logger.info(
+            "[dry-run] %s: %d 行待导入, invalid=%d",
+            table_name,
+            source_rows,
+            v["invalid_rows"],
+        )
+        return {
+            "source_rows": source_rows,
+            "valid_rows": source_rows - v["invalid_rows"],
+            "invalid_rows": v["invalid_rows"],
+            "processed": 0,
+            "failed": 0,
+        }
 
     result = _batch_upsert(engine, table_name, df, _UNIQUE_KEYS[table_name])
     return {"source_rows": source_rows, "valid_rows": source_rows, **result}
@@ -318,7 +392,13 @@ def import_shareholders(
     fp = data_root / "2" / "clean.xlsx"
     if not fp.exists():
         logger.warning("股东数据不存在: %s", fp)
-        return {"source_rows": 0, "valid_rows": 0, "invalid_rows": 1, "processed": 0, "failed": 0}
+        return {
+            "source_rows": 0,
+            "valid_rows": 0,
+            "invalid_rows": 1,
+            "processed": 0,
+            "failed": 0,
+        }
 
     df = pd.read_excel(fp)
     source_rows = len(df)
@@ -363,10 +443,22 @@ def import_shareholders(
 
     if dry_run:
         v = _validate_table("top_shareholders", df_out)
-        logger.info("[dry-run] top_shareholders: %d 行待导入, invalid=%d", source_rows, v["invalid_rows"])
-        return {"source_rows": source_rows, "valid_rows": source_rows - v["invalid_rows"], "invalid_rows": v["invalid_rows"], "processed": 0, "failed": 0}
+        logger.info(
+            "[dry-run] top_shareholders: %d 行待导入, invalid=%d",
+            source_rows,
+            v["invalid_rows"],
+        )
+        return {
+            "source_rows": source_rows,
+            "valid_rows": source_rows - v["invalid_rows"],
+            "invalid_rows": v["invalid_rows"],
+            "processed": 0,
+            "failed": 0,
+        }
 
-    result = _batch_upsert(engine, "top_shareholders", df_out, _UNIQUE_KEYS["top_shareholders"])
+    result = _batch_upsert(
+        engine, "top_shareholders", df_out, _UNIQUE_KEYS["top_shareholders"]
+    )
     return {"source_rows": source_rows, "valid_rows": source_rows, **result}
 
 
@@ -378,7 +470,13 @@ def import_announcements(
     fp = data_root / "3" / "clean.xlsx"
     if not fp.exists():
         logger.warning("公告数据不存在: %s", fp)
-        return {"source_rows": 0, "valid_rows": 0, "invalid_rows": 1, "processed": 0, "failed": 0}
+        return {
+            "source_rows": 0,
+            "valid_rows": 0,
+            "invalid_rows": 1,
+            "processed": 0,
+            "failed": 0,
+        }
 
     df = pd.read_excel(fp)
     source_rows = len(df)
@@ -408,10 +506,22 @@ def import_announcements(
 
     if dry_run:
         v = _validate_table("announcements", df_out)
-        logger.info("[dry-run] announcements: %d 行待导入, invalid=%d", source_rows, v["invalid_rows"])
-        return {"source_rows": source_rows, "valid_rows": source_rows - v["invalid_rows"], "invalid_rows": v["invalid_rows"], "processed": 0, "failed": 0}
+        logger.info(
+            "[dry-run] announcements: %d 行待导入, invalid=%d",
+            source_rows,
+            v["invalid_rows"],
+        )
+        return {
+            "source_rows": source_rows,
+            "valid_rows": source_rows - v["invalid_rows"],
+            "invalid_rows": v["invalid_rows"],
+            "processed": 0,
+            "failed": 0,
+        }
 
-    result = _batch_upsert(engine, "announcements", df_out, _UNIQUE_KEYS["announcements"])
+    result = _batch_upsert(
+        engine, "announcements", df_out, _UNIQUE_KEYS["announcements"]
+    )
     return {"source_rows": source_rows, "valid_rows": source_rows, **result}
 
 
@@ -423,7 +533,13 @@ def import_research_reports(
     fp = data_root / "5" / "rr_main_202605281537.csv"
     if not fp.exists():
         logger.warning("研报数据不存在: %s", fp)
-        return {"source_rows": 0, "valid_rows": 0, "invalid_rows": 1, "processed": 0, "failed": 0}
+        return {
+            "source_rows": 0,
+            "valid_rows": 0,
+            "invalid_rows": 1,
+            "processed": 0,
+            "failed": 0,
+        }
 
     df = pd.read_csv(fp, low_memory=False)
     source_rows = len(df)
@@ -470,10 +586,22 @@ def import_research_reports(
 
     if dry_run:
         v = _validate_table("research_reports", df_out)
-        logger.info("[dry-run] research_reports: %d 行待导入, invalid=%d", source_rows, v["invalid_rows"])
-        return {"source_rows": source_rows, "valid_rows": source_rows - v["invalid_rows"], "invalid_rows": v["invalid_rows"], "processed": 0, "failed": 0}
+        logger.info(
+            "[dry-run] research_reports: %d 行待导入, invalid=%d",
+            source_rows,
+            v["invalid_rows"],
+        )
+        return {
+            "source_rows": source_rows,
+            "valid_rows": source_rows - v["invalid_rows"],
+            "invalid_rows": v["invalid_rows"],
+            "processed": 0,
+            "failed": 0,
+        }
 
-    result = _batch_upsert(engine, "research_reports", df_out, _UNIQUE_KEYS["research_reports"])
+    result = _batch_upsert(
+        engine, "research_reports", df_out, _UNIQUE_KEYS["research_reports"]
+    )
     return {"source_rows": source_rows, "valid_rows": source_rows, **result}
 
 
@@ -503,7 +631,10 @@ _TABLE_VALIDATION: dict[str, dict] = {
     "balance_sheet": {"required": ["wind_code", "report_period", "statement_type"]},
     "income_statement": {"required": ["wind_code", "report_period", "statement_type"]},
     "cash_flow": {"required": ["wind_code", "report_period", "statement_type"]},
-    "top_shareholders": {"required": ["wind_code", "s_holder_name"], "file": "2/clean.xlsx"},
+    "top_shareholders": {
+        "required": ["wind_code", "s_holder_name"],
+        "file": "2/clean.xlsx",
+    },
     "announcements": {
         "required": ["object_id", "wind_code", "n_info_title"],
         "max_len": {"n_info_title": 512},
@@ -579,34 +710,78 @@ def _dry_run_all(data_root: Path, ds_ver: str) -> int:
         # Step 2: 三表
         for csv_name, table, usecols in [
             (
-                "asharebalancesheet_202605261517.csv", "balance_sheet",
-                ["wind_code", "report_period", "statement_type", "ann_dt",
-                 "monetary_cap", "acct_rcv", "oth_rcv", "inventories",
-                 "tot_cur_assets", "fix_assets", "goodwill", "tot_assets",
-                 "st_borrow", "lt_borrow", "acct_payable", "tot_cur_liab",
-                 "tot_liab", "tot_shrhldr_eqy_incl_min_int"],
+                "asharebalancesheet_202605261517.csv",
+                "balance_sheet",
+                [
+                    "wind_code",
+                    "report_period",
+                    "statement_type",
+                    "ann_dt",
+                    "monetary_cap",
+                    "acct_rcv",
+                    "oth_rcv",
+                    "inventories",
+                    "tot_cur_assets",
+                    "fix_assets",
+                    "goodwill",
+                    "tot_assets",
+                    "st_borrow",
+                    "lt_borrow",
+                    "acct_payable",
+                    "tot_cur_liab",
+                    "tot_liab",
+                    "tot_shrhldr_eqy_incl_min_int",
+                ],
             ),
             (
-                "ashareincome_202605261519.csv", "income_statement",
-                ["wind_code", "report_period", "statement_type", "ann_dt",
-                 "oper_rev", "tot_oper_rev", "less_oper_cost",
-                 "less_selling_dist_exp", "less_gerl_admin_exp", "less_fin_exp",
-                 "oper_profit", "tot_profit", "net_profit_excl_min_int_inc",
-                 "net_profit_after_ded_nr_lp"],
+                "ashareincome_202605261519.csv",
+                "income_statement",
+                [
+                    "wind_code",
+                    "report_period",
+                    "statement_type",
+                    "ann_dt",
+                    "oper_rev",
+                    "tot_oper_rev",
+                    "less_oper_cost",
+                    "less_selling_dist_exp",
+                    "less_gerl_admin_exp",
+                    "less_fin_exp",
+                    "oper_profit",
+                    "tot_profit",
+                    "net_profit_excl_min_int_inc",
+                    "net_profit_after_ded_nr_lp",
+                ],
             ),
             (
-                "asharecashflow_202605261518.csv", "cash_flow",
-                ["wind_code", "report_period", "statement_type", "ann_dt",
-                 "net_cash_flows_oper_act", "net_cash_flows_inv_act",
-                 "net_cash_flows_fnc_act", "net_incr_cash_cash_equ",
-                 "free_cash_flow"],
+                "asharecashflow_202605261518.csv",
+                "cash_flow",
+                [
+                    "wind_code",
+                    "report_period",
+                    "statement_type",
+                    "ann_dt",
+                    "net_cash_flows_oper_act",
+                    "net_cash_flows_inv_act",
+                    "net_cash_flows_fnc_act",
+                    "net_incr_cash_cash_equ",
+                    "free_cash_flow",
+                ],
             ),
         ]:
             fp = data_root / "4" / csv_name
             if fp.exists():
-                s = import_financial_table(engine, fp, table, usecols, ds_ver, dry_run=True)
+                s = import_financial_table(
+                    engine, fp, table, usecols, ds_ver, dry_run=True
+                )
             else:
-                s = {"source_rows": 0, "valid_rows": 0, "invalid_rows": 1, "processed": 0, "failed": 0}
+                s = {
+                    "source_rows": 0,
+                    "valid_rows": 0,
+                    "invalid_rows": 1,
+                    "processed": 0,
+                    "failed": 0,
+                }
                 logger.warning("[dry-run] %s: 文件不存在", csv_name)
             all_stats[table] = s
             total_source += s["source_rows"]
@@ -632,7 +807,10 @@ def _dry_run_all(data_root: Path, ds_ver: str) -> int:
         total_invalid += invalid
         logger.info(
             "  %-25s source=%d valid=%d invalid=%d",
-            table, s["source_rows"], s["valid_rows"], invalid,
+            table,
+            s["source_rows"],
+            s["valid_rows"],
+            invalid,
         )
     logger.info("  总计 source_rows: %d  invalid_rows: %d", total_source, total_invalid)
     logger.info("  验证: 数据库未被修改")
@@ -680,35 +858,75 @@ def main() -> int:
 
     try:
         # Step 1
-        all_stats["companies"] = import_companies(engine, data_root, args.dataset_version)
-        total_failed += all_stats["companies"]["failed"] + all_stats["companies"].get("invalid_rows", 0)
+        all_stats["companies"] = import_companies(
+            engine, data_root, args.dataset_version
+        )
+        total_failed += all_stats["companies"]["failed"] + all_stats["companies"].get(
+            "invalid_rows", 0
+        )
         if all_stats["companies"]["failed"] > 0:
             logger.error("companies 导入失败 %d 条", all_stats["companies"]["failed"])
 
         # Step 2: 三表
         for csv_name, table, usecols in [
             (
-                "asharebalancesheet_202605261517.csv", "balance_sheet",
-                ["wind_code", "report_period", "statement_type", "ann_dt",
-                 "monetary_cap", "acct_rcv", "oth_rcv", "inventories",
-                 "tot_cur_assets", "fix_assets", "goodwill", "tot_assets",
-                 "st_borrow", "lt_borrow", "acct_payable", "tot_cur_liab",
-                 "tot_liab", "tot_shrhldr_eqy_incl_min_int"],
+                "asharebalancesheet_202605261517.csv",
+                "balance_sheet",
+                [
+                    "wind_code",
+                    "report_period",
+                    "statement_type",
+                    "ann_dt",
+                    "monetary_cap",
+                    "acct_rcv",
+                    "oth_rcv",
+                    "inventories",
+                    "tot_cur_assets",
+                    "fix_assets",
+                    "goodwill",
+                    "tot_assets",
+                    "st_borrow",
+                    "lt_borrow",
+                    "acct_payable",
+                    "tot_cur_liab",
+                    "tot_liab",
+                    "tot_shrhldr_eqy_incl_min_int",
+                ],
             ),
             (
-                "ashareincome_202605261519.csv", "income_statement",
-                ["wind_code", "report_period", "statement_type", "ann_dt",
-                 "oper_rev", "tot_oper_rev", "less_oper_cost",
-                 "less_selling_dist_exp", "less_gerl_admin_exp", "less_fin_exp",
-                 "oper_profit", "tot_profit", "net_profit_excl_min_int_inc",
-                 "net_profit_after_ded_nr_lp"],
+                "ashareincome_202605261519.csv",
+                "income_statement",
+                [
+                    "wind_code",
+                    "report_period",
+                    "statement_type",
+                    "ann_dt",
+                    "oper_rev",
+                    "tot_oper_rev",
+                    "less_oper_cost",
+                    "less_selling_dist_exp",
+                    "less_gerl_admin_exp",
+                    "less_fin_exp",
+                    "oper_profit",
+                    "tot_profit",
+                    "net_profit_excl_min_int_inc",
+                    "net_profit_after_ded_nr_lp",
+                ],
             ),
             (
-                "asharecashflow_202605261518.csv", "cash_flow",
-                ["wind_code", "report_period", "statement_type", "ann_dt",
-                 "net_cash_flows_oper_act", "net_cash_flows_inv_act",
-                 "net_cash_flows_fnc_act", "net_incr_cash_cash_equ",
-                 "free_cash_flow"],
+                "asharecashflow_202605261518.csv",
+                "cash_flow",
+                [
+                    "wind_code",
+                    "report_period",
+                    "statement_type",
+                    "ann_dt",
+                    "net_cash_flows_oper_act",
+                    "net_cash_flows_inv_act",
+                    "net_cash_flows_fnc_act",
+                    "net_incr_cash_cash_equ",
+                    "free_cash_flow",
+                ],
             ),
         ]:
             fp = data_root / "4" / csv_name
@@ -739,7 +957,10 @@ def main() -> int:
     for table, s in all_stats.items():
         logger.info(
             "  %-25s source=%d processed=%d failed=%d",
-            table, s["source_rows"], s.get("processed", 0), s.get("failed", 0),
+            table,
+            s["source_rows"],
+            s.get("processed", 0),
+            s.get("failed", 0),
         )
     logger.info("  数据库总计: %d 条", total)
 

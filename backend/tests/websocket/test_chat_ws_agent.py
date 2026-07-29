@@ -115,22 +115,17 @@ def test_risk_diagnosis_runs_all_modules():
     """综合风险问题 → finance + equity + events 全部执行。"""
     client = TestClient(app)
     with client.websocket_connect("/api/v1/chat/ws") as ws:
-        ws.send_json({
-            "event_type": "chat.query",
-            "payload": {"text": "康美药业有造假风险吗"}
-        })
+        ws.send_json(
+            {"event_type": "chat.query", "payload": {"text": "康美药业有造假风险吗"}}
+        )
         events = _collect(ws)
 
     # 收集模块事件
     started_modules = {
-        e["payload"]["module"]
-        for e in events
-        if e["event_type"] == "module.started"
+        e["payload"]["module"] for e in events if e["event_type"] == "module.started"
     }
     completed_modules = {
-        e["payload"]["module"]
-        for e in events
-        if e["event_type"] == "module.completed"
+        e["payload"]["module"] for e in events if e["event_type"] == "module.completed"
     }
 
     expected = {"finance", "equity", "events"}
@@ -146,21 +141,19 @@ def test_finance_only_query_runs_finance():
     """纯财务问题 → 只执行 finance，claims_count > 0。"""
     client = TestClient(app)
     with client.websocket_connect("/api/v1/chat/ws") as ws:
-        ws.send_json({
-            "event_type": "chat.query",
-            "payload": {"text": "康美药业应收账款情况如何"}
-        })
+        ws.send_json(
+            {
+                "event_type": "chat.query",
+                "payload": {"text": "康美药业应收账款情况如何"},
+            }
+        )
         events = _collect(ws)
 
     started_modules = {
-        e["payload"]["module"]
-        for e in events
-        if e["event_type"] == "module.started"
+        e["payload"]["module"] for e in events if e["event_type"] == "module.started"
     }
     completed_modules = {
-        e["payload"]["module"]
-        for e in events
-        if e["event_type"] == "module.completed"
+        e["payload"]["module"] for e in events if e["event_type"] == "module.completed"
     }
 
     assert started_modules == {"finance"}, (

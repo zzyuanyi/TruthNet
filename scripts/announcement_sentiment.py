@@ -47,7 +47,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", default="announcements_sentiment.csv")
     p.add_argument("--map-output", default="fcode_sentiment_map.json")
     p.add_argument(
-        "--update-mysql", action="store_true",
+        "--update-mysql",
+        action="store_true",
         help="幂等更新 MySQL 中公告 sentiment/sentiment_method/updated_at",
     )
     p.add_argument("--dry-run", action="store_true")
@@ -80,6 +81,7 @@ def analyze_dict_coverage(dict_path: Path) -> dict:
     fcode_col = "fcode"
     all_codes = set(str(c).strip() for c in df_dict[fcode_col].dropna().unique())
     from backend.app.domain.events.fcode_taxonomy import FCODE_SENTIMENT_MAP
+
     mapped = set(FCODE_SENTIMENT_MAP.keys())
     unknown_in_dict = all_codes - mapped
     return {
@@ -124,19 +126,30 @@ def update_mysql_sentiment(data_file: Path) -> dict:
         stats[label] = stats.get(label, 0) + 1
 
         object_id = str(row.get("object_id", ""))
-        if pd.isna(row.get("object_id")) or not object_id.strip() or object_id.strip().lower() == "nan":
+        if (
+            pd.isna(row.get("object_id"))
+            or not object_id.strip()
+            or object_id.strip().lower() == "nan"
+        ):
             continue
         object_id = object_id.strip()
-        updates.append({
-            "object_id": object_id,
-            "sentiment": label,
-            "sentiment_method": method,
-        })
+        updates.append(
+            {
+                "object_id": object_id,
+                "sentiment": label,
+                "sentiment_method": method,
+            }
+        )
         source_ids.add(object_id)
 
     if not source_ids:
         logger.error("所有公告 object_id 均为空，无法回写")
-        return {"updated": 0, "failed": 0, "unmatched": len(df), "error": "NO_OBJECT_IDS"}
+        return {
+            "updated": 0,
+            "failed": 0,
+            "unmatched": len(df),
+            "error": "NO_OBJECT_IDS",
+        }
 
     # ── 写库前校验：object_id 匹配 ──
     engine = _make_engine()
@@ -150,14 +163,18 @@ def update_mysql_sentiment(data_file: Path) -> dict:
 
             if db_count == 0:
                 logger.error("announcements 表为空，无法回写")
-                return {"updated": 0, "failed": 0, "unmatched": len(source_ids),
-                        "stats": stats}
+                return {
+                    "updated": 0,
+                    "failed": 0,
+                    "unmatched": len(source_ids),
+                    "stats": stats,
+                }
 
             # 分批校验 object_id 匹配数
             id_list = list(source_ids)
             matched_count = 0
             for start in range(0, len(id_list), 1000):
-                batch = id_list[start:start + 1000]
+                batch = id_list[start : start + 1000]
                 cnt = conn.execute(
                     text(
                         "SELECT COUNT(*) FROM announcements "
@@ -171,10 +188,14 @@ def update_mysql_sentiment(data_file: Path) -> dict:
                 unmatched = len(source_ids) - matched_count
                 logger.error(
                     "object_id 不匹配: source=%d matched=%d unmatched=%d",
-                    len(source_ids), matched_count, unmatched,
+                    len(source_ids),
+                    matched_count,
+                    unmatched,
                 )
                 return {
-                    "updated": 0, "failed": 0, "unmatched": unmatched,
+                    "updated": 0,
+                    "failed": 0,
+                    "unmatched": unmatched,
                     "stats": stats,
                 }
 
@@ -191,7 +212,7 @@ def update_mysql_sentiment(data_file: Path) -> dict:
             failed = 0
 
             for start in range(0, len(updates), batch_size):
-                batch = updates[start:start + batch_size]
+                batch = updates[start : start + batch_size]
                 for u in batch:
                     u["now"] = NOW
                 try:
@@ -207,7 +228,9 @@ def update_mysql_sentiment(data_file: Path) -> dict:
 
             # 验证：sentiment IS NULL 数量
             null_count = conn.execute(
-                text("SELECT COUNT(*) FROM announcements WHERE sentiment IS NULL AND is_latest = 1")
+                text(
+                    "SELECT COUNT(*) FROM announcements WHERE sentiment IS NULL AND is_latest = 1"
+                )
             ).scalar()
             logger.info("sentiment IS NULL 剩余: %d", null_count)
 
@@ -287,17 +310,19 @@ def main() -> int:
         fcodes = str(row.get(fcode_col, ""))
         label, method, confidence = classify_sentiment(fcodes)
         stats[label] = stats.get(label, 0) + 1
-        results.append({
-            "object_id": row.get("object_id", ""),
-            "wind_code": row.get("s_info_windcode", row.get("wind_code", "")),
-            "ann_dt": row.get("ann_dt", ""),
-            "fcode": fcodes,
-            "title": row.get("n_info_title", row.get("title", "")),
-            "sentiment": label,
-            "sentiment_method": method,
-            "sentiment_confidence": confidence,
-            "sentiment_map_version": SENTIMENT_MAP_VERSION,
-        })
+        results.append(
+            {
+                "object_id": row.get("object_id", ""),
+                "wind_code": row.get("s_info_windcode", row.get("wind_code", "")),
+                "ann_dt": row.get("ann_dt", ""),
+                "fcode": fcodes,
+                "title": row.get("n_info_title", row.get("title", "")),
+                "sentiment": label,
+                "sentiment_method": method,
+                "sentiment_confidence": confidence,
+                "sentiment_map_version": SENTIMENT_MAP_VERSION,
+            }
+        )
 
     df_out = pd.DataFrame(results)
     if not args.dry_run:

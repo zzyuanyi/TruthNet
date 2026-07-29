@@ -71,7 +71,11 @@ def create_agent_graph() -> StateGraph:
     graph.add_conditional_edges(
         "plan_modules",
         _after_plan,
-        {"run_modules": "finance", "skip_modules": "build_claims", "no_plan": "generate_answer"},
+        {
+            "run_modules": "finance",
+            "skip_modules": "build_claims",
+            "no_plan": "generate_answer",
+        },
     )
 
     # serial for Phase B; Phase C fan-out with Send

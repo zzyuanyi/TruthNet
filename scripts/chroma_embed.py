@@ -37,6 +37,7 @@ def _load_embedding_model(model_name: str, cache_dir: str):
     # 尝试 ModelScope 国内镜像下载
     try:
         from modelscope import snapshot_download
+
         model_dir = snapshot_download(model_name, cache_dir=cache_dir)
         log.info("模型已通过 ModelScope 就绪: %s", model_dir)
         return SentenceTransformer(model_dir, device="cpu")

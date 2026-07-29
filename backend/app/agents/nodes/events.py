@@ -45,17 +45,21 @@ def _fetch_announcements(wind_code: str) -> list[dict]:
         return []
 
     with _get_engine().connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT object_id, ann_dt, n_info_title, n_info_fcode, "
-                "sentiment, sentiment_method, source_uri "
-                "FROM announcements "
-                "WHERE wind_code = :code AND is_latest = 1 "
-                "ORDER BY ann_dt DESC "
-                "LIMIT 50"
-            ),
-            {"code": wind_code},
-        ).mappings().all()
+        rows = (
+            conn.execute(
+                text(
+                    "SELECT object_id, ann_dt, n_info_title, n_info_fcode, "
+                    "sentiment, sentiment_method, source_uri "
+                    "FROM announcements "
+                    "WHERE wind_code = :code AND is_latest = 1 "
+                    "ORDER BY ann_dt DESC "
+                    "LIMIT 50"
+                ),
+                {"code": wind_code},
+            )
+            .mappings()
+            .all()
+        )
         return [dict(r) for r in rows]
 
 
@@ -74,7 +78,9 @@ def events_node(state: AgentState) -> dict:
 
     if company is None:
         return {
-            "module_status": {"events": ModuleStatus(state="failed", error_code="NO_COMPANY")},
+            "module_status": {
+                "events": ModuleStatus(state="failed", error_code="NO_COMPANY")
+            },
             "results": ModuleResults(events=None),
         }
 
@@ -83,7 +89,9 @@ def events_node(state: AgentState) -> dict:
         return {
             "module_status": {
                 "events": ModuleStatus(
-                    state="partial", error_code="DATA_SOURCE_UNAVAILABLE", recoverable=True
+                    state="partial",
+                    error_code="DATA_SOURCE_UNAVAILABLE",
+                    recoverable=True,
                 )
             },
             "results": ModuleResults(
@@ -98,7 +106,9 @@ def events_node(state: AgentState) -> dict:
         logger.exception("公告查询失败: wind_code=%s", company.wind_code)
         return {
             "module_status": {
-                "events": ModuleStatus(state="partial", error_code="DB_ERROR", recoverable=True)
+                "events": ModuleStatus(
+                    state="partial", error_code="DB_ERROR", recoverable=True
+                )
             },
             "results": ModuleResults(
                 events=EventsResult(timeline=[], clusters=[], evidence=[])
@@ -109,7 +119,9 @@ def events_node(state: AgentState) -> dict:
     if not rows:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         return {
-            "module_status": {"events": ModuleStatus(state="success", duration_ms=elapsed_ms)},
+            "module_status": {
+                "events": ModuleStatus(state="success", duration_ms=elapsed_ms)
+            },
             "results": ModuleResults(
                 events=EventsResult(timeline=[], clusters=[], evidence=[])
             ),
@@ -129,38 +141,50 @@ def events_node(state: AgentState) -> dict:
         category_label = fcode_category_label(first_fcode)
         sentiment = str(r.get("sentiment", "neutral") or "neutral")
 
-        timeline.append({
-            "date": str(r.get("ann_dt", "")),
-            "title": str(r.get("n_info_title", "")),
-            "category": category_label,
-            "sentiment": sentiment,
-            "sources": [str(r.get("source_uri", ""))] if r.get("source_uri") else [],
-        })
+        timeline.append(
+            {
+                "date": str(r.get("ann_dt", "")),
+                "title": str(r.get("n_info_title", "")),
+                "category": category_label,
+                "sentiment": sentiment,
+                "sources": [str(r.get("source_uri", ""))]
+                if r.get("source_uri")
+                else [],
+            }
+        )
 
         categories[category_label] = categories.get(category_label, 0) + 1
         sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
 
-        evidence_list.append(EvidenceRef(
-            evidence_id=f"ann_{r['object_id']}",
-            source_type="announcement",
-            source_record_id=str(r["object_id"]),
-            source_title=str(r.get("n_info_title", ""))[:120],
-        ))
+        evidence_list.append(
+            EvidenceRef(
+                evidence_id=f"ann_{r['object_id']}",
+                source_type="announcement",
+                source_record_id=str(r["object_id"]),
+                source_title=str(r.get("n_info_title", ""))[:120],
+            )
+        )
 
     # 事件簇
     clusters = []
     if sentiment_counts.get("negative", 0) > 0:
         first_date = sorted_rows[0].get("ann_dt", "")
         last_date = sorted_rows[-1].get("ann_dt", "")
-        clusters.append({
-            "topic": "负面公告",
-            "event_count": sentiment_counts["negative"],
-            "date_range": f"{first_date} 至 {last_date}" if len(sorted_rows) > 1 else str(first_date),
-        })
+        clusters.append(
+            {
+                "topic": "负面公告",
+                "event_count": sentiment_counts["negative"],
+                "date_range": f"{first_date} 至 {last_date}"
+                if len(sorted_rows) > 1
+                else str(first_date),
+            }
+        )
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     return {
-        "module_status": {"events": ModuleStatus(state="success", duration_ms=elapsed_ms)},
+        "module_status": {
+            "events": ModuleStatus(state="success", duration_ms=elapsed_ms)
+        },
         "results": ModuleResults(
             events=EventsResult(
                 timeline=timeline,

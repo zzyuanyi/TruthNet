@@ -16,7 +16,11 @@ def fake_encode(texts, *args, **kwargs):
     """返回固定维度的随机向量，模拟嵌入。"""
     if isinstance(texts, str):
         texts = [texts]
-    return np.random.default_rng(42).random((len(texts), FAKE_EMBED_DIM)).astype(np.float32)
+    return (
+        np.random.default_rng(42)
+        .random((len(texts), FAKE_EMBED_DIM))
+        .astype(np.float32)
+    )
 
 
 @pytest.fixture

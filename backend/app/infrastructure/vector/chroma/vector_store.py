@@ -29,6 +29,7 @@ def _get_embedding_model():
 
             try:
                 from modelscope import snapshot_download
+
                 model_dir = snapshot_download(
                     settings.EMBEDDING_MODEL, cache_dir=settings.EMBEDDING_CACHE_DIR
                 )
@@ -62,6 +63,7 @@ class ChromaVectorStore:
         if self._client is None:
             try:
                 import chromadb
+
                 os.makedirs(self._persist_dir, exist_ok=True)
                 self._client = chromadb.PersistentClient(path=self._persist_dir)
                 self._available = True
@@ -113,18 +115,24 @@ class ChromaVectorStore:
         metas = results.get("metadatas", [[]])[0]
         distances = results.get("distances", [[]])[0]
         for i in range(len(ids)):
-            items.append({
-                "id": ids[i],
-                "content": docs[i] if i < len(docs) else "",
-                "metadata": metas[i] if i < len(metas) else {},
-                "score": max(0.0, min(1.0, 1.0 - float(distances[i])))
-                if i < len(distances) else 0.0,
-            })
+            items.append(
+                {
+                    "id": ids[i],
+                    "content": docs[i] if i < len(docs) else "",
+                    "metadata": metas[i] if i < len(metas) else {},
+                    "score": max(0.0, min(1.0, 1.0 - float(distances[i])))
+                    if i < len(distances)
+                    else 0.0,
+                }
+            )
         return items
 
     async def add_documents(
-        self, documents: list[str], metadatas: list[dict],
-        collection: str = COLLECTION_NAME, ids: list[str] | None = None,
+        self,
+        documents: list[str],
+        metadatas: list[dict],
+        collection: str = COLLECTION_NAME,
+        ids: list[str] | None = None,
     ) -> None:
         """添加文档到指定 collection（含嵌入计算）。"""
         client = self._get_client()
@@ -147,8 +155,14 @@ class ChromaVectorStore:
             )
             if ids is None:
                 import uuid
+
                 ids = [uuid.uuid4().hex[:16] for _ in documents]
-            col.add(documents=documents, embeddings=embeddings.tolist(), metadatas=metadatas, ids=ids)
+            col.add(
+                documents=documents,
+                embeddings=embeddings.tolist(),
+                metadatas=metadatas,
+                ids=ids,
+            )
             logger.info("添加 %d 文档到 collection=%s", len(documents), collection)
         except Exception:
             logger.exception("ChromaDB 添加文档失败: collection=%s", collection)
