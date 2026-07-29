@@ -19,6 +19,9 @@ export default defineConfig({
     port: parseInt(process.env.DEPLOY_RUN_PORT || process.env.FRONTEND_PORT || '3000'),
     host: true,
     proxy: {
+      // ─── TruthNet V12 API（WebSocket + REST） ───
+      '/api/v1': { target: AGENT_API, changeOrigin: true, ws: true },
+
       // ─── Agent API (端口 8000): 认证、会话管理、SSE对话、仪表盘、系统配置、搜索 ───
       '/api/auth': { target: AGENT_API, changeOrigin: true },
       '/api/sessions': { target: AGENT_API, changeOrigin: true, ws: true },

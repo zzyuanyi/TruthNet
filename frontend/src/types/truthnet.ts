@@ -55,7 +55,7 @@ export const RISK_LEVELS: Record<RiskLevel, RiskLevelInfo> = {
 
 // ============ 分析面板数据 ============
 
-export type PanelState = 'empty' | 'loading' | 'ready' | 'thinking' | 'streaming' | 'done';
+export type PanelState = 'empty' | 'loading' | 'ready' | 'thinking' | 'streaming' | 'done' | 'error';
 
 export interface PanelData {
   risk_level: RiskLevel;
@@ -168,47 +168,24 @@ export interface EvidenceSource {
   snippet: string;
 }
 
-// ============ WebSocket 消息 ============
+// ============ WebSocket 消息（V12 event envelope） ============
 
-export type WSMessageType =
-  | 'thinking'
-  | 'text_chunk'
-  | 'structured_data'
-  | 'follow_up'
-  | 'done'
-  | 'error';
+export type WSEventType =
+  | 'turn.accepted' | 'turn.completed' | 'turn.failed' | 'turn.cancelled'
+  | 'module.started' | 'module.completed'
+  | 'answer.delta' | 'artifact.upsert'
+  | 'heartbeat';
 
-export interface WSMessage {
-  type: WSMessageType;
+export interface WSEvent {
+  schema_version: string;
+  event_id: string;
+  event_type: WSEventType;
   session_id: string;
-  payload: unknown;
-}
-
-export interface ThinkingPayload {
-  step: string;
-  progress: number;
-}
-
-export interface TextChunkPayload {
-  chunk: string;
-  is_final: boolean;
-}
-
-export interface StructuredDataPayload {
-  panel_data: PanelData;
-}
-
-export interface FollowUpPayload {
-  suggestions: string[];
-}
-
-export interface DonePayload {
-  message_id: string;
-}
-
-export interface ErrorPayload {
-  code: string;
-  message: string;
+  turn_id: string;
+  sequence: number;
+  timestamp: string;
+  trace_id: string;
+  payload: Record<string, unknown>;
 }
 
 // ============ 跨公司对比 ============

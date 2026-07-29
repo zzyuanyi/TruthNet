@@ -24,6 +24,7 @@ interface AnalysisPanelProps {
   data: PanelData | null;
   company?: { code: string; name: string };
   onFollowUp?: (suggestion: string) => void;
+  errorMessage?: string;
 }
 
 // 风险等级配置
@@ -35,7 +36,7 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string; icon: t
   green: { label: '正常', color: 'bg-green-500 text-white', icon: CheckCircle2 },
 };
 
-export function AnalysisPanel({ state, data, company, onFollowUp }: AnalysisPanelProps) {
+export function AnalysisPanel({ state, data, company, onFollowUp, errorMessage }: AnalysisPanelProps) {
   return (
     <div className="h-full flex flex-col bg-background">
       {/* 头部 */}
@@ -57,8 +58,22 @@ export function AnalysisPanel({ state, data, company, onFollowUp }: AnalysisPane
           {state === 'ready' && <ReadyState data={data} />}
           {state === 'done' && data && <DoneState data={data} onFollowUp={onFollowUp} />}
           {state === 'done' && !data && <EmptyState />}
+          {state === 'error' && <ErrorState message={errorMessage} />}
         </div>
       </ScrollArea>
+    </div>
+  );
+}
+
+// 错误状态
+function ErrorState({ message }: { message?: string }) {
+  return (
+    <div className="text-center py-12">
+      <AlertTriangle className="h-12 w-12 mx-auto text-destructive mb-4" />
+      <h3 className="text-sm font-medium mb-1">分析失败</h3>
+      <p className="text-xs text-muted-foreground">
+        {message || '请重新提问'}
+      </p>
     </div>
   );
 }

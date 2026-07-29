@@ -15,6 +15,15 @@ from app.agents.state import (
 
 def finance_node(state: AgentState) -> dict:
     company = state.get("company")
+    plan = state.get("plan")
+
+    # 未选中 → no-op（plan 缺失时保守执行）
+    if plan is not None and "finance" not in plan.requested_modules:
+        return {
+            "module_status": {"finance": ModuleStatus(state="skipped")},
+            "results": ModuleResults(finance=None),
+        }
+
     if company is None:
         return {
             "module_status": {"finance": ModuleStatus(state="skipped")},

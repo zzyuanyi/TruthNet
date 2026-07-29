@@ -26,6 +26,9 @@ import pandas as pd
 _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
+_backend_root = _repo_root / "backend"
+if str(_backend_root) not in sys.path:
+    sys.path.insert(0, str(_backend_root))
 
 from backend.app.core.config import settings  # noqa: E402
 from backend.app.infrastructure.graph.neo4j.equity_graph import (  # noqa: E402
@@ -145,7 +148,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--replace-graph-version",
         action="store_true",
-        help="⚠️ 危险：替换指定 graph_version 的全部关系（保留实体节点）",
+        help="[!]危险：替换指定 graph_version 的全部关系（保留实体节点）",
     )
     p.add_argument(
         "--concerted-only",
@@ -197,7 +200,7 @@ def main() -> int:
         # 替换模式：清除指定版本的旧关系
         if args.replace_graph_version:
             logger.warning(
-                "⚠️ 将替换 graph_version=%s 的全部关系！",
+                "[!]将替换 graph_version=%s 的全部关系！",
                 args.graph_version,
             )
             await adapter.cleanup_test_data(args.graph_version)
@@ -240,7 +243,7 @@ def main() -> int:
 
             if holder_entity_id not in entities:
                 entity_type = "Person" if holder_category == 1 else "Company"
-                # ⚠️ 特殊实体类型校正
+                # [!]特殊实体类型校正
                 if any(
                     kw in holder_name
                     for kw in ["国资委", "财政局", "人民政府", "国有资产"]

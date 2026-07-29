@@ -30,6 +30,25 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def _load_embedding_model(model_name: str, cache_dir: str):
+    """加载 BGE 模型（优先本地缓存，其次 ModelScope 国内镜像）。"""
+    from sentence_transformers import SentenceTransformer
+
+    # 尝试 ModelScope 国内镜像下载
+    try:
+        from modelscope import snapshot_download
+
+        model_dir = snapshot_download(model_name, cache_dir=cache_dir)
+        log.info("模型已通过 ModelScope 就绪: %s", model_dir)
+        return SentenceTransformer(model_dir, device="cpu")
+    except Exception:
+        pass
+
+    # 回退：从本地缓存加载（首次由 HuggingFace 缓存，后续秒加载）
+    log.info("从本地缓存加载模型")
+    return SentenceTransformer(model_name, cache_folder=cache_dir, device="cpu")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--batch-size", type=int, default=1000)
@@ -87,6 +106,7 @@ def main():
                     "char_start": ci * 350,
                     "char_end": min(ci * 350 + 400, len(content)),
                     "content_hash": hashlib.sha256(chunk.encode()).hexdigest()[:16],
+                    "chunk_text": chunk,
                 }
             )
 
@@ -95,11 +115,9 @@ def main():
         log.warning("No chunks generated!")
         return 1
 
-    # Load model and embed in batches
-    from sentence_transformers import SentenceTransformer
-
-    model = SentenceTransformer(
-        "BAAI/bge-small-zh-v1.5", cache_folder="data/model_cache", device="cpu"
+    # Load model（优先 ModelScope 国内镜像，被墙时 huggingface 不可达）
+    model = _load_embedding_model(
+        settings.EMBEDDING_MODEL, settings.EMBEDDING_CACHE_DIR
     )
     log.info("Model loaded, embedding %d chunks...", len(texts))
 

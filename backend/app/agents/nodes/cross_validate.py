@@ -7,6 +7,12 @@ from app.agents.state import AgentState
 
 
 def cross_validate_node(state: AgentState) -> dict:
+    plan = state.get("plan")
+
+    # 无交叉检查项 → no-op
+    if plan is None or not plan.cross_checks:
+        return {"messages": []}
+
     company = state.get("company")
     results = state.get("results")
     warnings: list[str] = []

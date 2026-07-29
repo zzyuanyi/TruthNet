@@ -383,7 +383,12 @@ class CashFlow(Base, SystemFieldsMixin):
 
 class TopShareholder(Base, SystemFieldsMixin):
     __tablename__ = "top_shareholders"
-    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+    __table_args__ = (
+        UniqueConstraint(
+            "source_record_id", name="uq_top_shareholders_source_record_id"
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
 
     wind_code: Mapped[str] = mapped_column(
         String(32), nullable=False, index=True, comment="Wind 代码"

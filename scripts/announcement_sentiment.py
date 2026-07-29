@@ -1,14 +1,8 @@
 #!/usr/bin/env python
-"""TruthNet — 公告情绪映射 (Phase B Task 4, 集成版).
+"""TruthNet — 公告情绪映射 (Phase B Task 4, 最终修正版).
 
-变更（相对于 PR #11 原版）：
-  - 覆盖真实 fcode 字典中所有已知类别（目标 33 类）
-  - 映射表与执行逻辑分离
-  - 映射表版本化
-  - 支持通过 object_id 幂等更新 MySQL
-  - 多 fcode 组合时按"负面优先"判定
-  - 未知类别标记为 'unknown'（不静默归为 neutral）
-  - 启发式规则标明 heuristic 和替代解释
+使用共享的 fcode_taxonomy 模块，避免两份映射漂移。
+--update-mysql 写入前校验 object_id 匹配数量。
 """
 
 from __future__ import annotations
@@ -17,130 +11,33 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy.engine import Engine
 
 _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
+from backend.app.core.config import settings  # noqa: E402
+from backend.app.domain.events.fcode_taxonomy import (  # noqa: E402
+    SENTIMENT_MAP_VERSION,
+    classify_sentiment,
+)
 
 logger = logging.getLogger(__name__)
-
-# ═══════════════════════════════════════════════════════════
-# FCODE 情绪映射表（版本化）
-# ═══════════════════════════════════════════════════════════
-
-SENTIMENT_MAP_VERSION = "1.0.0"
-SENTIMENT_EFFECTIVE_FROM = "2026-07-23"
-
-# 映射类型: positive | negative | neutral | unknown
-# unknown = 当前无法可靠分类，保留供人工审核
-
-FCODE_SENTIMENT_MAP: dict[str, dict[str, str]] = {
-    # ── 定期报告 ──
-    "001001": {"label": "negative", "reason": "年报"},
-    "001002": {"label": "negative", "reason": "半年报"},
-    "001003": {"label": "negative", "reason": "季报"},
-    "001004": {"label": "negative", "reason": "业绩预告"},
-    "001005": {"label": "negative", "reason": "业绩快报"},
-    "001006": {"label": "neutral", "reason": "业绩预告修正"},
-    "001007": {"label": "negative", "reason": "利润分配预案"},
-    # ── 公司治理 ──
-    "002001": {"label": "negative", "reason": "董事会决议"},
-    "002002": {"label": "negative", "reason": "监事会决议"},
-    "002003": {"label": "negative", "reason": "股东大会决议"},
-    "002004": {"label": "negative", "reason": "公司章程修订"},
-    "002005": {"label": "negative", "reason": "独立董事意见"},
-    "002006": {"label": "negative", "reason": "高管变动"},
-    # ── 股权变动 ──
-    "003001": {"label": "negative", "reason": "股东增减持"},
-    "003002": {"label": "negative", "reason": "股权质押"},
-    "003003": {"label": "negative", "reason": "股权质押解除"},
-    "003004": {"label": "negative", "reason": "股权冻结"},
-    "003005": {"label": "negative", "reason": "股权拍卖"},
-    "003006": {"label": "negative", "reason": "权益变动报告书"},
-    # ── 重大事项 ──
-    "004001": {"label": "negative", "reason": "重大资产重组"},
-    "004002": {"label": "negative", "reason": "对外担保"},
-    "004003": {"label": "negative", "reason": "关联交易"},
-    "004004": {"label": "negative", "reason": "诉讼/仲裁"},
-    "004005": {"label": "negative", "reason": "行政处罚"},
-    "004006": {"label": "negative", "reason": "立案调查"},
-    "004007": {"label": "negative", "reason": "退市风险警示"},
-    "004008": {"label": "neutral", "reason": "ST/摘帽"},
-    "004009": {"label": "negative", "reason": "澄清公告"},
-    # ── 融资事项 ──
-    "005001": {"label": "neutral", "reason": "增发/配股"},
-    "005002": {"label": "neutral", "reason": "债券发行"},
-    "005003": {"label": "neutral", "reason": "股份回购"},
-    "005004": {"label": "negative", "reason": "募集资金变更用途"},
-    # ── 其他 ──
-    "006001": {"label": "neutral", "reason": "投资者关系活动"},
-    "006002": {"label": "neutral", "reason": "其他"},
-}
-
-# 启发式规则（需项目负责人确认）
-# "澄清公告必然负面" — 实际取决于澄清内容，有替代解释
-HEURISTIC_NOTES = {
-    "004009": "heuristic: 澄清公告默认为负面（可能中性：正面澄清利好）",
-    "004002": "heuristic: 担保默认为负面（可能中性：常规经营担保）",
-    "002006": "heuristic: 高管变动默认为负面（可能中性：正常换届）",
-}
+NOW = datetime.now(timezone.utc)
 
 
-def classify_sentiment(fcodes: str) -> tuple[str, str, float]:
-    """根据 fcode 字符串判定情绪。
-
-    Args:
-        fcodes: 多 fcode 用 '|' 分隔，如 "004004|004005"
-
-    Returns:
-        (label, method, confidence)
-        label: positive/negative/neutral/unknown
-        method: fcode_map | multi_fcode_negative_priority | heuristic
-        confidence: 0.0-1.0
-    """
-    if pd.isna(fcodes) or not str(fcodes).strip():
-        return ("neutral", "no_fcode", 0.5)
-
-    codes = [c.strip() for c in str(fcodes).split("|") if c.strip()]
-    if not codes:
-        return ("neutral", "no_fcode", 0.5)
-
-    labels = []
-    methods = []
-    has_unknown = False
-
-    for code in codes:
-        if code in FCODE_SENTIMENT_MAP:
-            labels.append(FCODE_SENTIMENT_MAP[code]["label"])
-            reason = FCODE_SENTIMENT_MAP[code]["reason"]
-            if code in HEURISTIC_NOTES:
-                methods.append(f"heuristic:{reason}")
-            else:
-                methods.append(f"fcode_map:{reason}")
-        else:
-            labels.append("unknown")
-            methods.append("unknown_fcode")
-            has_unknown = True
-
-    # 负面优先策略
-    if "negative" in labels:
-        confidence = 1.0 if not has_unknown else 0.7
-        method = " | ".join(methods)
-        return ("negative", method, confidence)
-
-    if "positive" in labels:
-        confidence = 0.8 if not has_unknown else 0.6
-        method = " | ".join(methods)
-        return ("positive", method, confidence)
-
-    if has_unknown:
-        return ("unknown", " | ".join(methods), 0.3)
-
-    return ("neutral", " | ".join(methods), 0.9)
+def _make_engine() -> Engine:
+    url = (
+        f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
+        f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+    )
+    return create_engine(url, echo=False)
 
 
 def parse_args() -> argparse.Namespace:
@@ -152,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--update-mysql",
         action="store_true",
-        help="幂等更新 MySQL 中的公告 sentiment 字段",
+        help="幂等更新 MySQL 中公告 sentiment/sentiment_method/updated_at",
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--analyze-dict", action="store_true", help="仅分析字典覆盖情况")
@@ -160,41 +57,199 @@ def parse_args() -> argparse.Namespace:
 
 
 def analyze_dict_coverage(dict_path: Path) -> dict:
-    """分析 fcode 字典覆盖率."""
     if not dict_path or not dict_path.exists():
         logger.warning("fcode 字典文件不可用: %s", dict_path)
         return {}
 
-    df_dict = (
-        pd.read_csv(dict_path)
-        if dict_path.suffix == ".csv"
-        else pd.read_excel(dict_path)
-    )
-
-    # 尝试识别 fcode 列
-    fcode_col = None
-    for col in ["fcode", "n_info_fcode", "code", "fcode_id"]:
-        if col in df_dict.columns:
-            fcode_col = col
-            break
-
-    if fcode_col is None:
-        logger.warning("无法识别 fcode 列，可用列: %s", list(df_dict.columns))
+    suffix = dict_path.suffix.lower()
+    if suffix == ".csv":
+        df_dict = pd.read_csv(dict_path)
+    elif suffix in (".xlsx", ".xls"):
+        df_dict = pd.read_excel(dict_path)
+    elif suffix == ".txt":
+        # TSV 格式：fcode\tname，过滤仅保留 10 位数字 fcode 行
+        df_dict = pd.read_csv(dict_path, sep="\t", header=None, names=["fcode", "name"])
+        df_dict = df_dict[df_dict["fcode"].astype(str).str.match(r"^\d{10}$")].copy()
+    else:
+        logger.warning("不支持的字典文件格式: %s", suffix)
         return {}
 
+    if "fcode" not in df_dict.columns:
+        if list(df_dict.columns)[:2] != ["fcode", "name"]:
+            df_dict.columns = ["fcode", "name"] + list(df_dict.columns[2:])
+
+    fcode_col = "fcode"
     all_codes = set(str(c).strip() for c in df_dict[fcode_col].dropna().unique())
+    from backend.app.domain.events.fcode_taxonomy import FCODE_SENTIMENT_MAP
+
     mapped = set(FCODE_SENTIMENT_MAP.keys())
     unknown_in_dict = all_codes - mapped
-    unused_in_map = mapped - all_codes
-
     return {
         "dict_total_categories": len(all_codes),
         "mapped_categories": len(mapped),
         "unknown_categories": sorted(unknown_in_dict),
         "unknown_count": len(unknown_in_dict),
-        "unused_defined_categories": sorted(unused_in_map),
-        "categories_in_data": len(all_codes),
     }
+
+
+def update_mysql_sentiment(data_file: Path) -> dict:
+    """从源文件读取公告，分类后批量回写 MySQL。"""
+    logger.info("=== --update-mysql: 批量回写公告 sentiment ===")
+    if not data_file.exists():
+        logger.error("数据文件不存在: %s", data_file)
+        return {"updated": 0, "failed": 0, "unmatched": 0, "error": "FILE_NOT_FOUND"}
+
+    if data_file.suffix.lower() in (".xlsx", ".xls"):
+        df = pd.read_excel(data_file)
+    else:
+        df = pd.read_csv(data_file, low_memory=False)
+
+    logger.info("读取 %d 条公告", len(df))
+
+    fcode_col = None
+    for col in ["n_info_fcode", "fcode"]:
+        if col in df.columns:
+            fcode_col = col
+            break
+    if fcode_col is None:
+        logger.error("无法找到 fcode 列，可用列: %s", list(df.columns))
+        return {"updated": 0, "failed": 0, "unmatched": len(df)}
+
+    # 分类
+    stats: dict[str, int] = {"positive": 0, "negative": 0, "neutral": 0, "unknown": 0}
+    updates: list[dict] = []
+    source_ids = set()
+
+    for _, row in df.iterrows():
+        fcodes = str(row.get(fcode_col, ""))
+        label, method, _confidence = classify_sentiment(fcodes)
+        stats[label] = stats.get(label, 0) + 1
+
+        object_id = str(row.get("object_id", ""))
+        if (
+            pd.isna(row.get("object_id"))
+            or not object_id.strip()
+            or object_id.strip().lower() == "nan"
+        ):
+            continue
+        object_id = object_id.strip()
+        updates.append(
+            {
+                "object_id": object_id,
+                "sentiment": label,
+                "sentiment_method": method,
+            }
+        )
+        source_ids.add(object_id)
+
+    if not source_ids:
+        logger.error("所有公告 object_id 均为空，无法回写")
+        return {
+            "updated": 0,
+            "failed": 0,
+            "unmatched": len(df),
+            "error": "NO_OBJECT_IDS",
+        }
+
+    # ── 写库前校验：object_id 匹配 ──
+    engine = _make_engine()
+    try:
+        with engine.connect() as conn:
+            # 检查数据库中有多少条公告
+            db_count = conn.execute(
+                text("SELECT COUNT(*) FROM announcements WHERE is_latest = 1")
+            ).scalar()
+            logger.info("数据库公告数: %d", db_count)
+
+            if db_count == 0:
+                logger.error("announcements 表为空，无法回写")
+                return {
+                    "updated": 0,
+                    "failed": 0,
+                    "unmatched": len(source_ids),
+                    "stats": stats,
+                }
+
+            # 分批校验 object_id 匹配数
+            id_list = list(source_ids)
+            matched_count = 0
+            for start in range(0, len(id_list), 1000):
+                batch = id_list[start : start + 1000]
+                cnt = conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM announcements "
+                        "WHERE object_id IN :ids AND is_latest = 1"
+                    ).bindparams(bindparam("ids", expanding=True)),
+                    {"ids": batch},
+                ).scalar()
+                matched_count += cnt
+
+            if matched_count != len(source_ids):
+                unmatched = len(source_ids) - matched_count
+                logger.error(
+                    "object_id 不匹配: source=%d matched=%d unmatched=%d",
+                    len(source_ids),
+                    matched_count,
+                    unmatched,
+                )
+                return {
+                    "updated": 0,
+                    "failed": 0,
+                    "unmatched": unmatched,
+                    "stats": stats,
+                }
+
+            logger.info("object_id 全部匹配: %d / %d", matched_count, len(source_ids))
+
+            # ── 批量 UPDATE ──
+            update_sql = text(
+                "UPDATE announcements SET sentiment = :sentiment, "
+                "sentiment_method = :sentiment_method, updated_at = :now "
+                "WHERE object_id = :object_id"
+            )
+            batch_size = 1000
+            updated = 0
+            failed = 0
+
+            for start in range(0, len(updates), batch_size):
+                batch = updates[start : start + batch_size]
+                for u in batch:
+                    u["now"] = NOW
+                try:
+                    conn.execute(update_sql, batch)
+                    conn.commit()
+                    updated += len(batch)
+                except Exception:
+                    conn.rollback()
+                    failed += len(batch)
+                    logger.exception(
+                        "batch update failed: rows %d-%d", start, start + len(batch)
+                    )
+
+            # 验证：sentiment IS NULL 数量
+            null_count = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM announcements WHERE sentiment IS NULL AND is_latest = 1"
+                )
+            ).scalar()
+            logger.info("sentiment IS NULL 剩余: %d", null_count)
+
+            # 分布
+            for label in ["positive", "negative", "neutral", "unknown"]:
+                cnt = conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM announcements "
+                        "WHERE sentiment = :label AND is_latest = 1"
+                    ),
+                    {"label": label},
+                ).scalar()
+                logger.info("  DB %s: %d", label, cnt)
+
+    finally:
+        engine.dispose()
+
+    logger.info("回写完成: updated=%d failed=%d", updated, failed)
+    return {"updated": updated, "failed": failed, "unmatched": 0, "stats": stats}
 
 
 def main() -> int:
@@ -203,14 +258,26 @@ def main() -> int:
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
     )
 
-    # 分析字典覆盖
     if args.dict_file:
         coverage = analyze_dict_coverage(Path(args.dict_file))
         print(json.dumps(coverage, indent=2, ensure_ascii=False, default=str))
         if args.analyze_dict:
             return 0
 
-    # 处理数据文件
+    if args.update_mysql:
+        if not args.data_file:
+            logger.error("--update-mysql 需要 --data-file")
+            return 1
+        result = update_mysql_sentiment(Path(args.data_file))
+        if result.get("error"):
+            logger.error("回写失败: %s", result["error"])
+            return 1
+        if result.get("unmatched", 0) > 0:
+            logger.error("存在未匹配 object_id，退出码非 0")
+            return 1
+        return 0 if result["failed"] == 0 else 1
+
+    # 本地 CSV 输出模式
     if not args.data_file:
         logger.error("需要 --data-file 或 --analyze-dict")
         return 1
@@ -220,7 +287,6 @@ def main() -> int:
         logger.error("数据文件不存在: %s", data_path)
         return 1
 
-    # 读取公告数据
     if data_path.suffix.lower() in (".xlsx", ".xls"):
         df = pd.read_excel(data_path)
     else:
@@ -228,18 +294,15 @@ def main() -> int:
 
     logger.info("读取 %d 条公告", len(df))
 
-    # 识别 fcode 列
     fcode_col = None
     for col in ["n_info_fcode", "fcode", "announcement_fcode"]:
         if col in df.columns:
             fcode_col = col
             break
-
     if fcode_col is None:
         logger.error("无法找到 fcode 列，可用列: %s", list(df.columns))
         return 1
 
-    # 分类
     results = []
     stats = {"positive": 0, "negative": 0, "neutral": 0, "unknown": 0}
 
@@ -247,40 +310,25 @@ def main() -> int:
         fcodes = str(row.get(fcode_col, ""))
         label, method, confidence = classify_sentiment(fcodes)
         stats[label] = stats.get(label, 0) + 1
+        results.append(
+            {
+                "object_id": row.get("object_id", ""),
+                "wind_code": row.get("s_info_windcode", row.get("wind_code", "")),
+                "ann_dt": row.get("ann_dt", ""),
+                "fcode": fcodes,
+                "title": row.get("n_info_title", row.get("title", "")),
+                "sentiment": label,
+                "sentiment_method": method,
+                "sentiment_confidence": confidence,
+                "sentiment_map_version": SENTIMENT_MAP_VERSION,
+            }
+        )
 
-        result = {
-            "object_id": row.get("object_id", ""),
-            "wind_code": row.get("s_info_windcode", row.get("wind_code", "")),
-            "ann_dt": row.get("ann_dt", ""),
-            "fcode": fcodes,
-            "title": row.get("n_info_title", row.get("title", "")),
-            "sentiment": label,
-            "sentiment_method": method,
-            "sentiment_confidence": confidence,
-            "sentiment_map_version": SENTIMENT_MAP_VERSION,
-        }
-        results.append(result)
-
-    # 输出
     df_out = pd.DataFrame(results)
     if not args.dry_run:
         df_out.to_csv(args.output, index=False, encoding="utf-8")
         logger.info("输出: %s (%d 条)", args.output, len(df_out))
 
-    # 保存映射表
-    if not args.dry_run:
-        map_data = {
-            "version": SENTIMENT_MAP_VERSION,
-            "effective_from": SENTIMENT_EFFECTIVE_FROM,
-            "total_mapped": len(FCODE_SENTIMENT_MAP),
-            "heuristic_notes": HEURISTIC_NOTES,
-            "map": FCODE_SENTIMENT_MAP,
-        }
-        with open(args.map_output, "w", encoding="utf-8") as f:
-            json.dump(map_data, f, indent=2, ensure_ascii=False)
-        logger.info("映射表: %s", args.map_output)
-
-    # 统计
     total = sum(stats.values())
     print(f"\n情绪分类统计 ({total} 条公告):")
     for label in ["positive", "negative", "neutral", "unknown"]:

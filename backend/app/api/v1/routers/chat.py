@@ -288,6 +288,11 @@ async def websocket_chat_v1(ws: WebSocket):
             event_type = msg.get("event_type", "")
             payload = msg.get("payload", {})
 
+            # 客户端传入 session_id → 覆盖自动生成的 UUID（多轮记忆前置条件）
+            client_sid = payload.get("session_id", "")
+            if client_sid:
+                session_id = client_sid
+
             if not event_type:
                 # 尝试旧格式: {question: "..."} 或 {data: {question: "..."}}
                 question = msg.get("question", "") or msg.get("data", {}).get(
@@ -418,8 +423,14 @@ async def websocket_chat_v1(ws: WebSocket):
                     )
                     continue
 
-                # module.started + module.completed（真实串行顺序）
-                for name, ms in module_status.items():
+                # module.started + module.completed（仅已执行模块，跳过 no-op）
+                active_modules = {
+                    name: ms
+                    for name, ms in module_status.items()
+                    if getattr(ms, "state", "pending") != "skipped"
+                }
+
+                for name, ms in active_modules.items():
                     if not cancelled:
                         await ws.send_json(
                             _envelope(
@@ -427,7 +438,7 @@ async def websocket_chat_v1(ws: WebSocket):
                             )
                         )
 
-                for name, ms in module_status.items():
+                for name, ms in active_modules.items():
                     if not cancelled:
                         await ws.send_json(
                             _envelope(
