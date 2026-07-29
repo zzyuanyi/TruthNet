@@ -1,6 +1,6 @@
 """Agent Graph — V12 §7.1.
 
-LangGraph StateGraph: LoadContext → ResolveEntity → PlanModules
+LangGraph StateGraph: LoadContext → Memory → ResolveEntity → PlanModules
 → Finance → Equity → Events → CrossValidate → BuildClaims
 → GenerateAnswer → ValidateEvidence → PersistTurn
 """
@@ -14,6 +14,7 @@ from app.agents.nodes.events import events_node
 from app.agents.nodes.finance import finance_node
 from app.agents.nodes.generate_answer import generate_answer_node
 from app.agents.nodes.load_context import load_context_node
+from app.agents.nodes.memory import memory_node
 from app.agents.nodes.persist_turn import persist_turn_node
 from app.agents.nodes.plan_modules import plan_modules_node
 from app.agents.nodes.resolve_entity import resolve_entity_node
@@ -47,6 +48,7 @@ def create_agent_graph() -> StateGraph:
 
     # nodes
     graph.add_node("load_context", load_context_node)
+    graph.add_node("memory", memory_node)
     graph.add_node("resolve_entity", resolve_entity_node)
     graph.add_node("plan_modules", plan_modules_node)
     graph.add_node("finance", finance_node)
@@ -60,7 +62,8 @@ def create_agent_graph() -> StateGraph:
 
     # edges: linear chain with conditional fallbacks
     graph.set_entry_point("load_context")
-    graph.add_edge("load_context", "resolve_entity")
+    graph.add_edge("load_context", "memory")
+    graph.add_edge("memory", "resolve_entity")
 
     graph.add_conditional_edges(
         "resolve_entity",
