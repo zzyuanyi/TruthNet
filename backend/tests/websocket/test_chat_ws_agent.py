@@ -129,12 +129,12 @@ def test_risk_diagnosis_runs_all_modules():
     }
 
     expected = {"finance", "equity", "events"}
-    assert started_modules == expected, (
-        f"module.started 应为 {expected}，实际 {started_modules}"
-    )
-    assert completed_modules == expected, (
-        f"module.completed 应为 {expected}，实际 {completed_modules}"
-    )
+    assert (
+        started_modules == expected
+    ), f"module.started 应为 {expected}，实际 {started_modules}"
+    assert (
+        completed_modules == expected
+    ), f"module.completed 应为 {expected}，实际 {completed_modules}"
 
 
 def test_finance_only_query_runs_finance():
@@ -156,14 +156,14 @@ def test_finance_only_query_runs_finance():
         e["payload"]["module"] for e in events if e["event_type"] == "module.completed"
     }
 
-    assert started_modules == {"finance"}, (
-        f"纯财务问题应只执行 finance，实际 started: {started_modules}"
-    )
-    assert completed_modules == {"finance"}, (
-        f"纯财务问题应只完成 finance，实际 completed: {completed_modules}"
-    )
+    assert started_modules == {
+        "finance"
+    }, f"纯财务问题应只执行 finance，实际 started: {started_modules}"
+    assert completed_modules == {
+        "finance"
+    }, f"纯财务问题应只完成 finance，实际 completed: {completed_modules}"
 
     tc = next(e for e in events if e["event_type"] == "turn.completed")
-    assert tc["payload"]["claims_count"] > 0, (
-        f"至少 1 条 Claim，实际 claims_count={tc['payload']['claims_count']}"
-    )
+    assert (
+        tc["payload"]["claims_count"] > 0
+    ), f"至少 1 条 Claim，实际 claims_count={tc['payload']['claims_count']}"
