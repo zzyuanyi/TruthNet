@@ -288,6 +288,11 @@ async def websocket_chat_v1(ws: WebSocket):
             event_type = msg.get("event_type", "")
             payload = msg.get("payload", {})
 
+            # 客户端传入 session_id → 覆盖自动生成的 UUID（多轮记忆前置条件）
+            client_sid = payload.get("session_id", "")
+            if client_sid:
+                session_id = client_sid
+
             if not event_type:
                 # 尝试旧格式: {question: "..."} 或 {data: {question: "..."}}
                 question = msg.get("question", "") or msg.get("data", {}).get(

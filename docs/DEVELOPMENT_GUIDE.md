@@ -6,6 +6,8 @@
 > **蓝图参考**：[TruthNet_综合设计方案_V12.md](design/TruthNet_综合设计方案_V12.md)
 > **使用方式**：每周末各组填入"实际结果"，Phase 结束时组长汇总。
 >
+> ⚠️ **历史计划，实际执行以竞赛管理仓库 Phase C/D/E 为准**（2026-07-29 起）。
+>
 > ---
 
 ## 团队分工
@@ -100,7 +102,7 @@ python scripts/doctor.py                   # 环境检测
 python -m pytest backend/tests -v          # 现有测试（29 个）
 
 # ===== 后端 · 启动服务 =====
-uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8000
 # 浏览器打开 http://localhost:8000/docs 看到 Swagger 页面
 
 # ===== 前端 =====

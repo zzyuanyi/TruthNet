@@ -7,6 +7,6 @@ sentence-transformers==3.2.1
 transformers==4.45.2
 tokenizers==0.20.3
 torch==2.4.1
-# modelscope 从清华镜像安装（huggingface 国内不可达时使用）
+modelscope==1.39.0
+# huggingface 国内不可达时，modelscope 自动镜像下载 BGE 模型
 # pip install --default-timeout 180 --retries 10 -i https://pypi.tuna.tsinghua.edu.cn/simple modelscope
-modelscope

@@ -120,7 +120,7 @@ export default function ChatPage() {
     ws.onopen = () => {
       ws.send(JSON.stringify({
         event_type: 'chat.query',
-        payload: { text: content },
+        payload: { text: content, session_id: currentSessionId },
       }));
     };
 

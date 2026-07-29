@@ -29,7 +29,7 @@ class TestVectorPortContract:
         assert len(results) >= 0
 
     def test_chroma_persistent_write_reopen_read(self):
-        """ChromaDB persistent: write → reopen → read."""
+        """ChromaDB persistent: write → reopen → read（固定向量，不触发默认嵌入器）。"""
         import chromadb
 
         tmpdir = tempfile.mkdtemp(prefix="truthnet_vec_")
@@ -39,8 +39,12 @@ class TestVectorPortContract:
                 settings=chromadb.config.Settings(anonymized_telemetry=False),
             )
             col = client.create_collection(name="test_port_contract")
-            col.add(documents=["test doc"], ids=["id_1"])
-            results = col.query(query_texts=["test"], n_results=1)
+            col.add(
+                documents=["test doc"],
+                embeddings=[[1.0, 0.0, 0.0, 0.0]],
+                ids=["id_1"],
+            )
+            results = col.query(query_embeddings=[[1.0, 0.0, 0.0, 0.0]], n_results=1)
             assert len(results["ids"]) > 0
 
             del client
@@ -49,7 +53,7 @@ class TestVectorPortContract:
                 settings=chromadb.config.Settings(anonymized_telemetry=False),
             )
             col2 = client2.get_collection(name="test_port_contract")
-            results2 = col2.query(query_texts=["test"], n_results=1)
+            results2 = col2.query(query_embeddings=[[1.0, 0.0, 0.0, 0.0]], n_results=1)
             assert results2["ids"][0][0] == "id_1"
             client2.delete_collection(name="test_port_contract")
         finally:

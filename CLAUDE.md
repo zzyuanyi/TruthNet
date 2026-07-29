@@ -185,8 +185,24 @@ TruthNet/
 
 ```bash
 # ===== 环境 =====
-conda activate truthnet
+conda create -n truthnet python=3.11 -y && conda activate truthnet
 pip install -r requirements.txt
+
+# ===== 数据导入（首次搭建）=====
+# 0. 准备：从团队共享渠道获取赛方数据文件，放入 data/raw/ 对应子目录（1-5/）
+#    文件清单见 data/raw/README.md，渠道：微信群/网盘
+python scripts/import_data.py --dry-run           # 预检数据
+python scripts/import_data.py                    # MySQL 全量入库（7 表，~83 万行）
+python scripts/announcement_sentiment.py         # 公告情绪分类
+python scripts/backfill_company_names.py --dry-run  # 公司名称回填（预检）
+python scripts/backfill_company_names.py         # 公司名称回填（正式）
+python scripts/neo4j_full_import.py              # Neo4j 全量图谱
+python scripts/industry_fill.py                  # 行业分类补全
+
+# ===== Chroma 嵌入链路（需先导入 MySQL 研报数据）=====
+pip install -r requirements-chroma.txt           # 安装 ~2GB PyTorch 依赖（仅首次）
+python scripts/chroma_embed.py                   # Step 1: 研报分块 + 向量化 (~2h, CPU)
+python scripts/chroma_import.py --rebuild        # Step 2: 向量导入 ChromaDB
 
 # ===== 检查 =====
 python scripts/doctor.py
@@ -196,7 +212,7 @@ python -m pytest backend/tests -v
 pre-commit run --all-files
 
 # ===== 后端 =====
-uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8000
 
 # ===== 前端 =====
 cd frontend && pnpm install && pnpm dev

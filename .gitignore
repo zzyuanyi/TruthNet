@@ -48,6 +48,7 @@ chroma_data/
 # Data files (keep .gitkeep)
 data/raw/*
 !data/raw/.gitkeep
+!data/raw/README.md
 data/processed/*
 !data/processed/.gitkeep
 
@@ -82,6 +83,7 @@ htmlcov/
 
 # Claude Code local settings
 .claude/settings.local.json
+.claude/settings.json
 
 # V12 Full Profile - local data (not committed)
 .local/

@@ -1,7 +1,7 @@
 # TruthNet V12 - Start MySQL in console mode (dev, no admin)
 param(
     [int]$Port = 3307,
-    [string]$DataDir = "E:\project\TruthNet\.local\mysql_data"
+    [string]$DataDir = (Join-Path $PSScriptRoot "..\..\.local\mysql_data")
 )
 
 $MYSQL_BIN = "C:\Program Files\MySQL\MySQL Server 8.4\bin\mysqld.exe"

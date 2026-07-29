@@ -10,22 +10,52 @@ from app.agents.state import AgentState, ExecutionPlan
 # ── 关键词表 ──────────────────────────────────────────────
 
 _FINANCE_KW = [
-    "财务", "造假", "风险", "利润", "收入", "营收", "应收",
-    "现金流", "负债", "存货", "毛利", "报表", "勾稽", "盈利",
-    "舞弊", "异常",
+    "财务",
+    "造假",
+    "风险",
+    "利润",
+    "收入",
+    "营收",
+    "应收",
+    "现金流",
+    "负债",
+    "存货",
+    "毛利",
+    "报表",
+    "勾稽",
+    "盈利",
+    "舞弊",
+    "异常",
 ]
 
 _EQUITY_KW = [
-    "股权", "股东", "控制", "穿透", "关联", "实控人", "持股",
+    "股权",
+    "股东",
+    "控制",
+    "穿透",
+    "关联",
+    "实控人",
+    "持股",
 ]
 
 _EVENTS_KW = [
-    "事件", "舆情", "新闻", "公告", "处罚", "调查", "st", "立案",
+    "事件",
+    "舆情",
+    "新闻",
+    "公告",
+    "处罚",
+    "调查",
+    "st",
+    "立案",
 ]
 
 # 综合诊断 — 命中任一词 → 展开三模块（"异常"不在此列，避免"应收异常吗"误扩）
 _DIAGNOSIS_KW = [
-    "造假", "风险", "舞弊", "是否有问题", "有没有问题",
+    "造假",
+    "风险",
+    "舞弊",
+    "是否有问题",
+    "有没有问题",
 ]
 
 
@@ -65,7 +95,7 @@ def plan_modules_node(state: AgentState) -> dict:
         modules.append("events")
 
     cross_checks = []
-    if need_finance and need_equity:
+    if need_equity and need_events:
         cross_checks.append("equity_vs_events")
     if need_finance and len(modules) >= 2:
         cross_checks.append("financial_vs_cashflow")

@@ -50,13 +50,17 @@ def _find_company(query: str) -> CompanyRef | None:
                 except ValueError:
                     normalized = raw_code
 
-                row = conn.execute(
-                    text(
-                        "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
-                        "FROM companies WHERE wind_code = :code AND is_latest = 1 LIMIT 1"
-                    ),
-                    {"code": normalized},
-                ).mappings().first()
+                row = (
+                    conn.execute(
+                        text(
+                            "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
+                            "FROM companies WHERE wind_code = :code AND is_latest = 1 LIMIT 1"
+                        ),
+                        {"code": normalized},
+                    )
+                    .mappings()
+                    .first()
+                )
 
                 if row:
                     return CompanyRef(
@@ -68,16 +72,20 @@ def _find_company(query: str) -> CompanyRef | None:
                     )
 
             # 2. 完整名称匹配：LOCATE(sec_name, query)
-            row = conn.execute(
-                text(
-                    "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
-                    "FROM companies "
-                    "WHERE is_latest = 1 AND sec_name IS NOT NULL "
-                    "AND LOCATE(sec_name, :query) > 0 "
-                    "ORDER BY CHAR_LENGTH(sec_name) DESC LIMIT 1"
-                ),
-                {"query": query},
-            ).mappings().first()
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
+                        "FROM companies "
+                        "WHERE is_latest = 1 AND sec_name IS NOT NULL "
+                        "AND LOCATE(sec_name, :query) > 0 "
+                        "ORDER BY CHAR_LENGTH(sec_name) DESC LIMIT 1"
+                    ),
+                    {"query": query},
+                )
+                .mappings()
+                .first()
+            )
 
             if row:
                 return CompanyRef(
@@ -89,14 +97,18 @@ def _find_company(query: str) -> CompanyRef | None:
                 )
 
             # 3. 简称匹配：检查 query 子串是否命中 aliases 中存储的简称
-            row = conn.execute(
-                text(
-                    "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1, aliases "
-                    "FROM companies "
-                    "WHERE is_latest = 1 AND aliases IS NOT NULL "
-                    "ORDER BY CHAR_LENGTH(sec_name) DESC"
-                ),
-            ).mappings().all()
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1, aliases "
+                        "FROM companies "
+                        "WHERE is_latest = 1 AND aliases IS NOT NULL "
+                        "ORDER BY CHAR_LENGTH(sec_name) DESC"
+                    ),
+                )
+                .mappings()
+                .all()
+            )
 
             # 收集所有别名命中的公司，仅唯一命中时返回
             alias_hits: list[dict] = []
@@ -109,17 +121,48 @@ def _find_company(query: str) -> CompanyRef | None:
                     if not a:
                         continue
                     if a in query:
-                        alias_hits.append({
-                            "entity_id": str(r["entity_id"]),
-                            "wind_code": str(r["wind_code"]),
-                            "sec_name": str(r["sec_name"]),
-                            "exchange": str(r.get("exchange_code", "") or ""),
-                            "industry_l1": str(r.get("industry_l1", "") or ""),
-                        })
+                        alias_hits.append(
+                            {
+                                "entity_id": str(r["entity_id"]),
+                                "wind_code": str(r["wind_code"]),
+                                "sec_name": str(r["sec_name"]),
+                                "exchange": str(r.get("exchange_code", "") or ""),
+                                "industry_l1": str(r.get("industry_l1", "") or ""),
+                            }
+                        )
                         break  # 每条公司只命中一次
 
             if len(alias_hits) == 1:
                 return CompanyRef(**alias_hits[0])
+
+            # 4. 前缀兜底：sec_name 前 2 字出现在 query 中，恰好 1 家时返回
+            # "康美" in query → 康美药业, "平安" → 平安银行
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1 "
+                        "FROM companies "
+                        "WHERE is_latest = 1 "
+                        "AND sec_name IS NOT NULL "
+                        "AND sec_name <> wind_code "
+                        "AND CHAR_LENGTH(sec_name) >= 2 "
+                        "AND LOCATE(LEFT(sec_name, 2), :query) > 0"
+                    ),
+                    {"query": query},
+                )
+                .mappings()
+                .all()
+            )
+
+            if len(rows) == 1:
+                r = rows[0]
+                return CompanyRef(
+                    entity_id=str(r["entity_id"]),
+                    wind_code=str(r["wind_code"]),
+                    sec_name=str(r["sec_name"]),
+                    exchange=str(r.get("exchange_code", "") or ""),
+                    industry_l1=str(r.get("industry_l1", "") or ""),
+                )
 
     except Exception:
         logger.exception("实体解析查询失败: query=%.50s", query)
