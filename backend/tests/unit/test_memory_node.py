@@ -330,8 +330,10 @@ def test_ten_turns_entity_switch():
         ("贵州茅台呢", "贵州茅台财务状况健康..."),  # 切换
     ]
 
-    messages = [_msg("user", q) if i % 2 == 0 else _msg("assistant", a)
-                 for i, (q, a) in enumerate(turns)]
+    messages = [
+        _msg("user", q) if i % 2 == 0 else _msg("assistant", a)
+        for i, (q, a) in enumerate(turns)
+    ]
 
     state = _make_state("它的营收怎么样", messages)
     result = memory_node(state)

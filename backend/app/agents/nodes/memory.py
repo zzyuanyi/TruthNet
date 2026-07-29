@@ -20,18 +20,36 @@ logger = logging.getLogger(__name__)
 # ── 指代消解关键词表 ────────────────────────────────────────
 # 明确指代（直接指向上一轮主体）
 _EXPLICIT_ANAPHORA: list[str] = [
-    "它", "他", "她", "其",
+    "它",
+    "他",
+    "她",
+    "其",
 ]
 
 # 模糊指代（上下文中的指代）
 _VAGUE_ANAPHORA: list[str] = [
-    "这家", "那家", "该公司", "这家公司", "那家公司", "这个", "那个",
+    "这家",
+    "那家",
+    "该公司",
+    "这家公司",
+    "那家公司",
+    "这个",
+    "那个",
 ]
 
 # 追问指代（回指历史话题）
 _BACK_REFERENCE: list[str] = [
-    "上次", "刚才", "之前", "上面", "前面", "上回", "上一次", "上一轮",
-    "刚刚", "刚刚那家", "前一轮",
+    "上次",
+    "刚才",
+    "之前",
+    "上面",
+    "前面",
+    "上回",
+    "上一次",
+    "上一轮",
+    "刚刚",
+    "刚刚那家",
+    "前一轮",
 ]
 
 # ── 公司名提取 ──────────────────────────────────────────────
@@ -88,11 +106,31 @@ def _extract_companies_from_text(text: str) -> list[str]:
 def _extract_indicators_from_text(text: str) -> list[str]:
     """从文本中提取财务指标关键词。"""
     indicators_kw = [
-        "营收", "收入", "利润", "净利润", "扣非", "现金流",
-        "应收", "应付", "存货", "负债", "资产", "权益",
-        "毛利率", "净利率", "ROE", "ROA", "资产负债率",
-        "经营现金流", "自由现金流", "货币资金", "商誉",
-        "营业成本", "销售费用", "管理费用", "财务费用",
+        "营收",
+        "收入",
+        "利润",
+        "净利润",
+        "扣非",
+        "现金流",
+        "应收",
+        "应付",
+        "存货",
+        "负债",
+        "资产",
+        "权益",
+        "毛利率",
+        "净利率",
+        "ROE",
+        "ROA",
+        "资产负债率",
+        "经营现金流",
+        "自由现金流",
+        "货币资金",
+        "商誉",
+        "营业成本",
+        "销售费用",
+        "管理费用",
+        "财务费用",
     ]
     found: list[str] = []
     text_lower = text
@@ -235,9 +273,7 @@ def memory_node(state: AgentState) -> dict:
     result_messages: list = []
     context_text = _build_context_message(context)
     if context_text and context.is_anaphora:
-        result_messages.append(
-            {"role": "system", "content": context_text}
-        )
+        result_messages.append({"role": "system", "content": context_text})
 
     return {
         "memory_context": context,
