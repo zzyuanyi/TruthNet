@@ -13,7 +13,10 @@ from sqlalchemy.engine import Engine
 
 from app.agents.state import AgentState, CompanyRef
 from app.core.config import settings
-from app.infrastructure.graph.normalizer import normalize_wind_code
+from app.infrastructure.graph.normalizer import (
+    make_listed_company_entity_id,
+    normalize_wind_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +35,43 @@ def _get_engine() -> Engine:
     return _engine
 
 
+def _find_lite_company(query: str) -> CompanyRef | None:
+    """在 Lite Profile 的确定性 mock 公司中解析实体。
+
+    TODO: Phase C 统一由 CompanyRepository 注入，移除该兼容分支。
+    """
+    from app.infrastructure.persistence.sqlite.company_repository import _MOCK_COMPANIES
+
+    matches = []
+    for company in _MOCK_COMPANIES:
+        aliases = (company.code, company.name, company.short_name)
+        if any(alias and alias in query for alias in aliases):
+            matches.append(company)
+
+    if not matches:
+        for company in _MOCK_COMPANIES:
+            short_name = company.short_name or company.name
+            if len(short_name) >= 2 and short_name[:2] in query:
+                matches.append(company)
+
+    if len(matches) != 1:
+        return None
+
+    company = matches[0]
+    wind_code = normalize_wind_code(company.code)
+    return CompanyRef(
+        entity_id=make_listed_company_entity_id(wind_code),
+        wind_code=wind_code,
+        sec_name=company.short_name or company.name,
+        exchange=wind_code.rsplit(".", maxsplit=1)[-1],
+        industry_l1=company.industry,
+    )
+
+
 def _find_company(query: str) -> CompanyRef | None:
     """从用户输入中查找公司：先 Wind Code 匹配，再名称模糊匹配。"""
     if settings.SQL_BACKEND != "mysql":
-        return None
+        return _find_lite_company(query)
 
     try:
         with _get_engine().connect() as conn:
