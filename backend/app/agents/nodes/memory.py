@@ -14,7 +14,6 @@ import logging
 import re
 
 from app.agents.state import AgentState, MemoryContext
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
