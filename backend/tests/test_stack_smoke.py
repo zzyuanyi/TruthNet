@@ -134,7 +134,7 @@ def test_networkx_ownership_chain():
 # 5. ChromaDB
 # ============================================================
 def test_chromadb_minimal():
-    """ChromaDB 创建临时 collection，插入并查询。"""
+    """ChromaDB 创建临时 collection，插入并查询（固定向量，不触发默认嵌入器）。"""
 
     import chromadb
 
@@ -144,12 +144,14 @@ def test_chromadb_minimal():
         client = chromadb.PersistentClient(path=tmpdir)
         collection = client.create_collection(name="test_collection")
 
-        # 插入 2 条文本
+        # 使用固定向量，不传 documents 触发默认嵌入器下载
+        vectors = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
         collection.add(
             documents=[
                 "贵州茅台2023年营收1505.60亿元",
                 "宁德时代2023年营收4009.17亿元",
             ],
+            embeddings=vectors,
             ids=["doc_1", "doc_2"],
             metadatas=[
                 {"company": "600519", "year": 2023},
@@ -157,10 +159,10 @@ def test_chromadb_minimal():
             ],
         )
 
-        # Query
-        results = collection.query(query_texts=["营收"], n_results=2)
+        # Query 用 query_embeddings 而非 query_texts
+        results = collection.query(query_embeddings=[[1.0, 0.0, 0.0, 0.0]], n_results=2)
         assert len(results["ids"][0]) == 2
-        assert results["ids"][0][0] in ("doc_1", "doc_2")
+        assert results["ids"][0][0] == "doc_1"
 
     finally:
         # 清理临时目录

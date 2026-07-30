@@ -2,15 +2,13 @@
 
 from pydantic import BaseModel, Field
 
-from app.domain.conversation.models import ChatContext
-
 
 class ChatRequestV1(BaseModel):
     """POST /api/v1/chat 请求体 — V12."""
 
     question: str = Field(..., min_length=1, description="用户问题")
     session_id: str | None = Field(None, description="会话 ID，用于多轮对话")
-    context: ChatContext | None = Field(None, description="附加上下文信息")
+    context: dict | None = Field(None, description="附加上下文信息")
 
 
 class ChatDataV1(BaseModel):

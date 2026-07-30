@@ -313,10 +313,10 @@ class IncomeStatement(Base, SystemFieldsMixin):
         Float, nullable=True, comment="利润总额"
     )
     net_profit_excl_min_int_inc: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="净利润（不含少数股东损益）"
+        Float, nullable=True, comment="归母净利润（归属于母公司股东的净利润）"
     )
     net_profit_after_ded_nr_lp: Mapped[float | None] = mapped_column(
-        Float, nullable=True, comment="归母净利润"
+        Float, nullable=True, comment="扣非净利润（扣除非经常性损益后的净利润）"
     )
 
     def __repr__(self) -> str:
@@ -383,7 +383,12 @@ class CashFlow(Base, SystemFieldsMixin):
 
 class TopShareholder(Base, SystemFieldsMixin):
     __tablename__ = "top_shareholders"
-    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+    __table_args__ = (
+        UniqueConstraint(
+            "source_record_id", name="uq_top_shareholders_source_record_id"
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
 
     wind_code: Mapped[str] = mapped_column(
         String(32), nullable=False, index=True, comment="Wind 代码"

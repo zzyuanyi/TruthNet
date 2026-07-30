@@ -1,4 +1,8 @@
-"""Finance — V12 §8.1. Mock: return sample rule results."""
+"""Finance — V12 §8.1. 财务分析节点。
+
+Phase B mock: 返回康美药业 fixture 规则结果。
+Bug fix: 提供多种报表 evidence 以支持不同规则的 evidence 绑定。
+"""
 
 from app.agents.state import (
     AgentState,
@@ -10,6 +14,23 @@ from app.agents.state import (
 
 
 def finance_node(state: AgentState) -> dict:
+    company = state.get("company")
+    plan = state.get("plan")
+
+    # 未选中 → no-op（plan 缺失时保守执行）
+    if plan is not None and "finance" not in plan.requested_modules:
+        return {
+            "module_status": {"finance": ModuleStatus(state="skipped")},
+            "results": ModuleResults(finance=None),
+        }
+
+    if company is None:
+        return {
+            "module_status": {"finance": ModuleStatus(state="skipped")},
+            "results": ModuleResults(finance=None),
+        }
+
+    # Phase B mock: Kangmei fixture rule results
     return {
         "module_status": {"finance": ModuleStatus(state="success", duration_ms=120)},
         "results": ModuleResults(
@@ -32,7 +53,23 @@ def finance_node(state: AgentState) -> dict:
                         period="2025Q3",
                         value="47.2%",
                         source_title="资产负债表",
-                    )
+                    ),
+                    EvidenceRef(
+                        evidence_id="ev_is_01",
+                        source_type="income_statement",
+                        field_path="oper_rev",
+                        period="2025Q3",
+                        value="12.1%",
+                        source_title="利润表",
+                    ),
+                    EvidenceRef(
+                        evidence_id="ev_cf_01",
+                        source_type="cash_flow",
+                        field_path="net_cash_flows_oper_act",
+                        period="2025Q3",
+                        value="-2.3亿",
+                        source_title="现金流量表",
+                    ),
                 ],
             )
         ),

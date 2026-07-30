@@ -71,9 +71,9 @@ async def test_companies_search_returns_v12_envelope():
     assert "warnings" in body
 
     data = body["data"]
-    assert "companies" in data
+    assert "candidates" in data  # V12: companies → candidates
     assert "total" in data
-    assert isinstance(data["companies"], list)
+    assert isinstance(data["candidates"], list)
     assert data["total"] >= 0
 
 
@@ -86,7 +86,7 @@ async def test_companies_empty_query_returns_all():
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["data"]["companies"]) > 0
+    assert len(body["data"]["candidates"]) > 0
 
 
 @pytest.mark.asyncio
@@ -105,13 +105,16 @@ async def test_legacy_health_still_works():
 
 @pytest.mark.asyncio
 async def test_legacy_chat_still_works():
-    """POST /api/v1/chat 旧格式仍可用."""
+    """POST /api/v1/chat 返回 V12 格式（旧格式已移除）."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/chat", json={"question": "test"})
+        response = await client.post(
+            "/api/v1/chat", json={"question": "康美药业有造假风险吗"}
+        )
 
     assert response.status_code == 200
     body = response.json()
-    # 旧格式
-    assert body["code"] == 0
+    # V12 格式
+    assert "data" in body
+    assert "meta" in body
     assert "answer" in body["data"]

@@ -106,11 +106,16 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
     """
     url = _build_database_url()
-    engine_kwargs = {"poolclass": pool.NullPool}
-    # connect_timeout is MySQL-only; SQLite rejects it
-    if "mysql" in str(url):
-        engine_kwargs["connect_args"] = {"connect_timeout": 5}
-    connectable = create_engine(url, **engine_kwargs)
+    connect_args: dict = {}
+    if isinstance(url, EngineURL) or (
+        isinstance(url, str) and ("mysql" in url or "pymysql" in url)
+    ):
+        connect_args["connect_timeout"] = 5
+    connectable = create_engine(
+        url,
+        poolclass=pool.NullPool,
+        connect_args=connect_args,
+    )
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
