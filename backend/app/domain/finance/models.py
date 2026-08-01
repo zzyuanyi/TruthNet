@@ -46,9 +46,7 @@ class RuleResult(BaseModel):
     status: Literal[
         "triggered", "not_triggered", "not_applicable", "insufficient_data"
     ] = "not_triggered"
-    severity: Literal[
-        "red", "orange", "yellow", "green", "unknown"
-    ] = "green"
+    severity: Literal["red", "orange", "yellow", "green", "unknown"] = "green"
 
     current: dict[str, dict] = Field(default_factory=dict)
     history: list[dict] = Field(default_factory=list)

@@ -7,6 +7,7 @@ from typing import Any
 # 1. 结果准确率
 # ══════════════════════════════════════════════════════════
 
+
 def accuracy(ground_truth: list, predictions: list) -> float:
     """规则触发/不触发的二分类准确率."""
     if not ground_truth:
@@ -19,13 +20,13 @@ def accuracy(ground_truth: list, predictions: list) -> float:
 # 2. 证据覆盖率
 # ══════════════════════════════════════════════════════════
 
+
 def evidence_coverage(claims: list[dict]) -> float:
     """有证据支撑的 Claim 占比（目标 1.0）."""
     if not claims:
         return 0.0
     with_evidence = sum(
-        1 for c in claims
-        if c.get("evidence_ids") and len(c["evidence_ids"]) > 0
+        1 for c in claims if c.get("evidence_ids") and len(c["evidence_ids"]) > 0
     )
     return with_evidence / len(claims)
 
@@ -33,6 +34,7 @@ def evidence_coverage(claims: list[dict]) -> float:
 # ══════════════════════════════════════════════════════════
 # 3. 多轮主体保持率
 # ══════════════════════════════════════════════════════════
+
 
 def entity_retention_rate(
     turns: list[dict],
@@ -50,6 +52,7 @@ def entity_retention_rate(
 # 4. 无证据 Claim 比例
 # ══════════════════════════════════════════════════════════
 
+
 def unverified_claim_ratio(claims: list[dict]) -> float:
     """无证据支撑的 Claim 占比（目标 0.0）."""
     return 1.0 - evidence_coverage(claims)
@@ -59,13 +62,13 @@ def unverified_claim_ratio(claims: list[dict]) -> float:
 # 5. partial 比例
 # ══════════════════════════════════════════════════════════
 
+
 def partial_response_rate(module_statuses: list[dict]) -> float:
     """返回部分结果的模块占比."""
     if not module_statuses:
         return 0.0
     partial_or_failed = sum(
-        1 for m in module_statuses
-        if m.get("state") in ("partial", "failed")
+        1 for m in module_statuses if m.get("state") in ("partial", "failed")
     )
     return partial_or_failed / len(module_statuses)
 
@@ -73,6 +76,7 @@ def partial_response_rate(module_statuses: list[dict]) -> float:
 # ══════════════════════════════════════════════════════════
 # 6. 模块超时率
 # ══════════════════════════════════════════════════════════
+
 
 def module_timeout_rate(
     modules: list[dict],
@@ -97,6 +101,7 @@ def module_timeout_rate(
 # ══════════════════════════════════════════════════════════
 # 7. 风险等级校准
 # ══════════════════════════════════════════════════════════
+
 
 def risk_calibration(
     predicted_levels: list[str],
@@ -134,6 +139,7 @@ def risk_calibration(
 # 8. 行业分位差异
 # ══════════════════════════════════════════════════════════
 
+
 def industry_variance(
     results: list[dict],
     metric_key: str = "accuracy",
@@ -149,15 +155,14 @@ def industry_variance(
         by_industry.setdefault(ind, []).append(val)
 
     means = {
-        ind: sum(vals) / len(vals) if vals else 0.0
-        for ind, vals in by_industry.items()
+        ind: sum(vals) / len(vals) if vals else 0.0 for ind, vals in by_industry.items()
     }
     if not means:
         return {"std_dev": 0.0, "max_gap": 0.0}
 
     mean_of_means = sum(means.values()) / len(means)
     variance = sum((v - mean_of_means) ** 2 for v in means.values()) / len(means)
-    std_dev = variance ** 0.5
+    std_dev = variance**0.5
 
     sorted_inds = sorted(means.items(), key=lambda x: x[1])
     max_gap = sorted_inds[-1][1] - sorted_inds[0][1] if len(sorted_inds) >= 2 else 0.0
@@ -175,6 +180,7 @@ def industry_variance(
 # 9. LLM 输出格式合规率
 # ══════════════════════════════════════════════════════════
 
+
 def schema_compliance_rate(
     responses: list[dict],
     schema_fields: list[str] | None = None,
@@ -185,8 +191,7 @@ def schema_compliance_rate(
     if not responses:
         return 0.0
     compliant = sum(
-        1 for r in responses
-        if all(f in r and r[f] is not None for f in schema_fields)
+        1 for r in responses if all(f in r and r[f] is not None for f in schema_fields)
     )
     return compliant / len(responses)
 
@@ -194,6 +199,7 @@ def schema_compliance_rate(
 # ══════════════════════════════════════════════════════════
 # 汇总
 # ══════════════════════════════════════════════════════════
+
 
 def evaluate_all(
     ground_truth: dict,

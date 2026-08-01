@@ -7,8 +7,10 @@ from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     result = RuleResult(
-        rule_id="R6", rule_version="1.0.0",
-        rule_name="其他应收款与关联占用风险", status="not_triggered",
+        rule_id="R6",
+        rule_version="1.0.0",
+        rule_name="其他应收款与关联占用风险",
+        status="not_triggered",
     )
 
     comp_type = fetch_company_field(company_code, "comp_type_code")
@@ -25,7 +27,9 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     valid_assets = count_valid(tot_assets, 2)
     if valid_oth < 2 or valid_assets < 2:
         result.status = "insufficient_data"
-        result.explanation = f"数据不足: oth_rcv有效{valid_oth}期, assets有效{valid_assets}期"
+        result.explanation = (
+            f"数据不足: oth_rcv有效{valid_oth}期, assets有效{valid_assets}期"
+        )
         return result
 
     t_idx = -1
@@ -52,12 +56,21 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     # orange
     if severity == "green" and oth_to_assets > 10 and oth_yoy_pct > 100 and oth_large:
         severity = "orange"
-    elif severity == "green" and oth_to_assets > 10 and oth_to_acct is not None and oth_to_acct > 0.5:
+    elif (
+        severity == "green"
+        and oth_to_assets > 10
+        and oth_to_acct is not None
+        and oth_to_acct > 0.5
+    ):
         severity = "orange"
 
     # yellow
     if severity == "green":
-        if (oth_to_assets > 10 and oth_large) or (oth_yoy_pct > 200 and oth_large) or (oth_to_assets > 5 and oth_yoy_pct > 200):
+        if (
+            (oth_to_assets > 10 and oth_large)
+            or (oth_yoy_pct > 200 and oth_large)
+            or (oth_to_assets > 5 and oth_yoy_pct > 200)
+        ):
             severity = "yellow"
 
     result.status = "triggered" if severity != "green" else "not_triggered"
@@ -68,7 +81,10 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
         "oth_rcv_large": {"value": oth_large, "unit": "bool"},
     }
     if oth_to_acct is not None:
-        result.current["oth_rcv_to_acct_rcv"] = {"value": round(oth_to_acct, 2), "unit": "ratio"}
+        result.current["oth_rcv_to_acct_rcv"] = {
+            "value": round(oth_to_acct, 2),
+            "unit": "ratio",
+        }
     result.quality = {
         "statement_scope": "parent_company",
         "related_party_data_available": False,

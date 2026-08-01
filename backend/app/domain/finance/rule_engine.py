@@ -20,7 +20,9 @@ _RULES = [
 ]
 
 
-def evaluate_all_rules(company_code: str, as_of: str = "20260331") -> dict[str, RuleResult]:
+def evaluate_all_rules(
+    company_code: str, as_of: str = "20260331"
+) -> dict[str, RuleResult]:
     """运行全部 7 条规则.
 
     Returns:

@@ -7,8 +7,10 @@ from app.domain.finance.rule_utils import count_valid, mean_or_none, safe_div
 
 def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     result = RuleResult(
-        rule_id="R2", rule_version="1.0.0",
-        rule_name="现金流–利润背离", status="not_triggered",
+        rule_id="R2",
+        rule_version="1.0.0",
+        rule_name="现金流–利润背离",
+        status="not_triggered",
     )
 
     comp_type = fetch_company_field(company_code, "comp_type_code")
@@ -32,7 +34,9 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     recent_cf = oper_cf[-4:]
 
     # 检查是否全部为 profit<=0 且 cf<=0
-    if all(np is not None and np <= 0 for np in recent_np) and all(cf is not None and cf <= 0 for cf in recent_cf):
+    if all(np is not None and np <= 0 for np in recent_np) and all(
+        cf is not None and cf <= 0 for cf in recent_cf
+    ):
         result.status = "not_applicable"
         result.explanation = "公司持续亏损且现金流出，非粉饰信号"
         return result
@@ -68,11 +72,19 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         severity = "red"
     elif has_pos_profit_this and avg_ratio < 0 and max_consec_neg >= 2:
         # 利润增长但现金越来越差
-        np_yoy = safe_div(recent_np[-1] - (net_profit[-5] if len(net_profit) >= 5 else 0), abs(net_profit[-5]) if len(net_profit) >= 5 and net_profit[-5] else 1)
+        np_yoy = safe_div(
+            recent_np[-1] - (net_profit[-5] if len(net_profit) >= 5 else 0),
+            abs(net_profit[-5]) if len(net_profit) >= 5 and net_profit[-5] else 1,
+        )
         if np_yoy is not None and np_yoy > 0.2:
             severity = "red"
 
-    if severity == "green" and has_pos_profit_this and has_neg_cf_this and max_consec_neg >= 2:
+    if (
+        severity == "green"
+        and has_pos_profit_this
+        and has_neg_cf_this
+        and max_consec_neg >= 2
+    ):
         severity = "orange"
     elif severity == "green" and has_pos_profit_this and 0 <= avg_ratio < 0.3:
         severity = "orange"
@@ -94,7 +106,8 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         "data_completeness": round(valid_np / 4, 2),
     }
     result.evidence_ids = [
-        f"ev_is_net_profit_{as_of}", f"ev_cf_oper_{as_of}",
+        f"ev_is_net_profit_{as_of}",
+        f"ev_cf_oper_{as_of}",
     ]
     if severity == "red":
         result.explanation = (

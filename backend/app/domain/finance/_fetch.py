@@ -11,6 +11,7 @@ def _get_engine():
     global _ENGINE
     if _ENGINE is None:
         from app.core.config import settings
+
         url = (
             f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
             f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
@@ -60,8 +61,9 @@ def fetch_company_field(company_code: str, field_name: str) -> int | str | None:
     return row[0] if row else None
 
 
-def fetch_industry_peers(industry_l1: str, field_name: str, table_name: str,
-                          as_of_period: str = "20260331") -> list:
+def fetch_industry_peers(
+    industry_l1: str, field_name: str, table_name: str, as_of_period: str = "20260331"
+) -> list:
     """查询同行业所有公司在某个报告期的某个字段值列表."""
     engine = _get_engine()
     sql = text(f"""
@@ -74,5 +76,7 @@ def fetch_industry_peers(industry_l1: str, field_name: str, table_name: str,
           AND c.comp_type_code = 1
     """)
     with engine.connect() as conn:
-        rows = conn.execute(sql, {"industry": industry_l1, "period": as_of_period}).fetchall()
+        rows = conn.execute(
+            sql, {"industry": industry_l1, "period": as_of_period}
+        ).fetchall()
     return [float(r[0]) for r in rows if r[0] is not None]

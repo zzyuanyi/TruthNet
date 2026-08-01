@@ -7,8 +7,10 @@ from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     result = RuleResult(
-        rule_id="R5", rule_version="1.0.0",
-        rule_name="毛利率/费用率异常", status="not_triggered",
+        rule_id="R5",
+        rule_version="1.0.0",
+        rule_name="毛利率/费用率异常",
+        status="not_triggered",
     )
 
     comp_type = fetch_company_field(company_code, "comp_type_code")
@@ -55,13 +57,25 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
 
     gm_current = gm_list[-1] if gm_list[-1] is not None else None
     gm_hist = mean_or_none([g for g in gm_list[:-1] if g is not None])
-    gm_deviation = (gm_current - gm_hist) if gm_current is not None and gm_hist is not None else None
+    gm_deviation = (
+        (gm_current - gm_hist)
+        if gm_current is not None and gm_hist is not None
+        else None
+    )
 
     er_current = er_list[-1] if er_list[-1] is not None else None
     er_hist = mean_or_none([e for e in er_list[:-1] if e is not None])
-    er_deviation = (er_current - er_hist) if er_current is not None and er_hist is not None else None
+    er_deviation = (
+        (er_current - er_hist)
+        if er_current is not None and er_hist is not None
+        else None
+    )
 
-    combined = (abs(gm_deviation) + abs(er_deviation)) if gm_deviation is not None and er_deviation is not None else None
+    combined = (
+        (abs(gm_deviation) + abs(er_deviation))
+        if gm_deviation is not None and er_deviation is not None
+        else None
+    )
 
     severity = "green"
     if gm_deviation is not None and gm_deviation > 10:
@@ -76,7 +90,9 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         severity = "orange"
 
     if severity == "green":
-        if (gm_deviation is not None and gm_deviation > 10) or (er_deviation is not None and er_deviation < -5):
+        if (gm_deviation is not None and gm_deviation > 10) or (
+            er_deviation is not None and er_deviation < -5
+        ):
             severity = "yellow"
         elif combined is not None and combined > 15:
             severity = "yellow"
@@ -85,11 +101,20 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     result.severity = severity
     result.current = {}
     if gm_current is not None:
-        result.current["gross_margin"] = {"value": round(gm_current, 1), "unit": "percent"}
+        result.current["gross_margin"] = {
+            "value": round(gm_current, 1),
+            "unit": "percent",
+        }
     if gm_deviation is not None:
-        result.current["gm_deviation"] = {"value": round(gm_deviation, 1), "unit": "percentage_point"}
+        result.current["gm_deviation"] = {
+            "value": round(gm_deviation, 1),
+            "unit": "percentage_point",
+        }
     if er_deviation is not None:
-        result.current["er_deviation"] = {"value": round(er_deviation, 1), "unit": "percentage_point"}
+        result.current["er_deviation"] = {
+            "value": round(er_deviation, 1),
+            "unit": "percentage_point",
+        }
     result.quality = {
         "statement_scope": "parent_company",
         "history_periods_available": valid_or,
@@ -101,7 +126,9 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"利润两端同时优化，异常信号叠加。"
         )
     elif severity == "orange":
-        result.explanation = f"毛利率（{gm_deviation:+.1f}pp）明显偏离历史水平，建议关注。"
+        result.explanation = (
+            f"毛利率（{gm_deviation:+.1f}pp）明显偏离历史水平，建议关注。"
+        )
     elif severity == "yellow":
         result.explanation = "毛利率/费用率较历史均值有所偏离，建议持续关注。"
     return result

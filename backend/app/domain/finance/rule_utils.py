@@ -1,7 +1,6 @@
 """规则计算公共工具函数 — RULES_SPEC §1.2."""
 
 
-
 def yoy_growth(current: float | None, base: float | None) -> float | None:
     """同比增长率 — RULES_SPEC §1.2.
 

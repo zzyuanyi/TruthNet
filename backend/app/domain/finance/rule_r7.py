@@ -7,8 +7,10 @@ from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     result = RuleResult(
-        rule_id="R7", rule_version="1.0.0",
-        rule_name="盈利质量与非经常性依赖", status="not_triggered",
+        rule_id="R7",
+        rule_version="1.0.0",
+        rule_name="盈利质量与非经常性依赖",
+        status="not_triggered",
     )
 
     comp_type = fetch_company_field(company_code, "comp_type_code")
@@ -50,31 +52,80 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     non_recurring_ratio = None
     if core_available and core_profit[t_idx] is not None:
         non_recurring = np_current - core_profit[t_idx]
-        non_recurring_ratio = non_recurring / abs(np_current) if abs(np_current) > 0 else 0
+        non_recurring_ratio = (
+            non_recurring / abs(np_current) if abs(np_current) > 0 else 0
+        )
 
     # YoY 增速对比
-    np_yoy = yoy_growth(net_profit[t_idx], net_profit[t4_idx]) if len(net_profit) >= 5 else None
-    core_yoy = yoy_growth(core_profit[t_idx], core_profit[t4_idx]) if core_available and len(core_profit) >= 5 else None
-    rev_yoy = yoy_growth(oper_rev[t_idx], oper_rev[t4_idx]) if len(oper_rev) >= 5 else None
+    np_yoy = (
+        yoy_growth(net_profit[t_idx], net_profit[t4_idx])
+        if len(net_profit) >= 5
+        else None
+    )
+    core_yoy = (
+        yoy_growth(core_profit[t_idx], core_profit[t4_idx])
+        if core_available and len(core_profit) >= 5
+        else None
+    )
+    rev_yoy = (
+        yoy_growth(oper_rev[t_idx], oper_rev[t4_idx]) if len(oper_rev) >= 5 else None
+    )
     cf_yoy = yoy_growth(oper_cf[t_idx], oper_cf[t4_idx]) if len(oper_cf) >= 5 else None
 
-    quality_div = ((np_yoy or 0) - (core_yoy or 0)) * 100 if np_yoy is not None and core_yoy is not None else None
-    revenue_div = ((np_yoy or 0) - (rev_yoy or 0)) * 100 if np_yoy is not None and rev_yoy is not None else None
-    cash_div = ((np_yoy or 0) - (cf_yoy or 0)) * 100 if np_yoy is not None and cf_yoy is not None else None
+    quality_div = (
+        ((np_yoy or 0) - (core_yoy or 0)) * 100
+        if np_yoy is not None and core_yoy is not None
+        else None
+    )
+    revenue_div = (
+        ((np_yoy or 0) - (rev_yoy or 0)) * 100
+        if np_yoy is not None and rev_yoy is not None
+        else None
+    )
+    cash_div = (
+        ((np_yoy or 0) - (cf_yoy or 0)) * 100
+        if np_yoy is not None and cf_yoy is not None
+        else None
+    )
 
     # 营业外收支占比
     non_oper_ratio = None
-    if oper_profit[t_idx] is not None and tot_profit[t_idx] is not None and tot_profit[t_idx] != 0:
-        non_oper_ratio = (tot_profit[t_idx] - oper_profit[t_idx]) / abs(tot_profit[t_idx]) * 100
+    if (
+        oper_profit[t_idx] is not None
+        and tot_profit[t_idx] is not None
+        and tot_profit[t_idx] != 0
+    ):
+        non_oper_ratio = (
+            (tot_profit[t_idx] - oper_profit[t_idx]) / abs(tot_profit[t_idx]) * 100
+        )
 
     severity = "green"
     if not simplified:
         # 完整版
-        if core_ratio is not None and core_ratio < 0.3 and (quality_div is not None and quality_div > 30 or revenue_div is not None and revenue_div > 20):
+        if (
+            core_ratio is not None
+            and core_ratio < 0.3
+            and (
+                quality_div is not None
+                and quality_div > 30
+                or revenue_div is not None
+                and revenue_div > 20
+            )
+        ):
             severity = "red"
-        elif core_ratio is not None and core_ratio < 0.5 and quality_div is not None and quality_div > 30:
+        elif (
+            core_ratio is not None
+            and core_ratio < 0.5
+            and quality_div is not None
+            and quality_div > 30
+        ):
             severity = "orange"
-        elif core_ratio is not None and core_ratio < 0.5 and revenue_div is not None and revenue_div > 20:
+        elif (
+            core_ratio is not None
+            and core_ratio < 0.5
+            and revenue_div is not None
+            and revenue_div > 20
+        ):
             severity = "orange"
         elif core_ratio is not None and core_ratio < 0.3:
             severity = "orange"
@@ -90,7 +141,12 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
             severity = "yellow"
     else:
         # 简化版：仅用 revenue + cash 判断，上限 orange
-        if revenue_div is not None and revenue_div > 20 and cash_div is not None and cash_div > 30:
+        if (
+            revenue_div is not None
+            and revenue_div > 20
+            and cash_div is not None
+            and cash_div > 30
+        ):
             severity = "orange"
         elif revenue_div is not None and revenue_div > 20:
             severity = "yellow"
@@ -101,15 +157,30 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     result.severity = severity
     result.current = {}
     if core_ratio is not None:
-        result.current["core_profit_ratio"] = {"value": round(core_ratio * 100, 1), "unit": "percent"}
+        result.current["core_profit_ratio"] = {
+            "value": round(core_ratio * 100, 1),
+            "unit": "percent",
+        }
     if non_recurring_ratio is not None:
-        result.current["non_recurring_ratio"] = {"value": round(non_recurring_ratio * 100, 1), "unit": "percent"}
+        result.current["non_recurring_ratio"] = {
+            "value": round(non_recurring_ratio * 100, 1),
+            "unit": "percent",
+        }
     if np_yoy is not None:
-        result.current["net_profit_yoy"] = {"value": round(np_yoy * 100, 1), "unit": "percent"}
+        result.current["net_profit_yoy"] = {
+            "value": round(np_yoy * 100, 1),
+            "unit": "percent",
+        }
     if quality_div is not None:
-        result.current["quality_divergence"] = {"value": round(quality_div, 1), "unit": "percentage_point"}
+        result.current["quality_divergence"] = {
+            "value": round(quality_div, 1),
+            "unit": "percentage_point",
+        }
     if revenue_div is not None:
-        result.current["revenue_divergence"] = {"value": round(revenue_div, 1), "unit": "percentage_point"}
+        result.current["revenue_divergence"] = {
+            "value": round(revenue_div, 1),
+            "unit": "percentage_point",
+        }
     result.quality = {
         "statement_scope": "parent_company",
         "core_profit_available": core_available,

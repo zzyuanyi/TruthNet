@@ -7,8 +7,10 @@ from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
     result = RuleResult(
-        rule_id="R3", rule_version="1.0.0",
-        rule_name="存贷双高", status="not_triggered",
+        rule_id="R3",
+        rule_version="1.0.0",
+        rule_name="存贷双高",
+        status="not_triggered",
     )
 
     comp_type = fetch_company_field(company_code, "comp_type_code")
@@ -28,7 +30,9 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
     valid_assets = count_valid(tot_assets, 2)
     if valid_cash < 2 or valid_assets < 2:
         result.status = "insufficient_data"
-        result.explanation = f"数据不足: cash有效{valid_cash}期, assets有效{valid_assets}期"
+        result.explanation = (
+            f"数据不足: cash有效{valid_cash}期, assets有效{valid_assets}期"
+        )
         return result
 
     t_idx = -1
@@ -55,13 +59,32 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
     dual_high = cash_to_assets > 15 and debt_to_assets > 20
 
     severity = "green"
-    if cash_to_assets > 25 and debt_to_assets > 25 and implied_rate is not None and implied_rate > 5:
+    if (
+        cash_to_assets > 25
+        and debt_to_assets > 25
+        and implied_rate is not None
+        and implied_rate > 5
+    ):
         severity = "red"
     elif cash_to_assets > 15 and debt_to_assets > 20:
         # 检查是否持续扩大
         t4_idx = -5
-        prev_cash = (monetary_cap[t4_idx] or 0) / (tot_assets[t4_idx] or 1) * 100 if len(tot_assets) >= 5 and tot_assets[t4_idx] else 0
-        prev_debt = sum(v[t4_idx] for v in [st_borrow, lt_borrow] if v and len(v) >= 5 and v[t4_idx] is not None) / (tot_assets[t4_idx] or 1) * 100 if len(tot_assets) >= 5 and tot_assets[t4_idx] else 0
+        prev_cash = (
+            (monetary_cap[t4_idx] or 0) / (tot_assets[t4_idx] or 1) * 100
+            if len(tot_assets) >= 5 and tot_assets[t4_idx]
+            else 0
+        )
+        prev_debt = (
+            sum(
+                v[t4_idx]
+                for v in [st_borrow, lt_borrow]
+                if v and len(v) >= 5 and v[t4_idx] is not None
+            )
+            / (tot_assets[t4_idx] or 1)
+            * 100
+            if len(tot_assets) >= 5 and tot_assets[t4_idx]
+            else 0
+        )
         if cash_to_assets > prev_cash and debt_to_assets > prev_debt:
             severity = "red"
 
@@ -77,7 +100,10 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
         "debt_to_assets": {"value": round(debt_to_assets, 1), "unit": "percent"},
     }
     if implied_rate is not None:
-        result.current["implied_interest_rate"] = {"value": round(implied_rate, 2), "unit": "percent"}
+        result.current["implied_interest_rate"] = {
+            "value": round(implied_rate, 2),
+            "unit": "percent",
+        }
     result.quality = {
         "statement_scope": "parent_company",
         "bonds_payable_included": False,  # 当前数据集无此字段
@@ -95,5 +121,7 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"占总资产比例均偏高，'存贷双高'需要关注。"
         )
     elif severity == "yellow":
-        result.explanation = "货币资金和有息负债占总资产比例偏高，建议结合业务判断合理性。"
+        result.explanation = (
+            "货币资金和有息负债占总资产比例偏高，建议结合业务判断合理性。"
+        )
     return result
