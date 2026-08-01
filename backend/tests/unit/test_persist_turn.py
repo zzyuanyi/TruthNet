@@ -148,7 +148,9 @@ def test_persist_second_turn_increments_index(monkeypatch, sqlite_engine):
     _patch_mysql(monkeypatch, sqlite_engine)
     pt.persist_turn_node(_make_state())
     pt.persist_turn_node(
-        _make_state(query="它的应收账款呢", answer="应收账款增速47.2%。", turn_id="turn_02")
+        _make_state(
+            query="它的应收账款呢", answer="应收账款增速47.2%。", turn_id="turn_02"
+        )
     )
 
     with sqlite_engine.connect() as conn:
