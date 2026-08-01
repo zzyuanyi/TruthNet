@@ -19,9 +19,7 @@ def main():
         pool_pre_ping=True,
     )
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT DISTINCT wind_code FROM companies")
-        ).fetchall()
+        rows = conn.execute(text("SELECT DISTINCT wind_code FROM companies")).fetchall()
 
     all_codes = [r[0] for r in rows if r[0]]
     sample_size = min(100, len(all_codes))
@@ -50,16 +48,26 @@ def main():
     print("-" * 70)
 
     EXPECTED = {
-        "R1": (10, 20), "R2": (15, 25), "R3": (5, 10),
-        "R4": (10, 15), "R5": (10, 20), "R6": (5, 10), "R7": (10, 20),
+        "R1": (10, 20),
+        "R2": (15, 25),
+        "R3": (5, 10),
+        "R4": (10, 15),
+        "R5": (10, 20),
+        "R6": (5, 10),
+        "R7": (10, 20),
     }
 
     print(f"{'规则':6s} {'触发数':>6s} {'触发率':>8s} {'参考范围':>10s} {'判定':>12s}")
     print("-" * 70)
 
     EXPECTED = {
-        "R1": (5, 15), "R2": (20, 35), "R3": (5, 15),
-        "R4": (15, 25), "R5": (15, 30), "R6": (10, 25), "R7": (10, 25),
+        "R1": (5, 15),
+        "R2": (20, 35),
+        "R3": (5, 15),
+        "R4": (15, 25),
+        "R5": (15, 30),
+        "R6": (10, 25),
+        "R7": (10, 25),
     }
 
     all_ok = True
