@@ -2,7 +2,7 @@
 
 from app.domain.finance._fetch import fetch_company_field, fetch_field
 from app.domain.finance.models import RuleResult
-from app.domain.finance.rule_utils import count_valid, safe_div, yoy_growth
+from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 
 def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -135,5 +135,5 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         if core_ratio is not None and core_ratio < 0.5:
             result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性。"
         else:
-            result.explanation = f"净利润增速与现金流/营收增速存在背离，建议关注。"
+            result.explanation = "净利润增速与现金流/营收增速存在背离，建议关注。"
     return result

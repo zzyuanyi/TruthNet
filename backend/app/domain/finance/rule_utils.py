@@ -1,6 +1,5 @@
 """规则计算公共工具函数 — RULES_SPEC §1.2."""
 
-from typing import Any
 
 
 def yoy_growth(current: float | None, base: float | None) -> float | None:

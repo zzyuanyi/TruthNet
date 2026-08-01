@@ -2,7 +2,7 @@
 
 from app.domain.finance._fetch import fetch_company_field, fetch_field
 from app.domain.finance.models import RuleResult
-from app.domain.finance.rule_utils import count_valid, mean_or_none, safe_div
+from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 
 def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -95,5 +95,5 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"占总资产比例均偏高，'存贷双高'需要关注。"
         )
     elif severity == "yellow":
-        result.explanation = f"货币资金和有息负债占总资产比例偏高，建议结合业务判断合理性。"
+        result.explanation = "货币资金和有息负债占总资产比例偏高，建议结合业务判断合理性。"
     return result

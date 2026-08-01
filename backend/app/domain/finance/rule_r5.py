@@ -2,7 +2,7 @@
 
 from app.domain.finance._fetch import fetch_company_field, fetch_field
 from app.domain.finance.models import RuleResult
-from app.domain.finance.rule_utils import count_valid, mean_or_none, safe_div
+from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 
 def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -103,5 +103,5 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     elif severity == "orange":
         result.explanation = f"毛利率（{gm_deviation:+.1f}pp）明显偏离历史水平，建议关注。"
     elif severity == "yellow":
-        result.explanation = f"毛利率/费用率较历史均值有所偏离，建议持续关注。"
+        result.explanation = "毛利率/费用率较历史均值有所偏离，建议持续关注。"
     return result

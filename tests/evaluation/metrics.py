@@ -111,7 +111,7 @@ def risk_calibration(
 
     levels = ["red", "orange", "yellow", "green", "unknown"]
     confusion: dict[str, dict[str, int]] = {
-        l: {ll: 0 for ll in levels} for l in levels
+        level: {l2: 0 for l2 in levels} for level in levels
     }
     for p, g in zip(predicted_levels, ground_truth_levels):
         confusion.setdefault(p, {})
@@ -120,9 +120,9 @@ def risk_calibration(
     po = acc
     n = len(predicted_levels)
     pe = 0.0
-    for l in levels:
-        row_sum = sum(confusion[l].values())
-        col_sum = sum(confusion[ll].get(l, 0) for ll in confusion)
+    for level in levels:
+        row_sum = sum(confusion[level].values())
+        col_sum = sum(confusion[l2].get(level, 0) for l2 in confusion)
         if n > 0:
             pe += (row_sum / n) * (col_sum / n)
     kappa = (po - pe) / (1 - pe) if pe < 1 else 0.0

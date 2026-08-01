@@ -5,7 +5,6 @@ Phase C: 用 mock 数据验证 9 项指标的计算逻辑正确。
 Phase D: 替换 mock 为真实评测数据，产出正式评测报告。
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -103,7 +102,7 @@ def main():
             print(f"\n[{label}]")
             print(f"  value: {value}")
         if value is None:
-            print(f"  ✗ FAIL: None!")
+            print("  ✗ FAIL: None!")
             all_valid = False
 
     print("\n" + "=" * 60)

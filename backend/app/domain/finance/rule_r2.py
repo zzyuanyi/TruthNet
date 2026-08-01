@@ -107,5 +107,5 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"现金流/利润比（{avg_ratio:.2f}）低于健康水平。"
         )
     elif severity == "yellow":
-        result.explanation = f"本季经营现金流为负，与正利润背离，建议关注。"
+        result.explanation = "本季经营现金流为负，与正利润背离，建议关注。"
     return result

@@ -2,7 +2,7 @@
 
 from app.domain.finance._fetch import fetch_company_field, fetch_field
 from app.domain.finance.models import RuleResult
-from app.domain.finance.rule_utils import count_valid, safe_div, yoy_growth
+from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 
 def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
