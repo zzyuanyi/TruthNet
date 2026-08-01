@@ -168,6 +168,7 @@ async def chat_v1(request: ChatRequestV1):
     """
     trace_id = str(uuid.uuid4())
     session_id = request.session_id or str(uuid.uuid4())
+    turn_id = str(uuid.uuid4())
 
     try:
         from app.agents.state import ModuleResults, RuntimeState
@@ -182,7 +183,9 @@ async def chat_v1(request: ChatRequestV1):
             "evidence": [],
             "claims": [],
             "final_response": None,
-            "runtime": RuntimeState(trace_id=trace_id, session_id=session_id),
+            "runtime": RuntimeState(
+                trace_id=trace_id, session_id=session_id, turn_id=turn_id
+            ),
         }
 
         # 在线程池中执行 Agent graph（避免阻塞事件循环）
@@ -398,7 +401,10 @@ async def websocket_chat_v1(ws: WebSocket):
                     "evidence": [],
                     "claims": [],
                     "final_response": None,
-                    "runtime": RuntimeState(trace_id=trace_id, session_id=session_id),
+                    # turn_id 与 WS 事件信封对齐（PersistTurn 复用，保证 DB 可追溯）
+                    "runtime": RuntimeState(
+                        trace_id=trace_id, session_id=session_id, turn_id=turn_id
+                    ),
                 }
 
                 # 使用 asyncio.to_thread 避免阻塞事件循环

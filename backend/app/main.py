@@ -8,6 +8,7 @@
   - /api/v1/chat/ws   → V12 WebSocket 对话（进入 Agent graph）
   - /api/v1/companies → V12 公司搜索与画像
   - /api/v1/companies/{code}/equity → V12 股权穿透
+  - /api/v1/sessions → V12 会话列表/创建/详情
 
 变更（审计修复 P0-1）：
   - 移除 POST /api/v1/chat 旧 legacy 注册（硬编码贵州茅台 mock）
@@ -27,6 +28,7 @@ from app.api.v1.routers import chat as chat_v1
 from app.api.v1.routers import companies as companies_v1
 from app.api.v1.routers import equity as equity_v1
 from app.api.v1.routers import health as health_v1
+from app.api.v1.routers import sessions as sessions_v1
 from app.core.config import settings
 from app.schemas.common import HealthResponse, UnifiedResponse
 
@@ -78,6 +80,7 @@ app.include_router(health_v1.router, prefix="/api/v1")
 app.include_router(companies_v1.router, prefix="/api/v1")
 app.include_router(equity_v1.router, prefix="/api/v1")
 app.include_router(chat_v1.router, prefix="/api/v1")
+app.include_router(sessions_v1.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

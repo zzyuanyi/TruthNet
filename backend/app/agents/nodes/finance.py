@@ -70,6 +70,32 @@ def finance_node(state: AgentState) -> dict:
                         value="-2.3亿",
                         source_title="现金流量表",
                     ),
+                    # R2 背离结论需要净利润字段
+                    EvidenceRef(
+                        evidence_id="ev_is_02",
+                        source_type="income_statement",
+                        field_path="net_profit",
+                        period="2025Q3",
+                        value="8.5亿",
+                        source_title="利润表",
+                    ),
+                    # R3 存贷双高需要货币资金与有息负债字段
+                    EvidenceRef(
+                        evidence_id="ev_bs_02",
+                        source_type="balance_sheet",
+                        field_path="monetary_cap",
+                        period="2025Q3",
+                        value="358.0亿",
+                        source_title="资产负债表",
+                    ),
+                    EvidenceRef(
+                        evidence_id="ev_bs_03",
+                        source_type="balance_sheet",
+                        field_path="st_borrow",
+                        period="2025Q3",
+                        value="330.0亿",
+                        source_title="资产负债表",
+                    ),
                 ],
             )
         ),

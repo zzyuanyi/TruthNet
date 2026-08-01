@@ -31,8 +31,17 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 
 async def not_found_handler(request: Request, exc: Exception) -> JSONResponse:
-    """404 处理器."""
+    """404 处理器.
+
+    路由层抛出的 HTTPException 若携带自定义 detail dict
+    （如 error_code），原样透传，避免覆盖业务错误码。
+    """
     trace_id = str(uuid.uuid4())
+    detail_dict = getattr(exc, "detail", None)
+    if isinstance(detail_dict, dict):
+        content = {**detail_dict, "trace_id": trace_id}
+        return JSONResponse(status_code=404, content=content)
+
     detail = ProblemDetail(
         type="https://truthnet/errors/not-found",
         title="Resource Not Found",
