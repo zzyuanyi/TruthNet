@@ -40,7 +40,10 @@ def _load_embedding_model(model_name: str, cache_dir: str):
 
         model_dir = snapshot_download(model_name, cache_dir=cache_dir)
         log.info("模型已通过 ModelScope 就绪: %s", model_dir)
-        return SentenceTransformer(model_dir, device="cpu")
+        st = SentenceTransformer(model_dir, device="cpu")
+        if st._first_module() is not None:
+            return st
+        log.warning("ModelScope 模型不可用，回退 HuggingFace")
     except Exception:
         pass
 
