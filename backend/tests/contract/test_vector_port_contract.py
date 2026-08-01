@@ -4,7 +4,6 @@ import shutil
 import tempfile
 
 import pytest
-
 from app.application.ports.vector_store import VectorStorePort
 from app.infrastructure.vector.chroma.vector_store import ChromaVectorStore
 

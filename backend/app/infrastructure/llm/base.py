@@ -11,16 +11,16 @@ DeepSeek、Qwen 等 OpenAI 兼容 API 的公共实现：
 
 import json
 import logging
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 from tenacity import (
+    before_sleep_log,
     retry,
     retry_if_exception,
     stop_after_attempt,
     wait_exponential_jitter,
-    before_sleep_log,
 )
 
 from app.core.config import settings
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def _is_transient_error(exception: BaseException) -> bool:
     """判断是否为可重试的瞬时错误."""
     try:
-        from openai import APIStatusError, APITimeoutError, APIConnectionError
+        from openai import APIConnectionError, APIStatusError, APITimeoutError
 
         return isinstance(
             exception, (APIStatusError, APITimeoutError, APIConnectionError)

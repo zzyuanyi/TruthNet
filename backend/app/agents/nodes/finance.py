@@ -6,10 +6,10 @@ Bug fix: 提供多种报表 evidence 以支持不同规则的 evidence 绑定。
 
 from app.agents.state import (
     AgentState,
-    ModuleStatus,
     EvidenceRef,
     FinanceResult,
     ModuleResults,
+    ModuleStatus,
 )
 
 

@@ -9,11 +9,10 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
+from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, pool
 from sqlalchemy.engine import URL as EngineURL
-
-from alembic import context
 
 # Load .env file before any settings resolution
 _repo_root = (
@@ -40,7 +39,7 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from app.infrastructure.persistence.models import Base  # noqa: E402
+from app.infrastructure.persistence.models import Base
 
 target_metadata = Base.metadata
 

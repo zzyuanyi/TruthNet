@@ -1,9 +1,8 @@
 """API v1 完整契约测试."""
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from app.main import app
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.mark.asyncio

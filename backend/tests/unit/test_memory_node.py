@@ -4,9 +4,7 @@
 """
 
 import pytest
-
-from app.agents.state import AgentState, MemoryContext, CompanyRef, RuntimeState
-
+from app.agents.state import AgentState, CompanyRef, MemoryContext, RuntimeState
 
 # ── 辅助 ────────────────────────────────────────────────────
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Quick Neo4j import from shareholders Excel — compact version."""
 
-import sys
 import asyncio
 import hashlib
 import logging
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 import pandas as pd
 from app.infrastructure.graph.neo4j.equity_graph import Neo4jEquityGraph
 from app.infrastructure.graph.normalizer import (
-    normalize_wind_code,
     make_listed_company_entity_id,
+    normalize_wind_code,
 )
 
 logging.basicConfig(

@@ -4,7 +4,7 @@
 Mock 实现，后续接入真实 SQLite。
 """
 
-from app.domain.finance.models import FinancialItem, FinanceWarning
+from app.domain.finance.models import FinanceWarning, FinancialItem
 
 
 class SQLiteFinanceRepository:

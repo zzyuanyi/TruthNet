@@ -1,6 +1,6 @@
 """Profile 配置测试."""
 
-from app.core.enums import Profile, BackendType
+from app.core.enums import BackendType, Profile
 
 
 class TestProfileEnums:

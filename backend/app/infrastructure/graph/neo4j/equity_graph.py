@@ -45,9 +45,9 @@ def _pct_to_neo4j(value: Decimal | float | None) -> str | None:
     return f"{d:.6f}"
 
 
-def _pct_from_neo4j(raw: str | float | int | None) -> Decimal:
+def _pct_from_neo4j(raw: str | float | None) -> Decimal:
     if raw is None:
-        return Decimal("0")
+        return Decimal(0)
     return Decimal(str(raw))
 
 
@@ -133,16 +133,16 @@ class Neo4jEquityGraph:
 
     async def ensure_constraints(self) -> None:
         queries = [
-            "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS "
-            "FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE",
-            "CREATE INDEX entity_wind_code IF NOT EXISTS "
-            "FOR (e:Entity) ON (e.wind_code)",
-            "CREATE INDEX entity_name IF NOT EXISTS "
-            "FOR (e:Entity) ON (e.canonical_name)",
-            "CREATE INDEX rel_relationship_id IF NOT EXISTS "
-            "FOR ()-[r:OWNS]-() ON (r.relationship_id)",
-            "CREATE INDEX rel_is_latest IF NOT EXISTS "
-            "FOR ()-[r:OWNS]-() ON (r.is_latest)",
+            ("CREATE CONSTRAINT entity_id_unique IF NOT EXISTS "
+            "FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE"),
+            ("CREATE INDEX entity_wind_code IF NOT EXISTS "
+            "FOR (e:Entity) ON (e.wind_code)"),
+            ("CREATE INDEX entity_name IF NOT EXISTS "
+            "FOR (e:Entity) ON (e.canonical_name)"),
+            ("CREATE INDEX rel_relationship_id IF NOT EXISTS "
+            "FOR ()-[r:OWNS]-() ON (r.relationship_id)"),
+            ("CREATE INDEX rel_is_latest IF NOT EXISTS "
+            "FOR ()-[r:OWNS]-() ON (r.is_latest)"),
         ]
         for q in queries:
             try:
@@ -282,7 +282,7 @@ class Neo4jEquityGraph:
 
                 path_node_ids.append(src_id)
                 if pct > 0:
-                    total_fraction *= pct / Decimal("100")
+                    total_fraction *= pct / Decimal(100)
 
             tgt_nid = target_data.get("entity_id", "")
             if tgt_nid and path_node_ids:

@@ -6,7 +6,6 @@ Phase C 可替换为 LLM 意图识别增强。
 
 from app.agents.state import AgentState, ExecutionPlan
 
-
 # ── 关键词表 ──────────────────────────────────────────────
 
 _FINANCE_KW = [

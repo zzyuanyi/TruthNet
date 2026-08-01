@@ -9,14 +9,15 @@
 输出: data/processed/industry_mapping.csv + MySQL companies 表更新
 """
 
-import sys
 import logging
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.app.core.config import settings  # noqa: E402
-from sqlalchemy import create_engine, text  # noqa: E402
-import pandas as pd  # noqa: E402
+import pandas as pd
+from sqlalchemy import create_engine, text
+
+from backend.app.core.config import settings
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -54,8 +55,9 @@ def build_report_industry_map(engine):
 def try_akshare_fill(missing_codes):
     """尝试通过 akshare 查询申万行业。失败时返回空映射。"""
     try:
-        import akshare as ak  # noqa: F811
         import time
+
+        import akshare as ak
     except ImportError:
         log.warning("akshare 未安装，跳过网络查询")
         return {}

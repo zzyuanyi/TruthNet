@@ -15,22 +15,20 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel, Field
-
 from app.application.ports.llm_provider import LLMProvider
 from app.core.enums import BackendType
+from app.infrastructure.llm.deepseek.provider import DeepSeekProvider
 from app.infrastructure.llm.degradation import (
     create_degradation_response,
     create_degradation_structured,
 )
-from app.infrastructure.llm.deepseek.provider import DeepSeekProvider
 from app.infrastructure.llm.factory import (
     FallbackLLMProvider,
     create_llm_provider,
 )
 from app.infrastructure.llm.mock.provider import MockLLMProvider
 from app.infrastructure.llm.qwen.provider import QwenProvider
-
+from pydantic import BaseModel, Field
 
 # ── 测试用 Schema ─────────────────────────────────────────
 

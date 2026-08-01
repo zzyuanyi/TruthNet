@@ -9,20 +9,22 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Force CPU, avoid segfault
 os.environ["OMP_NUM_THREADS"] = "4"
 
-import sys
-import json
-import hashlib
-import logging
 import argparse
+import hashlib
+import json
+import logging
+import sys
 from pathlib import Path
+
 import torch
 
 torch.set_num_threads(4)
-import numpy as np  # noqa: E402
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.app.core.config import settings  # noqa: E402
-from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy import create_engine, text
+
+from backend.app.core.config import settings
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"

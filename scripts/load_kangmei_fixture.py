@@ -33,16 +33,13 @@ if str(_BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(_BACKEND_SRC))
 
 # 加载 .env（若存在）
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 _env_path = _REPO_ROOT / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=False)
 
-from sqlalchemy import URL as EngineURL, create_engine  # noqa: E402
-from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
-
-from app.infrastructure.persistence.models import (  # noqa: E402
+from app.infrastructure.persistence.models import (
     Announcement,
     BalanceSheet,
     Base,
@@ -52,6 +49,9 @@ from app.infrastructure.persistence.models import (  # noqa: E402
     ResearchReport,
     TopShareholder,
 )
+from sqlalchemy import URL as EngineURL
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 # ---------------------------------------------------------------------------
 # 常量

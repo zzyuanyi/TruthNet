@@ -6,9 +6,8 @@
 - chat.query + 旧格式兼容
 """
 
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 ENVELOPE_KEYS = {
     "schema_version",

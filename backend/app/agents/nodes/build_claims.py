@@ -8,7 +8,6 @@ Bug fix:
 
 from app.agents.state import AgentState, Claim, EvidenceRef
 
-
 # 规则 → 所需字段证据映射（证据必须覆盖 Claim 声明的全部字段，RULES_SPEC 字段-规则矩阵）
 # R1 背离 = 应收 + 营收；R2 背离 = 经营现金流 + 净利润；R3 存贷双高 = 货币资金 + 有息负债
 _RULE_EVIDENCE_MAP: dict[str, list[str]] = {
@@ -121,7 +120,7 @@ def build_claims_node(state: AgentState) -> dict:
             ev_ev_ids = [ev.evidence_id for ev in (results.events.evidence or [])]
             if ev_ev_ids:
                 negative_count = len(negative_events)
-                categories = set(e.get("category", "") for e in negative_events)
+                categories = {e.get("category", "") for e in negative_events}
                 cat_desc = "、".join(sorted(categories)) if categories else "多种类型"
                 claims.append(
                     Claim(

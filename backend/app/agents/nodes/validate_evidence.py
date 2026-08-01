@@ -38,9 +38,8 @@ def validate_evidence_node(state: AgentState) -> dict:
                 claim.verification_status = "verified"
 
     runtime = state.get("runtime")
-    if runtime and issues:
-        if hasattr(runtime, "warnings"):
-            runtime.warnings.extend(issues)
+    if runtime and issues and hasattr(runtime, "warnings"):
+        runtime.warnings.extend(issues)
 
     # claims 已由 build_claims 写入 state，本节点仅原地修改 verification_status；
     # 返回空增量（a + [] = a），避免拼接 reducer 下 claims 翻倍。

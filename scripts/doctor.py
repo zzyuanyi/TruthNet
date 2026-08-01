@@ -44,7 +44,7 @@ def run_cmd(cmd: list[str]) -> tuple[int, str, str]:
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            shell=True if sys.platform == "win32" else False,
+            shell=sys.platform == "win32",
         )
         stdout = result.stdout.strip() if result.stdout else ""
         stderr = result.stderr.strip() if result.stderr else ""

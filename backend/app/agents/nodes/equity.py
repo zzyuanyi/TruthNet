@@ -2,10 +2,10 @@
 
 from app.agents.state import (
     AgentState,
-    ModuleStatus,
-    EvidenceRef,
     EquityResult,
+    EvidenceRef,
     ModuleResults,
+    ModuleStatus,
 )
 
 

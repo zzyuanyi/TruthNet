@@ -58,7 +58,7 @@ def _check_mysql() -> dict:
             "host": settings.MYSQL_HOST,
             "port": settings.MYSQL_PORT,
         }
-    except (socket.timeout, ConnectionRefusedError, OSError) as e:
+    except (TimeoutError, ConnectionRefusedError, OSError) as e:
         return {"status": "unreachable", "reason": str(e)[:80]}
     except Exception as e:
         return {"status": "error", "reason": str(e)[:80]}
@@ -91,7 +91,7 @@ def _check_neo4j() -> dict:
         sock = socket.create_connection((host, port), timeout=3)
         sock.close()
         return {"status": "reachable", "host": host, "port": port}
-    except (socket.timeout, ConnectionRefusedError, OSError) as e:
+    except (TimeoutError, ConnectionRefusedError, OSError) as e:
         return {"status": "unreachable", "reason": str(e)[:80]}
     except Exception as e:
         return {"status": "error", "reason": str(e)[:80]}

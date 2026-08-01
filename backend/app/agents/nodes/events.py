@@ -14,10 +14,10 @@ from sqlalchemy.engine import Engine
 
 from app.agents.state import (
     AgentState,
-    ModuleStatus,
-    EvidenceRef,
     EventsResult,
+    EvidenceRef,
     ModuleResults,
+    ModuleStatus,
 )
 from app.core.config import settings
 from app.domain.events.fcode_taxonomy import fcode_category_label

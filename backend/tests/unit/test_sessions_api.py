@@ -5,14 +5,13 @@
 """
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.pool import StaticPool
-
 from app.api.v1.routers import sessions as sessions_router
 from app.core.config import settings
 from app.infrastructure.persistence.models import ConversationSession, ConversationTurn
 from app.main import app
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture

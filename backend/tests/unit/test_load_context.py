@@ -5,11 +5,10 @@
 """
 
 import pytest
-from sqlalchemy import create_engine, text
-
 from app.agents.nodes import load_context as lc
 from app.agents.state import AgentState, RuntimeState
 from app.infrastructure.persistence.models import ConversationSession, ConversationTurn
+from sqlalchemy import create_engine, text
 
 
 @pytest.fixture

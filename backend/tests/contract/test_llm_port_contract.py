@@ -5,7 +5,6 @@
 """
 
 import pytest
-
 from app.application.ports.llm_provider import LLMProvider
 from app.core.enums import BackendType
 from app.infrastructure.llm.deepseek.provider import DeepSeekProvider

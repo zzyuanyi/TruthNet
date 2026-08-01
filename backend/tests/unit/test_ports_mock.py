@@ -1,7 +1,6 @@
 """Port 协议和 Mock Adapter 单元测试."""
 
 import pytest
-
 from app.application.ports.company_repository import CompanyRepository
 from app.application.ports.equity_graph import EquityGraphPort
 from app.application.ports.llm_provider import LLMProvider

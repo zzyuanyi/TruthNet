@@ -30,8 +30,8 @@ _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from backend.app.core.config import settings  # noqa: E402
-from backend.app.infrastructure.graph.normalizer import (  # noqa: E402
+from backend.app.core.config import settings
+from backend.app.infrastructure.graph.normalizer import (
     make_listed_company_entity_id,
     normalize_wind_code,
 )

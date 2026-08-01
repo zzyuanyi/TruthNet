@@ -22,8 +22,8 @@ _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from backend.app.core.config import settings  # noqa: E402
-from backend.app.domain.events.fcode_taxonomy import (  # noqa: E402
+from backend.app.core.config import settings
+from backend.app.domain.events.fcode_taxonomy import (
     SENTIMENT_MAP_VERSION,
     classify_sentiment,
 )
@@ -79,7 +79,7 @@ def analyze_dict_coverage(dict_path: Path) -> dict:
             df_dict.columns = ["fcode", "name"] + list(df_dict.columns[2:])
 
     fcode_col = "fcode"
-    all_codes = set(str(c).strip() for c in df_dict[fcode_col].dropna().unique())
+    all_codes = {str(c).strip() for c in df_dict[fcode_col].dropna().unique()}
     from backend.app.domain.events.fcode_taxonomy import FCODE_SENTIMENT_MAP
 
     mapped = set(FCODE_SENTIMENT_MAP.keys())

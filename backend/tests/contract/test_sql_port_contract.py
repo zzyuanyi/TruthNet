@@ -1,7 +1,6 @@
 """SQL Port Contract 测试 — SQLite 和 MySQL 共享接口."""
 
 import pytest
-
 from app.application.ports.company_repository import CompanyRepository
 from app.infrastructure.persistence.sqlite.company_repository import (
     SQLiteCompanyRepository,

@@ -5,18 +5,19 @@ Reads data/processed/embeddings.npy + chunks_meta.json → upsert to ChromaDB.
 持久化目录和集合名与 vector_store.py 统一。
 """
 
-import sys
+import argparse
 import json
 import logging
-import argparse
+import sys
 from pathlib import Path
+
 import numpy as np
 
 _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from backend.app.core.config import settings  # noqa: E402
+from backend.app.core.config import settings
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"

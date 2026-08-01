@@ -21,11 +21,12 @@ _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from sqlalchemy import create_engine, text, inspect as sa_inspect  # noqa: E402
-from sqlalchemy.engine import Engine  # noqa: E402
+from sqlalchemy import create_engine, text
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.engine import Engine
 
-from backend.app.core.config import settings as app_settings  # noqa: E402
-from backend.app.infrastructure.graph.normalizer import (  # noqa: E402
+from backend.app.core.config import settings as app_settings
+from backend.app.infrastructure.graph.normalizer import (
     make_listed_company_entity_id,
     normalize_wind_code,
 )
@@ -292,7 +293,7 @@ def _batch_upsert(
     # 只保留目标表中存在的列（丢弃未知列）
     insp = sa_inspect(engine)
     existing = {c["name"]: c for c in insp.get_columns(table)}
-    cols = [c for c in rows[0].keys() if c in existing]
+    cols = [c for c in rows[0] if c in existing]
     rows = [{k: v for k, v in r.items() if k in cols} for r in rows]
 
     stg = _stg_name(table)

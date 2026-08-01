@@ -1,9 +1,8 @@
 """API 契约 smoke 验证 — 确认 FastAPI 端点返回与文档一致的响应格式。"""
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from app.main import app
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.mark.asyncio

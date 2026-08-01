@@ -31,7 +31,6 @@ def _utcnow() -> datetime:
 class Base(DeclarativeBase):
     """SQLAlchemy 声明式基类."""
 
-    pass
 
 
 # ============================================================================

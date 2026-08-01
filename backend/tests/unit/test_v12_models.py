@@ -1,7 +1,7 @@
 """V12 核心模型单元测试."""
 
-from app.core.enums import ModuleStatus, RiskLevel
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
+from app.core.enums import ModuleStatus, RiskLevel
 from app.domain.company.models import CompanyRef
 from app.domain.evidence.models import Claim, ConfidenceLevel, EvidenceRef, EvidenceType
 from app.domain.risk.models import RiskScore

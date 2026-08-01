@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-
 from app.infrastructure.vector.chroma.vector_store import ChromaVectorStore
 
 FAKE_EMBED_DIM = 8

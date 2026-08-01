@@ -8,8 +8,8 @@ import logging
 
 from app.application.ports.llm_provider import LLMProvider
 from app.core.config import settings
-from app.infrastructure.llm.degradation import create_degradation_response
 from app.infrastructure.llm.deepseek.provider import DeepSeekProvider
+from app.infrastructure.llm.degradation import create_degradation_response
 from app.infrastructure.llm.mock.provider import MockLLMProvider
 from app.infrastructure.llm.qwen.provider import QwenProvider
 

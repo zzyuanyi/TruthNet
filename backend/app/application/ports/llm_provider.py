@@ -4,7 +4,8 @@
 V12 §7.7: 增加 structured_chat 结构化输出支持。
 """
 
-from typing import AsyncIterator, Protocol, runtime_checkable
+from collections.abc import AsyncIterator
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
