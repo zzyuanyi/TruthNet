@@ -3,12 +3,14 @@
 MySQL → 分块 → ChromaDB.add() 自动 embedding (SentenceTransformer)
 """
 
-import sys, time
+import sys
+import time
 from pathlib import Path
-import pandas as pd
-from sqlalchemy import create_engine
+
 import chromadb
+import pandas as pd
 from chromadb.utils import embedding_functions
+from sqlalchemy import create_engine
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -29,8 +31,8 @@ log("Init ChromaDB with SentenceTransformer embedding...")
 client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 try:
     client.delete_collection(COLLECTION_NAME)
-except Exception:
-    pass
+except (ValueError, OSError):
+    pass  # collection may not exist
 ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=MODEL_NAME)
 collection = client.create_collection(
     name=COLLECTION_NAME,

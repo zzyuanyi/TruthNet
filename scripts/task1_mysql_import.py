@@ -4,9 +4,9 @@
 执行顺序：companies → 三表 → 股东 → 公告 → 研报
 """
 
-import sys
-import io
 import hashlib
+import io
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -417,25 +417,29 @@ def verify():
     tables = ["companies", "balance_sheet", "income_statement", "cash_flow",
               "top_shareholders", "announcements", "research_reports"]
 
-    with pymysql.connect(host="localhost", port=3306, user="truthnet",
-                          password="truthnet123", database="truthnet") as conn:
-        with conn.cursor() as cur:
-            for t in tables:
-                cur.execute(f"SELECT COUNT(*) FROM `{t}`")
-                cnt = cur.fetchone()[0]
-                print(f"  {t:25s}: {cnt:>10,}")
+    with (
+        pymysql.connect(host="localhost", port=3306, user="truthnet",
+                        password="truthnet123", database="truthnet") as conn,
+        conn.cursor() as cur,
+    ):
+        for t in tables:
+            cur.execute(f"SELECT COUNT(*) FROM `{t}`")
+            cnt = cur.fetchone()[0]
+            print(f"  {t:25s}: {cnt:>10,}")
 
     # 行业覆盖率
-    with pymysql.connect(host="localhost", port=3306, user="truthnet",
-                          password="truthnet123", database="truthnet") as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                  COUNT(CASE WHEN industry_l1 IS NOT NULL AND industry_l1 != '' THEN 1 END) * 1.0 / COUNT(*) AS coverage
-                FROM companies
-            """)
-            coverage = cur.fetchone()[0]
-            print(f"\n  Industry coverage: {coverage*100:.1f}%")
+    with (
+        pymysql.connect(host="localhost", port=3306, user="truthnet",
+                        password="truthnet123", database="truthnet") as conn,
+        conn.cursor() as cur,
+    ):
+        cur.execute("""
+            SELECT
+              COUNT(CASE WHEN industry_l1 IS NOT NULL AND industry_l1 != '' THEN 1 END) * 1.0 / COUNT(*) AS coverage
+            FROM companies
+        """)
+        coverage = cur.fetchone()[0]
+        print(f"\n  Industry coverage: {coverage*100:.1f}%")
 
 
 # ====================================================================

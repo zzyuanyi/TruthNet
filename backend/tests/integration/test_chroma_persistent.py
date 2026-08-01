@@ -30,8 +30,8 @@ def _cleanup_path(path: str) -> None:
     """Clean up temp directory."""
     try:
         shutil.rmtree(path, ignore_errors=True)
-    except Exception:
-        pass
+    except (ValueError, OSError):
+        pass  # collection may not exist
 
 
 def test_chroma_persistent_write_read():
@@ -49,8 +49,8 @@ def test_chroma_persistent_write_read():
         )
         try:
             client.delete_collection(name=collection_name)
-        except Exception:
-            pass
+        except ValueError:
+            pass  # collection may not exist
 
         collection = client.create_collection(name=collection_name)
         emb = _random_embedding()
@@ -100,8 +100,8 @@ def test_chroma_persistent_small_data():
         )
         try:
             client.delete_collection(name="test_small")
-        except Exception:
-            pass
+        except ValueError:
+            pass  # collection may not exist
 
         col = client.create_collection(name="test_small")
         n = 5
@@ -134,8 +134,8 @@ def test_chroma_persistent_no_embedding_function():
         )
         try:
             client.delete_collection(name="test_no_ef")
-        except Exception:
-            pass
+        except ValueError:
+            pass  # collection may not exist
 
         # 不传 embedding_function —— 只要不调 query_texts 就不下载模型
         col = client.create_collection(name="test_no_ef")
@@ -163,8 +163,8 @@ def test_chroma_metadata_filter():
         )
         try:
             client.delete_collection(name="test_meta")
-        except Exception:
-            pass
+        except ValueError:
+            pass  # collection may not exist
 
         col = client.create_collection(name="test_meta")
         embeddings = [_random_embedding() for _ in range(3)]

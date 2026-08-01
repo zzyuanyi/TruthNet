@@ -7,14 +7,14 @@
 列: wind_code | stock_name | industry_l1 | industry_l2 | source
 """
 
-import sys
 import io
 import re
+import sys
 import time
 from pathlib import Path
 
-import pandas as pd
 import akshare as ak
+import pandas as pd
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
@@ -194,14 +194,14 @@ for i, (wind_code, number) in enumerate(need_akshare):
             }
             empty_count += 1
 
-    except Exception as e:
+    except (OSError, ValueError):
         akshare_results[wind_code] = {
             "wind_code": wind_code,
             "number": number,
             "name": "",
             "industry_l1": "",
             "industry_l2": "",
-            "source": f"akshare_error",
+            "source": "akshare_error",
         }
         fail_count += 1
 
@@ -216,7 +216,7 @@ for i, (wind_code, number) in enumerate(need_akshare):
     if (i + 1) % 20 == 0:
         time.sleep(0.5)
 
-print(f"\nQuery complete:")
+print("\nQuery complete:")
 print(f"  Success (with industry): {success_count}")
 print(f"  Empty (industry='-'):    {empty_count}")
 print(f"  Error:                   {fail_count}")
@@ -258,7 +258,7 @@ total = len(df_out)
 has_ind = (df_out["industry_l1"].notna() & (df_out["industry_l1"] != "")).sum()
 print(f"Total records: {total}")
 print(f"With industry_l1: {has_ind} ({has_ind/total*100:.1f}%)")
-print(f"Sources breakdown:")
+print("Sources breakdown:")
 print(df_out["source"].value_counts().to_string())
 
 # 保存

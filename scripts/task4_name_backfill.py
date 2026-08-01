@@ -123,7 +123,7 @@ def query_akshare_batch(codes: list[str]) -> dict[str, str | None]:
             if code and name:
                 name_map[code] = name
         log(f"  akshare: {len(name_map)} stocks ({time.time()-t0:.1f}s)")
-    except Exception as e:
+    except (ImportError, OSError) as e:
         log(f"  akshare: FAILED ({e})")
 
     for wind_code in codes:
@@ -156,8 +156,8 @@ def query_akshare_batch(codes: list[str]) -> dict[str, str | None]:
                 if name and name != "" and name != ";":
                     results[wc] = name
                     sina_hit += 1
-        except Exception:
-            pass
+        except (requests.RequestException, OSError):
+            pass  # network issue, skip this source
     log(f"  Sina matched: {sina_hit}")
 
     # ── Source 3: 腾讯财经（新三板/北交所老代码）──
@@ -184,8 +184,8 @@ def query_akshare_batch(codes: list[str]) -> dict[str, str | None]:
                             results[wc] = name
                             tencent_hit += 1
                             break
-            except Exception:
-                pass
+            except (requests.RequestException, OSError):
+                pass  # network issue
     log(f"  Tencent matched: {tencent_hit}")
 
     # assign None for unmatched

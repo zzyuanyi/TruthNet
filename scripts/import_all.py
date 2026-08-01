@@ -50,8 +50,10 @@ STEPS = {
         "desc": "导入康美 fixture 至 Neo4j 图数据库",
         "cmd": [
             sys.executable, "-c",
-            "import asyncio; from app.infrastructure.graph.neo4j.importer import main_import; "
-            "print(asyncio.run(main_import(source='fixture', mock=True)))"
+            (
+                "import asyncio; from app.infrastructure.graph.neo4j.importer import main_import; "
+                "print(asyncio.run(main_import(source='fixture', mock=True)))"
+            ),
         ],
         "cwd": str(PROJECT_ROOT / "backend"),
         "timeout_min": 5,
@@ -93,6 +95,7 @@ def _run_step(step_key: str) -> bool:
             capture_output=False,
             timeout=info["timeout_min"] * 60,
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            check=False,
         )
         elapsed = time.time() - t0
         if result.returncode == 0:
@@ -154,7 +157,7 @@ def check_prereqs(requested_steps: set[str]) -> bool:
             )
             conn.close()
             log("  ✓ MySQL (localhost:3306)")
-        except Exception as e:
+        except (OSError, ImportError) as e:
             log(f"  ✗ MySQL: {e}")
             all_ok = False
 
@@ -166,7 +169,7 @@ def check_prereqs(requested_steps: set[str]) -> bool:
             driver.verify_connectivity()
             driver.close()
             log("  ✓ Neo4j (bolt://localhost:7687)")
-        except Exception as e:
+        except (OSError, ImportError) as e:
             log(f"  ✗ Neo4j: {e}")
             all_ok = False
 
