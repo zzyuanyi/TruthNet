@@ -1,7 +1,6 @@
-"""Finance 领域模型 — V12 baseline.
+"""Finance 领域模型 — V12 baseline + Phase C 规则引擎."""
 
-财务报表数据模型。本轮只建骨架，不实现完整财务规则。
-"""
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,3 +25,36 @@ class FinanceWarning(BaseModel):
     level: str = Field(default="low", description="严重程度: low/medium/high/critical")
     detail: str = Field(..., description="预警详情")
     related_items: list[str] = Field(default_factory=list, description="相关科目")
+
+
+# ── Phase C 规则引擎模型 ──────────────────────────────────────
+
+
+class CurrentMetric(BaseModel):
+    """规则当前指标值."""
+
+    value: float | None = None
+    unit: str = ""
+
+
+class RuleResult(BaseModel):
+    """单条规则计算结果 — 对齐 V12 §8.2 输出格式."""
+
+    rule_id: str  # "R1" ~ "R7"
+    rule_version: str = "1.0.0"
+    rule_name: str = ""
+    status: Literal[
+        "triggered", "not_triggered", "not_applicable", "insufficient_data"
+    ] = "not_triggered"
+    severity: Literal[
+        "red", "orange", "yellow", "green", "unknown"
+    ] = "green"
+
+    current: dict[str, dict] = Field(default_factory=dict)
+    history: list[dict] = Field(default_factory=list)
+    industry: dict = Field(default_factory=dict)
+    quality: dict = Field(default_factory=dict)
+    evidence_ids: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+    explanation: str = ""
+    warnings: list[str] = Field(default_factory=list)
