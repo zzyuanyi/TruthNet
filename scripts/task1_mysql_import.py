@@ -21,12 +21,12 @@ _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from sqlalchemy import create_engine, text
-from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy import inspect as sa_inspect  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
 
-from backend.app.core.config import settings as app_settings
-from backend.app.infrastructure.graph.normalizer import (
+from backend.app.core.config import settings as app_settings  # noqa: E402
+from backend.app.infrastructure.graph.normalizer import (  # noqa: E402
     make_listed_company_entity_id,
     normalize_wind_code,
 )

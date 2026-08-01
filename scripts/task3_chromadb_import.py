@@ -43,19 +43,23 @@ log(f"  Created '{COLLECTION_NAME}' with {MODEL_NAME}")
 
 # ── 分块 ──
 def chunk_text(text, chunk_size=600, overlap=80):
-    if not text or not isinstance(text, str): return []
+    if not text or not isinstance(text, str):
+        return []
     text = text.strip()
-    if len(text) <= chunk_size: return [text]
+    if len(text) <= chunk_size:
+        return [text]
     chunks, start = [], 0
     while start < len(text):
         end = start + chunk_size
         if end >= len(text):
-            chunks.append(text[start:].strip()); break
+            chunks.append(text[start:].strip())
+            break
         chunk = text[start:end]
         for sep in ["。", "；", "\n", "，"]:
             idx = chunk.rfind(sep, chunk_size // 2)
             if idx > chunk_size // 2:
-                end = start + idx + 1; break
+                end = start + idx + 1
+                break
         chunks.append(text[start:end].strip())
         start = end - overlap
     return chunks

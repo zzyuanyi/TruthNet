@@ -30,12 +30,12 @@ _backend_root = _repo_root / "backend"
 if str(_backend_root) not in sys.path:
     sys.path.insert(0, str(_backend_root))
 
-from backend.app.core.config import settings
-from backend.app.infrastructure.graph.neo4j.equity_graph import (
+from backend.app.core.config import settings  # noqa: E402
+from backend.app.infrastructure.graph.neo4j.equity_graph import (  # noqa: E402
     Neo4jEquityGraph,
     make_relationship_id,
 )
-from backend.app.infrastructure.graph.normalizer import (
+from backend.app.infrastructure.graph.normalizer import (  # noqa: E402
     make_listed_company_entity_id,
     normalize_wind_code,
 )

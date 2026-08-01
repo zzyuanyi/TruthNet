@@ -22,8 +22,8 @@ _repo_root = Path(__file__).resolve().parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from backend.app.core.config import settings
-from backend.app.domain.events.fcode_taxonomy import (
+from backend.app.core.config import settings  # noqa: E402
+from backend.app.domain.events.fcode_taxonomy import (  # noqa: E402
     SENTIMENT_MAP_VERSION,
     classify_sentiment,
 )

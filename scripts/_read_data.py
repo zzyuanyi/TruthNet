@@ -1,12 +1,11 @@
 """一次性读取所有比赛数据，UTF-8 编码。"""
 import io
 import sys
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 from pathlib import Path
 
 import pandas as pd
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BASE = PROJECT_ROOT / "data" / "raw" / "比赛数据"
