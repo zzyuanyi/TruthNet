@@ -20,8 +20,9 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 # ── 配置 ──
 DB_URL = "mysql+pymysql://truthnet:truthnet123@localhost:3306/truthnet"
 engine = create_engine(DB_URL, echo=False)
-BASE = Path(r"d:\projects\TruthNet\data\raw\比赛数据")
-PROCESSED = Path(r"d:\projects\TruthNet\data\processed")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BASE = PROJECT_ROOT / "data" / "raw" / "比赛数据"
+PROCESSED = PROJECT_ROOT / "data" / "processed"
 NOW = datetime.now(timezone.utc)
 
 BATCH_SIZE = 5000  # 每批写入行数

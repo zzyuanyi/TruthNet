@@ -15,7 +15,8 @@ sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
 def log(msg): print(msg, flush=True)
 
 # ── 配置 ──
-CHROMA_PATH = Path(r"d:\projects\TruthNet\data\chroma_db")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CHROMA_PATH = PROJECT_ROOT / "data" / "chroma_db"
 CHROMA_PATH.mkdir(parents=True, exist_ok=True)
 COLLECTION_NAME = "research_report_chunks"
 CHUNK_SIZE, CHUNK_OVERLAP = 600, 80

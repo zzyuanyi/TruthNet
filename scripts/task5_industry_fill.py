@@ -18,8 +18,9 @@ import akshare as ak
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-BASE = Path(r"d:\projects\TruthNet\data\raw\比赛数据")
-OUTPUT_DIR = Path(r"d:\projects\TruthNet\data\processed")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BASE = PROJECT_ROOT / "data" / "raw" / "比赛数据"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── 第一步：从三表 CSV 提取所有股票代码 ──

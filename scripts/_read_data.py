@@ -6,7 +6,8 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 from pathlib import Path
 import pandas as pd
 
-BASE = Path(r'd:\projects\TruthNet\data\raw\比赛数据')
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BASE = PROJECT_ROOT / "data" / "raw" / "比赛数据"
 
 # === Folder 1 ===
 print('=' * 80)
