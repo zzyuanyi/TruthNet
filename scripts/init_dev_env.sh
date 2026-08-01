@@ -63,6 +63,6 @@ fi
 echo ""
 echo "  开发前: python scripts/start_session.py"
 echo "  开发后: python scripts/end_session.py"
-echo "  启动后端: cd backend && uvicorn app.main:app --reload"
+echo "  启动后端: python -m uvicorn app.main:app --app-dir backend --reload"
 echo "  前端（待初始化）: cd frontend && pnpm install && pnpm dev"
 echo ""

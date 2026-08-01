@@ -43,7 +43,7 @@ ruff check .                                 # 代码检查
 ## 6. 启动后端
 
 ```bash
-uvicorn backend.app.main:app --reload
+python -m uvicorn app.main:app --app-dir backend --reload
 # http://127.0.0.1:8000/healthz
 # http://127.0.0.1:8000/api/v1/companies?query=茅台
 ```

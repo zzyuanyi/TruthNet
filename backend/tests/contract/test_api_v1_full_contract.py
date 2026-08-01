@@ -43,23 +43,22 @@ async def test_companies_search():
     body = response.json()
     assert "data" in body
     assert "meta" in body
-    assert len(body["data"]["companies"]) >= 1
+    assert len(body["data"]["candidates"]) >= 1
 
 
 @pytest.mark.asyncio
 async def test_chat_v1_contract():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/chat", json={"question": "test"})
+        response = await client.post(
+            "/api/v1/chat", json={"question": "康美药业有造假风险吗"}
+        )
     assert response.status_code == 200
     body = response.json()
-    # V12 envelope OR legacy format
-    if "meta" in body:
-        assert body["meta"]["schema_version"] == "1.0"
-        assert "answer" in body["data"]
-    else:
-        assert body["code"] == 0
-        assert "answer" in body["data"]
+    # V12 envelope
+    assert "meta" in body
+    assert body["meta"]["schema_version"] == "1.0"
+    assert "answer" in body["data"]
 
 
 @pytest.mark.asyncio

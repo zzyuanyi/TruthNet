@@ -70,13 +70,17 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
-    EMBEDDING_API_KEY: str = ""
-    EMBEDDING_BASE_URL: str = ""
-    EMBEDDING_MODEL: str = ""
-
     # ===== API 版本控制 =====
     API_V1_ENABLED: bool = True
     LEGACY_API_ENABLED: bool = True
+
+    # ===== 数据流水线 =====
+    DATA_ROOT: str = "data/raw"
+    PROCESSED_DATA_DIR: str = "data/processed"
+
+    # ===== 嵌入模型 =====
+    EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    EMBEDDING_CACHE_DIR: str = "data/model_cache"
 
     # ===== 数据版本 =====
     DEFAULT_AS_OF: str = ""

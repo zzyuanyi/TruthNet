@@ -1,6 +1,9 @@
 # TruthNet V12 Full Stack Port Check
 # 检查 MySQL, Neo4j, ChromaDB 端口是否监听
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$chromaDir = Join-Path $repoRoot "data\chroma_db"
+
 $ports = @(
     @{Name="MySQL"; Port=3307; Host="127.0.0.1"},
     @{Name="Neo4j Bolt"; Port=7687; Host="127.0.0.1"},
@@ -22,7 +25,6 @@ foreach ($p in $ports) {
 }
 
 # ChromaDB persistent dir
-$chromaDir = "E:\project\TruthNet\.local\chroma"
 if (Test-Path $chromaDir) {
     Write-Host "  [OK] ChromaDB persist dir: $chromaDir" -ForegroundColor Green
 } else {

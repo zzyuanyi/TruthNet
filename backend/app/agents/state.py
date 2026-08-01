@@ -93,6 +93,26 @@ class FinalResponse(BaseModel):
     follow_ups: list[str] = Field(default_factory=list)
 
 
+class MemoryContext(BaseModel):
+    """记忆上下文 — V12 §7.6.
+
+    多轮对话中的指代消解结果与实体跟踪状态。
+    """
+
+    resolved_entity_name: str | None = Field(
+        None, description="指代消解后的实体名称（如'康美药业'）"
+    )
+    is_anaphora: bool = Field(
+        False, description="当前 query 是否包含指代词（它/上次那家/该公司等）"
+    )
+    previous_companies: list[str] = Field(
+        default_factory=list, description="历史轮次中涉及的股票简称列表"
+    )
+    referenced_indicators: list[str] = Field(
+        default_factory=list, description="历史轮次中提及的财务指标"
+    )
+
+
 # ── 模块结果（并行写入，各自隔离） ─────────────────────────
 
 
@@ -143,3 +163,4 @@ class AgentState(TypedDict, total=False):
     claims: Annotated[list[Claim], lambda a, b: a + b]
     final_response: FinalResponse | None
     runtime: RuntimeState
+    memory_context: MemoryContext | None

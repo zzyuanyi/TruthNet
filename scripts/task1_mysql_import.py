@@ -1,465 +1,551 @@
-"""任务①：MySQL 全量入库
-========================
-将比赛数据全部导入 MySQL truthnet 数据库。
-执行顺序：companies → 三表 → 股东 → 公告 → 研报
+#!/usr/bin/env python
+"""TruthNet — 竞赛财务数据 MySQL 导入流水线 (Phase B Task 1).
+
+零硬编码 · 幂等导入 · 可恢复 · 批次安全 · staging 表 + ON DUPLICATE KEY UPDATE
+所有配置来自 app.core.config.Settings + CLI 覆盖。无模块级 DB 连接。
 """
 
+from __future__ import annotations
+
+import argparse
 import hashlib
-import io
+import json
+import logging
+import os
 import sys
-import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 
-import pandas as pd
-import pymysql
-from sqlalchemy import create_engine
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+from sqlalchemy import create_engine, text, inspect as sa_inspect  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
 
-# ── 配置 ──
-DB_URL = "mysql+pymysql://truthnet:truthnet123@localhost:3306/truthnet"
-engine = create_engine(DB_URL, echo=False)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BASE = PROJECT_ROOT / "data" / "raw" / "比赛数据"
-PROCESSED = PROJECT_ROOT / "data" / "processed"
-NOW = datetime.now(timezone.utc)
+from backend.app.core.config import settings as app_settings  # noqa: E402
+from backend.app.infrastructure.graph.normalizer import (  # noqa: E402
+    make_listed_company_entity_id,
+    normalize_wind_code,
+)
 
-BATCH_SIZE = 5000  # 每批写入行数
-DATASET_VERSION = "competition-2026"
+# ── Constants ──────────────────────────────────────────────────────────────
 
-def now_iso():
-    return NOW.strftime("%Y-%m-%d %H:%M:%S")
+STATEMENT_TYPE_MAP = {"408001000": "consolidated", "408006000": "parent_company"}
 
-def safe_date_str(val):
-    """将各种日期格式统一转成 YYYY-MM-DD 字符串"""
-    if pd.isna(val):
+# 需要日期标准化的列名
+_DATE_COLS = frozenset(
+    {
+        "listing_date",
+        "industry_as_of",
+        "report_period",
+        "ann_dt",
+        "s_holder_enddate",
+        "publish_date",
+    }
+)
+
+# 各表的唯一键列表（用于 ON DUPLICATE KEY UPDATE）
+_PK_COLS: dict[str, tuple[str, ...]] = {
+    "companies": ("entity_id",),
+    "announcements": ("object_id",),
+    "research_reports": ("report_id",),
+}
+
+# 导入顺序
+_TABLE_ORDER = (
+    "companies",
+    "balance_sheet",
+    "income_statement",
+    "cash_flow",
+    "top_shareholders",
+    "announcements",
+    "research_reports",
+)
+
+logger = logging.getLogger("task1_import")
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="TruthNet 竞赛数据 MySQL 导入")
+    p.add_argument("--data-root", default=os.environ.get("DATA_ROOT") or "data/raw")
+    p.add_argument(
+        "--processed-dir",
+        default=os.environ.get("PROCESSED_DATA_DIR") or "data/processed",
+    )
+    p.add_argument("--dataset-version", default=app_settings.DATASET_VERSION)
+    p.add_argument("--batch-size", type=int, default=5000)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--verify-only", action="store_true")
+    p.add_argument(
+        "--replace-dataset-version",
+        action="store_true",
+        help="标记旧版本 is_latest=0 后导入 (explicit opt-in)",
+    )
+    p.add_argument(
+        "--tables", nargs="*", default=list(_TABLE_ORDER), choices=list(_TABLE_ORDER)
+    )
+    return p.parse_args()
+
+
+# ── Engine ─────────────────────────────────────────────────────────────────
+
+
+def _make_engine() -> Engine:
+    url = (
+        f"mysql+pymysql://{app_settings.MYSQL_USER}:{app_settings.MYSQL_PASSWORD}"
+        f"@{app_settings.MYSQL_HOST}:{app_settings.MYSQL_PORT}"
+        f"/{app_settings.MYSQL_DATABASE}?charset=utf8mb4"
+    )
+    return create_engine(url, echo=False, pool_pre_ping=True, pool_recycle=3600)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _sha256(data: dict[str, Any]) -> str:
+    raw = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _norm_date(val: Any) -> str | None:
+    if val is None or val == "":
         return None
-    if isinstance(val, pd.Timestamp):
+    if isinstance(val, (date, datetime)):
         return val.strftime("%Y-%m-%d")
     s = str(val).strip()
-    if len(s) >= 10:
-        return s[:10]  # 截取日期部分
-    return s if s else None
-
-def sha256(s: str) -> str:
-    return hashlib.sha256(s.encode()).hexdigest() if s else ""
-
-def system_cols(source_file, source_row, source_type="competition_data"):
-    """生成系统字段 dict"""
-    return {
-        "source_record_id": None,
-        "source_file": source_file,
-        "source_row": source_row,
-        "source_type": source_type,
-        "dataset_version": DATASET_VERSION,
-        "revision_no": 1,
-        "is_latest": True,
-        "ingested_at": NOW,
-        "updated_at": NOW,
-        "quality_flags": None,
-        "checksum": None,
-    }
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y%m%d",
+        "%d-%b-%Y",
+        "%b %d, %Y",
+        "%Y-%m-%d %H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return s
 
 
-# ====================================================================
-# Step 1: 导入 companies 表
-# ====================================================================
-def import_companies():
-    print("=" * 60)
-    print("Step 1: Import companies")
-    print("=" * 60)
+def _norm_statement_type(val: Any) -> str | None:
+    if val is None:
+        return None
+    return STATEMENT_TYPE_MAP.get(str(val).strip(), str(val).strip())
 
-    df = pd.read_csv(PROCESSED / "industry_mapping.csv")
-    print(f"Total companies in mapping: {len(df)}")
 
-    rows = []
-    for i, (_, r) in enumerate(df.iterrows()):
-        wind_code = r["wind_code"]
-        # entity_id: 用 wind_code 去掉后缀作为实体 ID
-        entity_id = wind_code.replace(".SZ", "").replace(".SH", "").replace(".BJ", "")
-        exchange_map = {".SZ": "XSHE", ".SH": "XSHG", ".BJ": "XBJ"}
-        exchange_code = None
-        for suffix, code in exchange_map.items():
-            if suffix in wind_code:
-                exchange_code = code
+def _src_record_id(table: str, row: dict[str, Any], idx: int) -> str:
+    wc = row.get("wind_code", "")
+    rp = row.get("report_period", "")
+    st = row.get("statement_type", "")
+    if table == "companies":
+        return f"{table}:{wc}" if wc else f"{table}:row:{idx}"
+    if table in ("balance_sheet", "income_statement", "cash_flow"):
+        return f"{table}:{wc}:{rp}:{st}"
+    if table == "announcements":
+        return row.get("object_id") or f"{table}:row:{idx}"
+    if table == "research_reports":
+        return row.get("report_id") or f"{table}:row:{idx}"
+    if table == "top_shareholders":
+        sn = row.get("s_holder_name", "")
+        sq = row.get("s_holder_sequence", idx)
+        return f"{table}:{wc}:{sn}:{sq}"
+    return f"{table}:row:{idx}"
+
+
+def _normalize_row(
+    row: dict[str, Any],
+    table: str,
+    source_file: str,
+    row_idx: int,
+    dataset_version: str,
+) -> dict[str, Any]:
+    """规范化单行：日期、Wind Code、entity_id、statement_type、系统字段。"""
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        out[k] = _norm_date(v) if k in _DATE_COLS else v
+
+    # Wind Code
+    if out.get("wind_code"):
+        try:
+            out["wind_code"] = normalize_wind_code(str(out["wind_code"]))
+        except ValueError:
+            pass
+
+    # companies 特殊处理
+    if table == "companies":
+        wc = out.get("wind_code", "")
+        try:
+            out["entity_id"] = make_listed_company_entity_id(wc)
+        except ValueError:
+            out["entity_id"] = f"company_{wc.replace('.', '_')}"
+        if "." in wc and not out.get("exchange_code"):
+            em = {"SH": "XSHG", "SZ": "XSHE", "BJ": "BJ"}
+            out["exchange_code"] = em.get(wc.split(".")[1], wc.split(".")[1])
+
+    # statement_type
+    if "statement_type" in out:
+        out["statement_type"] = _norm_statement_type(out["statement_type"])
+
+    # 系统字段
+    now = _utcnow()
+    out["source_record_id"] = _src_record_id(table, out, row_idx)
+    out["source_file"] = source_file
+    out["source_row"] = row_idx + 1
+    out["source_type"] = "competition-csv"
+    out["dataset_version"] = dataset_version
+    out["revision_no"] = 1
+    out["is_latest"] = True
+    out["ingested_at"] = now
+    out["updated_at"] = now
+    out["checksum"] = _sha256(out)
+    out["quality_flags"] = {}
+    return out
+
+
+# ── File I/O ───────────────────────────────────────────────────────────────
+
+
+def _discover_files(data_root: Path, version: str) -> dict[str, list[Path]]:
+    base = data_root / version
+    files: dict[str, list[Path]] = {t: [] for t in _TABLE_ORDER}
+    if not base.exists():
+        return files
+    for t in _TABLE_ORDER:
+        for ext in (".json", ".jsonl", ".csv"):
+            p = base / f"{t}{ext}"
+            if p.exists():
+                files[t].append(p)
                 break
+    return files
 
-        row = {
-            "entity_id": entity_id,
-            "wind_code": wind_code,
-            "sec_name": r["stock_name"] if pd.notna(r["stock_name"]) else "",
-            "aliases": None,
-            "exchange_code": exchange_code,
-            "industry_l1": r["industry_l1"] if pd.notna(r["industry_l1"]) and r["industry_l1"] != "" else None,
-            "industry_l2": r["industry_l2"] if pd.notna(r["industry_l2"]) and r["industry_l2"] != "" else None,
-            "sw_indu_code": None,
-            "comp_type_code": None,
-            "listing_date": None,
-            "industry_source": r["source"],
-            "industry_as_of": NOW.date(),
-            **system_cols("industry_mapping.csv", i, "industry_mapping"),
+
+def _read_rows(fp: Path) -> list[dict[str, Any]]:
+    suf = fp.suffix.lower()
+    if suf == ".json":
+        with open(fp, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    if suf == ".jsonl":
+        rows = []
+        with open(fp, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return rows
+    if suf == ".csv":
+        try:
+            import pandas as pd
+        except ImportError:
+            logger.error("读取 CSV 需要 pandas: pip install pandas")
+            return []
+        df = pd.read_csv(fp, encoding="utf-8")
+        return df.where(pd.notna(df), None).to_dict(orient="records")
+    return []
+
+
+# ── Staging + Upsert ───────────────────────────────────────────────────────
+
+
+def _stg_name(table: str) -> str:
+    return f"_stg_{table}"
+
+
+def _col_list(cols: list[str]) -> str:
+    return ", ".join(f"`{c}`" for c in cols)
+
+
+def _ph_list(cols: list[str]) -> str:
+    return ", ".join(f":{c}" for c in cols)
+
+
+def _on_dup(cols: list[str], pk: tuple[str, ...]) -> str:
+    updates = [f"`{c}` = VALUES(`{c}`)" for c in cols if c not in pk]
+    return "ON DUPLICATE KEY UPDATE " + ", ".join(updates) if updates else ""
+
+
+def _batch_upsert(
+    engine: Engine,
+    table: str,
+    rows: list[dict[str, Any]],
+    batch_size: int,
+    pk: tuple[str, ...],
+) -> tuple[int, int]:
+    """staging 表批量 upsert。返回 (成功, 错误)。"""
+    if not rows:
+        return 0, 0
+
+    # 只保留目标表中存在的列（丢弃未知列）
+    insp = sa_inspect(engine)
+    existing = {c["name"]: c for c in insp.get_columns(table)}
+    cols = [c for c in rows[0].keys() if c in existing]
+    rows = [{k: v for k, v in r.items() if k in cols} for r in rows]
+
+    stg = _stg_name(table)
+    col_n = _col_list(cols)
+    ph_n = _ph_list(cols)
+    ins = f"INSERT INTO `{stg}` ({col_n}) VALUES ({ph_n})"
+    mrg = f"INSERT INTO `{table}` ({col_n}) SELECT {col_n} FROM `{stg}` {_on_dup(cols, pk)}"
+
+    # 创建 staging 表（从目标表复制 schema）
+    col_defs = []
+    for c in cols:
+        t = str(existing[c]["type"])
+        n = "NULL" if existing[c].get("nullable", True) else "NOT NULL"
+        col_defs.append(f"`{c}` {t} {n}")
+    ddl = f"CREATE TABLE IF NOT EXISTS `{stg}` ({', '.join(col_defs)}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP TABLE IF EXISTS `{stg}`"))
+        conn.execute(text(ddl))
+
+    # 批量写入 staging
+    ok, err = 0, 0
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(ins), batch)
+        except Exception as e:
+            logger.error(f"staging batch {i // batch_size} 失败: {e}")
+            err += len(batch)
+
+    # 合并
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text(mrg))
+            ok = result.rowcount
+    except Exception as e:
+        logger.error(f"合并失败: {e}")
+        # 逐行回退
+        up_sql = f"INSERT INTO `{table}` ({col_n}) VALUES ({ph_n}) {_on_dup(cols, pk)}"
+        for row in rows:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(up_sql), row)
+                ok += 1
+            except Exception:
+                pass
+        err += max(0, len(rows) - ok)
+
+    # 清理
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP TABLE IF EXISTS `{stg}`"))
+    return ok, err
+
+
+# ── Manifest ───────────────────────────────────────────────────────────────
+
+
+def _manifest_path(processed_dir: Path) -> Path:
+    return processed_dir / "task1_resume_manifest.json"
+
+
+def _load_manifest(processed_dir: Path) -> dict[str, Any]:
+    p = _manifest_path(processed_dir)
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+def _save_manifest(m: dict[str, Any], processed_dir: Path) -> None:
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    _manifest_path(processed_dir).write_text(
+        json.dumps(m, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+# ── Mark old ───────────────────────────────────────────────────────────────
+
+
+def _mark_old(engine: Engine, dataset_version: str, tables: list[str]) -> None:
+    for t in tables:
+        with engine.begin() as conn:
+            r = conn.execute(
+                text(
+                    f"UPDATE `{t}` SET is_latest=0, updated_at=:now "
+                    f"WHERE dataset_version=:ver AND is_latest=1"
+                ),
+                {"now": _utcnow(), "ver": dataset_version},
+            )
+            if r.rowcount:
+                logger.info(f"标记 {t}: {r.rowcount} 行 is_latest=0")
+
+
+# ── Verify only ────────────────────────────────────────────────────────────
+
+
+def _verify(
+    engine: Engine, args: argparse.Namespace, files: dict[str, list[Path]]
+) -> int:
+    insp = sa_inspect(engine)
+    print("=" * 60 + "\n  VERIFY-ONLY — 不执行导入\n" + "=" * 60)
+    total = 0
+    for t in args.tables:
+        fl = files.get(t, [])
+        if not fl:
+            print(f"\n  [{t}] 未发现文件")
+            continue
+        try:
+            db_cols = {c["name"] for c in insp.get_columns(t)}
+        except Exception:
+            print(f"\n  [{t}] 表不存在于数据库中，跳过 schema 检查")
+            continue
+        for fp in fl:
+            rows = _read_rows(fp)
+            total += len(rows)
+            src_cols = set()
+            for r in rows:
+                src_cols.update(r.keys())
+            print(f"\n  [{t}] {fp.name}: {len(rows)} 行, {len(src_cols)} 源列")
+            overlap = src_cols & db_cols
+            missing = (
+                db_cols
+                - src_cols
+                - {
+                    "id",
+                    "source_record_id",
+                    "source_file",
+                    "source_row",
+                    "source_type",
+                    "dataset_version",
+                    "revision_no",
+                    "is_latest",
+                    "ingested_at",
+                    "updated_at",
+                    "checksum",
+                    "quality_flags",
+                    "entity_id",
+                    "holder_entity_id",
+                    "entity_match_confidence",
+                }
+            )
+            extra = src_cols - db_cols
+            print(f"    匹配 {len(overlap)}/{len(db_cols)} 列")
+            if missing:
+                print(f"    缺失: {', '.join(sorted(missing))}")
+            if extra:
+                print(f"    多余: {', '.join(sorted(extra))}")
+    print(f"\n  总计 {total} 行\n" + "=" * 60)
+    return 0
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+
+    data_root = Path(args.data_root).resolve()
+    processed_dir = Path(args.processed_dir).resolve()
+    tables = args.tables
+
+    logger.info(
+        f"dataset={args.dataset_version} root={data_root} batch={args.batch_size}"
+    )
+
+    files = _discover_files(data_root, args.dataset_version)
+    if not any(v for v in files.values()):
+        logger.warning("未发现数据文件")
+        return 1
+
+    engine = _make_engine()
+    logger.info(
+        f"DB: {app_settings.MYSQL_HOST}:{app_settings.MYSQL_PORT}/{app_settings.MYSQL_DATABASE}"
+    )
+
+    if args.verify_only:
+        return _verify(engine, args, files)
+
+    manifest = _load_manifest(processed_dir) if args.resume else {}
+
+    if args.replace_dataset_version:
+        if args.dry_run:
+            logger.info("[dry-run] 将标记旧版本 is_latest=0")
+        else:
+            _mark_old(engine, args.dataset_version, tables)
+
+    stats: dict[str, dict[str, int]] = {}
+    for table_name in tables:
+        if manifest.get(table_name, {}).get("complete"):
+            logger.info(f"跳过: {table_name} (已完成)")
+            continue
+
+        fl = files.get(table_name, [])
+        if not fl:
+            logger.info(f"跳过: {table_name} (无文件)")
+            continue
+
+        pk = _PK_COLS.get(table_name, ("source_record_id",))
+        total_ok, total_err = 0, 0
+
+        for fp in fl:
+            logger.info(f"{table_name} ← {fp.name}")
+            raw = _read_rows(fp)
+            normalized = []
+            for i, row in enumerate(raw):
+                try:
+                    normalized.append(
+                        _normalize_row(
+                            row, table_name, fp.name, i, args.dataset_version
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"行 {i} 规范化失败: {e}")
+                    total_err += 1
+
+            if args.dry_run:
+                logger.info(f"[dry-run] {table_name}: {len(normalized)} 行")
+                total_ok += len(normalized)
+                continue
+
+            ok, err = _batch_upsert(engine, table_name, normalized, args.batch_size, pk)
+            total_ok += ok
+            total_err += err
+            logger.info(f"  → 成功 {ok}, 错误 {err}")
+
+        stats[table_name] = {"inserted": total_ok, "errors": total_err}
+        manifest[table_name] = {
+            "complete": (total_err == 0) or args.dry_run,
+            "inserted": total_ok,
+            "errors": total_err,
+            "dataset_version": args.dataset_version,
+            "updated_at": _utcnow().isoformat(),
         }
-        rows.append(row)
+        if not args.dry_run:
+            _save_manifest(manifest, processed_dir)
 
-    # 用 to_sql 批量写入
-    df_out = pd.DataFrame(rows)
-    df_out.to_sql("companies", engine, if_exists="append", index=False,
-                  method="multi", chunksize=BATCH_SIZE)
-    print(f"Inserted {len(df_out)} companies")
-    return df_out
-
-
-# ====================================================================
-# Step 2: 导入三表（资产负债表）
-# ====================================================================
-def import_balance_sheet():
-    print("\n" + "=" * 60)
-    print("Step 2a: Import balance_sheet")
-    print("=" * 60)
-
-    fname = "asharebalancesheet_202605261517"
-    fp = BASE / "4" / f"{fname}.csv"
-    source_file = f"4/{fname}.csv"
-
-    # 只读需要的列
-    usecols = [
-        "wind_code", "report_period", "statement_type", "ann_dt",
-        "monetary_cap", "acct_rcv", "oth_rcv", "inventories",
-        "tot_cur_assets", "fix_assets", "goodwill", "tot_assets",
-        "st_borrow", "lt_borrow", "acct_payable", "tot_cur_liab",
-        "tot_liab", "tot_shrhldr_eqy_incl_min_int",
-    ]
-    df = pd.read_csv(fp, low_memory=False, usecols=usecols)
-    print(f"Rows: {len(df)}")
-
-    total = len(df)
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df.iloc[start:end].copy()
-        # 添加系统字段
-        batch["source_file"] = source_file
-        batch["source_type"] = "competition_data"
-        batch["dataset_version"] = DATASET_VERSION
-        batch["revision_no"] = 1
-        batch["is_latest"] = True
-        batch["ingested_at"] = NOW
-        batch["updated_at"] = NOW
-
-        batch.to_sql("balance_sheet", engine, if_exists="append", index=False,
-                     method="multi", chunksize=1000)
-        if (start + BATCH_SIZE) % 20000 < BATCH_SIZE or end == total:
-            print(f"  Progress: {end}/{total}")
-
-    print(f"Inserted {total} rows into balance_sheet")
+    # 汇总
+    print("\n" + "=" * 60 + "\n  导入汇总\n" + "=" * 60)
+    gi, ge = 0, 0
+    for t, s in stats.items():
+        print(f"  [{t}] 插入: {s['inserted']}, 错误: {s['errors']}")
+        gi += s["inserted"]
+        ge += s["errors"]
+    print(f"  {'─' * 20}\n  总计: {gi} 插入, {ge} 错误\n" + "=" * 60)
+    if args.dry_run:
+        logger.info("dry-run 完成")
+    return 0 if ge == 0 else 2
 
 
-# ====================================================================
-# Step 2b: 导入利润表
-# ====================================================================
-def import_income_statement():
-    print("\n" + "=" * 60)
-    print("Step 2b: Import income_statement")
-    print("=" * 60)
-
-    fname = "ashareincome_202605261519"
-    fp = BASE / "4" / f"{fname}.csv"
-    source_file = f"4/{fname}.csv"
-
-    usecols = [
-        "wind_code", "report_period", "statement_type", "ann_dt",
-        "oper_rev", "tot_oper_rev", "less_oper_cost",
-        "less_selling_dist_exp", "less_gerl_admin_exp", "less_fin_exp",
-        "oper_profit", "tot_profit",
-        "net_profit_excl_min_int_inc", "net_profit_after_ded_nr_lp",
-    ]
-    df = pd.read_csv(fp, low_memory=False, usecols=usecols)
-    print(f"Rows: {len(df)}")
-
-    total = len(df)
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df.iloc[start:end].copy()
-        batch["source_file"] = source_file
-        batch["source_type"] = "competition_data"
-        batch["dataset_version"] = DATASET_VERSION
-        batch["revision_no"] = 1
-        batch["is_latest"] = True
-        batch["ingested_at"] = NOW
-        batch["updated_at"] = NOW
-
-        batch.to_sql("income_statement", engine, if_exists="append", index=False,
-                     method="multi", chunksize=1000)
-        if (start + BATCH_SIZE) % 20000 < BATCH_SIZE or end == total:
-            print(f"  Progress: {end}/{total}")
-
-    print(f"Inserted {total} rows into income_statement")
-
-
-# ====================================================================
-# Step 2c: 导入现金流量表
-# ====================================================================
-def import_cash_flow():
-    print("\n" + "=" * 60)
-    print("Step 2c: Import cash_flow")
-    print("=" * 60)
-
-    fname = "asharecashflow_202605261518"
-    fp = BASE / "4" / f"{fname}.csv"
-    source_file = f"4/{fname}.csv"
-
-    usecols = [
-        "wind_code", "report_period", "statement_type", "ann_dt",
-        "net_cash_flows_oper_act", "net_cash_flows_inv_act",
-        "net_cash_flows_fnc_act", "net_incr_cash_cash_equ",
-        "free_cash_flow",
-    ]
-    df = pd.read_csv(fp, low_memory=False, usecols=usecols)
-    print(f"Rows: {len(df)}")
-
-    total = len(df)
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df.iloc[start:end].copy()
-        batch["source_file"] = source_file
-        batch["source_type"] = "competition_data"
-        batch["dataset_version"] = DATASET_VERSION
-        batch["revision_no"] = 1
-        batch["is_latest"] = True
-        batch["ingested_at"] = NOW
-        batch["updated_at"] = NOW
-
-        batch.to_sql("cash_flow", engine, if_exists="append", index=False,
-                     method="multi", chunksize=1000)
-        if (start + BATCH_SIZE) % 20000 < BATCH_SIZE or end == total:
-            print(f"  Progress: {end}/{total}")
-
-    print(f"Inserted {total} rows into cash_flow")
-
-
-# ====================================================================
-# Step 3: 导入十大股东
-# ====================================================================
-def import_shareholders():
-    print("\n" + "=" * 60)
-    print("Step 3: Import top_shareholders")
-    print("=" * 60)
-
-    fp = BASE / "2" / "clean.xlsx"
-    source_file = "2/clean.xlsx"
-
-    df = pd.read_excel(fp)
-    print(f"Rows: {len(df)}")
-
-    # 列映射: Excel → DB
-    col_map = {
-        "s_info_windcode": "wind_code",
-        "ann_dt": "ann_dt",
-        "s_holder_enddate": "s_holder_enddate",
-        "s_holder_name": "s_holder_name",
-        "s_holder_aname": "s_holder_aname",
-        "s_holder_pct": "s_holder_pct",
-        "s_holder_quantity": "s_holder_quantity",
-        "s_holder_holdercategory": "s_holder_holdercategory",
-        "s_holder_sequence": "s_holder_sequence",
-        "report_period": "report_period",
-    }
-    df_out = df[list(col_map.keys())].rename(columns=col_map).copy()
-    # 日期转换
-    for date_col in ["ann_dt", "s_holder_enddate", "report_period"]:
-        if date_col in df_out.columns:
-            df_out[date_col] = df_out[date_col].apply(safe_date_str)
-    df_out["source_file"] = source_file
-    df_out["source_type"] = "competition_data"
-    df_out["dataset_version"] = DATASET_VERSION
-    df_out["revision_no"] = 1
-    df_out["is_latest"] = True
-    df_out["ingested_at"] = NOW
-    df_out["updated_at"] = NOW
-
-    total = len(df_out)
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df_out.iloc[start:end]
-        batch.to_sql("top_shareholders", engine, if_exists="append", index=False,
-                     method="multi", chunksize=1000)
-        if (start + BATCH_SIZE) % 50000 < BATCH_SIZE or end == total:
-            print(f"  Progress: {end}/{total}")
-
-    print(f"Inserted {total} rows into top_shareholders")
-
-
-# ====================================================================
-# Step 4: 导入公司公告
-# ====================================================================
-def import_announcements():
-    print("\n" + "=" * 60)
-    print("Step 4: Import announcements")
-    print("=" * 60)
-
-    fp = BASE / "3" / "clean.xlsx"
-    source_file = "3/clean.xlsx"
-
-    df = pd.read_excel(fp)
-    print(f"Rows: {len(df)}")
-
-    # 列映射
-    col_map = {
-        "object_id": "object_id",
-        "s_info_windcode": "wind_code",
-        "ann_dt": "ann_dt",
-        "n_info_title": "n_info_title",
-        "n_info_fcode": "n_info_fcode",
-        "n_info_annlink": "source_uri",
-    }
-    df_out = df[list(col_map.keys())].rename(columns=col_map).copy()
-    # 日期转换
-    df_out["ann_dt"] = df_out["ann_dt"].apply(safe_date_str)
-    df_out["source_file"] = source_file
-    df_out["source_type"] = "competition_data"
-    df_out["dataset_version"] = DATASET_VERSION
-    df_out["revision_no"] = 1
-    df_out["is_latest"] = True
-    df_out["ingested_at"] = NOW
-    df_out["updated_at"] = NOW
-    df_out["sentiment"] = None
-    df_out["sentiment_method"] = None
-
-    total = len(df_out)
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df_out.iloc[start:end]
-        batch.to_sql("announcements", engine, if_exists="append", index=False,
-                     method="multi", chunksize=1000)
-        if (start + BATCH_SIZE) % 20000 < BATCH_SIZE or end == total:
-            print(f"  Progress: {end}/{total}")
-
-    print(f"Inserted {total} rows into announcements")
-
-
-# ====================================================================
-# Step 5: 导入研报
-# ====================================================================
-def import_research_reports():
-    print("\n" + "=" * 60)
-    print("Step 5: Import research_reports")
-    print("=" * 60)
-
-    fname = "rr_main_202605281537"
-    fp = BASE / "5" / f"{fname}.csv"
-    source_file = f"5/{fname}.csv"
-
-    df = pd.read_csv(fp, low_memory=False)
-    print(f"Rows: {len(df)}")
-
-    # 列映射: CSV → DB
-    col_map = {
-        "report_id": "report_id",
-        "sec_code": "sec_code",
-        "exchange_code": "exchange_code",
-        "sec_name": "sec_name",
-        "org_name": "org_name",
-        "title": "title",
-        "publish_date": "publish_date",
-        "abstract": "abstract",
-        "rating_org": "rating_org",
-        "rating_change": "rating_change",
-        "industry_l1": "industry_l1",
-        "sw_indu_code": "sw_indu_code",
-        "source_uri": "source_uri",
-    }
-    # 安全提取存在的列
-    available_cols = [c for c in col_map if c in df.columns]
-    col_map_available = {c: col_map[c] for c in available_cols}
-    df_out = df[available_cols].rename(columns=col_map_available).copy()
-
-    # 日期转换
-    if "publish_date" in df_out.columns:
-        df_out["publish_date"] = df_out["publish_date"].apply(safe_date_str)
-
-    # 构建 wind_code（从 sec_code 推断）
-    if "exchange_code" in df.columns:
-        # exchange_code: XSHG=上海, XSHE=深圳
-        suffix_map = {"XSHG": ".SH", "XSHE": ".SZ"}
-        df_out["wind_code"] = df["sec_code"].astype(str).str.zfill(6) + \
-                              df["exchange_code"].map(suffix_map).fillna("")
-    else:
-        df_out["wind_code"] = df["sec_code"].astype(str).str.zfill(6)
-
-    df_out["source_file"] = source_file
-    df_out["source_type"] = "competition_data"
-    df_out["dataset_version"] = DATASET_VERSION
-    df_out["revision_no"] = 1
-    df_out["is_latest"] = True
-    df_out["ingested_at"] = NOW
-    df_out["updated_at"] = NOW
-
-    total = len(df_out)
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df_out.iloc[start:end]
-        batch.to_sql("research_reports", engine, if_exists="append", index=False,
-                     method="multi", chunksize=1000)
-        if (start + BATCH_SIZE) % 20000 < BATCH_SIZE or end == total:
-            print(f"  Progress: {end}/{total}")
-
-    print(f"Inserted {total} rows into research_reports")
-
-
-# ====================================================================
-# Step 6: 验证
-# ====================================================================
-def verify():
-    print("\n" + "=" * 60)
-    print("Verification: SELECT COUNT(*) from all tables")
-    print("=" * 60)
-
-    tables = ["companies", "balance_sheet", "income_statement", "cash_flow",
-              "top_shareholders", "announcements", "research_reports"]
-
-    with (
-        pymysql.connect(host="localhost", port=3306, user="truthnet",
-                        password="truthnet123", database="truthnet") as conn,
-        conn.cursor() as cur,
-    ):
-        for t in tables:
-            cur.execute(f"SELECT COUNT(*) FROM `{t}`")
-            cnt = cur.fetchone()[0]
-            print(f"  {t:25s}: {cnt:>10,}")
-
-    # 行业覆盖率
-    with (
-        pymysql.connect(host="localhost", port=3306, user="truthnet",
-                        password="truthnet123", database="truthnet") as conn,
-        conn.cursor() as cur,
-    ):
-        cur.execute("""
-            SELECT
-              COUNT(CASE WHEN industry_l1 IS NOT NULL AND industry_l1 != '' THEN 1 END) * 1.0 / COUNT(*) AS coverage
-            FROM companies
-        """)
-        coverage = cur.fetchone()[0]
-        print(f"\n  Industry coverage: {coverage*100:.1f}%")
-
-
-# ====================================================================
-# Main
-# ====================================================================
 if __name__ == "__main__":
-    t0 = time.time()
-    print(f"Task 1: MySQL Full Import — {now_iso()}")
-    print(f"Batch size: {BATCH_SIZE}")
-
-    import_companies()
-    import_balance_sheet()
-    import_income_statement()
-    import_cash_flow()
-    import_shareholders()
-    import_announcements()
-    import_research_reports()
-
-    verify()
-
-    elapsed = time.time() - t0
-    print(f"\nTotal time: {elapsed/60:.1f} minutes")
-    print("Task 1 complete!")
+    sys.exit(main())
