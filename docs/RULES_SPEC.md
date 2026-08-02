@@ -1,7 +1,10 @@
 # 织网鉴真 · 财务反欺诈规则引擎规格说明书
 
-> 版本：1.0.0 | 日期：2026-07-22 | 负责人：数据组
-> 适用报表口径：母公司报表（statement_type=408006000），合并报表数据可用时切换口径
+> 版本：1.0.1 | 日期：2026-08-02 | 负责人：数据组
+> 适用报表口径：**合并报表优先（statement_type=408001000）**；仅在合并口径无数据时
+> 降级母公司报表（408006000），并显式输出 statement_scope / coverage / warning。
+> （Phase C 集成验收修正：Wind 语义 408001000=合并、408006000=母公司，
+> 规则默认分析口径优先合并报表，禁止静默混算。）
 > 适用公司类型：非金融企业（comp_type_code=1），银行/保险/证券排除
 
 ---
@@ -25,8 +28,10 @@
 ### 1.1 数据口径
 
 ```text
-statement_scope = "parent_company"   # 母公司报表（408006000）
-fallback_scope  = "consolidated"     # 合并报表（408001000），仅在母公司字段缺失时用
+statement_scope = "consolidated"     # 合并报表（408001000）— 首选口径
+fallback_scope  = "parent_company"   # 母公司报表（408006000），仅在合并口径无数据时降级
+                                       # 降级时 quality.statement_scope=parent_company，
+                                       # 并输出 coverage 与 warning
 comp_type_filter = [1]               # 仅非金融企业
 ```
 

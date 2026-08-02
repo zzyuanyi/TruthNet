@@ -1,6 +1,6 @@
 """R2 · 现金流–利润背离 — RULES_SPEC §3."""
 
-from app.domain.finance._fetch import fetch_company_field, fetch_field
+from app.domain.finance._fetch import fetch_company_field, fetch_series
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_utils import count_valid, mean_or_none, safe_div
 
@@ -19,8 +19,12 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = "金融企业不适用"
         return result
 
-    net_profit = fetch_field(company_code, "net_profit_excl_min_int_inc", periods)
-    oper_cf = fetch_field(company_code, "net_cash_flows_oper_act", periods)
+    net_profit_sr = fetch_series(
+        company_code, "net_profit_excl_min_int_inc", periods, as_of
+    )
+    oper_cf_sr = fetch_series(company_code, "net_cash_flows_oper_act", periods, as_of)
+    net_profit = net_profit_sr.values
+    oper_cf = oper_cf_sr.values
 
     valid_np = count_valid(net_profit, 4)
     valid_cf = count_valid(oper_cf, 4)
@@ -101,10 +105,15 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         "consec_neg_cf": {"value": max_consec_neg, "unit": "quarters"},
     }
     result.quality = {
-        "statement_scope": "parent_company",
+        "statement_scope": net_profit_sr.scope,
+        "statement_type": net_profit_sr.statement_type,
         "profit_sign": "positive" if has_pos_profit_this else "negative",
         "data_completeness": round(valid_np / 4, 2),
+        "data_coverage": net_profit_sr.coverage,
     }
+    for w in (net_profit_sr.warning, oper_cf_sr.warning):
+        if w:
+            result.warnings.append(w)
     result.evidence_ids = [
         f"ev_is_net_profit_{as_of}",
         f"ev_cf_oper_{as_of}",

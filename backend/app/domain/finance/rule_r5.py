@@ -1,6 +1,6 @@
 """R5 · 毛利率/费用率异常 — RULES_SPEC §6."""
 
-from app.domain.finance._fetch import fetch_company_field, fetch_field
+from app.domain.finance._fetch import fetch_company_field, fetch_series
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_utils import count_valid, mean_or_none
 
@@ -19,11 +19,16 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = "金融企业不适用"
         return result
 
-    oper_rev = fetch_field(company_code, "oper_rev", periods)
-    less_oper_cost = fetch_field(company_code, "less_oper_cost", periods)
-    selling_exp = fetch_field(company_code, "less_selling_dist_exp", periods)
-    admin_exp = fetch_field(company_code, "less_gerl_admin_exp", periods)
-    fin_exp = fetch_field(company_code, "less_fin_exp", periods)
+    oper_rev_sr = fetch_series(company_code, "oper_rev", periods, as_of)
+    less_oper_cost_sr = fetch_series(company_code, "less_oper_cost", periods, as_of)
+    selling_exp_sr = fetch_series(company_code, "less_selling_dist_exp", periods, as_of)
+    admin_exp_sr = fetch_series(company_code, "less_gerl_admin_exp", periods, as_of)
+    fin_exp_sr = fetch_series(company_code, "less_fin_exp", periods, as_of)
+    oper_rev = oper_rev_sr.values
+    less_oper_cost = less_oper_cost_sr.values
+    selling_exp = selling_exp_sr.values
+    admin_exp = admin_exp_sr.values
+    fin_exp = fin_exp_sr.values
 
     valid_or = count_valid(oper_rev, 6)
     if valid_or < 4:
@@ -116,9 +121,20 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
             "unit": "percentage_point",
         }
     result.quality = {
-        "statement_scope": "parent_company",
+        "statement_scope": oper_rev_sr.scope,
+        "statement_type": oper_rev_sr.statement_type,
         "history_periods_available": valid_or,
+        "data_coverage": oper_rev_sr.coverage,
     }
+    for w in (
+        oper_rev_sr.warning,
+        less_oper_cost_sr.warning,
+        selling_exp_sr.warning,
+        admin_exp_sr.warning,
+        fin_exp_sr.warning,
+    ):
+        if w:
+            result.warnings.append(w)
     result.evidence_ids = [f"ev_is_oper_rev_{as_of}", f"ev_is_oper_cost_{as_of}"]
     if severity == "red":
         result.explanation = (

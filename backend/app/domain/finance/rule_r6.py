@@ -1,6 +1,6 @@
 """R6 · 其他应收款与关联占用风险 — RULES_SPEC §7."""
 
-from app.domain.finance._fetch import fetch_company_field, fetch_field
+from app.domain.finance._fetch import fetch_company_field, fetch_series
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_utils import count_valid, yoy_growth
 
@@ -19,9 +19,12 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = "金融企业不适用"
         return result
 
-    oth_rcv = fetch_field(company_code, "oth_rcv", periods)
-    tot_assets = fetch_field(company_code, "tot_assets", periods)
-    acct_rcv = fetch_field(company_code, "acct_rcv", periods)
+    oth_rcv_sr = fetch_series(company_code, "oth_rcv", periods, as_of)
+    tot_assets_sr = fetch_series(company_code, "tot_assets", periods, as_of)
+    acct_rcv_sr = fetch_series(company_code, "acct_rcv", periods, as_of)
+    oth_rcv = oth_rcv_sr.values
+    tot_assets = tot_assets_sr.values
+    acct_rcv = acct_rcv_sr.values
 
     valid_oth = count_valid(oth_rcv, 2)
     valid_assets = count_valid(tot_assets, 2)
@@ -86,10 +89,15 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
             "unit": "ratio",
         }
     result.quality = {
-        "statement_scope": "parent_company",
+        "statement_scope": oth_rcv_sr.scope,
+        "statement_type": oth_rcv_sr.statement_type,
         "related_party_data_available": False,
         "oth_rcv_to_acct_rcv_calculable": oth_to_acct is not None,
+        "data_coverage": oth_rcv_sr.coverage,
     }
+    for w in (oth_rcv_sr.warning, tot_assets_sr.warning, acct_rcv_sr.warning):
+        if w:
+            result.warnings.append(w)
     result.evidence_ids = [f"ev_bs_oth_rcv_{as_of}", f"ev_bs_tot_assets_{as_of}"]
     if severity == "red":
         result.explanation = (

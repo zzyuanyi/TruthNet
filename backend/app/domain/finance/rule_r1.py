@@ -1,6 +1,6 @@
 """R1 · 应收–营收背离 — RULES_SPEC §2."""
 
-from app.domain.finance._fetch import fetch_company_field, fetch_field
+from app.domain.finance._fetch import fetch_company_field, fetch_series
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_utils import count_valid, yoy_growth
 
@@ -21,8 +21,10 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = "金融企业不适用"
         return result
 
-    acct_rcv = fetch_field(company_code, "acct_rcv", periods)
-    oper_rev = fetch_field(company_code, "oper_rev", periods)
+    acct_rcv_sr = fetch_series(company_code, "acct_rcv", periods, as_of)
+    oper_rev_sr = fetch_series(company_code, "oper_rev", periods, as_of)
+    acct_rcv = acct_rcv_sr.values
+    oper_rev = oper_rev_sr.values
 
     valid_ar = count_valid(acct_rcv, 4)
     valid_or = count_valid(oper_rev, 4)
@@ -89,11 +91,16 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
             {"period": "t", "gap": round(gap, 1)},
         ]
     result.quality = {
-        "statement_scope": "parent_company",
+        "statement_scope": acct_rcv_sr.scope,
+        "statement_type": acct_rcv_sr.statement_type,
         "denominator_protection_applied": False,
         "missing_periods": 4 - valid_ar,
         "data_completeness": round(valid_ar / 4, 2),
+        "data_coverage": acct_rcv_sr.coverage,
     }
+    for w in (acct_rcv_sr.warning, oper_rev_sr.warning):
+        if w:
+            result.warnings.append(w)
     result.evidence_ids = [
         f"ev_bs_acct_rcv_{as_of}",
         f"ev_is_oper_rev_{as_of}",

@@ -1,6 +1,6 @@
 """R3 · 存贷双高 — RULES_SPEC §4."""
 
-from app.domain.finance._fetch import fetch_company_field, fetch_field
+from app.domain.finance._fetch import fetch_company_field, fetch_series
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_utils import count_valid, mean_or_none
 
@@ -19,12 +19,17 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = "金融企业不适用"
         return result
 
-    monetary_cap = fetch_field(company_code, "monetary_cap", periods)
-    st_borrow = fetch_field(company_code, "st_borrow", periods)
-    lt_borrow = fetch_field(company_code, "lt_borrow", periods)
+    monetary_cap_sr = fetch_series(company_code, "monetary_cap", periods, as_of)
+    st_borrow_sr = fetch_series(company_code, "st_borrow", periods, as_of)
+    lt_borrow_sr = fetch_series(company_code, "lt_borrow", periods, as_of)
     # bonds_payable / non_cur_liab_due_within_1y 在当前数据集中不存在，仅用 st_borrow + lt_borrow
-    tot_assets = fetch_field(company_code, "tot_assets", periods)
-    fin_exp = fetch_field(company_code, "less_fin_exp", periods)
+    tot_assets_sr = fetch_series(company_code, "tot_assets", periods, as_of)
+    fin_exp_sr = fetch_series(company_code, "less_fin_exp", periods, as_of)
+    monetary_cap = monetary_cap_sr.values
+    st_borrow = st_borrow_sr.values
+    lt_borrow = lt_borrow_sr.values
+    tot_assets = tot_assets_sr.values
+    fin_exp = fin_exp_sr.values
 
     valid_cash = count_valid(monetary_cap, 2)
     valid_assets = count_valid(tot_assets, 2)
@@ -105,10 +110,21 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
             "unit": "percent",
         }
     result.quality = {
-        "statement_scope": "parent_company",
+        "statement_scope": monetary_cap_sr.scope,
+        "statement_type": monetary_cap_sr.statement_type,
         "bonds_payable_included": False,  # 当前数据集无此字段
         "implied_rate_calculable": implied_rate is not None,
+        "data_coverage": monetary_cap_sr.coverage,
     }
+    for w in (
+        monetary_cap_sr.warning,
+        st_borrow_sr.warning,
+        lt_borrow_sr.warning,
+        tot_assets_sr.warning,
+        fin_exp_sr.warning,
+    ):
+        if w:
+            result.warnings.append(w)
     result.evidence_ids = [f"ev_bs_monetary_cap_{as_of}", f"ev_bs_borrow_{as_of}"]
     if severity == "red":
         result.explanation = (

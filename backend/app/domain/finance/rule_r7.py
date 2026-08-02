@@ -1,6 +1,6 @@
 """R7 · 盈利质量与非经常性依赖 — RULES_SPEC §8."""
 
-from app.domain.finance._fetch import fetch_company_field, fetch_field
+from app.domain.finance._fetch import fetch_company_field, fetch_series
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_utils import count_valid, yoy_growth
 
@@ -19,12 +19,22 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = "金融企业不适用"
         return result
 
-    net_profit = fetch_field(company_code, "net_profit_excl_min_int_inc", periods)
-    core_profit = fetch_field(company_code, "net_profit_after_ded_nr_lp", periods)
-    oper_rev = fetch_field(company_code, "oper_rev", periods)
-    oper_profit = fetch_field(company_code, "oper_profit", periods)
-    tot_profit = fetch_field(company_code, "tot_profit", periods)
-    oper_cf = fetch_field(company_code, "net_cash_flows_oper_act", periods)
+    net_profit_sr = fetch_series(
+        company_code, "net_profit_excl_min_int_inc", periods, as_of
+    )
+    core_profit_sr = fetch_series(
+        company_code, "net_profit_after_ded_nr_lp", periods, as_of
+    )
+    oper_rev_sr = fetch_series(company_code, "oper_rev", periods, as_of)
+    oper_profit_sr = fetch_series(company_code, "oper_profit", periods, as_of)
+    tot_profit_sr = fetch_series(company_code, "tot_profit", periods, as_of)
+    oper_cf_sr = fetch_series(company_code, "net_cash_flows_oper_act", periods, as_of)
+    net_profit = net_profit_sr.values
+    core_profit = core_profit_sr.values
+    oper_rev = oper_rev_sr.values
+    oper_profit = oper_profit_sr.values
+    tot_profit = tot_profit_sr.values
+    oper_cf = oper_cf_sr.values
 
     # 检查扣非字段是否可用
     core_available = core_profit and any(v is not None for v in core_profit)
@@ -182,10 +192,22 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
             "unit": "percentage_point",
         }
     result.quality = {
-        "statement_scope": "parent_company",
+        "statement_scope": net_profit_sr.scope,
+        "statement_type": net_profit_sr.statement_type,
         "core_profit_available": core_available,
         "simplified_mode": simplified,
+        "data_coverage": net_profit_sr.coverage,
     }
+    for w in (
+        net_profit_sr.warning,
+        core_profit_sr.warning,
+        oper_rev_sr.warning,
+        oper_profit_sr.warning,
+        tot_profit_sr.warning,
+        oper_cf_sr.warning,
+    ):
+        if w:
+            result.warnings.append(w)
     result.evidence_ids = [f"ev_is_net_profit_{as_of}"]
     if core_available:
         result.evidence_ids.append(f"ev_is_core_profit_{as_of}")
