@@ -25,6 +25,32 @@ from app.domain.finance.parent_scope import (
 
 _RULES = [f"R{i}" for i in range(1, 8)]
 
+# 规则证据 ID 中的表代码 → 真实表名
+_TABLE_CODE_MAP = {
+    "bs": "balance_sheet",
+    "is": "income_statement",
+    "cf": "cash_flow",
+}
+
+
+def _parse_rule_evidence(ev_id: str, as_of: str) -> tuple[str, str]:
+    """解析规则引擎证据 ID → (source_table, field_path).
+
+    形如 ev_bs_acct_rcv_20260331 → ("balance_sheet", "acct_rcv")。
+    无法解析时返回 ("financial_statement", ev_id)。
+    """
+    if ev_id.startswith("ev_"):
+        parts = ev_id.split("_")
+        if len(parts) >= 3:
+            table = _TABLE_CODE_MAP.get(parts[1], "financial_statement")
+            if ev_id.endswith(f"_{as_of}"):
+                field = "_".join(parts[2:-1])
+            else:
+                field = "_".join(parts[2:])
+            if field:
+                return table, field
+    return "financial_statement", ev_id
+
 
 def _dedup(items: list[str]) -> list[str]:
     """去重并保持原顺序（禁止 set() 导致顺序随机）。"""
@@ -96,6 +122,11 @@ def finance_node(state: AgentState) -> dict:
     warnings: list[str] = []
     evidence: list[EvidenceRef] = []
     unknown_type = False
+    runtime = state.get("runtime")
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    from app.core.config import settings as _settings
+    from app.domain.provenance.id_factory import NS_FINANCE, make_evidence_id
 
     for rid in _RULES:
         r = results.get(rid)
@@ -115,15 +146,33 @@ def finance_node(state: AgentState) -> dict:
             if w:
                 warnings.append(w)
         for ev_id in r.evidence_ids:
+            table, field = _parse_rule_evidence(ev_id, as_of)
+            src_record_id = f"{code}|{as_of}|{PARENT_STATEMENT_TYPE}"
+            evidence_id = make_evidence_id(
+                source_namespace=NS_FINANCE,
+                source_type="financial_statement",
+                source_record_id=src_record_id,
+                field_path=field,
+                period=as_of,
+                dataset_version=_settings.DATASET_VERSION,
+                company_code=code,
+            )
             evidence.append(
                 EvidenceRef(
-                    evidence_id=ev_id,
-                    source_type=PARENT_STATEMENT_TYPE,
-                    source_record_id=f"{rid}@{as_of}",
-                    field_path=rid,
+                    evidence_id=evidence_id,
+                    source_type="financial_statement",
+                    source_record_id=src_record_id,
+                    source_table=table,
+                    field_path=field,
                     period=as_of,
                     value=str(r.explanation or "")[:200],
                     source_title=f"母公司报表 · 财务反欺诈规则 {rid}",
+                    statement_scope="parent_company",
+                    module="finance",
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    company_code=code,
+                    dataset_version=_settings.DATASET_VERSION,
                 )
             )
 

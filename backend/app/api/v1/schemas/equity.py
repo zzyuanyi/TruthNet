@@ -1,4 +1,4 @@
-"""股权穿透 REST Schema — V12 §11."""
+"""股权穿透 REST Schema — V12 §11 + Phase C 真实图谱契约."""
 
 from pydantic import BaseModel, Field
 
@@ -14,21 +14,34 @@ class EquityNodeDTO(BaseModel):
     match_confidence: float | None = Field(default=None, description="匹配置信度")
     risk_level: str | None = Field(default=None, description="风险等级")
     mock: bool = Field(default=False, description="是否为 mock 数据")
+    source_system: str = Field(
+        default="unknown", description="数据来源: neo4j/networkx"
+    )
 
 
 class EquityEdgeDTO(BaseModel):
     """股权图谱边."""
 
-    id: str = Field(default="", description="边标识")
+    id: str = Field(default="", description="边标识（relationship_id）")
     source: str = Field(..., description="源节点 ID")
     target: str = Field(..., description="目标节点 ID")
     relation_type: str = Field(default="OWNS", description="关系类型")
-    ownership_pct: float | None = Field(default=None, description="持股比例 (%)")
+    ownership_pct: float | None = Field(default=None, description="持股比例 (%) 0-100")
     control_pct: float | None = Field(default=None, description="控制权比例 (%)")
     valid_from: str | None = Field(default=None, description="有效期起")
     valid_to: str | None = Field(default=None, description="有效期止")
     source_id: str | None = Field(default=None, description="数据来源")
     match_confidence: float | None = Field(default=None, description="匹配置信度")
+    # Phase C: 证据定位字段
+    relationship_id: str | None = Field(default=None, description="Neo4j 关系稳定 ID")
+    source_record_id: str | None = Field(default=None, description="来源记录 ID")
+    report_period: str | None = Field(default=None, description="报告期")
+    ann_dt: str | None = Field(default=None, description="公告日期")
+    is_latest: bool = Field(default=True, description="是否最新快照")
+    mock: bool = Field(default=False, description="是否为 mock 数据")
+    source_system: str = Field(
+        default="unknown", description="数据来源: neo4j/networkx"
+    )
 
 
 class EquityPathDTO(BaseModel):
@@ -36,16 +49,21 @@ class EquityPathDTO(BaseModel):
 
     path_id: str = Field(default="", description="路径 ID")
     node_ids: list[str] = Field(default_factory=list, description="路径节点 ID 序列")
-    edge_ids: list[str] = Field(default_factory=list, description="路径边 ID 序列")
+    edge_ids: list[str] = Field(
+        default_factory=list, description="路径边 relationship_id 序列"
+    )
     depth: int = Field(default=0, description="路径深度")
     final_control_pct: float | None = Field(
-        default=None, description="最终控制比例 (0-1)"
+        default=None, description="最终控制比例 (%) 0-100"
     )
     path_type: str = Field(default="control", description="路径类型")
+    source_system: str = Field(
+        default="unknown", description="数据来源: neo4j/networkx"
+    )
 
 
 class TargetCompanyDTO(BaseModel):
-    """目标公司."""
+    """目标公司（来自 MySQL 真实画像）."""
 
     entity_id: str = Field(default="", description="实体 ID")
     wind_code: str = Field(default="", description="Wind 代码")
@@ -61,5 +79,8 @@ class EquityResponseData(BaseModel):
     paths: list[EquityPathDTO] = Field(default_factory=list)
     as_of: str | None = Field(default=None, description="数据截止日期")
     graph_version: str = Field(default="", description="图数据版本")
+    source_system: str = Field(
+        default="unknown", description="数据来源: neo4j/networkx"
+    )
     partial: bool = Field(default=False, description="是否为部分结果")
     warnings: list[str] = Field(default_factory=list)

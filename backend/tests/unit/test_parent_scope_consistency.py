@@ -24,10 +24,7 @@ from app.agents.state import (
 )
 from app.core.config import settings
 from app.domain.finance import _fetch
-from app.domain.finance.parent_scope import (
-    PARENT_STATEMENT_TYPE,
-    SCOPE_NOTE,
-)
+from app.domain.finance.parent_scope import SCOPE_NOTE
 
 PARENT = "408006000"
 _PERIODS = ["20250331", "20250630", "20250930", "20251231", "20260331"]
@@ -118,13 +115,14 @@ def test_scope_note_exactly_once(finance_db):
 
 
 def test_finance_evidence_parent_scope(finance_db):
-    """财务 Evidence 标记母公司报表（source_type=408006000，source_title 含母公司报表）。"""
+    """财务 Evidence 标记母公司报表（statement_scope=parent_company，source_title 含母公司报表）。"""
     out = finance_node(_state_with())
     fin = out["results"].finance
     ev = fin.evidence
     assert ev, "应产出财务 Evidence"
     for e in ev:
-        assert e.source_type == PARENT_STATEMENT_TYPE, f"source_type={e.source_type}"
+        assert e.source_type == "financial_statement", f"source_type={e.source_type}"
+        assert e.statement_scope == "parent_company", f"scope={e.statement_scope}"
         assert "母公司报表" in e.source_title, f"source_title={e.source_title}"
 
 

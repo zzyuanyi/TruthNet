@@ -26,12 +26,18 @@ def _company() -> CompanyRef:
     )
 
 
-def _ev(evidence_id: str, source_type: str = "financial_statement") -> EvidenceRef:
+def _ev(
+    evidence_id: str,
+    source_type: str = "financial_statement",
+    field_path: str | None = None,
+    source_record_id: str | None = None,
+) -> EvidenceRef:
     return EvidenceRef(
         evidence_id=evidence_id,
         source_type=source_type,
         source_title=f"{evidence_id} 来源",
-        field_path="test_field",
+        field_path=field_path or "test_field",
+        source_record_id=source_record_id or f"src_{evidence_id}",
     )
 
 
@@ -48,15 +54,15 @@ def _make_state(results: ModuleResults) -> AgentState:
 
 
 def test_finance_claims_generated():
-    """R1/R2 触发 + 匹配证据 → 生成 Claim，evidence_ids 引用真实。"""
+    """R1/R2 触发 + 字段证据 → 生成 Claim，evidence_ids 引用真实。"""
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R2": "triggered"},
             evidence=[
-                _ev("ev_bs_acct_rcv_20260331"),
-                _ev("ev_is_oper_rev_20260331"),
-                _ev("ev_is_net_profit_20260331"),
-                _ev("ev_cf_oper_20260331"),
+                _ev("ev_fin_acct_rcv", field_path="acct_rcv"),
+                _ev("ev_fin_oper_rev", field_path="oper_rev"),
+                _ev("ev_fin_net_profit", field_path="net_profit"),
+                _ev("ev_fin_oper_cf", field_path="oper"),
             ],
         )
     )
@@ -66,22 +72,19 @@ def test_finance_claims_generated():
     assert len(financial) == 2
     r1 = next(c for c in financial if c.rule_id == "R1")
     # 背离结论需要应收+营收两个字段证据
-    assert set(r1.evidence_ids) == {
-        "ev_bs_acct_rcv_20260331",
-        "ev_is_oper_rev_20260331",
-    }
+    assert set(r1.evidence_ids) == {"ev_fin_acct_rcv", "ev_fin_oper_rev"}
     assert r1.severity == "red"
     r2 = next(c for c in financial if c.rule_id == "R2")
-    assert set(r2.evidence_ids) == {"ev_is_net_profit_20260331", "ev_cf_oper_20260331"}
+    assert set(r2.evidence_ids) == {"ev_fin_net_profit", "ev_fin_oper_cf"}
 
 
 def test_finance_rule_without_evidence_skipped():
-    """规则触发但无匹配证据 → 不生成该 Claim（§9.2 至少一个 Evidence）。"""
+    """规则触发但字段证据不全 → 不生成该 Claim（§9.2 至少一个 Evidence）。"""
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R3": "triggered"},
             evidence=[
-                _ev("ev_is_oper_rev_20260331")
+                _ev("ev_is_oper_rev_20260331", field_path="oper_rev")
             ],  # R1 缺 acct_rcv、R3 缺 monetary_cap/borrow
         )
     )
@@ -90,20 +93,20 @@ def test_finance_rule_without_evidence_skipped():
 
 
 def test_multi_rule_regression():
-    """R1-R7 全部触发 + 全量证据 → 生成 7 个 financial Claim。"""
+    """R1-R7 全部触发 + 全量字段证据 → 生成 7 个 financial Claim。"""
     statuses = {f"R{i}": "triggered" for i in range(1, 8)}
     evidence = [
-        _ev("ev_bs_acct_rcv_20260331"),
-        _ev("ev_is_oper_rev_20260331"),
-        _ev("ev_is_net_profit_20260331"),
-        _ev("ev_cf_oper_20260331"),
-        _ev("ev_bs_monetary_cap_20260331"),
-        _ev("ev_bs_borrow_20260331"),
-        _ev("ev_bs_inventories_20260331"),
-        _ev("ev_is_oper_cost_20260331"),
-        _ev("ev_bs_oth_rcv_20260331"),
-        _ev("ev_bs_tot_assets_20260331"),
-        _ev("ev_is_core_profit_20260331"),
+        _ev("ev_acct_rcv", field_path="acct_rcv"),
+        _ev("ev_oper_rev", field_path="oper_rev"),
+        _ev("ev_net_profit", field_path="net_profit"),
+        _ev("ev_oper_cf", field_path="oper"),
+        _ev("ev_monetary_cap", field_path="monetary_cap"),
+        _ev("ev_borrow", field_path="borrow"),
+        _ev("ev_inventories", field_path="inventories"),
+        _ev("ev_oper_cost", field_path="oper_cost"),
+        _ev("ev_oth_rcv", field_path="oth_rcv"),
+        _ev("ev_tot_assets", field_path="tot_assets"),
+        _ev("ev_core_profit", field_path="core_profit"),
     ]
     results = ModuleResults(
         finance=FinanceResult(rule_statuses=statuses, evidence=evidence)
@@ -118,10 +121,7 @@ def test_multi_rule_regression():
         assert all(eid in {e.evidence_id for e in evidence} for eid in c.evidence_ids)
     # R1 背离结论证据覆盖应收+营收两字段
     r1 = next(c for c in financial if c.rule_id == "R1")
-    assert set(r1.evidence_ids) == {
-        "ev_bs_acct_rcv_20260331",
-        "ev_is_oper_rev_20260331",
-    }
+    assert set(r1.evidence_ids) == {"ev_acct_rcv", "ev_oper_rev"}
 
 
 # ── equity Claim 证据绑定 ───────────────────────────────────
@@ -160,10 +160,21 @@ def test_events_evidence_binding():
     results = ModuleResults(
         events=EventsResult(
             timeline=[
-                {"category": "诉讼", "date": "2025-01-01", "sentiment": "negative"},
+                {
+                    "category": "诉讼",
+                    "date": "2025-01-01",
+                    "sentiment": "negative",
+                    "object_id": "obj_001",
+                },
                 {"category": "增持", "date": "2025-02-01", "sentiment": "positive"},
             ],
-            evidence=[_ev("ann_001", source_type="announcement")],
+            evidence=[
+                _ev(
+                    "ann_001",
+                    source_type="announcement",
+                    source_record_id="obj_001",
+                )
+            ],
         )
     )
     result = build_claims_node(_make_state(results))
@@ -211,15 +222,30 @@ def test_evidence_collected_from_all_modules():
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered"},
-            evidence=[_ev("ev_bs_acct_rcv_20260331"), _ev("ev_is_oper_rev_20260331")],
+            evidence=[
+                _ev("ev_bs_acct_rcv_20260331", field_path="acct_rcv"),
+                _ev("ev_is_oper_rev_20260331", field_path="oper_rev"),
+            ],
         ),
         equity=EquityResult(
             chains=[{"path": ["A"], "total_stake": 0.1}],
             evidence=[_ev("ev_eq_01", source_type="ownership_record")],
         ),
         events=EventsResult(
-            timeline=[{"category": "负面", "sentiment": "negative"}],
-            evidence=[_ev("ann_001", source_type="announcement")],
+            timeline=[
+                {
+                    "category": "负面",
+                    "sentiment": "negative",
+                    "object_id": "src_ann_001",
+                }
+            ],
+            evidence=[
+                _ev(
+                    "ann_001",
+                    source_type="announcement",
+                    source_record_id="src_ann_001",
+                )
+            ],
         ),
     )
     result = build_claims_node(_make_state(results))

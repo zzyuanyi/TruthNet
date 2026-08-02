@@ -52,16 +52,21 @@ def _make_state(
 # ── no-op 开关 ──────────────────────────────────────────────
 
 
-def test_noop_when_not_mysql(monkeypatch):
-    """SQL_BACKEND != mysql 时不写库、返回空 messages。"""
-    monkeypatch.setattr(pt.settings, "SQL_BACKEND", "sqlite")
+def test_db_error_marks_partial(monkeypatch):
+    """数据库异常被吞掉，但标记 persist_turn=partial + warning（不静默）。"""
+    monkeypatch.setattr(pt.settings, "SQL_BACKEND", "mysql")
 
     def _should_not_be_called():
-        raise AssertionError("sqlite 模式下不应访问数据库")
+        raise AssertionError("数据库引擎不可用")
 
     monkeypatch.setattr(pt, "_get_engine", _should_not_be_called)
     result = pt.persist_turn_node(_make_state())
-    assert result == {"messages": []}
+    assert result["messages"] == []
+    assert result["module_status"]["persist_turn"].state == "partial"
+    assert (
+        result["module_status"]["persist_turn"].error_code
+        == "PROVENANCE_PERSIST_FAILED"
+    )
 
 
 def test_noop_without_session_id(monkeypatch, sqlite_engine):
@@ -192,8 +197,8 @@ def test_title_truncated_to_30(monkeypatch, sqlite_engine):
 # ── 异常容错 ────────────────────────────────────────────────
 
 
-def test_db_error_swallowed(monkeypatch):
-    """数据库异常被吞掉，不抛给 Agent 主流程。"""
+def test_db_error_not_crashes(monkeypatch):
+    """数据库异常不抛给 Agent 主流程，返回可处理结果。"""
     monkeypatch.setattr(pt.settings, "SQL_BACKEND", "mysql")
 
     def _broken_engine():
@@ -201,4 +206,5 @@ def test_db_error_swallowed(monkeypatch):
 
     monkeypatch.setattr(pt, "_get_engine", _broken_engine)
     result = pt.persist_turn_node(_make_state())
-    assert result == {"messages": []}
+    assert result["messages"] == []
+    assert result["module_status"]["persist_turn"].state == "partial"

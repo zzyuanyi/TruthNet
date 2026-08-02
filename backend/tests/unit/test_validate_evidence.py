@@ -17,6 +17,7 @@ def _ev(evidence_id: str) -> EvidenceRef:
     return EvidenceRef(
         evidence_id=evidence_id,
         source_type="financial_statement",
+        source_record_id=f"src_{evidence_id}",
         source_title=f"{evidence_id} 来源",
     )
 

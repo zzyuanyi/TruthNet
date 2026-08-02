@@ -57,7 +57,7 @@ class RuntimeState(BaseModel):
 
 
 class EvidenceRef(BaseModel):
-    """证据引用 — V12 §9.1（精简，Phase B mock 用）."""
+    """证据引用 — V12 §9.1 + Phase C 全局追溯字段."""
 
     evidence_id: str
     source_type: str = ""
@@ -66,10 +66,22 @@ class EvidenceRef(BaseModel):
     period: str | None = None
     value: str | None = None
     source_title: str = ""
+    # Phase C: 全局追溯字段
+    turn_id: str = ""
+    trace_id: str = ""
+    company_code: str = ""
+    module: str = ""
+    source_table: str | None = None
+    unit: str | None = None
+    statement_scope: str | None = None
+    source_uri: str | None = None
+    source_excerpt: str | None = None
+    dataset_version: str = ""
+    retrieved_at: str = ""
 
 
 class Claim(BaseModel):
-    """结论声明 — V12 §9.2."""
+    """结论声明 — V12 §9.2 + Phase C 全局追溯字段."""
 
     claim_id: str
     text: str
@@ -81,6 +93,12 @@ class Claim(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     verification_status: str = "pending"
     limitations: list[str] = Field(default_factory=list)
+    # Phase C: 全局追溯字段
+    turn_id: str = ""
+    trace_id: str = ""
+    company_code: str = ""
+    module: str = ""
+    generated_at: str = ""
 
 
 class FinalResponse(BaseModel):
@@ -166,3 +184,4 @@ class AgentState(TypedDict, total=False):
     final_response: FinalResponse | None
     runtime: RuntimeState
     memory_context: MemoryContext | None
+    provenance_report: Any | None

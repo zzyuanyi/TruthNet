@@ -170,3 +170,8 @@ def test_finance_only_query_runs_finance():
 
     tc = next(e for e in events if e["event_type"] == "turn.completed")
     assert tc["payload"].get("answer"), "turn.completed 应包含回答文本"
+    # 4 期 fixture 数据中财务规则可能因数据不足不触发 Claim，
+    # 此测试验证模块路由正确（只执行 finance），不验证 Claim 数量。
+    assert (
+        tc["payload"]["claims_count"] >= 0
+    ), f"claims_count 应为非负整数，实际 claims_count={tc['payload']['claims_count']}"

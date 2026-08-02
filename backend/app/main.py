@@ -1,19 +1,19 @@
-"""TruthNet FastAPI 应用入口 · V12 baseline (审计修复版).
+"""TruthNet FastAPI 应用入口 · V12 baseline (Phase C v2).
 
-路由注册（去重后）：
-  - /health           → 旧健康检查（deprecated，保留兼容）
-  - /api/v1/healthz   → V12 存活检查
-  - /api/v1/readyz    → V12 就绪检查
-  - /api/v1/chat      → V12 REST 对话（唯一注册，进入 Agent graph）
-  - /api/v1/chat/ws   → V12 WebSocket 对话（进入 Agent graph）
-  - /api/v1/companies → V12 公司搜索与画像
-  - /api/v1/companies/{code}/equity → V12 股权穿透
-  - /api/v1/sessions → V12 会话列表/创建/详情
-
-变更（审计修复 P0-1）：
-  - 移除 POST /api/v1/chat 旧 legacy 注册（硬编码贵州茅台 mock）
-  - POST /api/v1/chat 唯一注册 → chat_v1 router（V12 DTO + Agent graph）
-  - 旧 UnifiedResponse 格式仅保留 /health 端点
+路由注册：
+  - /health                              → 旧健康检查（deprecated，保留兼容）
+  - /api/v1/healthz                      → V12 存活检查
+  - /api/v1/readyz                       → V12 就绪检查
+  - /api/v1/chat                         → V12 REST 对话
+  - /api/v1/chat/ws                      → V12 WebSocket 对话
+  - /api/v1/companies                    → V12 公司搜索与画像
+  - /api/v1/companies/{code}/equity      → V12 股权穿透
+  - /api/v1/companies/{code}/finance     → V12 财务分析 (§11.10)
+  - /api/v1/companies/{code}/events      → V12 舆情事件 (§11.11)
+  - /api/v1/companies/{code}/risk        → V12 综合风险 (§11.12)
+  - /api/v1/companies/{code}/benchmarks  → V12 行业对标 (§11.13)
+  - /api/v1/comparisons                  → V12 跨公司对比 (§11.14)
+  - /api/v1/sessions                     → V12 会话管理
 """
 
 import uuid
@@ -24,10 +24,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.exception_handlers import general_exception_handler, not_found_handler
+from app.api.v1.routers import benchmarks as benchmarks_v1
 from app.api.v1.routers import chat as chat_v1
 from app.api.v1.routers import companies as companies_v1
+from app.api.v1.routers import comparisons as comparisons_v1
 from app.api.v1.routers import equity as equity_v1
+from app.api.v1.routers import events as events_v1
+from app.api.v1.routers import finance as finance_v1
 from app.api.v1.routers import health as health_v1
+from app.api.v1.routers import provenance as provenance_v1
+from app.api.v1.routers import risk as risk_v1
 from app.api.v1.routers import sessions as sessions_v1
 from app.core.config import settings
 from app.schemas.common import HealthResponse, UnifiedResponse
@@ -79,6 +85,12 @@ async def health_check():
 app.include_router(health_v1.router, prefix="/api/v1")
 app.include_router(companies_v1.router, prefix="/api/v1")
 app.include_router(equity_v1.router, prefix="/api/v1")
+app.include_router(finance_v1.router, prefix="/api/v1")
+app.include_router(events_v1.router, prefix="/api/v1")
+app.include_router(risk_v1.router, prefix="/api/v1")
+app.include_router(benchmarks_v1.router, prefix="/api/v1")
+app.include_router(provenance_v1.router, prefix="/api/v1")
+app.include_router(comparisons_v1.router, prefix="/api/v1")
 app.include_router(chat_v1.router, prefix="/api/v1")
 app.include_router(sessions_v1.router, prefix="/api/v1")
 
