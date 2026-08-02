@@ -26,16 +26,14 @@ def _trace() -> str:
     return str(uuid.uuid4())
 
 
-def _resolve_company(code: str) -> tuple[str, str, str] | None:
-    """解析公司代码 → (entity_id, wind_code, sec_name)。"""
-    from app.api.v1.routers.companies import _MOCK_COMPANIES
+async def _resolve_company(code: str) -> tuple[str, str, str] | None:
+    """解析公司代码 → (entity_id, wind_code, sec_name)（MySQL 真实画像）。"""
+    from app.application.services.company_resolver import resolve_company
 
-    for c in _MOCK_COMPANIES:
-        wc = c["wind_code"]
-        # 支持 600518、600518.SH、600518_SH 多种格式
-        if code in (wc, wc.replace(".", "_"), wc.split(".")[0]):
-            return (c["entity_id"], wc, c["sec_name"])
-    return None
+    rec = await resolve_company(code)
+    if rec is None:
+        return None
+    return (rec.entity_id, rec.wind_code, rec.sec_name)
 
 
 @router.get("/companies/{code}/finance")
@@ -58,7 +56,7 @@ async def get_company_finance(
     data_warnings: list[str] = []
 
     # 1. 解析公司
-    resolved = _resolve_company(code)
+    resolved = await _resolve_company(code)
     if resolved is None:
         raise HTTPException(
             status_code=404,
@@ -125,13 +123,11 @@ async def get_company_finance(
     # 3. 行业对标（Phase C 依赖数据组任务3）
     industry_l1 = ""
     try:
-        from app.api.v1.routers.companies import _MOCK_COMPANIES
+        from app.application.services.company_resolver import resolve_company
 
-        industry_l1 = next(
-            (c["industry_l1"] for c in _MOCK_COMPANIES if c["wind_code"] == wind_code),
-            "",
-        )
-    except ImportError:
+        rec = await resolve_company(wind_code)
+        industry_l1 = rec.industry_l1 if rec else ""
+    except Exception:  # noqa: BLE001
         pass
     industry_benchmark = IndustryBenchmark(
         industry_l1=industry_l1,
