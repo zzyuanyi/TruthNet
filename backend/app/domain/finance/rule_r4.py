@@ -1,7 +1,17 @@
-"""R4 · 存货–营收背离 — RULES_SPEC §5."""
+"""R4 · 存货–营收背离 — RULES_SPEC §5.
 
-from app.domain.finance._fetch import fetch_company_field, fetch_series
+口径: 固定母公司报表（statement_type=408006000），不读取合并报表。
+公司类型: 统一走 check_company_type Gate（NULL/非法 → insufficient_data）。
+所有状态均携带母公司口径 quality。
+"""
+
+from app.domain.finance._fetch import fetch_series
 from app.domain.finance.models import RuleResult
+from app.domain.finance.parent_scope import (
+    build_gate_result,
+    build_parent_scope_quality,
+    check_company_type,
+)
 from app.domain.finance.rule_utils import count_valid, single_quarter, yoy_growth
 
 
@@ -13,11 +23,10 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         status="not_triggered",
     )
 
-    comp_type = fetch_company_field(company_code, "comp_type_code")
-    if comp_type is not None and comp_type != 1:
-        result.status = "not_applicable"
-        result.explanation = "金融企业不适用"
-        return result
+    # ── 1. 公司类型 Gate ──
+    gate = check_company_type(company_code)
+    if gate.status != "eligible":
+        return build_gate_result("R4", "存货–营收背离", gate)
 
     inventories_sr = fetch_series(company_code, "inventories", periods, as_of)
     oper_rev_sr = fetch_series(company_code, "oper_rev", periods, as_of)
@@ -26,6 +35,16 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
     oper_rev = oper_rev_sr.values
     less_oper_cost = less_oper_cost_sr.values
 
+    field_warnings = [
+        w
+        for w in (
+            inventories_sr.warning,
+            oper_rev_sr.warning,
+            less_oper_cost_sr.warning,
+        )
+        if w
+    ]
+
     valid_inv = count_valid(inventories, 4)
     valid_or = count_valid(oper_rev, 4)
     if valid_inv < 3 or valid_or < 3:
@@ -33,15 +52,40 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = (
             f"数据不足: inventory有效{valid_inv}期, oper_rev有效{valid_or}期"
         )
+        result.quality = build_parent_scope_quality(
+            coverage=inventories_sr.coverage,
+            data_completeness=round(valid_inv / 4, 2),
+            missing_periods=4 - valid_inv,
+        )
+        result.warnings = field_warnings
         return result
 
-    # YoY 增速
+    # YoY 增速（t-4Q 需要至少 5 期，避免越界）
+    if len(inventories) < 5 or len(oper_rev) < 5:
+        result.status = "insufficient_data"
+        result.explanation = (
+            f"历史期数不足: inventory={len(inventories)}期, oper_rev={len(oper_rev)}期"
+        )
+        result.quality = build_parent_scope_quality(
+            coverage=inventories_sr.coverage,
+            data_completeness=round(valid_inv / 4, 2),
+            missing_periods=4 - valid_inv,
+        )
+        result.warnings = field_warnings
+        return result
+
     t_idx, t4_idx = -1, -5
     inv_yoy = yoy_growth(inventories[t_idx], inventories[t4_idx])
     or_yoy = yoy_growth(oper_rev[t_idx], oper_rev[t4_idx])
     if inv_yoy is None or or_yoy is None:
         result.status = "insufficient_data"
         result.explanation = "分母保护触发，无法计算 YoY"
+        result.quality = build_parent_scope_quality(
+            coverage=inventories_sr.coverage,
+            data_completeness=round(valid_inv / 4, 2),
+            missing_periods=4 - valid_inv,
+        )
+        result.warnings = field_warnings
         return result
 
     growth_gap = (inv_yoy - or_yoy) * 100
@@ -126,16 +170,13 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
             "value": round(turnover_change, 1),
             "unit": "percent",
         }
-    result.quality = {
-        "statement_scope": inventories_sr.scope,
-        "statement_type": inventories_sr.statement_type,
-        "turnover_calculable": turnover_ok,
-        "missing_periods": 4 - valid_inv,
-        "data_coverage": inventories_sr.coverage,
-    }
-    for w in (inventories_sr.warning, oper_rev_sr.warning, less_oper_cost_sr.warning):
-        if w:
-            result.warnings.append(w)
+    result.quality = build_parent_scope_quality(
+        coverage=inventories_sr.coverage,
+        data_completeness=round(valid_inv / 4, 2),
+        missing_periods=4 - valid_inv,
+        extra={"turnover_calculable": turnover_ok},
+    )
+    result.warnings = field_warnings
     result.evidence_ids = [f"ev_bs_inventories_{as_of}", f"ev_is_oper_rev_{as_of}"]
     if severity == "red":
         result.explanation = (

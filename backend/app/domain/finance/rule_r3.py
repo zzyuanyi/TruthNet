@@ -1,7 +1,17 @@
-"""R3 · 存贷双高 — RULES_SPEC §4."""
+"""R3 · 存贷双高 — RULES_SPEC §4.
 
-from app.domain.finance._fetch import fetch_company_field, fetch_series
+口径: 固定母公司报表（statement_type=408006000），不读取合并报表。
+公司类型: 统一走 check_company_type Gate（NULL/非法 → insufficient_data）。
+所有状态均携带母公司口径 quality。
+"""
+
+from app.domain.finance._fetch import fetch_series
 from app.domain.finance.models import RuleResult
+from app.domain.finance.parent_scope import (
+    build_gate_result,
+    build_parent_scope_quality,
+    check_company_type,
+)
 from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 
@@ -13,11 +23,10 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
         status="not_triggered",
     )
 
-    comp_type = fetch_company_field(company_code, "comp_type_code")
-    if comp_type is not None and comp_type != 1:
-        result.status = "not_applicable"
-        result.explanation = "金融企业不适用"
-        return result
+    # ── 1. 公司类型 Gate ──
+    gate = check_company_type(company_code)
+    if gate.status != "eligible":
+        return build_gate_result("R3", "存贷双高", gate)
 
     monetary_cap_sr = fetch_series(company_code, "monetary_cap", periods, as_of)
     st_borrow_sr = fetch_series(company_code, "st_borrow", periods, as_of)
@@ -31,6 +40,18 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
     tot_assets = tot_assets_sr.values
     fin_exp = fin_exp_sr.values
 
+    field_warnings = [
+        w
+        for w in (
+            monetary_cap_sr.warning,
+            st_borrow_sr.warning,
+            lt_borrow_sr.warning,
+            tot_assets_sr.warning,
+            fin_exp_sr.warning,
+        )
+        if w
+    ]
+
     valid_cash = count_valid(monetary_cap, 2)
     valid_assets = count_valid(tot_assets, 2)
     if valid_cash < 2 or valid_assets < 2:
@@ -38,6 +59,12 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = (
             f"数据不足: cash有效{valid_cash}期, assets有效{valid_assets}期"
         )
+        result.quality = build_parent_scope_quality(
+            coverage=monetary_cap_sr.coverage,
+            data_completeness=round(valid_cash / 2, 2),
+            missing_periods=2 - valid_cash,
+        )
+        result.warnings = field_warnings
         return result
 
     t_idx = -1
@@ -109,22 +136,16 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
             "value": round(implied_rate, 2),
             "unit": "percent",
         }
-    result.quality = {
-        "statement_scope": monetary_cap_sr.scope,
-        "statement_type": monetary_cap_sr.statement_type,
-        "bonds_payable_included": False,  # 当前数据集无此字段
-        "implied_rate_calculable": implied_rate is not None,
-        "data_coverage": monetary_cap_sr.coverage,
-    }
-    for w in (
-        monetary_cap_sr.warning,
-        st_borrow_sr.warning,
-        lt_borrow_sr.warning,
-        tot_assets_sr.warning,
-        fin_exp_sr.warning,
-    ):
-        if w:
-            result.warnings.append(w)
+    result.quality = build_parent_scope_quality(
+        coverage=monetary_cap_sr.coverage,
+        data_completeness=round(valid_cash / 2, 2),
+        missing_periods=2 - valid_cash,
+        extra={
+            "bonds_payable_included": False,  # 当前数据集无此字段
+            "implied_rate_calculable": implied_rate is not None,
+        },
+    )
+    result.warnings = field_warnings
     result.evidence_ids = [f"ev_bs_monetary_cap_{as_of}", f"ev_bs_borrow_{as_of}"]
     if severity == "red":
         result.explanation = (

@@ -1,7 +1,17 @@
-"""R1 · 应收–营收背离 — RULES_SPEC §2."""
+"""R1 · 应收–营收背离 — RULES_SPEC §2.
 
-from app.domain.finance._fetch import fetch_company_field, fetch_series
+口径: 固定母公司报表（statement_type=408006000），不读取合并报表。
+公司类型: 统一走 check_company_type Gate（NULL/非法 → insufficient_data）。
+所有状态均携带母公司口径 quality。
+"""
+
+from app.domain.finance._fetch import fetch_series
 from app.domain.finance.models import RuleResult
+from app.domain.finance.parent_scope import (
+    build_gate_result,
+    build_parent_scope_quality,
+    check_company_type,
+)
 from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 
@@ -14,17 +24,17 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         status="not_triggered",
     )
 
-    # ── 1. 适用性检查 ──
-    comp_type = fetch_company_field(company_code, "comp_type_code")
-    if comp_type is not None and comp_type != 1:
-        result.status = "not_applicable"
-        result.explanation = "金融企业不适用"
-        return result
+    # ── 1. 公司类型 Gate ──
+    gate = check_company_type(company_code)
+    if gate.status != "eligible":
+        return build_gate_result("R1", "应收–营收背离", gate)
 
     acct_rcv_sr = fetch_series(company_code, "acct_rcv", periods, as_of)
     oper_rev_sr = fetch_series(company_code, "oper_rev", periods, as_of)
     acct_rcv = acct_rcv_sr.values
     oper_rev = oper_rev_sr.values
+
+    field_warnings = [w for w in (acct_rcv_sr.warning, oper_rev_sr.warning) if w]
 
     valid_ar = count_valid(acct_rcv, 4)
     valid_or = count_valid(oper_rev, 4)
@@ -33,6 +43,12 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = (
             f"数据不足: acct_rcv有效{valid_ar}期, oper_rev有效{valid_or}期"
         )
+        result.quality = build_parent_scope_quality(
+            coverage=acct_rcv_sr.coverage,
+            data_completeness=round(valid_ar / 4, 2),
+            missing_periods=4 - valid_ar,
+        )
+        result.warnings = field_warnings
         return result
     if len(acct_rcv) < 5 or len(oper_rev) < 5:
         # t-4Q 需要至少 5 期；不足则无法计算 YoY，避免越界
@@ -40,6 +56,12 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.explanation = (
             f"历史期数不足: acct_rcv={len(acct_rcv)}期, oper_rev={len(oper_rev)}期"
         )
+        result.quality = build_parent_scope_quality(
+            coverage=acct_rcv_sr.coverage,
+            data_completeness=round(valid_ar / 4, 2),
+            missing_periods=4 - valid_ar,
+        )
+        result.warnings = field_warnings
         return result
 
     # ── 2. 计算 ──
@@ -49,6 +71,12 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
     if ar_yoy is None or or_yoy is None:
         result.status = "insufficient_data"
         result.explanation = "分母保护触发，无法计算 YoY"
+        result.quality = build_parent_scope_quality(
+            coverage=acct_rcv_sr.coverage,
+            data_completeness=round(valid_ar / 4, 2),
+            missing_periods=4 - valid_ar,
+        )
+        result.warnings = field_warnings
         return result
 
     gap = (ar_yoy - or_yoy) * 100  # 转为百分点
@@ -96,17 +124,13 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
             {"period": "t-1Q", "gap": round(prev_gap, 1)},
             {"period": "t", "gap": round(gap, 1)},
         ]
-    result.quality = {
-        "statement_scope": acct_rcv_sr.scope,
-        "statement_type": acct_rcv_sr.statement_type,
-        "denominator_protection_applied": False,
-        "missing_periods": 4 - valid_ar,
-        "data_completeness": round(valid_ar / 4, 2),
-        "data_coverage": acct_rcv_sr.coverage,
-    }
-    for w in (acct_rcv_sr.warning, oper_rev_sr.warning):
-        if w:
-            result.warnings.append(w)
+    result.quality = build_parent_scope_quality(
+        coverage=acct_rcv_sr.coverage,
+        data_completeness=round(valid_ar / 4, 2),
+        missing_periods=4 - valid_ar,
+        extra={"denominator_protection_applied": False},
+    )
+    result.warnings = field_warnings
     result.evidence_ids = [
         f"ev_bs_acct_rcv_{as_of}",
         f"ev_is_oper_rev_{as_of}",

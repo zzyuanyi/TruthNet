@@ -1,10 +1,12 @@
-"""财务数据读取 — 双后端 + 合并报表优先、母公司降级.
+"""财务数据读取 — 双后端 + 固定母公司报表口径.
 
-设计要点（对应 Phase C 集成验收）:
+设计要点（Phase C 口径修正）:
 - 遵循 settings.SQL_BACKEND: lite → SQLite（本地测试/CI），full → MySQL。
-- Wind statement_type 语义: 408001000=合并报表（首选口径）, 408006000=母公司报表。
-- 规则默认优先使用合并报表；仅当合并口径无数据时才降级母公司口径，
-  并显式返回 statement_scope / statement_type / coverage / warning，绝不静默混算。
+- 项目财务反欺诈规则固定采用母公司报表口径
+  （PARENT_STATEMENT_TYPE=408006000，scope=parent_company）。
+  不查询合并报表（408001000），不做任何口径切换，不输出口径降级 warning。
+- 若某字段无母公司报表数据，返回空 values + coverage=0 + 明确的"缺少母公司报表" warning，
+  绝不回退到合并口径。
 - as_of 过滤: 只取 report_period <= as_of 的报告期（字符串比较，YYYYMMDD）。
 """
 
@@ -14,12 +16,10 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 
 from app.domain.finance.field_mapping import get_table
-
-CONSOLIDATED = "408001000"  # 合并报表
-PARENT = "408006000"  # 母公司报表
-
-SCOPE_CONSOLIDATED = "consolidated"
-SCOPE_PARENT = "parent_company"
+from app.domain.finance.statement_type import (
+    PARENT_STATEMENT_SCOPE,
+    PARENT_STATEMENT_TYPE,
+)
 
 _ENGINES: dict[str, object] = {}
 
@@ -29,10 +29,10 @@ class SeriesResult:
     """字段时序读取结果 — 携带口径与覆盖率信息."""
 
     values: list  # 按 report_period 升序的值列表，缺失为 None
-    scope: str = SCOPE_PARENT  # "consolidated" | "parent_company"
-    statement_type: str = PARENT
+    scope: str = PARENT_STATEMENT_SCOPE  # 恒为 "parent_company"
+    statement_type: str = PARENT_STATEMENT_TYPE  # 恒为 "408006000"
     coverage: float = 0.0  # 期望窗口内有效值占比
-    warning: str | None = None  # 降级口径或覆盖不足时的警告
+    warning: str | None = None  # 覆盖不足或母公司数据缺失时的警告
     periods: list = field(default_factory=list)  # 实际读取到的报告期
 
 
@@ -69,46 +69,40 @@ def fetch_series(
     periods: int = 8,
     as_of: str = "20260331",
 ) -> SeriesResult:
-    """读取某财务字段最近 N 期（含口径降级）。
+    """读取某财务字段最近 N 期 — 固定母公司报表口径（408006000）。
 
-    优先合并报表(408001000)，无数据时降级母公司(408006000)。
-    若发生降级，warning 提示口径与覆盖率。
+    只执行一次母公司查询；无记录时返回空 SeriesResult，coverage=0，
+    warning 明确提示缺少母公司报表数据（statement_type=408006000）。
     """
     table = get_table(field_name)
     engine = _get_engine()
     as_of_clause = " AND report_period <= :as_of" if as_of else ""
 
-    def _query(stmt_type: str):
-        sql = text(
-            f"SELECT report_period, {field_name} FROM {table} "
-            f"WHERE wind_code = :code AND statement_type = :stmt "
-            f"{as_of_clause} ORDER BY report_period ASC"
-        )
-        with engine.connect() as conn:
-            return conn.execute(
-                sql, {"code": company_code, "stmt": stmt_type, "as_of": as_of}
-            ).fetchall()
-
-    rows = _query(CONSOLIDATED)
-    scope = SCOPE_CONSOLIDATED
-    stmt_type = CONSOLIDATED
-    warning: str | None = None
+    sql = text(
+        f"SELECT report_period, {field_name} FROM {table} "
+        f"WHERE wind_code = :code AND statement_type = :stmt "
+        f"{as_of_clause} ORDER BY report_period ASC"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sql,
+            {
+                "code": company_code,
+                "stmt": PARENT_STATEMENT_TYPE,
+                "as_of": as_of,
+            },
+        ).fetchall()
 
     if not rows:
-        rows = _query(PARENT)
-        scope = SCOPE_PARENT
-        stmt_type = PARENT
-        if not rows:
-            return SeriesResult(
-                values=[],
-                scope=SCOPE_PARENT,
-                statement_type=PARENT,
-                coverage=0.0,
-                warning=f"{field_name} 无任何口径数据（consolidated/parent）",
-            )
-        warning = (
-            f"{field_name} 无合并报表(408001000)数据，已降级母公司报表"
-            f"(408006000)，statement_scope={scope}"
+        return SeriesResult(
+            values=[],
+            scope=PARENT_STATEMENT_SCOPE,
+            statement_type=PARENT_STATEMENT_TYPE,
+            coverage=0.0,
+            warning=(
+                f"{field_name} 缺少母公司报表数据"
+                f"（statement_type={PARENT_STATEMENT_TYPE}）"
+            ),
         )
 
     periods_actual = [r[0] for r in rows]
@@ -120,14 +114,14 @@ def fetch_series(
 
     valid = sum(1 for v in values if v is not None)
     coverage = round(valid / periods, 2) if periods else 0.0
+    warning: str | None = None
     if coverage < 0.5:
-        cov_warn = f"{field_name} 覆盖率仅 {coverage:.0%}（有效 {valid}/{periods} 期）"
-        warning = f"{warning}; {cov_warn}" if warning else cov_warn
+        warning = f"{field_name} 覆盖率仅 {coverage:.0%}（有效 {valid}/{periods} 期）"
 
     return SeriesResult(
         values=values,
-        scope=scope,
-        statement_type=stmt_type,
+        scope=PARENT_STATEMENT_SCOPE,
+        statement_type=PARENT_STATEMENT_TYPE,
         coverage=coverage,
         warning=warning,
         periods=periods_actual,
@@ -140,7 +134,7 @@ def fetch_field(
     periods: int = 8,
     as_of: str = "20260331",
 ) -> list:
-    """兼容旧调用：仅返回值列表（含口径降级）。"""
+    """兼容旧调用：仅返回值列表（固定母公司报表口径）。"""
     return fetch_series(company_code, field_name, periods, as_of).values
 
 
@@ -159,33 +153,36 @@ def fetch_industry_peers(
     table_name: str,
     as_of_period: str = "20260331",
 ) -> tuple[list, str]:
-    """查询同行业公司在某报告期的字段值列表（合并优先，降级母公司）.
+    """查询同行业公司在某报告期的字段值列表 — 固定母公司报表口径。
+
+    同行业比较只取母公司口径（408006000）数据，不混入合并口径。
+    未命中母公司数据时返回空列表。
 
     Returns:
-        (values, scope)
+        (values, scope)  # scope 恒为 "parent_company"
     """
     engine = _get_engine()
     table = table_name
 
-    def _query(stmt_type: str):
-        sql = text(
-            f"SELECT t.{field_name} "
-            f"FROM {table} t "
-            f"JOIN companies c ON t.wind_code = c.wind_code "
-            f"WHERE c.industry_l1 = :industry "
-            f"AND t.report_period = :period "
-            f"AND t.statement_type = :stmt "
-            f"AND c.comp_type_code = 1"
-        )
-        with engine.connect() as conn:
-            return conn.execute(
-                sql,
-                {"industry": industry_l1, "period": as_of_period, "stmt": stmt_type},
-            ).fetchall()
-
-    rows = _query(CONSOLIDATED)
-    scope = SCOPE_CONSOLIDATED
-    if not rows:
-        rows = _query(PARENT)
-        scope = SCOPE_PARENT
-    return [float(r[0]) for r in rows if r[0] is not None], scope
+    sql = text(
+        f"SELECT t.{field_name} "
+        f"FROM {table} t "
+        f"JOIN companies c ON t.wind_code = c.wind_code "
+        f"WHERE c.industry_l1 = :industry "
+        f"AND t.report_period = :period "
+        f"AND t.statement_type = :stmt "
+        f"AND c.comp_type_code = 1"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sql,
+            {
+                "industry": industry_l1,
+                "period": as_of_period,
+                "stmt": PARENT_STATEMENT_TYPE,
+            },
+        ).fetchall()
+    return (
+        [float(r[0]) for r in rows if r[0] is not None],
+        PARENT_STATEMENT_SCOPE,
+    )

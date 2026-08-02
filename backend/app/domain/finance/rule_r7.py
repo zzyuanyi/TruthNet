@@ -1,7 +1,17 @@
-"""R7 · 盈利质量与非经常性依赖 — RULES_SPEC §8."""
+"""R7 · 盈利质量与非经常性依赖 — RULES_SPEC §8.
 
-from app.domain.finance._fetch import fetch_company_field, fetch_series
+口径: 固定母公司报表（statement_type=408006000），不读取合并报表。
+公司类型: 统一走 check_company_type Gate（NULL/非法 → insufficient_data）。
+所有状态均携带母公司口径 quality。
+"""
+
+from app.domain.finance._fetch import fetch_series
 from app.domain.finance.models import RuleResult
+from app.domain.finance.parent_scope import (
+    build_gate_result,
+    build_parent_scope_quality,
+    check_company_type,
+)
 from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 
@@ -13,11 +23,10 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         status="not_triggered",
     )
 
-    comp_type = fetch_company_field(company_code, "comp_type_code")
-    if comp_type is not None and comp_type != 1:
-        result.status = "not_applicable"
-        result.explanation = "金融企业不适用"
-        return result
+    # ── 1. 公司类型 Gate ──
+    gate = check_company_type(company_code)
+    if gate.status != "eligible":
+        return build_gate_result("R7", "盈利质量与非经常性依赖", gate)
 
     net_profit_sr = fetch_series(
         company_code, "net_profit_excl_min_int_inc", periods, as_of
@@ -36,6 +45,19 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     tot_profit = tot_profit_sr.values
     oper_cf = oper_cf_sr.values
 
+    field_warnings = [
+        w
+        for w in (
+            net_profit_sr.warning,
+            core_profit_sr.warning,
+            oper_rev_sr.warning,
+            oper_profit_sr.warning,
+            tot_profit_sr.warning,
+            oper_cf_sr.warning,
+        )
+        if w
+    ]
+
     # 检查扣非字段是否可用
     core_available = core_profit and any(v is not None for v in core_profit)
     simplified = not core_available
@@ -44,6 +66,16 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if valid_np < 3:
         result.status = "insufficient_data"
         result.explanation = f"数据不足: profit有效{valid_np}期"
+        result.quality = build_parent_scope_quality(
+            coverage=net_profit_sr.coverage,
+            data_completeness=round(valid_np / 4, 2),
+            missing_periods=4 - valid_np,
+            extra={
+                "core_profit_available": core_available,
+                "simplified_mode": simplified,
+            },
+        )
+        result.warnings = field_warnings
         return result
 
     t_idx, t4_idx = -1, -5
@@ -51,6 +83,16 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if np_current is None or np_current <= 0:
         result.status = "not_applicable"
         result.explanation = "公司亏损，盈利质量规则不适用"
+        result.quality = build_parent_scope_quality(
+            coverage=net_profit_sr.coverage,
+            data_completeness=round(valid_np / 4, 2),
+            missing_periods=4 - valid_np,
+            extra={
+                "core_profit_available": core_available,
+                "simplified_mode": simplified,
+            },
+        )
+        result.warnings = field_warnings
         return result
 
     # 扣非利润占比
@@ -191,23 +233,16 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
             "value": round(revenue_div, 1),
             "unit": "percentage_point",
         }
-    result.quality = {
-        "statement_scope": net_profit_sr.scope,
-        "statement_type": net_profit_sr.statement_type,
-        "core_profit_available": core_available,
-        "simplified_mode": simplified,
-        "data_coverage": net_profit_sr.coverage,
-    }
-    for w in (
-        net_profit_sr.warning,
-        core_profit_sr.warning,
-        oper_rev_sr.warning,
-        oper_profit_sr.warning,
-        tot_profit_sr.warning,
-        oper_cf_sr.warning,
-    ):
-        if w:
-            result.warnings.append(w)
+    result.quality = build_parent_scope_quality(
+        coverage=net_profit_sr.coverage,
+        data_completeness=round(valid_np / 4, 2),
+        missing_periods=4 - valid_np,
+        extra={
+            "core_profit_available": core_available,
+            "simplified_mode": simplified,
+        },
+    )
+    result.warnings = field_warnings
     result.evidence_ids = [f"ev_is_net_profit_{as_of}"]
     if core_available:
         result.evidence_ids.append(f"ev_is_core_profit_{as_of}")
@@ -215,15 +250,20 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if simplified:
         result.warnings.append("扣非净利润字段不可用，使用简化版判断（上限 orange）")
 
-    if severity == "red":
+    if severity == "red" and core_ratio is not None:
         result.explanation = (
             f"扣非利润占净利润仅 {core_ratio*100:.1f}%，盈利对非经常性损益严重依赖，"
             f"主营业务盈利能力需审视。"
         )
     elif severity == "orange":
-        result.explanation = (
-            f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善。"
-        )
+        if core_ratio is not None:
+            result.explanation = (
+                f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善。"
+            )
+        else:
+            result.explanation = (
+                "净利润增速与现金流/营收增速存在背离，盈利质量有待改善。"
+            )
     elif severity == "yellow":
         if core_ratio is not None and core_ratio < 0.5:
             result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性。"
