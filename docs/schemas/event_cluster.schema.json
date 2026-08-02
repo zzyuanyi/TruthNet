@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://truthnet.dev/schemas/event_cluster.schema.json",
+  "title": "EventCluster",
+  "description": "TruthNet Phase C 事件簇交接数据（数据组 → 后端）单条记录结构。",
+  "type": "object",
+  "required": [
+    "event_cluster_id",
+    "entity_id",
+    "wind_code",
+    "topic",
+    "start_date",
+    "end_date",
+    "event_count",
+    "sentiment",
+    "sources",
+    "evidence_ids",
+    "cluster_method",
+    "cluster_version",
+    "dataset_version",
+    "created_at"
+  ],
+  "properties": {
+    "event_cluster_id": {
+      "type": "string",
+      "pattern": "^evtcl_[A-Za-z0-9_]{8,}$",
+      "description": "事件簇唯一 ID（evtcl_ 前缀，确定性生成，非空且唯一）"
+    },
+    "entity_id": { "type": "string", "description": "公司 entity_id（与 companies 表对齐）" },
+    "wind_code": { "type": "string", "description": "Wind 代码，如 600518.SH" },
+    "topic": { "type": "string", "minLength": 1, "description": "事件簇主题" },
+    "summary": { "type": "string", "description": "事件簇摘要" },
+    "start_date": { "type": "string", "format": "date", "description": "起始日期 (ISO-8601)" },
+    "end_date": { "type": "string", "format": "date", "description": "结束日期 (ISO-8601)，不得早于 start_date" },
+    "event_count": { "type": "integer", "minimum": 1, "description": "事件数量（与去重后 sources 数量一致）" },
+    "sentiment": {
+      "type": "string",
+      "enum": ["positive", "negative", "neutral", "mixed", "unknown"]
+    },
+    "sentiment_score": {
+      "type": ["number", "null"],
+      "minimum": -1,
+      "maximum": 1,
+      "description": "情感得分 [-1,1]"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/eventSource" }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "关联 Evidence ID 列表（可解析，不指向簇自身）"
+    },
+    "cluster_method": { "type": "string", "description": "聚类方法标识" },
+    "cluster_version": { "type": "string", "description": "聚类版本" },
+    "dataset_version": { "type": "string", "description": "数据集版本" },
+    "quality_flags": { "type": "array", "items": { "type": "string" } },
+    "created_at": { "type": "string", "format": "date-time", "description": "创建时间 (ISO-8601 UTC)" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "$defs": {
+    "eventSource": {
+      "type": "object",
+      "required": ["source_id", "source_type", "source_record_id", "title"],
+      "properties": {
+        "source_id": { "type": "string", "description": "来源在本文件内唯一 ID" },
+        "source_type": {
+          "type": "string",
+          "enum": ["announcement", "research_report", "news", "regulation"]
+        },
+        "source_record_id": { "type": "string", "description": "底层来源记录 ID（如公告 object_id）" },
+        "title": { "type": "string", "minLength": 1 },
+        "published_at": { "type": ["string", "null"], "format": "date" },
+        "source_uri": { "type": ["string", "null"] },
+        "content_hash": { "type": ["string", "null"] },
+        "fcode": { "type": ["string", "null"], "description": "公告类型代码" }
+      }
+    }
+  }
+}

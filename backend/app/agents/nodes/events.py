@@ -63,6 +63,59 @@ def _fetch_announcements(wind_code: str) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def _fetch_event_clusters(wind_code: str) -> list[dict]:
+    """从 event_clusters 表读取交接事件簇（同步）。"""
+    if settings.SQL_BACKEND != "mysql":
+        return []
+    try:
+        from app.infrastructure.persistence.mysql.event_cluster_repository import (
+            MySQLEventClusterRepository,
+        )
+        from datetime import date
+
+        repo = MySQLEventClusterRepository()
+        records = repo.list_by_company_sync(
+            wind_code, date(1970, 1, 1), date(2100, 1, 1)
+        )
+    except Exception:  # noqa: BLE001
+        # 表未迁移或数据未交付 → 无事件簇
+        return []
+    clusters = []
+    for rec in records:
+        clusters.append(
+            {
+                "event_cluster_id": rec.event_cluster_id,
+                "topic": rec.topic,
+                "summary": rec.summary,
+                "start_date": rec.start_date.isoformat(),
+                "end_date": rec.end_date.isoformat(),
+                "event_count": rec.event_count,
+                "sentiment": rec.sentiment,
+                "sentiment_score": rec.sentiment_score,
+                "sources": [
+                    {
+                        "source_id": s.source_id,
+                        "source_type": s.source_type,
+                        "source_record_id": s.source_record_id,
+                        "title": s.title,
+                        "published_at": (
+                            s.published_at.isoformat() if s.published_at else None
+                        ),
+                        "source_uri": s.source_uri,
+                        "content_hash": s.content_hash,
+                        "fcode": s.fcode,
+                    }
+                    for s in rec.sources
+                ],
+                "evidence_ids": rec.evidence_ids,
+                "cluster_method": rec.cluster_method,
+                "cluster_version": rec.cluster_version,
+                "dataset_version": rec.dataset_version,
+            }
+        )
+    return clusters
+
+
 def events_node(state: AgentState) -> dict:
     t0 = time.perf_counter()
 
@@ -141,11 +194,15 @@ def events_node(state: AgentState) -> dict:
             "runtime": runtime,
         }
 
-    # 生成 timeline、分类统计、Evidence
+    # 生成 timeline、分类统计、Evidence（确定性 ID）
     timeline = []
     categories: dict[str, int] = {}
     sentiment_counts: dict[str, int] = {}
     evidence_list = []
+    runtime = state.get("runtime")
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    from app.domain.provenance.id_factory import NS_ANNOUNCEMENT, make_evidence_id
 
     sorted_rows = sorted(rows, key=lambda r: r.get("ann_dt", ""))
 
@@ -161,6 +218,7 @@ def events_node(state: AgentState) -> dict:
                 "title": str(r.get("n_info_title", "")),
                 "category": category_label,
                 "sentiment": sentiment,
+                "object_id": str(r.get("object_id", "")),
                 "sources": [str(r.get("source_uri", ""))]
                 if r.get("source_uri")
                 else [],
@@ -170,29 +228,42 @@ def events_node(state: AgentState) -> dict:
         categories[category_label] = categories.get(category_label, 0) + 1
         sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
 
+        object_id = str(r["object_id"])
+        evidence_id = make_evidence_id(
+            source_namespace=NS_ANNOUNCEMENT,
+            source_type="announcement",
+            source_record_id=object_id,
+            period=str(r.get("ann_dt", "") or ""),
+            dataset_version=settings.DATASET_VERSION,
+            company_code=company.wind_code,
+        )
         evidence_list.append(
             EvidenceRef(
-                evidence_id=f"ann_{r['object_id']}",
+                evidence_id=evidence_id,
                 source_type="announcement",
-                source_record_id=str(r["object_id"]),
+                source_record_id=object_id,
+                source_table="announcements",
                 source_title=str(r.get("n_info_title", ""))[:120],
+                source_uri=r.get("source_uri"),
+                module="events",
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=company.wind_code,
+                dataset_version=settings.DATASET_VERSION,
             )
         )
 
-    # 事件簇
-    clusters = []
-    if sentiment_counts.get("negative", 0) > 0:
-        first_date = sorted_rows[0].get("ann_dt", "")
-        last_date = sorted_rows[-1].get("ann_dt", "")
-        clusters.append(
-            {
-                "topic": "负面公告",
-                "event_count": sentiment_counts["negative"],
-                "date_range": f"{first_date} 至 {last_date}"
-                if len(sorted_rows) > 1
-                else str(first_date),
-            }
-        )
+    # 事件簇（优先消费 event_clusters 交接数据，不重新生成/不伪造）
+    clusters = _fetch_event_clusters(company.wind_code)
+    if not clusters:
+        runtime = state.get("runtime")
+        if runtime is not None and hasattr(runtime, "warnings"):
+            not_ready = (
+                "EVENT_CLUSTER_DATA_NOT_READY: 事件簇交接数据未交付或未覆盖"
+                "该公司，不生成/不伪造事件簇"
+            )
+            if not_ready not in runtime.warnings:
+                runtime.warnings.append(not_ready)
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     return {

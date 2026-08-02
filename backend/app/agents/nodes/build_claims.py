@@ -1,26 +1,26 @@
-"""BuildClaimsAndEvidence — V12 §9.2. 从模块结果构建 Claims。
+"""BuildClaimsAndEvidence — V12 §9.2 + Phase C 任务 16.
 
-Bug fix:
-  - 使用 state 中的公司名称，不再硬编码"康美药业"
-  - 根据规则绑定对应 Evidence（不再所有规则都引用 ev_bs_01）
-  - 收集模块 evidence 到 state["evidence"]
+从模块结果构建 Claims：
+  - 使用统一 make_claim_id()（确定性，同 turn 重试相同，不同 turn 不冲突）；
+  - 绑定真实 Evidence ID（财务字段 / 股权 relationship_id / 公告 object_id）；
+  - 无完整证据不得生成 verified Claim；
+  - 证据去重但保留顺序。
 """
 
 from app.agents.state import AgentState, Claim, EvidenceRef
 from app.domain.finance.parent_scope import CLAIM_PARENT_SCOPE_LIMITATION
+from app.domain.provenance.id_factory import make_claim_id
 
 
-# 规则 → 证据 ID 前缀（与规则引擎 evidence_ids 对应，前缀匹配避免依赖 as_of）
-# 证据必须覆盖 Claim 声明的全部字段（部分匹配不足以支撑结论）。
-# 规则引擎产出形如 ev_bs_acct_rcv_<as_of> 的真实证据，由 finance_node 转为 EvidenceRef。
-_RULE_EVIDENCE_MAP: dict[str, list[str]] = {
-    "R1": ["ev_bs_acct_rcv", "ev_is_oper_rev"],  # acct_rcv + oper_rev
-    "R2": ["ev_is_net_profit", "ev_cf_oper"],  # net_profit + oper_cf
-    "R3": ["ev_bs_monetary_cap", "ev_bs_borrow"],  # monetary_cap + borrow
-    "R4": ["ev_bs_inventories", "ev_is_oper_rev"],  # inventories + oper_rev
-    "R5": ["ev_is_oper_rev", "ev_is_oper_cost"],  # oper_rev + less_oper_cost
-    "R6": ["ev_bs_oth_rcv", "ev_bs_tot_assets"],  # oth_rcv + tot_assets
-    "R7": ["ev_is_net_profit", "ev_is_core_profit"],  # net_profit + 扣非
+# 规则 → 所需财务字段（与 finance_node 解析的 field_path 对应）
+_RULE_FIELD_MAP: dict[str, list[str]] = {
+    "R1": ["acct_rcv", "oper_rev"],
+    "R2": ["net_profit", "oper"],
+    "R3": ["monetary_cap", "borrow"],
+    "R4": ["inventories", "oper_rev"],
+    "R5": ["oper_rev", "oper_cost"],
+    "R6": ["oth_rcv", "tot_assets"],
+    "R7": ["net_profit", "core_profit"],
 }
 
 
@@ -53,90 +53,179 @@ def _build_rule_text(rule_id: str, company_name: str, status: str) -> str:
     )
 
 
+def _mk_claim(
+    state: AgentState,
+    *,
+    text: str,
+    claim_type: str,
+    severity: str,
+    evidence_ids: list[str],
+    rule_id: str | None = None,
+    rule_version: str | None = None,
+    event_cluster_id: str | None = None,
+    ordinal: int = 0,
+    limitations: list[str] | None = None,
+) -> Claim:
+    """统一构造 Claim（确定性 ID + 追溯字段）。"""
+    runtime = state.get("runtime")
+    company = state.get("company")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    company_code = company.wind_code if company else ""
+
+    claim_id = make_claim_id(
+        turn_id=turn_id,
+        company_code=company_code,
+        claim_type=claim_type,
+        rule_id=rule_id,
+        event_cluster_id=event_cluster_id,
+        ordinal=ordinal,
+        claim_text=text,
+        rule_version=rule_version or "",
+    )
+    return Claim(
+        claim_id=claim_id,
+        text=text,
+        claim_type=claim_type,
+        severity=severity,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        evidence_ids=list(evidence_ids),
+        limitations=limitations or [],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=company_code,
+        module=claim_type,
+        generated_at="",
+    )
+
+
 def build_claims_node(state: AgentState) -> dict:
     results = state.get("results")
     company = state.get("company")
     company_name = company.sec_name if company else "目标公司"
     claims: list[Claim] = []
 
-    # 收集 evidence
+    # 收集 evidence 并建立索引（按 evidence_id 去重，保留顺序）
     evidence = _collect_evidence(results)
-
-    # 为 evidence 建立索引
     evidence_index: dict[str, EvidenceRef] = {}
     for ev in evidence:
         if ev.evidence_id not in evidence_index:
             evidence_index[ev.evidence_id] = ev
 
+    # ── 财务 Claim ───────────────────────────────────────
     if results and results.finance and results.finance.rule_statuses:
-        for rule_id, status in results.finance.rule_statuses.items():
-            if status == "triggered":
-                # 为每条规则选择语义匹配的 evidence（前缀匹配规则引擎真实产出）
-                prefixes = _RULE_EVIDENCE_MAP.get(rule_id, [])
-                actual_ev_ids = [
-                    eid
-                    for eid in evidence_index
-                    if any(eid.startswith(p) for p in prefixes)
-                ]
-                # 证据必须完整覆盖 Claim 声明的全部字段（前缀数 >= 声明的字段数）
-                if len(actual_ev_ids) < len(prefixes):
-                    continue
+        for ordinal, (rule_id, status) in enumerate(
+            results.finance.rule_statuses.items()
+        ):
+            if status != "triggered":
+                continue
+            required_fields = _RULE_FIELD_MAP.get(rule_id, [])
+            # 按字段语义绑定真实证据（同一字段多期证据去重保留顺序）
+            actual_ev_ids = []
+            for ev in evidence:
+                if ev.source_type == "financial_statement":
+                    fld = ev.field_path or ""
+                    if fld in required_fields and ev.evidence_id not in actual_ev_ids:
+                        actual_ev_ids.append(ev.evidence_id)
+            # 字段必须完整覆盖
+            covered = {
+                ev.field_path for ev in evidence if ev.evidence_id in actual_ev_ids
+            }
+            if len(covered) < len(set(required_fields)) or not actual_ev_ids:
+                continue
 
-                claims.append(
-                    Claim(
-                        claim_id=f"claim_{rule_id}_01",
-                        text=_build_rule_text(rule_id, company_name, status),
-                        claim_type="financial",
-                        severity="red"
-                        if rule_id in ("R1", "R2", "R3", "R7")
-                        else "orange",
-                        rule_id=rule_id,
-                        rule_version="1.0.0",
-                        evidence_ids=actual_ev_ids,
-                        # 财务结论限定母公司报表范围（Phase C 口径修正）
-                        limitations=[CLAIM_PARENT_SCOPE_LIMITATION],
-                    )
+            text = _build_rule_text(rule_id, company_name, status)
+            claims.append(
+                _mk_claim(
+                    state,
+                    text=text,
+                    claim_type="financial",
+                    severity="red" if rule_id in ("R1", "R2", "R3", "R7") else "orange",
+                    evidence_ids=actual_ev_ids,
+                    rule_id=rule_id,
+                    rule_version="1.0.0",
+                    ordinal=ordinal,
+                    limitations=[CLAIM_PARENT_SCOPE_LIMITATION],
                 )
+            )
 
+    # ── 股权 Claim（绑定真实 relationship 证据） ──────────
     if results and results.equity and results.equity.chains:
         chains = results.equity.chains
         if chains:
-            # 绑定实际存在的 equity 证据（上游 equity.py 产出 ev_eq_01）
-            eq_ev_ids = [ev.evidence_id for ev in (results.equity.evidence or [])]
+            top_chain = chains[0]
+            # 优先绑定顶层控制链边上的真实 relationship 证据
+            rel_ids = set(top_chain.get("edge_ids") or [])
+            all_eq_ev = results.equity.evidence or []
+            if rel_ids:
+                eq_ev_ids = [
+                    ev.evidence_id for ev in all_eq_ev if ev.source_record_id in rel_ids
+                ]
+            else:
+                eq_ev_ids = [ev.evidence_id for ev in all_eq_ev]
             if eq_ev_ids:
-                top_chain = chains[0]
-                path_names = "→".join(top_chain.get("path", []))
+                path_names = "→".join(
+                    top_chain.get("path_names") or top_chain.get("path", [])
+                )
                 stake = top_chain.get("total_stake", 0)
+                text = (
+                    f"{company_name}控制链穿透: {path_names}, "
+                    f"最终控制{stake * 100:.1f}%"
+                )
                 claims.append(
-                    Claim(
-                        claim_id="claim_eq_01",
-                        text=f"{company_name}控制链穿透: {path_names}, 最终控制{stake * 100:.1f}%",
+                    _mk_claim(
+                        state,
+                        text=text,
                         claim_type="equity",
                         severity="red",
                         evidence_ids=eq_ev_ids,
+                        ordinal=0,
                     )
                 )
 
+    # ── 事件 Claim（绑定事件簇 + 负面来源证据） ───────────
     if results and results.events and results.events.timeline:
         timeline = results.events.timeline
-        # 仅负面公告构成风险信号（events.py timeline 含全部公告，中性/正面不计）
         negative_events = [
             e for e in timeline if e.get("sentiment", "neutral") == "negative"
         ]
         if negative_events:
-            # 绑定实际存在的事件证据（上游 events.py 产出 ann_{object_id}）
-            ev_ev_ids = [ev.evidence_id for ev in (results.events.evidence or [])]
-            if ev_ev_ids:
+            # 事件簇提供的 evidence_ids
+            cluster_ev_ids: list[str] = []
+            for cluster in results.events.clusters or []:
+                cluster_ev_ids.extend(cluster.get("evidence_ids") or [])
+            # 负面公告来源证据（source_record_id == object_id）
+            neg_object_ids = {str(e.get("object_id", "")) for e in negative_events}
+            ev_ev_ids = []
+            for ev in results.events.evidence or []:
+                if (
+                    ev.source_record_id in neg_object_ids
+                    and ev.evidence_id not in ev_ev_ids
+                ):
+                    ev_ev_ids.append(ev.evidence_id)
+            # 合并事件簇证据，去重保留顺序
+            combined: list[str] = []
+            for eid in ev_ev_ids + [c for c in cluster_ev_ids if c in evidence_index]:
+                if eid not in combined:
+                    combined.append(eid)
+
+            if combined:
                 negative_count = len(negative_events)
                 categories = set(e.get("category", "") for e in negative_events)
                 cat_desc = "、".join(sorted(categories)) if categories else "多种类型"
+                text = (
+                    f"{company_name}存在{negative_count}项负面事件（{cat_desc}），"
+                    f"含风险信号"
+                )
                 claims.append(
-                    Claim(
-                        claim_id="claim_events_01",
-                        text=f"{company_name}存在{negative_count}项负面事件（{cat_desc}），含风险信号",
+                    _mk_claim(
+                        state,
+                        text=text,
                         claim_type="event",
                         severity="red",
-                        evidence_ids=ev_ev_ids,
+                        evidence_ids=combined,
+                        ordinal=0,
                     )
                 )
 

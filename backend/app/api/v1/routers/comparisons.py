@@ -28,15 +28,14 @@ def _trace() -> str:
     return str(uuid.uuid4())
 
 
-def _resolve_company(code: str) -> tuple[str, str, str] | None:
-    """解析公司代码 → (wind_code, sec_name, industry_l1)。"""
-    from app.api.v1.routers.companies import _MOCK_COMPANIES
+async def _resolve_company(code: str) -> tuple[str, str, str] | None:
+    """解析公司代码 → (wind_code, sec_name, industry_l1)（MySQL 真实画像）。"""
+    from app.application.services.company_resolver import resolve_company
 
-    for c in _MOCK_COMPANIES:
-        wc = c["wind_code"]
-        if code in (wc, wc.replace(".", "_"), wc.split(".")[0]):
-            return (wc, c["sec_name"], c.get("industry_l1", ""))
-    return None
+    rec = await resolve_company(code)
+    if rec is None:
+        return None
+    return (rec.wind_code, rec.sec_name, rec.industry_l1 or "")
 
 
 @router.post("/comparisons")
@@ -54,7 +53,7 @@ async def create_comparison(body: ComparisonRequest):
     resolved_map: dict[str, tuple[str, str, str]] = {}
 
     for code in body.company_codes:
-        resolved = _resolve_company(code)
+        resolved = await _resolve_company(code)
         if resolved is None:
             warnings.append(
                 WarningItem(
