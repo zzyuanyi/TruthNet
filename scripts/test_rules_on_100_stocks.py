@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""任务① 100 只股票规则验收 — 合并报表优先、显式口径与覆盖度.
+"""任务① 100 只股票规则验收 — 固定母公司报表口径 + 公司类型 Gate.
 
-Phase C 集成验收修正:
+Phase C 口径修正:
 - DB 连接来自 app.core.config.settings（尊重 SQL_BACKEND，禁止硬编码凭据）。
-- 规则内部已实现"合并报表(408001000)优先、母公司(408006000)降级并显式标记"，
-  本脚本逐条报告每规则实际使用的 statement_scope 分布。
-- 触发率分母 = eligible（triggered + not_triggered）; insufficient_data / not_applicable
-  单独统计，绝不混入"未触发"。
+- 项目财务规则固定采用母公司报表口径（statement_type=408006000，scope=parent_company）。
+- 公司类型 Gate: comp_type_code=1 → eligible；2/3/4 → financial_excluded；
+  NULL/非法 → company_type_unknown（insufficient_data，禁止当作非金融）。
+- 触发率分母只使用 eligible 公司（triggered + not_triggered）;
+  insufficient_data / not_applicable / 金融排除 / 类型未知 单独统计，绝不混入"未触发"。
 - 随机抽样可复现（--seed）。
 
 用法:
@@ -74,6 +75,7 @@ def main() -> int:
             "status": {},
             "scope": {},
             "stmt": {},
+            "ctype": {},
             "industry": {},
             "periods": set(),
         }
@@ -88,15 +90,18 @@ def main() -> int:
             st["scope"][scope] = st["scope"].get(scope, 0) + 1
             stmt = q.get("statement_type", "unknown")
             st["stmt"][stmt] = st["stmt"].get(stmt, 0) + 1
-            for p in r.history if isinstance(r.history, list) else []:
-                pass
+            ctype = q.get("company_type_status", "unknown")
+            st["ctype"][ctype] = st["ctype"].get(ctype, 0) + 1
         if (idx + 1) % 20 == 0:
             print(f"  已处理 {idx + 1}/{len(sample)}...")
 
     print()
-    hdr = f"{'规则':5s} {'总样本':>5s} {'eligible':>8s} {'触发':>4s} {'未触发':>5s} {'insuf':>6s} {'NA':>4s} {'error':>5s} {'触发率(eligible)':>15s}"
+    hdr = (
+        f"{'规则':5s} {'样本':>5s} {'eligible':>8s} {'触发':>4s} {'未触发':>5s} "
+        f"{'insuf':>6s} {'NA':>4s} {'金融排除':>7s} {'类型未知':>7s} {'触发率':>8s}"
+    )
     print(hdr)
-    print("-" * 78)
+    print("-" * 82)
 
     for rid in [f"R{i}" for i in range(1, 8)]:
         st = per_rule[rid]
@@ -105,24 +110,28 @@ def main() -> int:
         not_t = st["status"].get("not_triggered", 0)
         insuf = st["status"].get("insufficient_data", 0)
         na = st["status"].get("not_applicable", 0)
-        err = st["status"].get("error", 0)
+        fin_excl = st["ctype"].get("excluded_financial", 0)
+        type_unknown = st["ctype"].get("unknown", 0)
         eligible = trig + not_t
         rate = trig / eligible if eligible else 0.0
         scopes = ", ".join(f"{k}={v}" for k, v in sorted(st["scope"].items()))
         stmts = ", ".join(f"{k}={v}" for k, v in sorted(st["stmt"].items()))
+        ctypes = ", ".join(f"{k}={v}" for k, v in sorted(st["ctype"].items()))
         print(
             f"{rid:5s} {n:>5d} {eligible:>8d} {trig:>4d} {not_t:>5d} "
-            f"{insuf:>6d} {na:>4d} {err:>5d} {rate * 100:>14.1f}%"
+            f"{insuf:>6d} {na:>4d} {fin_excl:>7d} {type_unknown:>7d} {rate * 100:>7.1f}%"
         )
         print(f"      scope分布: {scopes}")
         print(f"      stmt_type分布: {stmts}")
+        print(f"      公司类型分布: {ctypes}")
 
-    print("-" * 78)
+    print("-" * 82)
     print(
-        "触发率分母定义: eligible = triggered + not_triggered（排除 insufficient_data 与 not_applicable）。"
+        "触发率分母定义: eligible = triggered + not_triggered（仅非金融且类型已知公司）。"
     )
     print(
-        "本脚本不评估触发率是否'合理'——只输出事实分布。口径/覆盖度是否异常需结合字段覆盖率分析。"
+        "金融排除(2/3/4)与类型未知(NULL/非法)不计入触发率分母；"
+        "类型未知公司输出 insufficient_data，绝不当作非金融。"
     )
     return 0
 

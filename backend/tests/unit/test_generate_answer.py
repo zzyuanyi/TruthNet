@@ -111,6 +111,70 @@ def test_no_risk_signal_conclusion():
     assert fr.risk_level == "green"
 
 
+# ── Phase C: 母公司口径措辞 ────────────────────────────────
+
+
+def _finance_state(rule_statuses, warnings=None, claims=None, company=None):
+    """构造 finance 已执行的 state。"""
+    fin = FinanceResult(
+        rule_statuses=rule_statuses,
+        warnings=warnings or [],
+        evidence=[],
+    )
+    return _make_state(
+        company=company or _company(),
+        claims=claims or [],
+        results=ModuleResults(finance=fin),
+    )
+
+
+def test_no_risk_finance_executed_parent_scope_wording():
+    """Finance 执行且无风险 → 明确"母公司报表及当前数据覆盖范围"。"""
+    claims = [_claim("c1", "financial", "green", None)]
+    state = _finance_state(rule_statuses={"R1": "not_triggered"}, claims=claims)
+    fr = generate_answer_node(state)["final_response"]
+    assert "在母公司报表及当前数据覆盖范围内，未发现明显异常信号。" in fr.answer
+
+
+def test_risk_finance_executed_parent_scope_wording():
+    """Finance 执行且有风险 → 结论带"基于母公司报表及当前数据覆盖"。"""
+    claims = [_claim("c1", "financial", "red", "R1")]
+    state = _finance_state(rule_statuses={"R1": "triggered"}, claims=claims)
+    fr = generate_answer_node(state)["final_response"]
+    assert "基于母公司报表及当前数据覆盖" in fr.answer
+    assert "共检测到 1 项风险信号" in fr.answer
+
+
+def test_pure_equity_no_parent_scope_forced():
+    """纯股权查询（finance 未执行）→ 不强行插入母公司口径说明。"""
+    claims = [_claim("c1", "equity", "red", None)]
+    state = _make_state(company=_company(), claims=claims)
+    fr = generate_answer_node(state)["final_response"]
+    assert "母公司报表" not in fr.answer
+    assert "共检测到 1 项风险信号" in fr.answer
+
+
+def test_unknown_company_type_no_false_no_risk():
+    """公司类型未知 → 不得输出"未发现风险"，明确数据不足。"""
+    state = _finance_state(
+        rule_statuses={f"R{i}": "insufficient_data" for i in range(1, 8)},
+        warnings=["公司类型缺失，无法判断是否适用非金融财务规则，规则未执行"],
+    )
+    fr = generate_answer_node(state)["final_response"]
+    assert "公司类型信息缺失" in fr.answer
+    assert "无法确认是否存在财务风险" in fr.answer
+    assert "未发现明显异常信号" not in fr.answer
+
+
+def test_forbidden_phrases_absent():
+    """禁止出现"集团整体没有风险 / 未发现任何风险 / 公司不存在财务风险"。"""
+    claims = [_claim("c1", "financial", "green", None)]
+    state = _finance_state(rule_statuses={"R1": "not_triggered"}, claims=claims)
+    answer = generate_answer_node(state)["final_response"].answer
+    for forbidden in ("集团整体没有风险", "未发现任何风险", "公司不存在财务风险"):
+        assert forbidden not in answer
+
+
 # ── risk_level 分级 ─────────────────────────────────────────
 
 

@@ -28,7 +28,6 @@ from app.agents.state import (
 from app.core.config import settings
 from app.domain.finance import _fetch
 
-CONSOLIDATED = "408001000"
 PARENT = "408006000"
 _PERIODS = ["20250331", "20250630", "20250930", "20251231", "20260331"]
 

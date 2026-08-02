@@ -20,6 +20,8 @@ from app.domain.finance.rule_engine import evaluate_all_rules
 from app.domain.finance.rule_r1 import evaluate_r1
 from app.domain.finance.rule_r2 import evaluate_r2
 from app.domain.finance.rule_r3 import evaluate_r3
+from app.domain.finance.rule_r4 import evaluate_r4
+from app.domain.finance.rule_r7 import evaluate_r7
 
 CONSOLIDATED = "408001000"
 PARENT = "408006000"
@@ -312,14 +314,14 @@ def test_r3_not_triggered(rule_db):
 
 
 # ══════════════════════════════════════════════════════════
-# 口径: 合并优先 / 母公司降级
+# 口径: 固定母公司报表（408006000），不读取合并报表
 # ══════════════════════════════════════════════════════════
 
 
-def test_consolidated_preferred_when_both(rule_db):
+def test_parent_fixed_even_when_consolidated_exists(rule_db):
     conn = rule_db
     _insert_company(conn, "600010.SH")
-    # 同时插入合并与母公司：合并数据触发，母公司不触发
+    # 同时存在合并(999 触发)与母公司(100 同步增长不触发)：必须只读母公司 408006000
     ar_cons = _seq(100_000_000, [0.1, 0.1, 0.5, 0.8])
     ore_cons = _seq(200_000_000, [0.1, 0.1, 0.1, 0.1])
     _insert_bs(conn, "600010.SH", CONSOLIDATED, {"acct_rcv": ar_cons})
@@ -330,22 +332,76 @@ def test_consolidated_preferred_when_both(rule_db):
     _insert_is(conn, "600010.SH", PARENT, {"oper_rev": ore_cons})
 
     r = evaluate_r1("600010.SH", "20260331")
-    assert r.quality["statement_scope"] == "consolidated"
-    assert r.quality["statement_type"] == CONSOLIDATED
+    # 固定母公司口径，绝不因合并报表存在而切换为 consolidated
+    assert r.quality["statement_scope"] == "parent_company"
+    assert r.quality["statement_type"] == PARENT
 
 
-def test_parent_only_fallback_with_warning(rule_db):
+def test_fetch_series_uses_parent_even_when_consolidated_higher(rule_db):
+    """合并表数值更高也必须被忽略：fetch_series 只返回母公司 408006000 的值。"""
+    conn = rule_db
+    _insert_company(conn, "600020.SH")
+    # 合并表 acct_rcv = 999，母公司 = 100
+    _insert_bs(
+        conn,
+        "600020.SH",
+        CONSOLIDATED,
+        {"acct_rcv": [999, 999, 999, 999, 999, 999, 999, 999]},
+        periods=[
+            "20250331",
+            "20250630",
+            "20250930",
+            "20251231",
+            "20260331",
+            "20260331",
+            "20260331",
+            "20260331",
+        ],
+    )
+    _insert_bs(
+        conn,
+        "600020.SH",
+        PARENT,
+        {"acct_rcv": [100, 110, 120, 130, 140, 150, 160, 170]},
+    )
+    sr = _fetch.fetch_series("600020.SH", "acct_rcv", 8, "20260331")
+    assert sr.statement_type == PARENT
+    assert sr.scope == "parent_company"
+    assert sr.values and all(v < 999 for v in sr.values), "不得读取合并口径 999"
+
+
+def test_consolidated_only_returns_insufficient_with_warning(rule_db):
     conn = rule_db
     _insert_company(conn, "600011.SH")
+    # 只有合并报表，无母公司报表：不得降级使用合并数据
+    ar_cons = _seq(100_000_000, [0.1, 0.1, 0.5, 0.8])
+    ore_cons = _seq(200_000_000, [0.1, 0.1, 0.1, 0.1])
+    _insert_bs(conn, "600011.SH", CONSOLIDATED, {"acct_rcv": ar_cons})
+    _insert_is(conn, "600011.SH", CONSOLIDATED, {"oper_rev": ore_cons})
+
+    r = evaluate_r1("600011.SH", "20260331")
+    assert r.status == "insufficient_data"
+    assert r.quality["statement_scope"] == "parent_company"
+    assert r.quality["statement_type"] == PARENT
+    assert r.quality["coverage"] == 0.0
+    assert any("缺少母公司报表" in w for w in r.warnings), f"warnings={r.warnings}"
+    assert not any("降级" in w for w in r.warnings)
+
+
+def test_parent_only_no_degrade_warning(rule_db):
+    conn = rule_db
+    _insert_company(conn, "600012.SH")
     ar = _seq(100_000_000, [0.1, 0.1, 0.5, 0.8])
     ore = _seq(200_000_000, [0.1, 0.1, 0.1, 0.1])
     # 仅母公司口径
-    _insert_bs(conn, "600011.SH", PARENT, {"acct_rcv": ar})
-    _insert_is(conn, "600011.SH", PARENT, {"oper_rev": ore})
+    _insert_bs(conn, "600012.SH", PARENT, {"acct_rcv": ar})
+    _insert_is(conn, "600012.SH", PARENT, {"oper_rev": ore})
 
-    r = evaluate_r1("600011.SH", "20260331")
+    r = evaluate_r1("600012.SH", "20260331")
     assert r.quality["statement_scope"] == "parent_company"
-    assert any("降级母公司" in w or "408006000" in w for w in r.warnings)
+    assert r.quality["statement_type"] == PARENT
+    # 不得出现口径切换 warning 文案
+    assert not any("降级" in w for w in r.warnings), f"warnings={r.warnings}"
 
 
 def test_as_of_filters_future_periods(rule_db):
@@ -410,6 +466,123 @@ def test_nan_none_values(rule_db):
         "insufficient_data",
         "not_applicable",
     )
+
+
+# ══════════════════════════════════════════════════════════
+# 公司类型 Gate: 1→执行；2/3/4→不适用；NULL/非法→insufficient
+# ══════════════════════════════════════════════════════════
+
+
+def test_company_type_gate_financial_excluded(rule_db):
+    """comp_type_code=2/3/4 → 全部规则 not_applicable + excluded_financial。"""
+    conn = rule_db
+    for code, ctype in [
+        ("600030.SH", 2),
+        ("600031.SH", 3),
+        ("600032.SH", 4),
+    ]:
+        _insert_company(conn, code, comp_type=ctype)
+        results = evaluate_all_rules(code, "20260331")
+        for r in results.values():
+            assert r.status == "not_applicable", f"{code} {r.rule_id} {r.status}"
+            assert r.quality["company_type_status"] == "excluded_financial"
+            assert r.quality["statement_scope"] == "parent_company"
+            assert r.quality["statement_type"] == PARENT
+            assert any("COMPANY_TYPE_FINANCIAL_EXCLUDED" == w for w in r.warnings)
+
+
+def test_company_type_gate_null_is_insufficient(rule_db):
+    """comp_type_code=NULL → 全部规则 insufficient_data，绝不当作非金融。"""
+    conn = rule_db
+    _insert_company(conn, "600033.SH", comp_type=None)
+    results = evaluate_all_rules("600033.SH", "20260331")
+    for r in results.values():
+        assert r.status == "insufficient_data", f"{r.rule_id} {r.status}"
+        assert r.severity == "unknown"
+        assert r.quality["company_type_status"] == "unknown"
+        assert r.quality["statement_scope"] == "parent_company"
+        assert r.quality["statement_type"] == PARENT
+        assert r.quality["coverage"] == 0.0
+        assert "COMPANY_TYPE_UNKNOWN" in r.warnings
+
+
+def test_company_type_gate_invalid_is_insufficient(rule_db):
+    """comp_type_code 非法（如 7）→ insufficient_data。"""
+    conn = rule_db
+    _insert_company(conn, "600034.SH", comp_type=7)
+    results = evaluate_all_rules("600034.SH", "20260331")
+    for r in results.values():
+        assert r.status == "insufficient_data"
+        assert r.quality["company_type_status"] == "unknown"
+
+
+def test_r4_short_history_no_index_error(rule_db):
+    """R4 仅 3 期数据（无 t-4Q）→ insufficient_data，不抛 IndexError。"""
+    conn = rule_db
+    _insert_company(conn, "600036.SH")
+    _insert_bs(
+        conn,
+        "600036.SH",
+        PARENT,
+        {"inventories": [1e8, 1.1e8, 1.2e8]},
+        periods=_PERIODS[-3:],
+    )
+    _insert_is(
+        conn,
+        "600036.SH",
+        PARENT,
+        {"oper_rev": [2e8, 2.1e8, 2.2e8]},
+        periods=_PERIODS[-3:],
+    )
+    r = evaluate_r4("600036.SH", "20260331")
+    assert r.status == "insufficient_data"
+    assert r.quality["statement_scope"] == "parent_company"
+
+
+def test_r7_orange_without_core_ratio_no_type_error(rule_db):
+    """R7 扣非字段缺失（简化版）触发 orange → 不抛 TypeError，quality 固定母公司口径。"""
+    conn = rule_db
+    _insert_company(conn, "600037.SH")
+    # 简化版：net_profit 有、扣非字段全 NULL；营收/现金背离触发 orange
+    np = [1e8, 1.1e8, 1.2e8, 1.3e8, 1.4e8]
+    rev = [1e8, 1e8, 1e8, 1e8, 1e8]  # 增速 0
+    cf = [1e8, 1.3e8, 1.6e8, 2.0e8, 2.5e8]  # 增速 >30%
+    _insert_is(
+        conn,
+        "600037.SH",
+        PARENT,
+        {
+            "net_profit_excl_min_int_inc": np,
+            "oper_rev": rev,
+            "net_profit_after_ded_nr_lp": [None] * 5,
+        },
+    )
+    _insert_cf(conn, "600037.SH", PARENT, {"net_cash_flows_oper_act": cf})
+    r = evaluate_r7("600037.SH", "20260331")
+    assert r.status in (
+        "triggered",
+        "not_triggered",
+        "insufficient_data",
+        "not_applicable",
+    )
+    assert r.quality["statement_scope"] == "parent_company"
+
+
+def test_all_statuses_carry_parent_scope_quality(rule_db):
+    """triggered / not_triggered / insufficient_data 均携带母公司口径 quality。"""
+    conn = rule_db
+    _insert_company(conn, "600035.SH")
+    # R2 触发数据
+    np = [1e8, 1.1e8, 1.2e8, 1.3e8, 1.4e8]
+    cf = [-5e7, -6e7, -7e7, -8e7, -9e7]
+    _insert_is(conn, "600035.SH", PARENT, {"net_profit_excl_min_int_inc": np})
+    _insert_cf(conn, "600035.SH", PARENT, {"net_cash_flows_oper_act": cf})
+    results = evaluate_all_rules("600035.SH", "20260331")
+    for r in results.values():
+        assert r.quality, f"{r.rule_id} quality 为空"
+        assert r.quality["statement_scope"] == "parent_company"
+        assert r.quality["statement_type"] == PARENT
+        assert r.quality["company_type_status"] == "known_non_financial"
 
 
 # ══════════════════════════════════════════════════════════
