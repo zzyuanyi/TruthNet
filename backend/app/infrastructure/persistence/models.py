@@ -205,7 +205,7 @@ class BalanceSheet(Base, SystemFieldsMixin):
     statement_type: Mapped[str] = mapped_column(
         String(32),
         default="408006000",
-        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径) (详见 domain/finance/statement_type.py)",
+        comment="报表类型代码: 408006000=母公司报表(项目固定分析口径), 408001000=合并报表(数据字典保留, R1-R7 不使用) (详见 domain/finance/statement_type.py)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期 (YYYY-MM-DD)"
@@ -283,7 +283,7 @@ class IncomeStatement(Base, SystemFieldsMixin):
     statement_type: Mapped[str] = mapped_column(
         String(32),
         default="408006000",
-        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径)",
+        comment="报表类型代码: 408006000=母公司报表(项目固定分析口径), 408001000=合并报表(数据字典保留, R1-R7 不使用)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期"
@@ -351,7 +351,7 @@ class CashFlow(Base, SystemFieldsMixin):
     statement_type: Mapped[str] = mapped_column(
         String(32),
         default="408006000",
-        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径)",
+        comment="报表类型代码: 408006000=母公司报表(项目固定分析口径), 408001000=合并报表(数据字典保留, R1-R7 不使用)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期"

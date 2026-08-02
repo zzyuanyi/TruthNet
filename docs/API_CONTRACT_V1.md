@@ -90,7 +90,7 @@
 | 参数 | 用途 |
 |------|------|
 | `as_of` | 指定数据快照日期 |
-| `statement_scope` | `parent_company / consolidated / auto` |
+| `statement_scope` | `parent_company`（固定母公司报表口径 408006000；`auto/consolidated` 已停用） |
 | `include` | 指定摘要接口包含的可选区域 |
 | `periods` | 财务历史期数 |
 | `months` | 事件回溯月数 |
