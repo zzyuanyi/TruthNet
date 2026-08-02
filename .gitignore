@@ -93,3 +93,4 @@ htmlcov/
 .gguf
 .safetensors
 data/model_cache/
+.env.lite.bak
