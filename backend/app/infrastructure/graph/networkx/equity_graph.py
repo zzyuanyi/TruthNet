@@ -50,7 +50,13 @@ class NetworkXEquityGraph:
     async def get_graph(
         self, company_code: str, depth: int = 3, direction: str = "upstream"
     ) -> EquityGraph:
-        """获取股权穿透图谱 — 向上游穿透股东."""
+        """获取股权穿透图谱 — 异步入口（sync 核心）."""
+        return self._get_graph_sync(company_code, depth=depth, direction=direction)
+
+    def _get_graph_sync(
+        self, company_code: str, depth: int = 3, direction: str = "upstream"
+    ) -> EquityGraph:
+        """获取股权穿透图谱 — 向上游穿透股东（同步核心）."""
         nodes = []
 
         if company_code not in self._graph:

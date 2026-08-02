@@ -214,7 +214,7 @@ def equity_node(state: AgentState) -> dict:
     from app.infrastructure.graph.networkx.equity_graph import NetworkXEquityGraph
 
     adapter = NetworkXEquityGraph()
-    graph = adapter.get_graph(company_code, depth=5)
+    graph = adapter._get_graph_sync(company_code, depth=5)
     node_name = {n.id: n.label for n in graph.nodes}
     graph_data = {
         "source": "networkx",
