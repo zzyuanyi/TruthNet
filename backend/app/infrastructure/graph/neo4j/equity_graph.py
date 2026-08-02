@@ -51,6 +51,21 @@ def _pct_from_neo4j(raw: str | float | int | None) -> Decimal:
     return Decimal(str(raw))
 
 
+# Neo4j 持股比例存储合同：百分数（0-100），字符串类型。
+# 对外 API 统一 ownership_pct = 0-100，禁止重复乘 100。
+OWNERSHIP_PCT_SCALE = 100
+
+
+def _clean_period(value: str | None) -> str | None:
+    """清洗报告期/公告日期（去掉 '.0' 尾巴，空串转 None）。"""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s or None
+
+
 # ═══════════════════════════════════════════════════════════
 # 关系 ID 生成 — 确保历史快照不被覆盖
 # ═══════════════════════════════════════════════════════════
@@ -119,17 +134,21 @@ class Neo4jEquityGraph:
 
     # ── 连接管理 ──
 
-    async def check_connection(self) -> bool:
+    def _check_connection_sync(self) -> bool:
+        """同步连接检查（Agent 同步节点使用）。"""
         if self._driver is None:
             return False
         try:
             self._driver.verify_connectivity()
             self._available = True
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Neo4j 连接不可用: %s", e)
             self._available = False
             return False
+
+    async def check_connection(self) -> bool:
+        return self._check_connection_sync()
 
     async def ensure_constraints(self) -> None:
         queries = [
@@ -180,28 +199,37 @@ class Neo4jEquityGraph:
         as_of: str | None = None,
         graph_version: str | None = None,
     ) -> EquityGraph:
-        """获取股权穿透图谱。
+        """获取股权穿透图谱（真实 Neo4j 查询）— 异步入口."""
+        return self._get_graph_sync(
+            company_code, depth=depth, direction=direction, as_of=as_of
+        )
 
-        Args:
-            company_code: Wind Code（任意格式，经由 normalizer 统一）
-            depth: 最大穿透深度 (1-10)
-            direction: upstream=向上穿透股东 / downstream=向下穿透投资
-            as_of: 可选时点查询（ISO date），不传则返回最新关系
-            graph_version: 可选图版本过滤
+    def _get_graph_sync(
+        self,
+        company_code: str,
+        depth: int = 3,
+        direction: str = "upstream",
+        as_of: str | None = None,
+        graph_version: str | None = None,
+    ) -> EquityGraph:
+        """获取股权穿透图谱（真实 Neo4j 查询）— 同步核心.
 
-        Returns:
-            EquityGraph 域模型
+        Phase C 契约：
+          - ownership_pct 为 0-100 百分数（Neo4j 存储合同为百分数字符串）。
+          - 每条边绑定稳定 relationship_id；路径携带 edge_ids。
+          - Neo4j 不可用时返回空图（不降级 NetworkX 冒充），由 Router 标记 partial。
         """
         if not self._available:
-            await self.check_connection()
+            self._check_connection_sync()
             if not self._available:
-                return EquityGraph(company_id=company_code)
+                logger.warning("Neo4j 不可用: %s — 返回空图", company_code)
+                return EquityGraph(company_id=company_code, source_system="neo4j")
 
         try:
             resolved_code = self._resolve_wind_code(company_code)
         except ValueError:
             logger.warning("无法解析 Wind Code: %s", company_code)
-            return EquityGraph(company_id=company_code)
+            return EquityGraph(company_id=company_code, source_system="neo4j")
 
         depth = max(1, min(10, depth))
 
@@ -236,51 +264,66 @@ class Neo4jEquityGraph:
             )
         except Exception as e:
             logger.error("Neo4j 查询失败: %s", e)
-            return EquityGraph(company_id=company_code)
+            return EquityGraph(company_id=company_code, source_system="neo4j")
 
-        nodes_map: dict[str, object] = {}
-        edges_map: dict[tuple[str, str], object] = {}
+        nodes_map: dict[str, EquityNode] = {}
+        edges_map: dict[str, EquityEdge] = {}
         paths_list: list[OwnershipChain] = []
 
         for record in records:
             target_data = record["target"]
             path = record["path"]
 
-            # 收集节点
+            # 收集节点（entity_id 与 MySQL 对齐）
             for node in path.nodes:
-                nid = node.get("entity_id", "")
+                nid = node.get("entity_id", "") or node.element_id
                 if nid and nid not in nodes_map:
                     nodes_map[nid] = EquityNode(
                         id=nid,
                         label=node.get("display_name")
-                        or node.get("canonical_name", ""),
+                        or node.get("canonical_name")
+                        or nid,
                         type=node.get("entity_type", "entity"),
                         depth=0,
+                        entity_id=nid,
+                        wind_code=node.get("wind_code") or None,
+                        source_system="neo4j",
+                        mock=bool(node.get("mock", False)),
                     )
 
             # 收集边和路径
             path_node_ids: list[str] = []
+            path_edge_ids: list[str] = []
             total_fraction = Decimal("1.0")
 
             for rel in path.relationships:
                 src_id = rel.start_node.get("entity_id", "")
                 tgt_id = rel.end_node.get("entity_id", "")
-                rel.get("relationship_id", "")
-
-                if hasattr(edges_map, "get"):
-                    pass  # using dict
+                rel_id = rel.get("relationship_id") or ""
+                pct = _pct_from_neo4j(rel.get("ownership_pct"))
+                pct_100 = float(pct)
 
                 if src_id and tgt_id:
-                    pct = _pct_from_neo4j(rel.get("ownership_pct"))
-                    edge_obj = EquityEdge(
-                        source=src_id,
-                        target=tgt_id,
-                        relation=rel.type or "OWNS",
-                        stake_ratio=float(pct) / 100.0 if pct > 0 else None,
-                    )
-                    edges_map[(src_id, tgt_id)] = edge_obj
+                    if rel_id and rel_id not in edges_map:
+                        edges_map[rel_id] = EquityEdge(
+                            source=src_id,
+                            target=tgt_id,
+                            relation=rel.type or "OWNS",
+                            stake_ratio=(pct_100 / 100.0) if pct > 0 else None,
+                            ownership_pct=pct_100,
+                            relationship_id=rel_id,
+                            source_record_id=(rel.get("source_record_id") or rel_id),
+                            report_period=_clean_period(rel.get("report_period")),
+                            ann_dt=_clean_period(rel.get("ann_dt")),
+                            is_latest=bool(rel.get("is_latest", True)),
+                            source_system="neo4j",
+                            mock=bool(rel.get("mock", False)),
+                        )
+                    if rel_id:
+                        path_edge_ids.append(rel_id)
 
-                path_node_ids.append(src_id)
+                if src_id:
+                    path_node_ids.append(src_id)
                 if pct > 0:
                     total_fraction *= pct / Decimal("100")
 
@@ -294,6 +337,10 @@ class Neo4jEquityGraph:
                         path=path_node_ids,
                         total_stake=float(total_fraction),
                         depth=len(path_node_ids) - 1,
+                        edge_ids=path_edge_ids,
+                        final_control_pct=round(float(total_fraction) * 100, 4),
+                        path_type="control",
+                        source_system="neo4j",
                     )
                 )
 
@@ -302,6 +349,9 @@ class Neo4jEquityGraph:
             nodes=list(nodes_map.values()),
             edges=list(edges_map.values()),
             control_chains=paths_list,
+            graph_version=settings.GRAPH_VERSION,
+            dataset_version=settings.DATASET_VERSION,
+            source_system="neo4j",
         )
 
     async def get_control_chains(
@@ -312,6 +362,45 @@ class Neo4jEquityGraph:
     ) -> list[OwnershipChain]:
         graph = await self.get_graph(company_code, depth=max_depth, as_of=as_of)
         return graph.control_chains
+
+    async def get_relationship_by_id(self, relationship_id: str) -> dict | None:
+        """按 relationship_id 查找原关系（Evidence 来源定位用）— 异步入口."""
+        return self.get_relationship_by_id_sync(relationship_id)
+
+    def get_relationship_by_id_sync(self, relationship_id: str) -> dict | None:
+        """按 relationship_id 查找原关系（Evidence 来源定位用）.
+
+        返回关系属性 + 两端节点信息；找不到返回 None。
+        """
+        if not self._available:
+            self._check_connection_sync()
+            if not self._available:
+                return None
+        try:
+            records, _, _ = self._driver.execute_query(
+                "MATCH (s:Entity)-[r:OWNS {relationship_id: $rid}]->(t:Entity) "
+                "RETURN s.entity_id AS source_entity_id, "
+                "       s.canonical_name AS source_name, "
+                "       t.entity_id AS target_entity_id, "
+                "       t.canonical_name AS target_name, "
+                "       t.wind_code AS target_wind_code, "
+                "       properties(r) AS rel",
+                {"rid": relationship_id},
+            )
+            if not records:
+                return None
+            rec = records[0]
+            rel = dict(rec["rel"])
+            rel["source_entity_id"] = rec["source_entity_id"]
+            rel["source_name"] = rec["source_name"]
+            rel["target_entity_id"] = rec["target_entity_id"]
+            rel["target_name"] = rec["target_name"]
+            rel["target_wind_code"] = rec["target_wind_code"]
+            rel["relationship_id"] = relationship_id
+            return rel
+        except Exception as e:  # noqa: BLE001
+            logger.error("Neo4j relationship 查询失败: %s", e)
+            return None
 
     # ── 数据导入 ──
 
