@@ -1,17 +1,27 @@
-"""任务④：公司名称回填脚本
-============================
-双源策略：
-  Phase 1 (离线) — 从 MySQL research_reports 表提取 wind_code → sec_name 映射，直接补齐
-  Phase 2 (在线) — 用 akshare 逐只查询（需网络，单独执行 --online）
+"""任务④：公司名称 + 公司类型回填脚本
+====================================
+多源策略：
+  Phase 1 (离线) — 从 MySQL research_reports + announcements 公告标题前缀
+                  提取 wind_code → sec_name 映射，直接补齐
+  Phase 2 (离线) — 从 raw 资产负债表 CSV 回填 companies.comp_type_code
+  Phase 3 (在线) — 用 akshare 逐只查询（需网络，单独执行 --online）
+
+Phase C 集成修正:
+  - collect_missing_codes 将 sec_name == wind_code 视为缺失（否则 3460 家
+    被误判为已命名）；
+  - 新增公告标题简称提取（n_info_title '公司简称:' 前缀）；
+  - 新增 comp_type_code 回填（raw/4/*.csv 数据源）；
+  - DB 连接改为 app.core.config.settings（禁止硬编码凭据）。
 
 用法：
-  python scripts/task4_name_backfill.py           # 仅离线（研报源）
+  python scripts/task4_name_backfill.py           # 仅离线（研报+公告+类型）
   python scripts/task4_name_backfill.py --online  # 离线 + akshare 在线补全
 
 输出: data/processed/name_backfill_report.csv（补名记录）
 """
 
 import io
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -23,14 +33,20 @@ import pymysql
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 # ── 配置 ──
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "truthnet",
-    "password": "truthnet123",
-    "database": "truthnet",
-}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT / "backend") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+
+from app.core.config import settings  # noqa: E402
+
+DB_CONFIG = {
+    "host": settings.MYSQL_HOST,
+    "port": settings.MYSQL_PORT,
+    "user": settings.MYSQL_USER,
+    "password": settings.MYSQL_PASSWORD,
+    "database": settings.MYSQL_DATABASE,
+    "charset": "utf8mb4",
+}
 OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 NOW = datetime.now(timezone.utc)
@@ -88,8 +104,76 @@ def build_name_map_from_reports() -> dict[str, str]:
     return name_map
 
 
+def build_name_map_from_announcements() -> dict[str, str]:
+    """从 announcements.n_info_title 提取 wind_code → 简称 映射.
+
+    公告标题格式为 '公司简称:公告标题...'，取冒号前片段作为公司简称。
+    """
+    log("=" * 60)
+    log("Phase 1b: Offline — name map from announcement titles")
+    log("=" * 60)
+
+    conn = pymysql.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT DISTINCT wind_code, n_info_title FROM announcements "
+        "WHERE n_info_title IS NOT NULL AND LENGTH(n_info_title) > 0"
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    name_map: dict[str, str] = {}
+    for wind_code, title in rows:
+        if wind_code in name_map or not title:
+            continue
+        short = str(title).split(":", 1)[0].strip()
+        if 2 <= len(short) <= 10 and re.fullmatch(r"[一-鿿A-Za-z0-9]+", short):
+            name_map[wind_code] = short
+
+    log(f"  Unique wind_codes with announcement names: {len(name_map)}")
+    return name_map
+
+
+def backfill_comp_type_from_raw() -> int:
+    """从 raw 资产负债表 CSV 回填 companies.comp_type_code.
+
+    原始数据源: data/raw/4/asharebalancesheet_*.csv（含 comp_type_code 列）。
+    MySQL balance_sheet 未导入该列，故直接读 CSV。
+    """
+    log("=" * 60)
+    log("Phase 2: Offline — backfill comp_type_code from raw balance sheet CSV")
+    log("=" * 60)
+
+    raw_dir = PROJECT_ROOT / "data" / "raw" / "4"
+    csv_files = sorted(raw_dir.glob("asharebalancesheet_*.csv"))
+    if not csv_files:
+        log(f"  WARN: 未找到 {raw_dir}/asharebalancesheet_*.csv")
+        return 0
+
+    df = pd.read_csv(
+        csv_files[0], low_memory=False, usecols=["wind_code", "comp_type_code"]
+    )
+    comp = df.dropna(subset=["comp_type_code"]).drop_duplicates(subset="wind_code")
+    log(f"  CSV comp_type 记录: {len(comp)}")
+
+    conn = pymysql.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    updated = 0
+    for _, r in comp.iterrows():
+        cur.execute(
+            "UPDATE companies SET comp_type_code = %s "
+            "WHERE wind_code = %s AND (comp_type_code IS NULL OR comp_type_code = 0)",
+            (int(r["comp_type_code"]), r["wind_code"]),
+        )
+        updated += cur.rowcount
+    conn.commit()
+    conn.close()
+    log(f"  comp_type_code 回填: {updated}")
+    return updated
+
+
 # ====================================================================
-# Phase 2: 在线 — akshare 查询
+# Phase 3: 在线 — akshare 查询
 # ====================================================================
 
 
@@ -221,11 +305,13 @@ def collect_missing_codes() -> tuple[list[str], list[str]]:
     conn = pymysql.connect(**DB_CONFIG)
     cur = conn.cursor()
 
+    # 缺失 = NULL/空串/仍为股票代码（sec_name == wind_code 视为未回填）
     cur.execute(
-        "SELECT wind_code FROM companies WHERE sec_name IS NULL OR sec_name = ''"
+        "SELECT wind_code FROM companies "
+        "WHERE sec_name IS NULL OR sec_name = '' OR sec_name = wind_code"
     )
     to_update = list({row[0] for row in cur.fetchall()})
-    log(f"  Empty sec_name in companies: {len(to_update)}")
+    log(f"  Missing sec_name in companies: {len(to_update)}")
 
     union_q = " UNION ".join(
         f"SELECT DISTINCT wind_code FROM `{t}`" for t in DATA_TABLES
@@ -339,7 +425,8 @@ def verify() -> None:
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT COUNT(*) FROM companies WHERE sec_name IS NULL OR sec_name = ''"
+        "SELECT COUNT(*) FROM companies "
+        "WHERE sec_name IS NULL OR sec_name = '' OR sec_name = wind_code"
     )
     log(f"  Companies missing sec_name: {cur.fetchone()[0]}")
 
@@ -356,7 +443,8 @@ def verify() -> None:
     cur.execute("SELECT COUNT(*) FROM companies")
     total = cur.fetchone()[0]
     cur.execute(
-        "SELECT COUNT(*) FROM companies WHERE sec_name IS NOT NULL AND sec_name != ''"
+        "SELECT COUNT(*) FROM companies "
+        "WHERE sec_name IS NOT NULL AND sec_name != '' AND sec_name != wind_code"
     )
     named = cur.fetchone()[0]
     log(f"  Total: {total} | Named: {named} ({named/total*100:.1f}%)")
@@ -375,8 +463,9 @@ if __name__ == "__main__":
     log(f"Mode: {'ONLINE + offline' if use_online else 'OFFLINE only'}")
     log(f"DB: {DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}")
 
-    # Phase 1: 离线 — 研报表名称映射
+    # Phase 1: 离线 — 研报表 + 公告标题名称映射
     name_map = build_name_map_from_reports()
+    name_map.update(build_name_map_from_announcements())
 
     # 收集需要补全的代码
     to_update, to_insert = collect_missing_codes()
@@ -400,18 +489,21 @@ if __name__ == "__main__":
             results[code] = None
             offline_miss.append(code)
 
-    log(f"\n  Offline (research_reports) hit: {offline_hit}/{len(all_codes)}")
+    log(f"\n  Offline (reports+announcements) hit: {offline_hit}/{len(all_codes)}")
     log(f"  Offline miss: {len(offline_miss)}")
 
-    # Phase 2: 在线补全
+    # Phase 3: 在线补全
     if use_online and offline_miss:
         online_results = query_akshare_batch(offline_miss)
         for code, name in online_results.items():
             if name:
                 results[code] = name
 
-    # 写回 MySQL
+    # 写回 MySQL（名称）
     stats = write_back(results)
+
+    # Phase 2: 离线 — comp_type_code 回填（置于写回后，覆盖新建公司）
+    backfill_comp_type_from_raw()
 
     # 验证
     verify()
