@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class SentimentSummary(BaseModel):
     """情绪统计."""
+
     positive_count: int = Field(default=0)
     negative_count: int = Field(default=0)
     neutral_count: int = Field(default=0)
@@ -14,6 +15,7 @@ class SentimentSummary(BaseModel):
 
 class EventCluster(BaseModel):
     """事件簇 — V12 §11.11."""
+
     cluster_id: str = Field(..., description="事件簇 ID")
     topic: str = Field(..., description="簇主题")
     event_count: int = Field(default=0, description="包含事件数")
@@ -25,6 +27,7 @@ class EventCluster(BaseModel):
 
 class TimelineEvent(BaseModel):
     """时间线事件."""
+
     date: str = Field(..., description="日期 YYYY-MM-DD")
     title: str = Field(..., description="事件标题")
     category: str = Field(default="公告", description="事件类别")
@@ -37,6 +40,7 @@ class TimelineEvent(BaseModel):
 
 class RatingChange(BaseModel):
     """评级变化."""
+
     date: str = Field(default="", description="日期")
     org_name: str = Field(..., description="评级机构")
     prev_rating: str = Field(default="", description="前次评级")
@@ -47,6 +51,7 @@ class RatingChange(BaseModel):
 
 class KeywordSummary(BaseModel):
     """关键词摘要."""
+
     top_keywords: list[dict] = Field(
         default_factory=list, description="高频关键词及频次"
     )
@@ -64,8 +69,6 @@ class EventsResponseData(BaseModel):
     rating_changes: list[RatingChange] = Field(default_factory=list)
     keyword_summary: KeywordSummary = Field(default_factory=KeywordSummary)
     evidence_ids: list[str] = Field(default_factory=list)
-    announcements_available: bool = Field(
-        default=True, description="公告数据是否可用"
-    )
+    announcements_available: bool = Field(default=True, description="公告数据是否可用")
     months_covered: int = Field(default=36, description="覆盖月数")
     warnings: list[str] = Field(default_factory=list)

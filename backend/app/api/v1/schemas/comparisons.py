@@ -14,13 +14,12 @@ class ComparisonRequest(BaseModel):
         default_factory=lambda: ["R1", "R2", "R3"],
         description="对比指标列表",
     )
-    statement_scope: str = Field(
-        default="parent_company", description="报表口径"
-    )
+    statement_scope: str = Field(default="parent_company", description="报表口径")
 
 
 class CompanyIndicator(BaseModel):
     """单公司单指标值."""
+
     wind_code: str = Field(..., description="公司代码")
     sec_name: str = Field(default="", description="公司名称")
     value: float | None = Field(default=None)
@@ -31,6 +30,7 @@ class CompanyIndicator(BaseModel):
 
 class IndicatorCompare(BaseModel):
     """单指标跨公司对比."""
+
     indicator: str = Field(..., description="指标/规则 ID")
     label: str = Field(default="", description="中文标签")
     companies: list[CompanyIndicator] = Field(default_factory=list)
@@ -38,6 +38,7 @@ class IndicatorCompare(BaseModel):
 
 class CompanyRiskSummary(BaseModel):
     """公司风险摘要（对比用）."""
+
     wind_code: str = Field(..., description="公司代码")
     sec_name: str = Field(default="")
     industry_l1: str = Field(default="")

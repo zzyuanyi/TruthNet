@@ -5,17 +5,23 @@ from pydantic import BaseModel, Field
 
 class SubScore(BaseModel):
     """分项贡献分."""
-    dimension: str = Field(..., description="维度名: finance / equity / events / external")
+
+    dimension: str = Field(
+        ..., description="维度名: finance / equity / events / external"
+    )
     label: str = Field(default="", description="中文标签")
     score: float = Field(default=0.0, ge=0.0, le=1.0)
     weight: float = Field(default=0.25, ge=0.0, le=1.0)
     contribution: float = Field(default=0.0, description="加权后贡献")
-    status: str = Field(default="unknown", description="模块状态: success / partial / failed / skipped")
+    status: str = Field(
+        default="unknown", description="模块状态: success / partial / failed / skipped"
+    )
     warning: str | None = Field(default=None)
 
 
 class RiskTag(BaseModel):
     """风险标签."""
+
     tag: str = Field(..., description="标签名")
     category: str = Field(default="", description="来源类别")
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -23,6 +29,7 @@ class RiskTag(BaseModel):
 
 class PatternMatch(BaseModel):
     """造假模式匹配结果."""
+
     pattern_id: str = Field(..., description="模式 ID，如 P1")
     pattern_name: str = Field(..., description="模式中文名")
     triggered_rules: list[str] = Field(default_factory=list)
@@ -32,6 +39,7 @@ class PatternMatch(BaseModel):
 
 class MitigatingFactor(BaseModel):
     """缓解因素."""
+
     factor: str = Field(..., description="因素描述")
     category: str = Field(default="", description="类别")
     weight: float = Field(default=0.0, description="影响权重")
@@ -39,6 +47,7 @@ class MitigatingFactor(BaseModel):
 
 class DataCoverage(BaseModel):
     """数据覆盖."""
+
     finance: bool = Field(default=False)
     equity: bool = Field(default=False)
     events: bool = Field(default=False)
@@ -49,6 +58,7 @@ class DataCoverage(BaseModel):
 
 class RiskEvidence(BaseModel):
     """风险证据引用."""
+
     evidence_id: str = Field(..., description="证据 ID")
     source_type: str = Field(default="", description="来源类型")
     claim_ids: list[str] = Field(default_factory=list)
@@ -64,7 +74,9 @@ class RiskResponseData(BaseModel):
 
     # 核心评分
     overall_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    risk_level: str = Field(default="unknown", description="red / orange / yellow / green")
+    risk_level: str = Field(
+        default="unknown", description="red / orange / yellow / green"
+    )
     sub_scores: list[SubScore] = Field(default_factory=list)
 
     # 风险标签与模式

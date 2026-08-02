@@ -108,9 +108,7 @@ async def get_company_events(
             sentiment_counter = Counter()
             for row in rows:
                 _, ann_date, fcode_raw, title = row
-                ann_date_str = (
-                    str(ann_date) if ann_date else ""
-                )
+                ann_date_str = str(ann_date) if ann_date else ""
                 sentiment, _, _ = classify_sentiment(
                     str(fcode_raw) if fcode_raw else ""
                 )
@@ -134,9 +132,7 @@ async def get_company_events(
                 neutral_count=sentiment_counter.get("neutral", 0),
                 total_count=len(rows),
                 negative_ratio=(
-                    sentiment_counter.get("negative", 0) / len(rows)
-                    if rows
-                    else 0.0
+                    sentiment_counter.get("negative", 0) / len(rows) if rows else 0.0
                 ),
             )
 
@@ -154,9 +150,7 @@ async def get_company_events(
                             topic=label,
                             event_count=len(evts),
                             date_range=(
-                                f"{min(dates)} 至 {max(dates)}"
-                                if dates
-                                else ""
+                                f"{min(dates)} 至 {max(dates)}" if dates else ""
                             ),
                             sentiment=(
                                 "negative"
@@ -201,9 +195,7 @@ async def get_company_events(
             announcements_available=announcements_available,
             months_covered=months,
             warnings=(
-                [w.message for w in warnings]
-                if not announcements_available
-                else []
+                [w.message for w in warnings] if not announcements_available else []
             ),
         ),
         meta=ApiMeta(

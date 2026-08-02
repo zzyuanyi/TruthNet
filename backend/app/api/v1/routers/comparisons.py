@@ -101,19 +101,19 @@ async def create_comparison(body: ComparisonRequest):
             )
             results = evaluate_all_rules(wind_code, as_of)
             triggered_rules = [
-                rid
-                for rid, r in results.items()
-                if r.status == "triggered"
+                rid for rid, r in results.items() if r.status == "triggered"
             ]
-            red_count = sum(
-                1 for r in results.values() if r.severity == "red"
-            )
+            red_count = sum(1 for r in results.values() if r.severity == "red")
 
             overall_score = min(1.0, red_count * 0.25)
             risk_level = (
                 "red"
                 if overall_score >= 0.6
-                else ("orange" if overall_score >= 0.35 else ("yellow" if overall_score >= 0.15 else "green"))
+                else (
+                    "orange"
+                    if overall_score >= 0.35
+                    else ("yellow" if overall_score >= 0.15 else "green")
+                )
             )
 
             # 模式匹配

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class IndustryPercentile(BaseModel):
     """单个指标的分位值."""
+
     indicator: str = Field(..., description="指标标识，如 'receivable_yoy'")
     label: str = Field(default="", description="中文标签")
     rule_id: str | None = Field(default=None, description="关联规则 ID")
@@ -26,9 +27,7 @@ class BenchmarksResponseData(BaseModel):
     period: str = Field(default="", description="对标期间，如 2026Q2")
     percentiles: list[IndustryPercentile] = Field(default_factory=list)
     peer_count: int = Field(default=0, description="同行业公司总数")
-    is_sample_sufficient: bool = Field(
-        default=True, description="样本是否充足（≥5）"
-    )
+    is_sample_sufficient: bool = Field(default=True, description="样本是否充足（≥5）")
     generic_thresholds_only: bool = Field(
         default=False,
         description="样本不足时仅展示通用阈值，不展示伪造分位",

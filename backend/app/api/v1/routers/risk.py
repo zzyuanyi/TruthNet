@@ -131,9 +131,7 @@ async def get_company_risk(
                         pattern_name=name,
                         triggered_rules=matched,
                         confidence=(
-                            "high"
-                            if len(matched) >= len(rule_ids)
-                            else "medium"
+                            "high" if len(matched) >= len(rule_ids) else "medium"
                         ),
                         reasoning=f"{len(matched)}/{len(rule_ids)} 条规则触发: {', '.join(rule_ids)}",
                     )
@@ -169,9 +167,7 @@ async def get_company_risk(
 
         chain_count = len(graph.control_chains) if graph else 0
         # 多层控制链 + 自然人节点 → 风险信号
-        equity_score = (
-            0.3 if chain_count > 2 else (0.1 if chain_count > 0 else 0.0)
-        )
+        equity_score = 0.3 if chain_count > 2 else (0.1 if chain_count > 0 else 0.0)
         equity_available = True
 
         sub_scores.append(
@@ -238,10 +234,7 @@ async def get_company_risk(
 
             with engine.connect() as conn:
                 rows = conn.execute(
-                    text(
-                        "SELECT fcode FROM announcements "
-                        "WHERE wind_code = :code"
-                    ),
+                    text("SELECT fcode FROM announcements " "WHERE wind_code = :code"),
                     {"code": wind_code},
                 ).fetchall()
 

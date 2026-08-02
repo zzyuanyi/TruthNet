@@ -128,11 +128,7 @@ async def get_company_finance(
         from app.api.v1.routers.companies import _MOCK_COMPANIES
 
         industry_l1 = next(
-            (
-                c["industry_l1"]
-                for c in _MOCK_COMPANIES
-                if c["wind_code"] == wind_code
-            ),
+            (c["industry_l1"] for c in _MOCK_COMPANIES if c["wind_code"] == wind_code),
             "",
         )
     except ImportError:

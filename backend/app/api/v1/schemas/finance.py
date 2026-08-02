@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class FinanceRuleItem(BaseModel):
     """单条规则结果 — 对齐 V12 RuleResult."""
+
     rule_id: str = Field(..., description="规则 ID (R1-R7)")
     rule_version: str = Field(default="1.0.0")
     rule_name: str = Field(default="", description="规则中文名")
@@ -19,16 +20,12 @@ class FinanceRuleItem(BaseModel):
         default_factory=dict,
         description="当前指标值，如 {'应收账款同比': {'value': 35.2, 'unit': '%'}}",
     )
-    history: list[dict] = Field(
-        default_factory=list, description="历史序列，每期一条"
-    )
+    history: list[dict] = Field(default_factory=list, description="历史序列，每期一条")
     industry: dict = Field(
         default_factory=dict,
         description="行业分位，如 {'p50': 12.0, 'p75': 25.0, 'p90': 40.0}",
     )
-    quality: dict = Field(
-        default_factory=dict, description="数据质量标记"
-    )
+    quality: dict = Field(default_factory=dict, description="数据质量标记")
     explanation: str = Field(default="", description="LLM 解读文本")
     evidence_ids: list[str] = Field(default_factory=list)
     claim_ids: list[str] = Field(default_factory=list)
@@ -37,6 +34,7 @@ class FinanceRuleItem(BaseModel):
 
 class IndustryBenchmark(BaseModel):
     """行业对标 — V12 §11.10."""
+
     industry_l1: str = Field(default="", description="一级行业")
     peer_count: int = Field(default=0, description="同行业公司数")
     percentile: dict[str, float | None] = Field(
@@ -48,6 +46,7 @@ class IndustryBenchmark(BaseModel):
 
 class DataQuality(BaseModel):
     """数据质量."""
+
     periods_available: int = Field(default=0, description="可用期数")
     periods_requested: int = Field(default=8, description="请求期数")
     statement_scope: str = Field(default="parent_company", description="报表口径")

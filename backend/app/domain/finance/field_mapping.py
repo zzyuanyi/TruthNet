@@ -55,7 +55,9 @@ def get_table(field_name: str) -> str:
     """返回字段别名所属的表名。"""
     t = FIELD_TO_TABLE.get(field_name)
     if t is None:
-        raise ValueError(f"未知字段: {field_name}，请确认别名已在 BALANCE_SHEET_FIELDS / INCOME_STATEMENT_FIELDS / CASH_FLOW_FIELDS 中注册")
+        raise ValueError(
+            f"未知字段: {field_name}，请确认别名已在 BALANCE_SHEET_FIELDS / INCOME_STATEMENT_FIELDS / CASH_FLOW_FIELDS 中注册"
+        )
     return t
 
 
