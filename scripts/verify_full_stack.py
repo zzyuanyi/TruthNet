@@ -63,7 +63,7 @@ def tcp_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
         sock = socket.create_connection((host, port), timeout=timeout)
         sock.close()
         return True
-    except (socket.timeout, ConnectionRefusedError, OSError):
+    except (TimeoutError, ConnectionRefusedError, OSError):
         return False
 
 
@@ -75,7 +75,7 @@ def check_lite_profile(result: CheckResult) -> None:
             SQLiteCompanyRepository,
         )
 
-        _repo = SQLiteCompanyRepository()  # noqa: F841
+        _repo = SQLiteCompanyRepository()
         result.pass_("SQLite CompanyRepository", "lite adapter loaded")
     except Exception as e:
         result.fail("SQLite CompanyRepository", str(e)[:80])
@@ -386,9 +386,8 @@ def check_chroma_persistent(result: CheckResult, cleanup: bool = False) -> None:
 def check_readyz_endpoints(result: CheckResult, profile: str) -> None:
     """验证 /healthz 和 /readyz."""
     import httpx
-    from httpx import ASGITransport
-
     from app.main import app
+    from httpx import ASGITransport
 
     transport = ASGITransport(app=app)
 

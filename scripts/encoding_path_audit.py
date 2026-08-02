@@ -25,7 +25,6 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from pathlib import Path
 
-
 # ============================================================
 # 可忽略目录
 # ============================================================
@@ -172,9 +171,7 @@ def _is_pattern_definition(line: str) -> bool:
         r"^(drive_patterns|path_patterns|pat\d*|.*_pattern)\s*=\s*\[", stripped
     ):
         return True
-    if re.match(r"^(drive_pattern|.*_pattern)\s*=\s*re\.", stripped):
-        return True
-    return False
+    return bool(re.match(r"^(drive_pattern|.*_pattern)\s*=\s*re\.", stripped))
 
 
 def _is_audit_self_diagnostic(line: str) -> bool:
@@ -183,9 +180,7 @@ def _is_audit_self_diagnostic(line: str) -> bool:
     # 诊断字符串包含 "裸 open()" 或 "硬编码盘符" 等
     if "裸 open()" in stripped or "bare_open" in stripped:
         return True
-    if 'f"硬编码' in stripped or "f'硬编码" in stripped:
-        return True
-    return False
+    return bool('f"硬编码' in stripped or "f'硬编码" in stripped)
 
 
 # ============================================================

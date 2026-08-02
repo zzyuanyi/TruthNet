@@ -39,9 +39,6 @@ _env_path = _REPO_ROOT / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=False)
 
-from sqlalchemy import URL as EngineURL, create_engine  # noqa: E402
-from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
-
 from app.infrastructure.persistence.models import (  # noqa: E402
     Announcement,
     BalanceSheet,
@@ -52,6 +49,9 @@ from app.infrastructure.persistence.models import (  # noqa: E402
     ResearchReport,
     TopShareholder,
 )
+from sqlalchemy import URL as EngineURL  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 常量

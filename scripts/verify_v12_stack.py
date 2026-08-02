@@ -61,7 +61,7 @@ def check_env(ci_mode: bool = False) -> list[str]:
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
     is_311 = sys.version_info.major == 3 and sys.version_info.minor == 11
-    ok, msg = check(f"Python version ({py_ver})", is_311, "expected 3.11.x")
+    _ok, msg = check(f"Python version ({py_ver})", is_311, "expected 3.11.x")
     lines.append(msg)
 
     # truthnet env check
@@ -83,7 +83,7 @@ def check_env(ci_mode: bool = False) -> list[str]:
     if pv_file.exists():
         expected = pv_file.read_text(encoding="utf-8").strip()
         pv_ok = py_ver.startswith(expected)
-        ok2, msg2 = check(
+        _ok2, msg2 = check(
             f".python-version match ({expected})", pv_ok, f"current: {py_ver}"
         )
         lines.append(msg2)
@@ -114,7 +114,7 @@ def check_core_deps() -> list[str]:
     ]
 
     for name, pkg_name in deps:
-        ok, msg = import_pkg(name, pkg_name)
+        _ok, msg = import_pkg(name, pkg_name)
         lines.append(msg)
 
     return lines
@@ -134,7 +134,7 @@ def check_v12_deps() -> list[str]:
     ]
 
     for name, pkg_name in deps:
-        ok, msg = import_pkg(name, pkg_name)
+        _ok, msg = import_pkg(name, pkg_name)
         lines.append(msg)
 
     return lines
@@ -296,9 +296,9 @@ def run_smoke_tests(profile: str = "lite") -> list[str]:
 
     # --- LangGraph smoke ---
     try:
-        from langgraph.graph import StateGraph
-
         from typing import TypedDict
+
+        from langgraph.graph import StateGraph
 
         class MiniState(TypedDict):
             count: int
@@ -325,11 +325,11 @@ def run_smoke_tests(profile: str = "lite") -> list[str]:
 
     # --- V12 adapter imports ---
     try:
+        from app.infrastructure.graph.networkx.equity_graph import NetworkXEquityGraph
+        from app.infrastructure.llm.mock.provider import MockLLMProvider
         from app.infrastructure.persistence.sqlite.company_repository import (
             SQLiteCompanyRepository,
         )
-        from app.infrastructure.graph.networkx.equity_graph import NetworkXEquityGraph
-        from app.infrastructure.llm.mock.provider import MockLLMProvider
 
         assert SQLiteCompanyRepository is not None
         assert NetworkXEquityGraph is not None
