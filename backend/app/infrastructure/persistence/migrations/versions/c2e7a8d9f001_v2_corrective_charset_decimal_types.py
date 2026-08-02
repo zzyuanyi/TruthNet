@@ -102,18 +102,25 @@ def upgrade() -> None:
     )
 
     # ── 派生表 charset/collation ─────────────────────────
+    # 注意: 存在外键约束的表（conversation_turns→conversation_sessions,
+    # rule_evaluations→rule_definitions）执行 CONVERT TO 时，MySQL 会校验 FK
+    # 两侧 collation 兼容性并报 3780（无论先转父表还是先转子表均失败）。
+    # 因此必须临时关闭 FK 检查，转换完成后重新开启；否则全新数据库
+    # `alembic upgrade head` 无法完成。转换后两侧均为 utf8mb4_0900_ai_ci，
+    # FK 关系保持有效（实测 CASCADE 删除仍生效）。
 
-    op.execute(
-        "ALTER TABLE conversation_sessions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
-    )
+    op.execute("SET FOREIGN_KEY_CHECKS = 0")
     op.execute(
         "ALTER TABLE conversation_turns CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
     op.execute(
-        "ALTER TABLE rule_definitions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+        "ALTER TABLE conversation_sessions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
     op.execute(
         "ALTER TABLE rule_evaluations CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+    )
+    op.execute(
+        "ALTER TABLE rule_definitions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
     op.execute(
         "ALTER TABLE evidence_refs CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
@@ -124,6 +131,7 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE risk_assessments CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
+    op.execute("SET FOREIGN_KEY_CHECKS = 1")
 
 
 def downgrade() -> None:
