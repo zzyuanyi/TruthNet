@@ -7,6 +7,7 @@ Bug fix:
 """
 
 from app.agents.state import AgentState, Claim, EvidenceRef
+from app.domain.finance.parent_scope import CLAIM_PARENT_SCOPE_LIMITATION
 
 
 # 规则 → 证据 ID 前缀（与规则引擎 evidence_ids 对应，前缀匹配避免依赖 as_of）
@@ -92,6 +93,8 @@ def build_claims_node(state: AgentState) -> dict:
                         rule_id=rule_id,
                         rule_version="1.0.0",
                         evidence_ids=actual_ev_ids,
+                        # 财务结论限定母公司报表范围（Phase C 口径修正）
+                        limitations=[CLAIM_PARENT_SCOPE_LIMITATION],
                     )
                 )
 

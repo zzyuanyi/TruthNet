@@ -112,11 +112,15 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
         if hasattr(evt, "timeline"):
             timeline = evt.timeline
 
-    # 收集 warnings
+    # 收集 warnings（Finance 口径说明恰好一次 + 模块状态）
     warnings: list[str] = []
     runtime = result.get("runtime")
     if runtime and hasattr(runtime, "warnings"):
         warnings.extend(runtime.warnings)
+    if results and getattr(results, "finance", None) and results.finance.warnings:
+        for w in results.finance.warnings:
+            if w and w not in warnings:
+                warnings.append(w)
     for name, ms in module_status.items():
         if hasattr(ms, "state") and ms.state in ("partial", "failed"):
             warnings.append(f"模块 {name} 状态: {ms.state}")
@@ -485,6 +489,26 @@ async def websocket_chat_v1(ws: WebSocket):
 
                 # turn.completed
                 if not cancelled:
+                    # Finance 口径说明 / coverage / 缺失 warning 需对前端可见
+                    results = result.get("results")
+                    finance_payload = None
+                    warnings: list[str] = []
+                    if results and getattr(results, "finance", None):
+                        fin = results.finance
+                        if fin.warnings:
+                            for w in fin.warnings:
+                                if w and w not in warnings:
+                                    warnings.append(w)
+                        finance_payload = {
+                            "rule_statuses": fin.rule_statuses,
+                            "warnings": list(fin.warnings),
+                            "evidence_count": len(fin.evidence or []),
+                        }
+                    runtime = result.get("runtime")
+                    if runtime and hasattr(runtime, "warnings"):
+                        for w in runtime.warnings:
+                            if w and w not in warnings:
+                                warnings.append(w)
                     await ws.send_json(
                         _envelope(
                             "turn.completed",
@@ -494,6 +518,8 @@ async def websocket_chat_v1(ws: WebSocket):
                                 "claims_count": len(result.get("claims", [])),
                                 "follow_ups": getattr(final_response, "follow_ups", []),
                                 "evidence_count": len(result.get("evidence", [])),
+                                "warnings": warnings,
+                                "finance": finance_payload,
                             },
                         )
                     )

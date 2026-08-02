@@ -1,8 +1,11 @@
 """Finance — V12 §8.1. 财务分析节点。
 
-Phase C 集成修正: 调用真实规则引擎（evaluate_all_rules），移除 Phase B Mock。
-- 规则引擎内部实现"合并报表(408001000)优先、母公司(408006000)降级并显式标记"，
-  每条规则输出 statement_scope / coverage / warning。
+Phase C 口径修正: 调用真实规则引擎（evaluate_all_rules），固定母公司报表口径。
+- 项目财务规则固定采用母公司报表（statement_type=408006000，scope=parent_company），
+  不再使用"合并报表优先、母公司降级"，不再输出"降级" warning。
+- 模块执行时始终将统一口径说明（SCOPE_NOTE）放入 results.finance.warnings，恰好一次；
+  规则 field 级 warning 去重（保持顺序）后追加。
+- 规则证据 source_type=408006000、source_title 标记"母公司报表"。
 - 规则引擎不可用（无 DB / 异常）时返回 failed + 明确 warning，绝不返回 Mock 触发结果。
 - 全部规则因数据不足/不适用而无有效信号时返回 partial，标注数据真实缺失。
 """
@@ -14,8 +17,24 @@ from app.agents.state import (
     ModuleResults,
     ModuleStatus,
 )
+from app.domain.finance.parent_scope import (
+    PARENT_STATEMENT_TYPE,
+    SCOPE_NOTE,
+    W_COMPANY_TYPE_UNKNOWN,
+)
 
 _RULES = [f"R{i}" for i in range(1, 8)]
+
+
+def _dedup(items: list[str]) -> list[str]:
+    """去重并保持原顺序（禁止 set() 导致顺序随机）。"""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
 
 
 def _resolve_as_of(state: AgentState) -> str:
@@ -75,36 +94,46 @@ def finance_node(state: AgentState) -> dict:
     rule_statuses: dict[str, str] = {}
     warnings: list[str] = []
     evidence: list[EvidenceRef] = []
+    unknown_type = False
 
     for rid in _RULES:
         r = results.get(rid)
         if r is None:
             continue
         rule_statuses[rid] = r.status
+        if r.status == "insufficient_data" and W_COMPANY_TYPE_UNKNOWN in r.warnings:
+            unknown_type = True
         for w in r.warnings:
-            if w and w not in warnings:
+            if w:
                 warnings.append(w)
-        q = r.quality or {}
-        scope = q.get("statement_scope", "")
-        stmt_type = q.get("statement_type", "")
         for ev_id in r.evidence_ids:
             evidence.append(
                 EvidenceRef(
                     evidence_id=ev_id,
-                    source_type=stmt_type or "finance_rule",
+                    source_type=PARENT_STATEMENT_TYPE,
                     source_record_id=f"{rid}@{as_of}",
                     field_path=rid,
                     period=as_of,
                     value="",
-                    source_title=f"财务反欺诈规则 {rid}（{scope}）",
+                    source_title=f"母公司报表 · 财务反欺诈规则 {rid}",
                 )
             )
+
+    # 统一口径说明恰好一次（规则实际执行时才有意义）
+    if rule_statuses:
+        warnings.insert(0, SCOPE_NOTE)
+    # 规则级去重（保持顺序）
+    warnings = _dedup(warnings)
 
     if not rule_statuses:
         status = "failed"
         warnings.append("财务规则引擎未返回任何结果")
     elif any(s == "triggered" for s in rule_statuses.values()):
         status = "success"
+    elif unknown_type:
+        # 公司类型未知 → 数据不足，不得标记 success / 输出"未发现风险"
+        status = "partial"
+        warnings.append("公司类型缺失，无法判断是否适用非金融财务规则，规则未执行")
     elif all(
         s in ("insufficient_data", "not_applicable") for s in rule_statuses.values()
     ):
