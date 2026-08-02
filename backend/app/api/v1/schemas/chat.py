@@ -22,3 +22,4 @@ class ChatDataV1(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="财务预警点")
     missing_modules: list[str] = Field(default_factory=list, description="暂缺模块列表")
     trace_id: str = Field(..., description="追踪 ID")
+    follow_ups: list[str] = Field(default_factory=list, description="追问建议")
