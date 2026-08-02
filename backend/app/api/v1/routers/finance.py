@@ -123,19 +123,22 @@ async def get_company_finance(
         )
 
     # 3. 行业对标（Phase C 依赖数据组任务3）
+    industry_l1 = ""
+    try:
+        from app.api.v1.routers.companies import _MOCK_COMPANIES
+
+        industry_l1 = next(
+            (
+                c["industry_l1"]
+                for c in _MOCK_COMPANIES
+                if c["wind_code"] == wind_code
+            ),
+            "",
+        )
+    except ImportError:
+        pass
     industry_benchmark = IndustryBenchmark(
-        industry_l1=(
-            next(
-                (
-                    c["industry_l1"]
-                    for c in _MOCK_COMPANIES
-                    if c["wind_code"] == wind_code
-                ),
-                "",
-            )
-            if "_MOCK_COMPANIES" in dir()
-            else ""
-        ),
+        industry_l1=industry_l1,
         peer_count=0,
         warnings=["行业分位数据尚未就绪（Phase C 数据组任务3）"],
     )

@@ -216,7 +216,6 @@ async def get_company_risk(
         )
 
     # 2c. 事件维度
-    events_available = False
     try:
         from app.domain.finance._fetch import _get_engine
 
@@ -234,7 +233,6 @@ async def get_company_risk(
             ann_count = row[0] if row else 0
 
         if ann_count > 0:
-            events_available = True
             # 有公告 → 查询负面占比
             from app.domain.events.fcode_taxonomy import classify_sentiment
 
