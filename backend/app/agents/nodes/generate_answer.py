@@ -10,6 +10,10 @@ V12 §2.6 四层回答结构：
 """
 
 from app.agents.state import AgentState, FinalResponse
+from app.domain.finance.parent_scope import (
+    NO_SIGNAL_IN_SCOPE,
+    RISK_SIGNAL_IN_SCOPE,
+)
 
 # 已触发规则 → 对应指标追问（V12 §2.6 示例："查看应收账款近 8 季度趋势"）
 _RULE_FOLLOW_UP: dict[str, str] = {
@@ -115,10 +119,39 @@ def _build_follow_ups(state: AgentState) -> list[str]:
     return _dedup(follow_ups)
 
 
+def _finance_executed(state: AgentState) -> tuple[bool, object]:
+    """返回 (finance 模块是否实际执行, results.finance 对象).
+
+    finance 模块执行 = results.finance 非空且包含规则状态。
+    纯股权 / 纯事件查询（finance 未执行）不强制插入母公司口径说明。
+    """
+    results = state.get("results")
+    if not results or results.finance is None:
+        return False, None
+    if not results.finance.rule_statuses:
+        return False, results.finance
+    return True, results.finance
+
+
+def _finance_all_blocked(finance) -> bool:
+    """财务规则全部因数据不足/不适用而无有效信号（不能得出"无风险"）。"""
+    if not finance or not finance.rule_statuses:
+        return False
+    return all(
+        s in ("insufficient_data", "not_applicable")
+        for s in finance.rule_statuses.values()
+    )
+
+
 def generate_answer_node(state: AgentState) -> dict:
     company = state.get("company")
     claims = state.get("claims", [])
     evidence = state.get("evidence", [])
+    finance_ran, finance = _finance_executed(state)
+    finance_blocked = _finance_all_blocked(finance)
+    finance_unknown_type = finance_blocked and any(
+        "公司类型缺失" in (w or "") for w in (finance.warnings or [])
+    )
 
     if company is None:
         return {
@@ -130,18 +163,32 @@ def generate_answer_node(state: AgentState) -> dict:
             )
         }
 
-    # ① 一句话结论
+    # ① 一句话结论（Phase C：Finance 执行时限定母公司报表口径）
     risk_count = sum(1 for c in claims if c.severity in _RISK_SEVERITIES)
+    name_code = f"{company.sec_name}（{company.wind_code}）综合分析完成，"
     if risk_count:
-        conclusion = (
-            f"{company.sec_name}（{company.wind_code}）综合分析完成，"
-            f"共检测到 {risk_count} 项风险信号。"
-        )
+        if finance_ran:
+            # 口径限定：本分析基于母公司报表及当前数据覆盖
+            conclusion = name_code + RISK_SIGNAL_IN_SCOPE.format(n=risk_count)
+        else:
+            conclusion = name_code + f"共检测到 {risk_count} 项风险信号。"
     else:
-        conclusion = (
-            f"{company.sec_name}（{company.wind_code}）综合分析完成，"
-            "未发现明显异常信号。"
-        )
+        if finance_unknown_type:
+            # 公司类型缺失：不得输出"未发现风险"
+            conclusion = (
+                name_code
+                + "公司类型信息缺失，无法执行非金融财务规则，无法确认是否存在财务风险。"
+            )
+        elif finance_blocked:
+            conclusion = (
+                name_code
+                + "在母公司报表及当前数据覆盖范围内，财务规则因不适用/数据不足"
+                "未产出有效信号，未发现可确认的异常信号。"
+            )
+        elif finance_ran:
+            conclusion = name_code + NO_SIGNAL_IN_SCOPE
+        else:
+            conclusion = name_code + "未发现明显异常信号。"
 
     # ② 三类核心信号摘要
     summary = _build_signal_summary(claims)

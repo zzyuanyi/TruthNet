@@ -1,7 +1,17 @@
-"""R5 · 毛利率/费用率异常 — RULES_SPEC §6."""
+"""R5 · 毛利率/费用率异常 — RULES_SPEC §6.
 
-from app.domain.finance._fetch import fetch_company_field, fetch_series
+口径: 固定母公司报表（statement_type=408006000），不读取合并报表。
+公司类型: 统一走 check_company_type Gate（NULL/非法 → insufficient_data）。
+所有状态均携带母公司口径 quality。
+"""
+
+from app.domain.finance._fetch import fetch_series
 from app.domain.finance.models import RuleResult
+from app.domain.finance.parent_scope import (
+    build_gate_result,
+    build_parent_scope_quality,
+    check_company_type,
+)
 from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 
@@ -13,11 +23,10 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         status="not_triggered",
     )
 
-    comp_type = fetch_company_field(company_code, "comp_type_code")
-    if comp_type is not None and comp_type != 1:
-        result.status = "not_applicable"
-        result.explanation = "金融企业不适用"
-        return result
+    # ── 1. 公司类型 Gate ──
+    gate = check_company_type(company_code)
+    if gate.status != "eligible":
+        return build_gate_result("R5", "毛利率/费用率异常", gate)
 
     oper_rev_sr = fetch_series(company_code, "oper_rev", periods, as_of)
     less_oper_cost_sr = fetch_series(company_code, "less_oper_cost", periods, as_of)
@@ -30,15 +39,41 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     admin_exp = admin_exp_sr.values
     fin_exp = fin_exp_sr.values
 
+    field_warnings = [
+        w
+        for w in (
+            oper_rev_sr.warning,
+            less_oper_cost_sr.warning,
+            selling_exp_sr.warning,
+            admin_exp_sr.warning,
+            fin_exp_sr.warning,
+        )
+        if w
+    ]
+
     valid_or = count_valid(oper_rev, 6)
     if valid_or < 4:
         result.status = "insufficient_data"
         result.explanation = f"数据不足: oper_rev有效{valid_or}期"
+        result.quality = build_parent_scope_quality(
+            coverage=oper_rev_sr.coverage,
+            data_completeness=round(valid_or / 6, 2),
+            missing_periods=6 - valid_or,
+            extra={"history_periods_available": valid_or},
+        )
+        result.warnings = field_warnings
         return result
 
     if oper_rev[-1] is None or oper_rev[-1] <= 0:
         result.status = "insufficient_data"
         result.explanation = "当期无收入"
+        result.quality = build_parent_scope_quality(
+            coverage=oper_rev_sr.coverage,
+            data_completeness=round(valid_or / 6, 2),
+            missing_periods=6 - valid_or,
+            extra={"history_periods_available": valid_or},
+        )
+        result.warnings = field_warnings
         return result
 
     # 计算最近 8 期毛利率
@@ -120,21 +155,13 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
             "value": round(er_deviation, 1),
             "unit": "percentage_point",
         }
-    result.quality = {
-        "statement_scope": oper_rev_sr.scope,
-        "statement_type": oper_rev_sr.statement_type,
-        "history_periods_available": valid_or,
-        "data_coverage": oper_rev_sr.coverage,
-    }
-    for w in (
-        oper_rev_sr.warning,
-        less_oper_cost_sr.warning,
-        selling_exp_sr.warning,
-        admin_exp_sr.warning,
-        fin_exp_sr.warning,
-    ):
-        if w:
-            result.warnings.append(w)
+    result.quality = build_parent_scope_quality(
+        coverage=oper_rev_sr.coverage,
+        data_completeness=round(valid_or / 6, 2),
+        missing_periods=6 - valid_or,
+        extra={"history_periods_available": valid_or},
+    )
+    result.warnings = field_warnings
     result.evidence_ids = [f"ev_is_oper_rev_{as_of}", f"ev_is_oper_cost_{as_of}"]
     if severity == "red":
         result.explanation = (

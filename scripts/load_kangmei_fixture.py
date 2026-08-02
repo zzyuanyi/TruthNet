@@ -61,7 +61,7 @@ _WIND_CODE = "600518.SH"
 _ENTITY_ID = "company_600518_SH"
 _SOURCE_TYPE = "fixture"
 _SOURCE_FILE = "scripts/load_kangmei_fixture.py"
-_STATEMENT_TYPE = "408006000"  # 合并报表口径
+_STATEMENT_TYPE = "408006000"  # 母公司报表口径（项目固定分析口径）
 
 # ---------------------------------------------------------------------------
 # 数据库连接

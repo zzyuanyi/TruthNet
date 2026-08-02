@@ -1,7 +1,17 @@
-"""R2 · 现金流–利润背离 — RULES_SPEC §3."""
+"""R2 · 现金流–利润背离 — RULES_SPEC §3.
 
-from app.domain.finance._fetch import fetch_company_field, fetch_series
+口径: 固定母公司报表（statement_type=408006000），不读取合并报表。
+公司类型: 统一走 check_company_type Gate（NULL/非法 → insufficient_data）。
+所有状态均携带母公司口径 quality。
+"""
+
+from app.domain.finance._fetch import fetch_series
 from app.domain.finance.models import RuleResult
+from app.domain.finance.parent_scope import (
+    build_gate_result,
+    build_parent_scope_quality,
+    check_company_type,
+)
 from app.domain.finance.rule_utils import count_valid, mean_or_none, safe_div
 
 
@@ -13,11 +23,10 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         status="not_triggered",
     )
 
-    comp_type = fetch_company_field(company_code, "comp_type_code")
-    if comp_type is not None and comp_type != 1:
-        result.status = "not_applicable"
-        result.explanation = "金融企业不适用"
-        return result
+    # ── 1. 公司类型 Gate ──
+    gate = check_company_type(company_code)
+    if gate.status != "eligible":
+        return build_gate_result("R2", "现金流–利润背离", gate)
 
     net_profit_sr = fetch_series(
         company_code, "net_profit_excl_min_int_inc", periods, as_of
@@ -26,11 +35,19 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     net_profit = net_profit_sr.values
     oper_cf = oper_cf_sr.values
 
+    field_warnings = [w for w in (net_profit_sr.warning, oper_cf_sr.warning) if w]
+
     valid_np = count_valid(net_profit, 4)
     valid_cf = count_valid(oper_cf, 4)
     if valid_np < 3 or valid_cf < 3:
         result.status = "insufficient_data"
         result.explanation = f"数据不足: profit有效{valid_np}期, cf有效{valid_cf}期"
+        result.quality = build_parent_scope_quality(
+            coverage=net_profit_sr.coverage,
+            data_completeness=round(valid_np / 4, 2),
+            missing_periods=4 - valid_np,
+        )
+        result.warnings = field_warnings
         return result
 
     # 最近 4 期
@@ -43,6 +60,12 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     ):
         result.status = "not_applicable"
         result.explanation = "公司持续亏损且现金流出，非粉饰信号"
+        result.quality = build_parent_scope_quality(
+            coverage=net_profit_sr.coverage,
+            data_completeness=round(valid_np / 4, 2),
+            missing_periods=4 - valid_np,
+        )
+        result.warnings = field_warnings
         return result
 
     # 计算每期 cf/profit ratio
@@ -65,6 +88,12 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     if avg_ratio is None:
         result.status = "insufficient_data"
         result.explanation = "无法计算现金流利润比"
+        result.quality = build_parent_scope_quality(
+            coverage=net_profit_sr.coverage,
+            data_completeness=round(valid_np / 4, 2),
+            missing_periods=4 - valid_np,
+        )
+        result.warnings = field_warnings
         return result
 
     # 判断严重程度
@@ -104,16 +133,13 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         "cf_to_profit_ratio": {"value": round(avg_ratio, 3), "unit": "ratio"},
         "consec_neg_cf": {"value": max_consec_neg, "unit": "quarters"},
     }
-    result.quality = {
-        "statement_scope": net_profit_sr.scope,
-        "statement_type": net_profit_sr.statement_type,
-        "profit_sign": "positive" if has_pos_profit_this else "negative",
-        "data_completeness": round(valid_np / 4, 2),
-        "data_coverage": net_profit_sr.coverage,
-    }
-    for w in (net_profit_sr.warning, oper_cf_sr.warning):
-        if w:
-            result.warnings.append(w)
+    result.quality = build_parent_scope_quality(
+        coverage=net_profit_sr.coverage,
+        data_completeness=round(valid_np / 4, 2),
+        missing_periods=4 - valid_np,
+        extra={"profit_sign": "positive" if has_pos_profit_this else "negative"},
+    )
+    result.warnings = field_warnings
     result.evidence_ids = [
         f"ev_is_net_profit_{as_of}",
         f"ev_cf_oper_{as_of}",
