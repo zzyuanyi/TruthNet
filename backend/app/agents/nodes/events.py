@@ -115,16 +115,30 @@ def events_node(state: AgentState) -> dict:
             ),
         }
 
-    # 无公告 → 空结果（成功）
+    # 无公告 → NO_ANNOUNCEMENT_DATA（空 timeline + 明确 warning + coverage 说明）
     if not rows:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        runtime = state.get("runtime")
+        if runtime is not None and hasattr(runtime, "warnings"):
+            no_ann_warn = (
+                "NO_ANNOUNCEMENT_DATA: 该公司在公告数据集中无公告记录，"
+                "事件时间线为空，公告维度 coverage=0"
+            )
+            if no_ann_warn not in runtime.warnings:
+                runtime.warnings.append(no_ann_warn)
         return {
             "module_status": {
-                "events": ModuleStatus(state="success", duration_ms=elapsed_ms)
+                "events": ModuleStatus(
+                    state="partial",
+                    error_code="NO_ANNOUNCEMENT_DATA",
+                    recoverable=True,
+                    duration_ms=elapsed_ms,
+                )
             },
             "results": ModuleResults(
                 events=EventsResult(timeline=[], clusters=[], evidence=[])
             ),
+            "runtime": runtime,
         }
 
     # 生成 timeline、分类统计、Evidence

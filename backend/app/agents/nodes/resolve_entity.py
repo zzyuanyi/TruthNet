@@ -208,7 +208,16 @@ def _find_company(query: str) -> CompanyRef | None:
 
 def resolve_entity_node(state: AgentState) -> dict:
     user_query = state.get("user_query", "")
-    company = _find_company(user_query)
+    # 指代消解：memory 节点已解析出实体名（如"它"→"康美药业"），
+    # 追加到搜索文本，使指代轮次能继续公司分析。
+    search_text = user_query
+    mc = state.get("memory_context")
+    if mc is not None:
+        resolved = getattr(mc, "resolved_entity_name", "") or ""
+        if resolved:
+            search_text = f"{user_query} {resolved}"
+
+    company = _find_company(search_text)
 
     if company is None:
         return {"company": None}
