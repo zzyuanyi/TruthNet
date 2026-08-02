@@ -5,7 +5,7 @@
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON,
@@ -753,6 +753,19 @@ class EvidenceRef(Base):
     retrieved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="检索时间"
     )
+    # Phase C: 全局追溯字段
+    turn_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="关联轮次 ID"
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="追踪 ID"
+    )
+    module: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="来源模块: finance/equity/events"
+    )
+    source_table: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="来源表名"
+    )
 
     def __repr__(self) -> str:
         return f"<Evidence {self.evidence_id} [{self.source_type}]>"
@@ -775,13 +788,15 @@ class Claim(Base):
     )
     text: Mapped[str] = mapped_column(Text, nullable=False, comment="声明内容")
     claim_type: Mapped[str | None] = mapped_column(
-        String(32), nullable=True, comment="声明类型: fact/analysis/suggestion"
+        String(32),
+        nullable=True,
+        comment="声明类型: financial/equity/event/fact/analysis",
     )
     severity: Mapped[str] = mapped_column(
         String(16), default="low", comment="严重程度: none/low/medium/high/critical"
     )
-    confidence: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, comment="置信度: high/medium/low/unverified"
+    confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="置信度 (0-1)"
     )
     rule_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="关联规则 ID"
@@ -798,9 +813,166 @@ class Claim(Base):
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="生成时间"
     )
+    # Phase C: 全局追溯字段
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="追踪 ID"
+    )
+    company_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="公司代码"
+    )
+    module: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="来源模块: finance/equity/events"
+    )
 
     def __repr__(self) -> str:
         return f"<Claim {self.claim_id} [{self.confidence}]>"
+
+
+# ============================================================================
+# Phase C 派生表 15: claim_evidence_links — Claim↔Evidence 关联 (§6.4)
+# ============================================================================
+
+
+class ClaimEvidenceLink(Base):
+    __tablename__ = "claim_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "claim_id",
+            "evidence_id",
+            "relation_type",
+            name="uq_claim_evidence_link",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    claim_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("claims.claim_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Claim ID",
+    )
+    evidence_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("evidence_refs.evidence_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Evidence ID",
+    )
+    relation_type: Mapped[str] = mapped_column(
+        String(16),
+        default="supports",
+        comment="关系类型: supports/contradicts/context",
+    )
+    sequence_no: Mapped[int] = mapped_column(Integer, default=0, comment="顺序号")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Link {self.claim_id} → {self.evidence_id}>"
+
+
+# ============================================================================
+# Phase C 派生表 16: event_clusters — 事件簇交接 (§5.5)
+# ============================================================================
+
+
+class EventCluster(Base):
+    __tablename__ = "event_clusters"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+
+    event_cluster_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="事件簇唯一 ID"
+    )
+    entity_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="公司 entity_id"
+    )
+    wind_code: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True, comment="Wind 代码"
+    )
+    topic: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="事件簇主题"
+    )
+    summary: Mapped[str] = mapped_column(Text, default="", comment="摘要")
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, comment="起始日期")
+    end_date: Mapped[date] = mapped_column(Date, nullable=False, comment="结束日期")
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, comment="事件数")
+    sentiment: Mapped[str] = mapped_column(String(16), nullable=False, comment="情感")
+    sentiment_score: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="情感得分 [-1,1]"
+    )
+    cluster_method: Mapped[str] = mapped_column(
+        String(64), default="", comment="聚类方法"
+    )
+    cluster_version: Mapped[str] = mapped_column(
+        String(32), default="", comment="聚类版本"
+    )
+    dataset_version: Mapped[str] = mapped_column(
+        String(64), default="", comment="数据集版本"
+    )
+    quality_flags: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="质量标记"
+    )
+    evidence_ids: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="关联 Evidence ID 列表"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="更新时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<EventCluster {self.event_cluster_id} [{self.topic[:20]}]>"
+
+
+class EventClusterSource(Base):
+    __tablename__ = "event_cluster_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_cluster_id",
+            "source_record_id",
+            name="uq_event_cluster_source",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_cluster_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("event_clusters.event_cluster_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="事件簇 ID",
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="来源类型"
+    )
+    source_record_id: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="来源记录 ID"
+    )
+    evidence_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="关联 Evidence ID"
+    )
+    source_title: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="来源标题"
+    )
+    source_uri: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="来源 URI"
+    )
+    published_at: Mapped[date | None] = mapped_column(
+        Date, nullable=True, comment="发布日期"
+    )
+    content_hash: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, comment="内容哈希"
+    )
+    sequence_no: Mapped[int] = mapped_column(Integer, default=0, comment="顺序号")
+
+    def __repr__(self) -> str:
+        return f"<ClusterSource {self.event_cluster_id} {self.source_record_id}>"
 
 
 # ============================================================================
