@@ -1,4 +1,10 @@
-"""财务字段 → 数据库表映射 — Phase C 规则引擎."""
+"""财务字段 → 数据库表映射 — Phase C 规则引擎.
+
+ORM 建表时列名直接使用字段别名（acct_rcv, oper_rev 等），
+因此无需额外别名→列名映射层，字段名直接作为 SQL 列名。
+"""
+
+# ── 字段 → 表映射 ──────────────────────────────────────────
 
 BALANCE_SHEET_FIELDS = {
     "acct_rcv",
@@ -46,13 +52,13 @@ for f in CASH_FLOW_FIELDS:
 
 
 def get_table(field_name: str) -> str:
-    """返回字段所属的表名."""
+    """返回字段别名所属的表名。"""
     t = FIELD_TO_TABLE.get(field_name)
     if t is None:
-        raise ValueError(f"未知字段: {field_name}")
+        raise ValueError(f"未知字段: {field_name}，请确认别名已在 BALANCE_SHEET_FIELDS / INCOME_STATEMENT_FIELDS / CASH_FLOW_FIELDS 中注册")
     return t
 
 
 def is_cumulative_field(field_name: str) -> bool:
-    """判断是否为利润表/现金流表的累计值字段."""
+    """判断是否为利润表/现金流表的累计值字段。"""
     return field_name in INCOME_STATEMENT_FIELDS or field_name in CASH_FLOW_FIELDS
