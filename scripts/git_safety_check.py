@@ -23,9 +23,8 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

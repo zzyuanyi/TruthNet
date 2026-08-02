@@ -53,10 +53,10 @@ def test_finance_claims_generated():
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R2": "triggered"},
             evidence=[
-                _ev("ev_bs_01"),
-                _ev("ev_is_01"),
-                _ev("ev_cf_01"),
-                _ev("ev_is_02"),
+                _ev("ev_bs_acct_rcv_20260331"),
+                _ev("ev_is_oper_rev_20260331"),
+                _ev("ev_is_net_profit_20260331"),
+                _ev("ev_cf_oper_20260331"),
             ],
         )
     )
@@ -66,10 +66,13 @@ def test_finance_claims_generated():
     assert len(financial) == 2
     r1 = next(c for c in financial if c.rule_id == "R1")
     # 背离结论需要应收+营收两个字段证据
-    assert r1.evidence_ids == ["ev_bs_01", "ev_is_01"]
+    assert set(r1.evidence_ids) == {
+        "ev_bs_acct_rcv_20260331",
+        "ev_is_oper_rev_20260331",
+    }
     assert r1.severity == "red"
     r2 = next(c for c in financial if c.rule_id == "R2")
-    assert r2.evidence_ids == ["ev_cf_01", "ev_is_02"]
+    assert set(r2.evidence_ids) == {"ev_is_net_profit_20260331", "ev_cf_oper_20260331"}
 
 
 def test_finance_rule_without_evidence_skipped():
@@ -77,7 +80,9 @@ def test_finance_rule_without_evidence_skipped():
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R3": "triggered"},
-            evidence=[_ev("ev_is_01")],  # 只有 R5 用的 IS 证据，R1/R3 的 BS/CF 缺失
+            evidence=[
+                _ev("ev_is_oper_rev_20260331")
+            ],  # R1 缺 acct_rcv、R3 缺 monetary_cap/borrow
         )
     )
     result = build_claims_node(_make_state(results))
@@ -88,12 +93,17 @@ def test_multi_rule_regression():
     """R1-R7 全部触发 + 全量证据 → 生成 7 个 financial Claim。"""
     statuses = {f"R{i}": "triggered" for i in range(1, 8)}
     evidence = [
-        _ev("ev_bs_01"),
-        _ev("ev_is_01"),
-        _ev("ev_cf_01"),
-        _ev("ev_is_02"),
-        _ev("ev_bs_02"),
-        _ev("ev_bs_03"),
+        _ev("ev_bs_acct_rcv_20260331"),
+        _ev("ev_is_oper_rev_20260331"),
+        _ev("ev_is_net_profit_20260331"),
+        _ev("ev_cf_oper_20260331"),
+        _ev("ev_bs_monetary_cap_20260331"),
+        _ev("ev_bs_borrow_20260331"),
+        _ev("ev_bs_inventories_20260331"),
+        _ev("ev_is_oper_cost_20260331"),
+        _ev("ev_bs_oth_rcv_20260331"),
+        _ev("ev_bs_tot_assets_20260331"),
+        _ev("ev_is_core_profit_20260331"),
     ]
     results = ModuleResults(
         finance=FinanceResult(rule_statuses=statuses, evidence=evidence)
@@ -105,14 +115,13 @@ def test_multi_rule_regression():
     # 所有 Claim 的 evidence_ids 非空且引用真实存在
     for c in financial:
         assert c.evidence_ids
-        assert all(
-            eid
-            in {"ev_bs_01", "ev_is_01", "ev_cf_01", "ev_is_02", "ev_bs_02", "ev_bs_03"}
-            for eid in c.evidence_ids
-        )
+        assert all(eid in {e.evidence_id for e in evidence} for eid in c.evidence_ids)
     # R1 背离结论证据覆盖应收+营收两字段
     r1 = next(c for c in financial if c.rule_id == "R1")
-    assert set(r1.evidence_ids) == {"ev_bs_01", "ev_is_01"}
+    assert set(r1.evidence_ids) == {
+        "ev_bs_acct_rcv_20260331",
+        "ev_is_oper_rev_20260331",
+    }
 
 
 # ── equity Claim 证据绑定 ───────────────────────────────────
@@ -202,7 +211,7 @@ def test_evidence_collected_from_all_modules():
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered"},
-            evidence=[_ev("ev_bs_01"), _ev("ev_is_01")],
+            evidence=[_ev("ev_bs_acct_rcv_20260331"), _ev("ev_is_oper_rev_20260331")],
         ),
         equity=EquityResult(
             chains=[{"path": ["A"], "total_stake": 0.1}],
@@ -216,7 +225,12 @@ def test_evidence_collected_from_all_modules():
     result = build_claims_node(_make_state(results))
 
     ids = {ev.evidence_id for ev in result["evidence"]}
-    assert ids == {"ev_bs_01", "ev_is_01", "ev_eq_01", "ann_001"}
+    assert ids == {
+        "ev_bs_acct_rcv_20260331",
+        "ev_is_oper_rev_20260331",
+        "ev_eq_01",
+        "ann_001",
+    }
     # 三类 Claim 全部生成且引用真实证据
     assert len(result["claims"]) == 3
     for c in result["claims"]:

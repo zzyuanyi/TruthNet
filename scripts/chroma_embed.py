@@ -9,20 +9,22 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Force CPU, avoid segfault
 os.environ["OMP_NUM_THREADS"] = "4"
 
-import sys
-import json
-import hashlib
-import logging
 import argparse
+import hashlib
+import json
+import logging
+import sys
 from pathlib import Path
+
+import numpy as np
 import torch
 
 torch.set_num_threads(4)
-import numpy as np  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.app.core.config import settings  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
+
+from backend.app.core.config import settings  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -32,15 +34,18 @@ log = logging.getLogger(__name__)
 
 def _load_embedding_model(model_name: str, cache_dir: str):
     """加载 BGE 模型（优先本地缓存，其次 ModelScope 国内镜像）。"""
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import SentenceTransformer  # noqa: E402
 
     # 尝试 ModelScope 国内镜像下载
     try:
-        from modelscope import snapshot_download
+        from modelscope import snapshot_download  # noqa: E402
 
         model_dir = snapshot_download(model_name, cache_dir=cache_dir)
         log.info("模型已通过 ModelScope 就绪: %s", model_dir)
-        return SentenceTransformer(model_dir, device="cpu")
+        st = SentenceTransformer(model_dir, device="cpu")
+        if st._first_module() is not None:
+            return st
+        log.warning("ModelScope 模型不可用，回退 HuggingFace")
     except Exception:
         pass
 

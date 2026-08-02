@@ -28,7 +28,6 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Miniconda 官方下载 URL
@@ -101,7 +100,7 @@ def detect_conda() -> dict:
     version = out if code == 0 else "unknown"
 
     # 获取 conda env list
-    code, out, err = run_cmd(["conda", "env", "list"])
+    code, out, _err = run_cmd(["conda", "env", "list"])
     envs: list[str] = []
     if code == 0:
         for line in out.splitlines():
@@ -362,7 +361,7 @@ def apply_config(system_info: dict, conda_info: dict, venv_info: dict, args) -> 
         venv_dir = REPO_ROOT / ".venv"
         if not venv_dir.exists():
             print("\n  正在创建 venv 环境...")
-            code, out, err = run_cmd(
+            code, _out, err = run_cmd(
                 [sys.executable, "-m", "venv", str(venv_dir)],
                 timeout=60,
             )

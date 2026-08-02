@@ -1,7 +1,9 @@
-"""PersistTurn — V12 §7.2. 保存 turn 状态到 MySQL。
+"""PersistTurn — V12 §7.2. 保存 turn 状态（conversation 表）。
 
 完整 State → conversation_sessions + conversation_turns (§10.8)。
-SQL_BACKEND != mysql 时保持 no-op（Phase B 占位行为）。
+Phase C 集成修正: 尊重 SQL_BACKEND（sqlite lite / mysql full），lite 模式
+同样写入 SQLite，保证与 load_context 读写一致（多轮记忆闭环）。
+数据库异常吞掉并记日志，不阻断 Agent 主流程。
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -18,19 +21,33 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_engine: Engine | None = None
+_engines: dict[str, Engine] = {}
+
+
+def _repo_root() -> Path:
+    # backend/app/agents/nodes/persist_turn.py -> 项目根
+    return Path(__file__).resolve().parents[4]
 
 
 def _get_engine() -> Engine:
-    """惰性缓存 MySQL engine（与 resolve_entity 节点一致）。"""
-    global _engine
-    if _engine is None:
+    """惰性缓存引擎，尊重 SQL_BACKEND（sqlite/mysql）。"""
+    backend = settings.SQL_BACKEND
+    if backend in _engines:
+        return _engines[backend]
+
+    if backend == "mysql":
         url = (
             f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
             f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+            "?charset=utf8mb4"
         )
-        _engine = create_engine(url, echo=False)
-    return _engine
+        _engines[backend] = create_engine(url, echo=False)
+    else:  # sqlite
+        path = Path(settings.SQLITE_PATH)
+        if not path.is_absolute():
+            path = _repo_root() / path
+        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
+    return _engines[backend]
 
 
 def _session_id(state: AgentState) -> str | None:
@@ -63,9 +80,6 @@ def persist_turn_node(state: AgentState) -> dict:
     写入 conversation_sessions（upsert）+ conversation_turns（turn_index 递增）。
     任何异常都吞掉并记日志，不阻断 Agent 主流程。
     """
-    if settings.SQL_BACKEND != "mysql":
-        return {"messages": []}
-
     session_id = _session_id(state)
     question = state.get("user_query", "")
     if not session_id or not question:

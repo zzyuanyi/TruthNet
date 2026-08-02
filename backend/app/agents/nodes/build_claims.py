@@ -9,17 +9,17 @@ Bug fix:
 from app.agents.state import AgentState, Claim, EvidenceRef
 
 
-# 规则 → 所需字段证据映射（证据必须覆盖 Claim 声明的全部字段，RULES_SPEC 字段-规则矩阵）
-# R1 背离 = 应收 + 营收；R2 背离 = 经营现金流 + 净利润；R3 存贷双高 = 货币资金 + 有息负债
+# 规则 → 证据 ID 前缀（与规则引擎 evidence_ids 对应，前缀匹配避免依赖 as_of）
+# 证据必须覆盖 Claim 声明的全部字段（部分匹配不足以支撑结论）。
+# 规则引擎产出形如 ev_bs_acct_rcv_<as_of> 的真实证据，由 finance_node 转为 EvidenceRef。
 _RULE_EVIDENCE_MAP: dict[str, list[str]] = {
-    "R1": ["ev_bs_01", "ev_is_01"],  # acct_rcv + oper_rev
-    "R2": ["ev_cf_01", "ev_is_02"],  # net_cash_flows_oper_act + net_profit
-    "R3": ["ev_bs_02", "ev_bs_03"],  # monetary_cap + st_borrow
-    # TODO(任务 1): R4-R7 依赖真实化后的字段证据，当前 mock 无对应字段
-    "R4": ["ev_bs_01"],  # 需 inventories
-    "R5": ["ev_is_01"],  # 需费用类字段
-    "R6": ["ev_bs_01"],  # 需 oth_rcv
-    "R7": ["ev_cf_01"],  # 需 net_profit（扣非对比）
+    "R1": ["ev_bs_acct_rcv", "ev_is_oper_rev"],  # acct_rcv + oper_rev
+    "R2": ["ev_is_net_profit", "ev_cf_oper"],  # net_profit + oper_cf
+    "R3": ["ev_bs_monetary_cap", "ev_bs_borrow"],  # monetary_cap + borrow
+    "R4": ["ev_bs_inventories", "ev_is_oper_rev"],  # inventories + oper_rev
+    "R5": ["ev_is_oper_rev", "ev_is_oper_cost"],  # oper_rev + less_oper_cost
+    "R6": ["ev_bs_oth_rcv", "ev_bs_tot_assets"],  # oth_rcv + tot_assets
+    "R7": ["ev_is_net_profit", "ev_is_core_profit"],  # net_profit + 扣非
 }
 
 
@@ -70,12 +70,16 @@ def build_claims_node(state: AgentState) -> dict:
     if results and results.finance and results.finance.rule_statuses:
         for rule_id, status in results.finance.rule_statuses.items():
             if status == "triggered":
-                # 为每条规则选择语义匹配的 evidence
-                ev_ids = _RULE_EVIDENCE_MAP.get(rule_id, ["ev_bs_01"])
-                # 证据必须完整覆盖 Claim 声明的全部字段（部分匹配不足以支撑结论）
-                if any(eid not in evidence_index for eid in ev_ids):
+                # 为每条规则选择语义匹配的 evidence（前缀匹配规则引擎真实产出）
+                prefixes = _RULE_EVIDENCE_MAP.get(rule_id, [])
+                actual_ev_ids = [
+                    eid
+                    for eid in evidence_index
+                    if any(eid.startswith(p) for p in prefixes)
+                ]
+                # 证据必须完整覆盖 Claim 声明的全部字段（前缀数 >= 声明的字段数）
+                if len(actual_ev_ids) < len(prefixes):
                     continue
-                actual_ev_ids = ev_ids
 
                 claims.append(
                     Claim(

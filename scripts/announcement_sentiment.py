@@ -79,7 +79,7 @@ def analyze_dict_coverage(dict_path: Path) -> dict:
             df_dict.columns = ["fcode", "name"] + list(df_dict.columns[2:])
 
     fcode_col = "fcode"
-    all_codes = set(str(c).strip() for c in df_dict[fcode_col].dropna().unique())
+    all_codes = {str(c).strip() for c in df_dict[fcode_col].dropna().unique()}
     from backend.app.domain.events.fcode_taxonomy import FCODE_SENTIMENT_MAP
 
     mapped = set(FCODE_SENTIMENT_MAP.keys())
