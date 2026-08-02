@@ -43,6 +43,11 @@ jobs:
       - name: Run tests
         run: python -m pytest backend/tests -v
 
+      - name: Run evaluation framework tests
+        # 与 backend/tests 分开收集，避免顶层 tests/ 与 backend/tests/
+        # 双包在单次 pytest 收集时的 import-mode 冲突。
+        run: python -m pytest tests/evaluation -v
+
       - name: Ruff check
         run: ruff check .
 

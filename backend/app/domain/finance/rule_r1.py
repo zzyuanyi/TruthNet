@@ -34,6 +34,13 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"数据不足: acct_rcv有效{valid_ar}期, oper_rev有效{valid_or}期"
         )
         return result
+    if len(acct_rcv) < 5 or len(oper_rev) < 5:
+        # t-4Q 需要至少 5 期；不足则无法计算 YoY，避免越界
+        result.status = "insufficient_data"
+        result.explanation = (
+            f"历史期数不足: acct_rcv={len(acct_rcv)}期, oper_rev={len(oper_rev)}期"
+        )
+        return result
 
     # ── 2. 计算 ──
     t_idx, t4_idx = -1, -5
@@ -47,14 +54,13 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
     gap = (ar_yoy - or_yoy) * 100  # 转为百分点
 
     # ── 3. 上一期 gap（用于连续背离判断）──
-    prev_t, prev_t4 = -2, -6
-    prev_ar_yoy = yoy_growth(acct_rcv[prev_t], acct_rcv[prev_t4])
-    prev_or_yoy = yoy_growth(oper_rev[prev_t], oper_rev[prev_t4])
-    prev_gap = (
-        ((prev_ar_yoy - prev_or_yoy) * 100)
-        if (prev_ar_yoy is not None and prev_or_yoy is not None)
-        else None
-    )
+    # 需至少 6 期数据（prev_t=-2, prev_t4=-6）；不足时 prev_gap=None，不越界。
+    prev_gap = None
+    if len(acct_rcv) >= 6 and len(oper_rev) >= 6:
+        prev_ar_yoy = yoy_growth(acct_rcv[-2], acct_rcv[-6])
+        prev_or_yoy = yoy_growth(oper_rev[-2], oper_rev[-6])
+        if prev_ar_yoy is not None and prev_or_yoy is not None:
+            prev_gap = (prev_ar_yoy - prev_or_yoy) * 100
 
     # ── 4. 阈值判断 ──
     severity = "green"
