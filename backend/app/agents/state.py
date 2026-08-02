@@ -118,6 +118,8 @@ class MemoryContext(BaseModel):
 
 class FinanceResult(BaseModel):
     rule_statuses: dict[str, str] = Field(default_factory=dict)
+    # 规则明细：rule_id → {rule_name, explanation, severity}（规则引擎产出，供回答展开清单）
+    rule_details: dict[str, dict] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
 

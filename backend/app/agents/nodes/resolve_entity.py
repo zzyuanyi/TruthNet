@@ -219,6 +219,17 @@ def resolve_entity_node(state: AgentState) -> dict:
 
     company = _find_company(search_text)
 
+    # 主语省略延续：query 无公司名且无指代词（如"综合给一个风险结论"），
+    # 延续最近对话主体（V12 §7.6 当前主体恢复）
+    if company is None and mc is not None:
+        prev = getattr(mc, "previous_companies", []) or []
+        if prev:
+            company = _find_company(prev[0])
+            if company is not None:
+                logger.info(
+                    "ResolveEntity: query 无公司名，延续最近主体 %s", company.sec_name
+                )
+
     if company is None:
         return {"company": None}
 
