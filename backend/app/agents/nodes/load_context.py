@@ -3,7 +3,12 @@
 按 session_id 回读最近 N 轮 (question, answer)，组装为 messages 历史
 注入 state，供 memory 节点做指代消解（公司/指标从文本提取，
 company_code 当前无消费者，不入库查询）。
-SQL_BACKEND != mysql 或不可恢复时保持占位行为。
+
+Phase C 集成修正:
+- 恢复窗口由 5 轮扩至 _HISTORY_LIMIT=10，满足"10 轮指代正确"验收。
+- 支持 SQL_BACKEND 双后端（sqlite lite / mysql full），lite 模式同样可
+  从 SQLite conversation_turns 恢复历史。
+- 数据库不可用/异常时保持占位行为（返回空历史，不阻断图执行）。
 
 Bug fix: 空 {} 会导致 LangGraph InvalidUpdateError，始终返回 state key。
 """
@@ -11,6 +16,7 @@ Bug fix: 空 {} 会导致 LangGraph InvalidUpdateError，始终返回 state key�
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -20,22 +26,36 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 回读最近轮次上限（V12 长对话记忆：超过 10 轮后主体丢失 → 滑动窗口回读）
-_HISTORY_LIMIT = 5
+# 回读最近轮次上限（10 轮：验收要求第 10 轮仍能恢复正确主体）
+_HISTORY_LIMIT = 10
 
-_engine: Engine | None = None
+_engines: dict[str, Engine] = {}
+
+
+def _repo_root() -> Path:
+    # backend/app/agents/nodes/load_context.py -> 项目根
+    return Path(__file__).resolve().parents[4]
 
 
 def _get_engine() -> Engine:
-    """惰性缓存 MySQL engine（与 resolve_entity 节点一致）。"""
-    global _engine
-    if _engine is None:
+    """惰性缓存引擎，尊重 SQL_BACKEND（sqlite/mysql）。"""
+    backend = settings.SQL_BACKEND
+    if backend in _engines:
+        return _engines[backend]
+
+    if backend == "mysql":
         url = (
             f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
             f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+            "?charset=utf8mb4"
         )
-        _engine = create_engine(url, echo=False)
-    return _engine
+        _engines[backend] = create_engine(url, echo=False)
+    else:  # sqlite
+        path = Path(settings.SQLITE_PATH)
+        if not path.is_absolute():
+            path = _repo_root() / path
+        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
+    return _engines[backend]
 
 
 def _session_id(state: AgentState) -> str | None:
@@ -54,9 +74,6 @@ def load_context_node(state: AgentState) -> dict:
     下游 memory 节点可从中提取公司/指标做指代消解。
     """
     runtime = state.get("runtime")
-
-    if settings.SQL_BACKEND != "mysql":
-        return {"messages": [], "runtime": runtime}
 
     session_id = _session_id(state)
     if not session_id:

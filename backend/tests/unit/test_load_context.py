@@ -107,16 +107,16 @@ def test_loads_history_in_order(monkeypatch, sqlite_engine):
 
 
 def test_loads_recent_n_only(monkeypatch, sqlite_engine):
-    """超过回读上限时只取最近 N 轮（默认 5）。"""
+    """超过回读上限时只取最近 N 轮（Phase C: 10 轮窗口）。"""
     _patch_mysql(monkeypatch, sqlite_engine)
-    _seed_turns(sqlite_engine, n=7)
+    _seed_turns(sqlite_engine, n=12)
 
     result = lc.load_context_node(_make_state())
 
     msgs = result["messages"]
-    assert len(msgs) == 10  # 5 轮 × 2 条
+    assert len(msgs) == 20  # 10 轮 × 2 条（_HISTORY_LIMIT=10）
     assert msgs[0] == {"role": "user", "content": "第3轮问题"}
-    assert msgs[-1] == {"role": "assistant", "content": "第7轮回答"}
+    assert msgs[-1] == {"role": "assistant", "content": "第12轮回答"}
 
 
 def test_empty_history(monkeypatch, sqlite_engine):
