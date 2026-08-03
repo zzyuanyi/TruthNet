@@ -36,7 +36,6 @@ _INCOME = {
     "less_gerl_admin_exp",
     "less_fin_exp",
     "net_profit_excl_min_int_inc",
-    "net_profit_after_ded_nr_lp",
 }
 _CASHFLOW = {"net_cash_flows_oper_act"}
 
@@ -187,12 +186,6 @@ def _compute_r6_oth_rcv_to_assets(series: dict[str, list]) -> float | None:
     return _safe_div(oth, assets)
 
 
-def _compute_r7_core_profit_ratio(series: dict[str, list]) -> float | None:
-    core = (series.get("net_profit_after_ded_nr_lp") or [None])[-1]
-    profit = (series.get("net_profit_excl_min_int_inc") or [None])[-1]
-    return _safe_div(core, profit)
-
-
 # ── 注册表 ──────────────────────────────────────────────────
 
 REGISTRY: dict[str, MetricSpec] = {}
@@ -319,18 +312,6 @@ _register(
         fields=("oth_rcv", "tot_assets"),
         periods=1,
         compute_from_series=_compute_r6_oth_rcv_to_assets,
-    )
-)
-_register(
-    MetricSpec(
-        metric_id="r7_core_profit_ratio",
-        rule_id="R7",
-        name="扣非/净利润比",
-        unit="ratio",
-        description="R7 核心中间量：扣非净利润 / 归母净利润",
-        fields=("net_profit_after_ded_nr_lp", "net_profit_excl_min_int_inc"),
-        periods=1,
-        compute_from_series=_compute_r7_core_profit_ratio,
     )
 )
 

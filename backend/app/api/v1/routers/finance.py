@@ -330,7 +330,6 @@ def _build_industry_benchmark(
             "r3_cash_to_assets",
             "r4_growth_gap",
             "r6_oth_rcv_to_assets",
-            "r7_core_profit_ratio",
         ):
             try:
                 metric = get_metric(metric_id)

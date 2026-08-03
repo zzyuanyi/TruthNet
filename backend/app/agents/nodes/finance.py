@@ -345,7 +345,6 @@ def _query_industry_benchmark(company_code: str, as_of: str) -> dict:
             "r3_cash_to_assets",
             "r4_growth_gap",
             "r6_oth_rcv_to_assets",
-            "r7_core_profit_ratio",
         ):
             try:
                 metric = get_metric(metric_id)

@@ -300,6 +300,10 @@ async def get_company_events(
         )
         rows = []
 
+    # 无论是否有公告都必须初始化（持久化分支无条件引用）
+    _timeline_object_ids: list[str] = []
+    _timeline_ann_dates: list[str] = []
+
     if rows:
         announcements_available = True
         from app.domain.events.fcode_taxonomy import fcode_category_label
@@ -307,8 +311,6 @@ async def get_company_events(
 
         sentiment_counter: Counter = Counter()
         titles: list[str] = []
-        _timeline_object_ids: list[str] = []
-        _timeline_ann_dates: list[str] = []
         for r in rows:
             fcode_raw = str(r.get("n_info_fcode", "") or "")
             first_fcode = fcode_raw.split("|")[0].strip() if fcode_raw else ""
