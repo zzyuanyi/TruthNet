@@ -119,6 +119,7 @@ def finance_node(state: AgentState) -> dict:
 
     rule_statuses: dict[str, str] = {}
     rules_list: list = []
+    rule_details: dict[str, dict] = {}
     warnings: list[str] = []
     evidence: list[EvidenceRef] = []
     unknown_type = False
@@ -134,6 +135,13 @@ def finance_node(state: AgentState) -> dict:
             continue
         rule_statuses[rid] = r.status
         rules_list.append(r)
+        # 规则明细（含触发解释/严重度/指标数值，供回答展开规则清单）
+        rule_details[rid] = {
+            "rule_name": r.rule_name or "",
+            "explanation": str(r.explanation or ""),
+            "severity": r.severity or "",
+            "current": dict(getattr(r, "current", None) or {}),
+        }
         if r.status == "insufficient_data" and W_COMPANY_TYPE_UNKNOWN in r.warnings:
             unknown_type = True
         for w in r.warnings:
@@ -159,7 +167,7 @@ def finance_node(state: AgentState) -> dict:
                     source_table=table,
                     field_path=field,
                     period=as_of,
-                    value="",
+                    value=str(r.explanation or "")[:200],
                     source_title=f"母公司报表 · 财务反欺诈规则 {rid}",
                     statement_scope="parent_company",
                     module="finance",
@@ -207,6 +215,7 @@ def finance_node(state: AgentState) -> dict:
                 rules=rules_list,
                 periods_available=periods_available,
                 industry_benchmark=industry_benchmark,
+                rule_details=rule_details,
                 warnings=warnings,
                 evidence=evidence,
             )

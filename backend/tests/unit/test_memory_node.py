@@ -341,3 +341,14 @@ def test_ten_turns_entity_switch():
     ctx = result["memory_context"]
     # 最近提到的是贵州茅台
     assert ctx.resolved_entity_name == "贵州茅台"
+
+
+def test_extract_companies_common_suffix():
+    """通用行业后缀（家居/重工/建材等）可提取（P1 回归：演示公司金牌家居）。"""
+    from app.agents.nodes.memory import _extract_companies_from_text
+
+    assert "金牌家居" in _extract_companies_from_text(
+        "金牌家居（603180.SH）综合分析完成"
+    )
+    assert "三一重工" in _extract_companies_from_text("三一重工财务分析")
+    assert "欧派家居" in _extract_companies_from_text("欧派家居 2025 年报分析")

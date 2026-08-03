@@ -133,8 +133,10 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             missing_modules.append(f"{name} 模块未执行")
 
     answer = ""
+    follow_ups: list[str] = []
     if final_response:
         answer = getattr(final_response, "answer", "")
+        follow_ups = getattr(final_response, "follow_ups", []) or []
 
     return V12Response(
         data=ChatDataV1(
@@ -154,6 +156,7 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             warnings=warnings,
             missing_modules=missing_modules,
             trace_id=trace_id,
+            follow_ups=follow_ups,
         ),
         meta=ApiMeta(
             request_id=trace_id,

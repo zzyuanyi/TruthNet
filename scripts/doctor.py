@@ -439,9 +439,15 @@ def main():
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(repo_root / ".env.example")
+        # 优先级: 进程环境变量 > 仓库根 .env > .env.example > 程序默认值
+        env_file = repo_root / ".env"
+        if not env_file.exists():
+            env_file = repo_root / ".env.example"
+        load_dotenv(env_file, override=False)
+        r = check(f"Profile 配置来源: {env_file.name}", True)
     except Exception:
-        pass
+        r = check("Profile 配置来源: 未知", False)
+    results.append(r)
 
     profile = os.environ.get("TRUTHNET_PROFILE", "lite")
     r = check(f"TRUTHNET_PROFILE = {profile}", True, "lite=默认开发/CI, full=正式演示")

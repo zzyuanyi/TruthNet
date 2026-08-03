@@ -1,6 +1,12 @@
 """应用配置（基于 pydantic-settings）· V12 baseline."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+# 仓库根目录下的 .env（绝对路径，与进程工作目录无关）
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -92,7 +98,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     model_config = {
-        "env_file": ".env",
+        # 绝对路径：无论从哪个工作目录启动都指向仓库根目录 .env；
+        # .env 不存在时退化为 None（纯默认值 + 环境变量），不报错
+        "env_file": _ENV_FILE if _ENV_FILE.exists() else None,
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }

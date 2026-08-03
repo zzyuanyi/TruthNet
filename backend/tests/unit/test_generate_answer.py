@@ -269,6 +269,109 @@ def test_follow_up_fallback():
     assert fr.follow_ups == ["查看企业画像详情"]
 
 
+# ── 规则明细（rule_details 展开） ──────────────────────────
+
+
+def _rule_state(rule_details, rule_statuses=None, claims=None):
+    """构造带 rule_details 的 state（finance 已执行）。"""
+    fin = FinanceResult(
+        rule_statuses=rule_statuses or {rid: "triggered" for rid in rule_details},
+        rule_details=rule_details,
+    )
+    return _make_state(
+        company=_company(),
+        claims=claims or [_claim("c1", "financial", "red", "R1")],
+        results=ModuleResults(finance=fin),
+    )
+
+
+def test_rule_details_only_triggered():
+    """只展示 triggered 规则：R2 not_triggered 不出现在明细。"""
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
+            },
+        },
+        "R2": {
+            "rule_name": "现金流-利润背离",
+            "severity": "orange",
+            "current": {
+                "cf_to_profit_ratio": {"value": -21.6, "unit": "ratio"},
+            },
+        },
+    }
+    state = _rule_state(
+        rule_details,
+        rule_statuses={"R1": "triggered", "R2": "not_triggered"},
+    )
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "R1 应收-营收背离（高风险）" in answer
+    assert "现金流-利润背离" not in answer
+
+
+def test_rule_details_units():
+    """百分比 / pp / 季度 / 天数单位正确，bool 指标用是/否。"""
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
+                "growth_gap": {"value": 166.2, "unit": "percentage_point"},
+                "consec_neg_cf": {"value": 2, "unit": "quarters"},
+                "inventory_turnover_days": {"value": 20, "unit": "days"},
+                "oth_rcv_large": {"value": True, "unit": ""},
+            },
+        },
+    }
+    answer = generate_answer_node(_rule_state(rule_details))["final_response"].answer
+    assert "应收账款增速 149.6%" in answer
+    assert "增速差距 166.2pp" in answer
+    assert "连续负现金流季度 2个季度" in answer
+    assert "存货周转天数 20天" in answer
+    assert "存在大额其他应收款：是" in answer
+
+
+def test_rule_details_none_value_skipped():
+    """空值指标不输出（不得出现 None%）。"""
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": None, "unit": "percent"},
+                "oper_rev_growth": {"value": -16.6, "unit": "percent"},
+            },
+        },
+    }
+    answer = generate_answer_node(_rule_state(rule_details))["final_response"].answer
+    assert "None" not in answer
+    assert "营业收入增速 -16.6%" in answer
+
+
+def test_rule_details_no_metrics_no_section():
+    """无 rule_details 数据 → 不追加"触发规则明细"；
+    空 current → 仍展示规则名+等级（指标部分省略）。"""
+    # 空 current：规则名+等级保留，指标部分省略
+    state_empty_current = _rule_state(
+        {"R1": {"rule_name": "应收-营收背离", "severity": "red", "current": {}}}
+    )
+    answer_empty = generate_answer_node(state_empty_current)["final_response"].answer
+    assert "触发规则明细：R1 应收-营收背离（高风险）。" in answer_empty
+
+    # 无 rule_details：完全不追加明细段
+    state_no_details = _make_state(
+        company=_company(), claims=[_claim("c1", "financial", "red", "R1")]
+    )
+    assert (
+        "触发规则明细"
+        not in generate_answer_node(state_no_details)["final_response"].answer
+    )
+
+
 # ── FinalResponse 字段透传 ─────────────────────────────────
 
 
