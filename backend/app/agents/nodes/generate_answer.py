@@ -69,6 +69,79 @@ def _dedup(items: list[str]) -> list[str]:
     return result
 
 
+# 指标字段 → 中文标签（展示层映射，规则引擎字段名保持英文）
+_METRIC_LABELS: dict[str, str] = {
+    "acct_rcv_growth": "应收账款增速",
+    "oper_rev_growth": "营业收入增速",
+    "oper_rev_yoy": "营业收入同比",
+    "gap": "增速差距",
+    "growth_gap": "增速差距",
+    "cf_to_profit_ratio": "现金流/利润比",
+    "consec_neg_cf": "连续负现金流季度",
+    "inventory_yoy": "存货同比增速",
+    "inventory_turnover_days": "存货周转天数",
+    "oth_rcv_to_assets": "其他应收款占总资产",
+    "oth_rcv_yoy": "其他应收款同比",
+    "oth_rcv_to_acct_rcv": "其他应收款/应收账款",
+    "oth_rcv_large": "存在大额其他应收款",
+    "net_profit_yoy": "净利润同比",
+    "revenue_divergence": "营收增速差",
+}
+_METRIC_UNITS: dict[str, str] = {
+    "percent": "%",
+    "percentage_point": "pp",
+    "quarters": "个季度",
+    "days": "天",
+    "ratio": "",
+}
+_SEVERITY_LABELS: dict[str, str] = {
+    "red": "高风险",
+    "orange": "中风险",
+    "yellow": "关注",
+    "green": "低风险",
+}
+
+
+def _format_metrics(current: dict) -> str:
+    """规则指标数值展开："应收账款增速 149.6%、营业收入增速 -16.6%…" """
+    parts: list[str] = []
+    for k, v in (current or {}).items():
+        if not isinstance(v, dict):
+            continue
+        label = _METRIC_LABELS.get(k, k)
+        val = v.get("value")
+        unit = _METRIC_UNITS.get(str(v.get("unit", "")), "")
+        if val is None:
+            continue  # 空值指标不输出（避免 "None%"）
+        if isinstance(val, bool):
+            parts.append(f"{label}：{'是' if val else '否'}")
+        else:
+            parts.append(f"{label} {val}{unit}")
+    return "、".join(parts)
+
+
+def _build_rule_details(state: AgentState) -> str:
+    """财务触发规则明细（规则名称/风险等级/指标数值/解释，V12 §4.3 规则触发清单）。"""
+    results = state.get("results")
+    if not results or not results.finance or not results.finance.rule_details:
+        return ""
+    lines: list[str] = []
+    for rid in sorted(results.finance.rule_details):
+        if results.finance.rule_statuses.get(rid) != "triggered":
+            continue
+        d = results.finance.rule_details[rid]
+        name = d.get("rule_name", "") or rid
+        sev = _SEVERITY_LABELS.get(d.get("severity", ""), "")
+        metrics = _format_metrics(d.get("current") or {})
+        line = f"{rid} {name}（{sev}）"
+        if metrics:
+            line += f"：{metrics}"
+        lines.append(line)
+    if not lines:
+        return ""
+    return "触发规则明细：" + "；".join(lines) + "。"
+
+
 def _build_follow_ups(state: AgentState) -> list[str]:
     """追问建议：已触发规则 + 缺失数据/缺失模块生成（V12 §2.6）。
 
@@ -192,8 +265,12 @@ def generate_answer_node(state: AgentState) -> dict:
 
     # ② 三类核心信号摘要
     summary = _build_signal_summary(claims)
+    # ③ 财务触发规则明细（V12 §4.3 规则触发清单）
+    rule_details = _build_rule_details(state)
 
     answer = conclusion + (summary + "。" if summary else "")
+    if rule_details:
+        answer += rule_details
 
     return {
         "final_response": FinalResponse(

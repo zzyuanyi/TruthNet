@@ -138,7 +138,12 @@ def test_risk_diagnosis_runs_all_modules():
 
 
 def test_finance_only_query_runs_finance():
-    """纯财务问题 → 只执行 finance，claims_count > 0。"""
+    """纯财务问题 → 只执行 finance，回答完整。
+
+    断言模块路由（仅 finance 执行）与回答完整性，不依赖规则触发数量——
+    本地真实数据可能 0 触发（claims_count=0），CI fixture 数据触发（>0），
+    两者都属正常，测试本意是验证 finance-only 路由而非触发率。
+    """
     client = TestClient(app)
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         ws.send_json(
@@ -164,6 +169,7 @@ def test_finance_only_query_runs_finance():
     }, f"纯财务问题应只完成 finance，实际 completed: {completed_modules}"
 
     tc = next(e for e in events if e["event_type"] == "turn.completed")
+    assert tc["payload"].get("answer"), "turn.completed 应包含回答文本"
     # 4 期 fixture 数据中财务规则可能因数据不足不触发 Claim，
     # 此测试验证模块路由正确（只执行 finance），不验证 Claim 数量。
     assert (
