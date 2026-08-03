@@ -23,6 +23,12 @@ from app.main import app  # noqa: E402
 @pytest.fixture
 def client(monkeypatch):
     """无公告 + 有评级 + 事件簇空的端到端场景（全部 mock DB 访问）。"""
+    from app.core.config import settings
+
+    # CI 为 SQLite（SQL_BACKEND != mysql 时端点早退 DATA_SOURCE_UNAVAILABLE），
+    # 测试固定按 full-profile 语义走完整分支
+    monkeypatch.setattr(settings, "SQL_BACKEND", "mysql")
+
     import app.api.v1.routers.events as ev
 
     # 1. 公告为空
