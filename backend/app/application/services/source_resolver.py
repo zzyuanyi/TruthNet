@@ -69,12 +69,15 @@ def _resolve_financial(source_record_id: str, source_table: str | None) -> dict:
         table = "balance_sheet"
     try:
         with _get_engine().connect() as conn:
+            # 请求期可能晚于最新已披露报表（如 as_of=20260331 时最新期为
+            # 20251231）——取 report_period <= 请求期的最近一条
             row = (
                 conn.execute(
                     text(
                         f"SELECT * FROM {table} "
-                        "WHERE wind_code = :code AND report_period = :per "
-                        "AND statement_type = :stmt LIMIT 1"
+                        "WHERE wind_code = :code AND statement_type = :stmt "
+                        "AND report_period <= :per "
+                        "ORDER BY report_period DESC LIMIT 1"
                     ),
                     {"code": code, "per": period, "stmt": stmt},
                 )

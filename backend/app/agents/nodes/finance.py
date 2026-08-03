@@ -74,21 +74,30 @@ def _dedup(items: list[str]) -> list[str]:
     return result
 
 
-def _resolve_record(cache: dict, table: str, src_record_id: str) -> dict:
-    """按 (table, src_record_id) 缓存 resolve_source 返回的报表记录。"""
+def _resolve_record(
+    cache: dict, table: str, src_record_id: str
+) -> tuple[dict, str | None]:
+    """按 (table, src_record_id) 缓存 resolve_source 的报表记录。
+
+    返回 (record, 实际报告期)——请求期可能晚于最新已披露报表，
+    以记录中的 report_period 为准（None 表示未解析到记录）。
+    """
     key = (table, src_record_id)
     if key not in cache:
         try:
             from app.application.services.source_resolver import resolve_source
 
-            cache[key] = resolve_source(
+            record = resolve_source(
                 source_type="financial_statement",
                 source_record_id=src_record_id,
                 source_table=table,
             ).get("record", {})
         except Exception:  # noqa: BLE001 — 解析失败按无记录处理
-            cache[key] = {}
-    return cache[key]
+            record = {}
+        cache[key] = record
+    record = cache[key]
+    actual = record.get("report_period") if record else None
+    return record, str(actual) if actual else None
 
 
 def _field_value(
@@ -98,7 +107,7 @@ def _field_value(
 
     无法解析或字段不存在 → (None, None)，不回退 explanation。
     """
-    rec = _resolve_record(cache, table, src_record_id)
+    rec, _ = _resolve_record(cache, table, src_record_id)
     alias = _FIELD_ALIASES.get(field, field)
     if isinstance(alias, tuple):
         vals = [rec.get(a) for a in alias]
@@ -199,19 +208,26 @@ def finance_node(state: AgentState) -> dict:
         generated_ids: list[str] = []
         for ev_id in r.evidence_ids:
             table, field = _parse_rule_evidence(ev_id, as_of)
-            src_record_id = f"{code}|{as_of}|{PARENT_STATEMENT_TYPE}"
+            req_src = f"{code}|{as_of}|{PARENT_STATEMENT_TYPE}"
+            # 真实报告期：请求期可能晚于最新已披露报表（如 20260331 → 20251231），
+            # 以 resolve 返回的实际期间为准（无记录时回退请求期）
+            record, actual_period = _resolve_record(record_cache, table, req_src)
+            period = actual_period or as_of
+            src_record_id = (
+                f"{code}|{period}|{PARENT_STATEMENT_TYPE}" if actual_period else req_src
+            )
             evidence_id = make_evidence_id(
                 source_namespace=NS_FINANCE,
                 source_type="financial_statement",
                 source_record_id=src_record_id,
                 field_path=field,
-                period=as_of,
+                period=period,
                 dataset_version=_settings.DATASET_VERSION,
                 company_code=code,
                 rule_id=rid,
             )
             generated_ids.append(evidence_id)
-            value, unit = _field_value(record_cache, table, src_record_id, field)
+            value, unit = _field_value(record_cache, table, req_src, field)
             evidence.append(
                 EvidenceRef(
                     evidence_id=evidence_id,
@@ -219,7 +235,7 @@ def finance_node(state: AgentState) -> dict:
                     source_record_id=src_record_id,
                     source_table=table,
                     field_path=field,
-                    period=as_of,
+                    period=period,
                     value=value,
                     unit=unit,
                     source_title=f"母公司报表 · 财务反欺诈规则 {rid}",

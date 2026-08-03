@@ -222,3 +222,56 @@ def test_demo_cleanup_arg_validation():
         SimpleNamespace(url="", cleanup=True, session_id="s")
     )
     assert err is None
+
+
+# ── 9. 请求期晚于最新报表时取实际报告期（P1 回归）────────
+def test_resolve_record_returns_actual_period(monkeypatch):
+    from app.agents.nodes import finance as finance_mod
+
+    monkeypatch.setattr(
+        "app.application.services.source_resolver.resolve_source",
+        lambda **kw: {
+            "resolved": True,
+            "record": {"report_period": "20251231", "acct_rcv": 123.0},
+        },
+    )
+    record, period = finance_mod._resolve_record({}, "balance_sheet", _SRC)
+    assert period == "20251231"  # 实际期间 ≠ 请求期 20260331
+    assert record["acct_rcv"] == 123.0
+    # 未解析到记录 → 期间 None
+    monkeypatch.setattr(
+        "app.application.services.source_resolver.resolve_source",
+        lambda **kw: {"resolved": False, "record": {}},
+    )
+    record, period = finance_mod._resolve_record({}, "balance_sheet", _SRC)
+    assert period is None
+
+
+# ── 10. demo 交互确认后执行清理（P2 回归）────────────────
+def test_demo_cleanup_confirm_executes_cleanup(monkeypatch):
+    import demo_multi_turn
+
+    calls: list[str] = []
+    monkeypatch.setattr(demo_multi_turn, "_cleanup", lambda sid: calls.append(sid))
+    # 输入 y → 执行清理
+    sid, cleaned = demo_multi_turn._resolve_session(
+        SimpleNamespace(session_id="ses_x", cleanup=True, yes=False),
+        input_fn=lambda _: "y",
+    )
+    assert cleaned is True
+    assert calls == ["ses_x"]
+    # 输入 n（默认拒绝）→ 不清理、改用全新会话
+    sid2, cleaned2 = demo_multi_turn._resolve_session(
+        SimpleNamespace(session_id="ses_x", cleanup=True, yes=False),
+        input_fn=lambda _: "n",
+    )
+    assert cleaned2 is False
+    assert calls == ["ses_x"]
+    assert sid2 != "ses_x"
+    # --yes 跳过确认直接清理
+    sid3, cleaned3 = demo_multi_turn._resolve_session(
+        SimpleNamespace(session_id="ses_y", cleanup=True, yes=True),
+        input_fn=lambda _: "n",
+    )
+    assert cleaned3 is True
+    assert calls == ["ses_x", "ses_y"]

@@ -84,6 +84,26 @@ def _evids_to_delete(rows: list[tuple[str, int]]) -> list[str]:
     return [eid for eid, refs in rows if refs == 0]
 
 
+def _resolve_session(args, input_fn=input) -> tuple[str, bool]:
+    """决定演示会话：返回 (session_id, cleaned)。
+
+    - 默认生成唯一会话，不清理
+    - --cleanup：交互确认（默认拒绝）或 --yes 跳过 → 确认后执行清理
+    - 确认被拒绝 → 改用全新唯一会话
+    """
+    session_id = args.session_id or f"ses_demo_{uuid.uuid4().hex[:12]}"
+    if not args.cleanup:
+        return session_id, False
+    confirmed = args.yes
+    if not args.yes:
+        ans = input_fn(f"确认清理会话 {session_id} 的全部数据？[y/N] ") or "n"
+        confirmed = ans.lower() == "y"
+    if confirmed:
+        _cleanup(session_id)
+        return session_id, True
+    return f"ses_demo_{uuid.uuid4().hex[:12]}", False
+
+
 def _cleanup(session_id: str) -> None:
     """清理指定会话（仅 --cleanup 时调用）。
 
@@ -176,18 +196,9 @@ def main() -> int:
         print(err)
         return 1
 
-    session_id = args.session_id or f"ses_demo_{uuid.uuid4().hex[:12]}"
-    if args.cleanup:
-        if not args.yes:
-            ans = input(f"确认清理会话 {session_id} 的全部数据？[y/N] ") or "n"
-            if ans.lower() != "y":
-                # 默认拒绝 → 改用全新唯一会话继续，不清理
-                session_id = f"ses_demo_{uuid.uuid4().hex[:12]}"
-                print(f"已取消清理，改用唯一会话 {session_id}")
-        else:
-            _cleanup(session_id)
-        if args.yes:
-            print(f"[会话] {session_id}（已清理，从零开始）\n")
+    session_id, cleaned = _resolve_session(args)
+    if cleaned:
+        print(f"[会话] {session_id}（已清理，从零开始）\n")
     else:
         print(f"[会话] {session_id}（唯一会话，不清理）\n")
 
