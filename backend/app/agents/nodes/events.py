@@ -126,7 +126,7 @@ def _fetch_rating_changes(wind_code: str) -> list[dict]:
                 conn.execute(
                     text(
                         "SELECT quarter, institution, previous_rating, current_rating, "
-                        "direction, published_at "
+                        "direction, published_at, evidence_id "
                         "FROM rating_changes WHERE wind_code = :code "
                         "ORDER BY quarter DESC LIMIT 30"
                     ),

@@ -73,6 +73,7 @@ class RatingChange(BaseModel):
     new_rating: str = Field(default="", description="当前评级")
     change: str = Field(default="maintain", description="up / down / maintain")
     title: str = Field(default="", description="研报标题")
+    evidence_id: str = Field(default="", description="关联证据 ID（可 Lookup 追溯）")
 
 
 class KeywordSummary(BaseModel):

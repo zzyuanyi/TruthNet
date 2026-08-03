@@ -138,8 +138,11 @@ def _fetch_announcements(
 
 
 def _fetch_rating_changes(wind_code: str, start_date: str) -> list[RatingChange]:
-    """从 research_reports 读真实评级变更，规范化 direction。"""
-    from app.domain.events.rating_normalizer import normalize_rating
+    """从 rating_changes 衍生表读取真实评级变更（含统一 Evidence ID 可 Lookup）。
+
+    与 Agent 消费同一衍生表，避免 research_reports 与衍生表两条链路口径漂移；
+    title 从 evidence_refs.source_title 关联取回。
+    """
     from sqlalchemy import create_engine, text
 
     url = (
@@ -152,11 +155,13 @@ def _fetch_rating_changes(wind_code: str, start_date: str) -> list[RatingChange]
         rows = (
             conn.execute(
                 text(
-                    "SELECT org_name, publish_date, rating_org, rating_change, title "
-                    "FROM research_reports "
-                    "WHERE wind_code = :code AND publish_date >= :start "
-                    "AND rating_change IS NOT NULL AND rating_change != '' "
-                    "ORDER BY publish_date DESC LIMIT 100"
+                    "SELECT rc.quarter, rc.institution, rc.previous_rating, "
+                    "rc.current_rating, rc.direction, rc.published_at, "
+                    "rc.evidence_id, er.source_title "
+                    "FROM rating_changes rc "
+                    "LEFT JOIN evidence_refs er ON er.evidence_id = rc.evidence_id "
+                    "WHERE rc.wind_code = :code AND rc.published_at >= :start "
+                    "ORDER BY rc.published_at DESC LIMIT 100"
                 ),
                 {"code": wind_code, "start": start_date},
             )
@@ -165,19 +170,15 @@ def _fetch_rating_changes(wind_code: str, start_date: str) -> list[RatingChange]
         )
     out: list[RatingChange] = []
     for r in rows:
-        norm = normalize_rating(r["rating_org"], r["rating_change"])
-        change = norm.direction or "maintain"
-        # 只返回有方向变化的评级（down/up），maintain 不构成拐点
-        if change not in ("down", "up"):
-            continue
         out.append(
             RatingChange(
-                date=str(r["publish_date"] or ""),
-                org_name=str(r["org_name"] or "未知机构"),
-                prev_rating="",
-                new_rating=str(r["rating_org"] or ""),
-                change=change,
-                title=str(r["title"] or "")[:120],
+                date=str(r["published_at"] or ""),
+                org_name=str(r["institution"] or "未知机构"),
+                prev_rating=str(r["previous_rating"] or ""),
+                new_rating=str(r["current_rating"] or ""),
+                change=str(r["direction"] or "maintain"),
+                title=str(r["source_title"] or "")[:120],
+                evidence_id=str(r["evidence_id"] or ""),
             )
         )
     return out
