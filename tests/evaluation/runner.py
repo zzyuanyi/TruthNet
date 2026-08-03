@@ -19,24 +19,38 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
+_ROOT = Path(__file__).resolve().parent.parent.parent
+# root 必须在 backend 之前：否则 backend/tests 遮蔽根目录 tests 包，
+# `python tests/evaluation/runner.py` 直接执行时 ModuleNotFoundError。
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(1, str(_ROOT / "backend"))
 
 from tests.evaluation.metrics import evaluate_all  # noqa: E402
 
 # ── 9 项指标生产目标（方向 + 阈值）─────────────────────────────
-# 来自 V12 §14.3 Measure。方向: min=不低于, max=不高于。
+# 来自 tests/evaluation/README.md §2（与文档口径严格一致）。
+# 方向: min=不低于, max=不高于。
 TARGETS: dict[str, dict] = {
     "1_accuracy": {"direction": "min", "threshold": 0.70},
     "2_evidence_coverage": {"direction": "min", "threshold": 0.90},
-    "3_entity_retention_rate": {"direction": "min", "threshold": 0.90},
+    "3_entity_retention_rate": {
+        "direction": "min",
+        "threshold": 0.85,
+    },  # README §2 指标3
     "4_unverified_claim_ratio": {"direction": "max", "threshold": 0.10},
-    "5_partial_response_rate": {"direction": "max", "threshold": 0.10},
+    "5_partial_response_rate": {
+        "direction": "max",
+        "threshold": 0.20,
+    },  # README §2 指标5
     # 6 为按模块的 dict，单独处理
-    # 7 为 dict {accuracy, kappa}
-    # 8 为 dict {std_dev, max_gap}
+    # 7 为 dict {accuracy, kappa}，目标 Kappa ≥ 0.6
+    # 8 为 dict {std_dev, max_gap}，目标 std_dev ≤ 0.15
     "9_schema_compliance_rate": {"direction": "min", "threshold": 0.95},
 }
+
+# 指标 7/8 的复合目标（README §2）
+KAPPA_THRESHOLD = 0.60
+STD_DEV_THRESHOLD = 0.15
 
 LABELS = {
     "1_accuracy": "结果准确率",
@@ -80,15 +94,20 @@ def evaluate_target(metric: str, value) -> tuple[str, str]:
         if not isinstance(value, dict):
             return "failed", "无校准数据"
         acc = value.get("accuracy", 0.0)
-        ok = acc >= 0.70
-        desc = f"accuracy={acc:.3f} {'≥' if ok else '<'} 0.70"
+        kappa = value.get("kappa", 0.0)
+        # README §2 指标7: 目标 Kappa ≥ 0.6（substantial agreement）
+        ok = kappa >= KAPPA_THRESHOLD
+        desc = (
+            f"kappa={kappa:.3f} {'≥' if ok else '<'} {KAPPA_THRESHOLD} (acc={acc:.3f})"
+        )
         return ("passed" if ok else "failed"), desc
     if metric == "8_industry_variance":
         if not isinstance(value, dict):
             return "failed", "无行业分位数据"
-        gap = value.get("max_gap", 0.0)
-        ok = gap <= 0.20
-        desc = f"max_gap={gap:.3f} {'≤' if ok else '>'} 0.20"
+        std = value.get("std_dev", 0.0)
+        # README §2 指标8: 目标 std_dev ≤ 0.15
+        ok = std <= STD_DEV_THRESHOLD
+        desc = f"std_dev={std:.3f} {'≤' if ok else '>'} {STD_DEV_THRESHOLD}"
         return ("passed" if ok else "failed"), desc
     spec = TARGETS.get(metric)
     if spec is None:

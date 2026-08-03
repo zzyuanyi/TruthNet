@@ -31,7 +31,12 @@ def evaluate_all_rules(
     results: dict[str, RuleResult] = {}
     for rule_id, rule_func in _RULES:
         try:
-            results[rule_id] = rule_func(company_code, as_of)
+            result = rule_func(company_code, as_of)
+            # 数据任务 1：每条规则至少携带一条历史/当前值记录（R1 已有多期，
+            # R2-R7 兜底填充当前值条目，避免 history 为空）
+            if not result.history and result.current:
+                result.history = [{"period": as_of, **result.current}]
+            results[rule_id] = result
         except Exception as e:
             results[rule_id] = RuleResult(
                 rule_id=rule_id,

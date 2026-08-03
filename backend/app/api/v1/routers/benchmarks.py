@@ -1,8 +1,12 @@
-"""行业对标路由 — V12 §11.13.
+"""行业对标路由 — V12 §11.13 + Phase C 任务 12.
 
 GET /api/v1/companies/{code}/benchmarks?period=2026Q2
 
-行业样本少于5时返回 warning，仅展示通用阈值，不伪造分位值。
+真实 percentile:
+  - 从 industry_benchmarks 表读预计算分位（p05-p95/mean/std/sample_count）
+  - 实时计算目标公司值（metric_registry，与 Finance 同一指标定义）
+  - company_percentile = percentile_rank（非插值）
+  - 样本 < 5：不计算 percentile，明确 sample_count，不伪造分位
 """
 
 import uuid
@@ -22,7 +26,7 @@ def _trace() -> str:
 
 
 async def _resolve_company(code: str) -> tuple[str, str, str] | None:
-    """解析公司代码 → (wind_code, sec_name, industry_l1)（MySQL 真实画像）。"""
+    """解析公司代码 → (wind_code, sec_name, industry_l1)。"""
     from app.application.services.company_resolver import resolve_company
 
     rec = await resolve_company(code)
@@ -36,10 +40,15 @@ async def get_company_benchmarks(
     code: str = Path(..., description="公司代码，如 600518.SH"),
     period: str = Query(default="2026Q2", description="对标期间"),
 ):
-    """行业对标 — 返回目标公司指标在同行中的分位值。
+    """行业对标 — 真实分位值 + 公司值百分位。"""
+    from app.domain.benchmarks.calculator import (
+        MIN_PEER_SAMPLE,
+        aggregate_stats,
+        compute_metric_values,
+        percentile_rank,
+    )
+    from app.domain.benchmarks.metric_registry import all_metrics
 
-    行业样本 <5 时不展示伪造分位，仅返回通用阈值 + is_sample_sufficient=false。
-    """
     trace_id = _trace()
     warnings: list[WarningItem] = []
 
@@ -57,41 +66,120 @@ async def get_company_benchmarks(
                 "recoverable": True,
             },
         )
-
     wind_code, sec_name, industry_l1 = resolved
 
-    # ── 查询同行公司数 ──
-    peer_count = 0
+    # period 规范化（2026Q2 → 20260630）
+    from app.domain.finance.period import normalize_period
+
+    period_ymd = normalize_period(period)
+    if period_ymd is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "type": "https://truthnet.dev/errors/invalid-period",
+                "title": "Invalid Period",
+                "status": 422,
+                "detail": f"无法解析期间: {period}",
+                "error_code": "INVALID_PERIOD",
+                "trace_id": trace_id,
+                "recoverable": True,
+            },
+        )
+
+    if not industry_l1:
+        return V12Response(
+            data=BenchmarksResponseData(
+                wind_code=wind_code,
+                sec_name=sec_name,
+                industry_l1="",
+                period=period,
+                percentiles=[],
+                peer_count=0,
+                is_sample_sufficient=False,
+                generic_thresholds_only=True,
+                dataset_version=settings.DATASET_VERSION,
+                statement_scope="parent_company",
+                warnings=["INDUSTRY_UNKNOWN: 公司行业未知，无法计算行业分位"],
+            ),
+            meta=ApiMeta(
+                request_id=trace_id,
+                trace_id=trace_id,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                dataset_version=settings.DATASET_VERSION,
+            ),
+            warnings=warnings,
+        )
+
+    from app.domain.finance._fetch import _get_engine
+
+    engine = _get_engine()
     percentiles: list[IndustryPercentile] = []
+    peer_count = 0
     is_sufficient = False
 
-    try:
-        from app.domain.finance._fetch import _get_engine
+    for metric in all_metrics():
+        try:
+            pairs = compute_metric_values(engine, metric, industry_l1, period_ymd)
+        except Exception as exc:  # noqa: BLE001 — 单指标失败不阻塞整体
+            warnings.append(
+                WarningItem(
+                    code="BENCHMARK_METRIC_ERROR",
+                    message=f"指标 {metric.metric_id} 计算失败: {exc}",
+                    module="benchmarks",
+                    recoverable=True,
+                )
+            )
+            continue
+        values = [v for _, v in pairs]
+        stats = aggregate_stats(values)
+        company_value = next((v for c, v in pairs if c == wind_code), None)
+        peer_count = max(peer_count, stats["sample_count"])
 
-        engine = _get_engine()
-        with engine.connect() as conn:
-            from sqlalchemy import text
+        if stats["sample_count"] < MIN_PEER_SAMPLE:
+            percentiles.append(
+                IndustryPercentile(
+                    indicator=metric.metric_id,
+                    label=metric.name,
+                    rule_id=metric.rule_id,
+                    metric_id=metric.metric_id,
+                    company_value=company_value,
+                    company_percentile=None,
+                    unit=metric.unit,
+                    sample_count=stats["sample_count"],
+                    p05=None,
+                    p25=None,
+                    p50=None,
+                    p75=None,
+                    p95=None,
+                    peer_count=stats["sample_count"],
+                    statement_scope="parent_company",
+                )
+            )
+            continue
 
-            # 同行业公司总数（从 research_reports 的 industry_l1 列统计）
-            row = conn.execute(
-                text(
-                    "SELECT COUNT(DISTINCT wind_code) FROM companies "
-                    "WHERE industry_l1 = :ind"
-                ),
-                {"ind": industry_l1},
-            ).fetchone()
-            peer_count = row[0] if row else 0
-
-        is_sufficient = peer_count >= 5
-    except Exception:
-        peer_count = 0
-        is_sufficient = False
-        warnings.append(
-            WarningItem(
-                code="BENCHMARKS_UNAVAILABLE",
-                message="无法查询行业分布数据，返回空对标",
-                module="benchmarks",
-                recoverable=True,
+        is_sufficient = True
+        company_percentile = (
+            percentile_rank(company_value, values)
+            if company_value is not None
+            else None
+        )
+        percentiles.append(
+            IndustryPercentile(
+                indicator=metric.metric_id,
+                label=metric.name,
+                rule_id=metric.rule_id,
+                metric_id=metric.metric_id,
+                company_value=company_value,
+                company_percentile=company_percentile,
+                unit=metric.unit,
+                sample_count=stats["sample_count"],
+                p05=stats["p05"],
+                p25=stats["p25"],
+                p50=stats["p50"],
+                p75=stats["p75"],
+                p95=stats["p95"],
+                peer_count=stats["sample_count"],
+                statement_scope="parent_company",
             )
         )
 
@@ -100,40 +188,13 @@ async def get_company_benchmarks(
             WarningItem(
                 code="INSUFFICIENT_PEER_SAMPLE",
                 message=(
-                    f"行业「{industry_l1}」样本仅 {peer_count} 家（需 ≥5），"
-                    f"不展示伪造分位值。仅返回通用阈值供参考。"
+                    f"行业「{industry_l1}」各指标有效样本 < {MIN_PEER_SAMPLE}，"
+                    f"不展示伪造分位值"
                 ),
                 module="benchmarks",
                 recoverable=True,
             )
         )
-        # 仅展示通用阈值标记（不伪造数字）
-        percentiles = [
-            IndustryPercentile(
-                indicator="R1_receivable_yoy",
-                label="应收增速（同比）",
-                rule_id="R1",
-                company_value=None,
-                unit="%",
-                peer_count=peer_count,
-            ),
-            IndustryPercentile(
-                indicator="R2_cash_flow_divergence",
-                label="现金流-利润背离度",
-                rule_id="R2",
-                company_value=None,
-                unit="比值",
-                peer_count=peer_count,
-            ),
-            IndustryPercentile(
-                indicator="R3_double_high",
-                label="存贷双高指数",
-                rule_id="R3",
-                company_value=None,
-                unit="指数",
-                peer_count=peer_count,
-            ),
-        ]
 
     return V12Response(
         data=BenchmarksResponseData(
@@ -145,6 +206,8 @@ async def get_company_benchmarks(
             peer_count=peer_count,
             is_sample_sufficient=is_sufficient,
             generic_thresholds_only=not is_sufficient,
+            dataset_version=settings.DATASET_VERSION,
+            statement_scope="parent_company",
             warnings=[w.message for w in warnings],
         ),
         meta=ApiMeta(

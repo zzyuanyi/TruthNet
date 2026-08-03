@@ -211,6 +211,33 @@ def build_claims_node(state: AgentState) -> dict:
                     )
                 )
 
+    # ── 交叉验证 Claim（读取 state.cross_validation，B4/B3 联动） ──
+    cross_validation = state.get("cross_validation")
+    if cross_validation is not None:
+        checks = cross_validation.checks or []
+        for ordinal, check in enumerate(checks):
+            if check.status != "fail":
+                continue
+            check_evidence_ids = [
+                eid for eid in check.evidence_ids if eid in evidence_index
+            ]
+            text = (
+                f"{company_name}交叉验证发现不一致"
+                f"（{check.check_type}：{check.left_module} vs {check.right_module}）"
+                f"{': ' + check.warning if check.warning else ''}"
+            )
+            claims.append(
+                _mk_claim(
+                    state,
+                    text=text,
+                    claim_type="cross_validation",
+                    severity="orange",
+                    evidence_ids=check_evidence_ids,
+                    ordinal=ordinal,
+                    limitations=["交叉验证仅标记模块间不一致，不做深度因果推断"],
+                )
+            )
+
     return {
         "claims": claims,
         "evidence": evidence,

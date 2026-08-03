@@ -194,6 +194,50 @@ def test_title_truncated_to_30(monkeypatch, sqlite_engine):
         assert len(title) == 30
 
 
+# ── 同 turn 重试幂等（Phase C 任务 8） ─────────────────────
+
+
+def test_same_turn_retry_is_idempotent(monkeypatch, sqlite_engine):
+    """同 turn_id 二次写入 → UPDATE 而非重复 INSERT，行数与序号不变。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    pt.persist_turn_node(_make_state())
+    # 重试同一 turn（模拟 WS 重发）
+    pt.persist_turn_node(_make_state(answer="重试后的回答"))
+
+    with sqlite_engine.connect() as conn:
+        assert (
+            conn.execute(text("SELECT COUNT(*) FROM conversation_turns")).scalar_one()
+            == 1
+        )
+        turn = (
+            conn.execute(text("SELECT turn_index, answer FROM conversation_turns"))
+            .mappings()
+            .one()
+        )
+        assert turn["turn_index"] == 1  # 序号不递增
+        assert turn["answer"] == "重试后的回答"  # 内容更新
+
+
+def test_same_turn_retry_does_not_increment_index(monkeypatch, sqlite_engine):
+    """同 turn 重试后接新 turn，序号应为 2（不是 3）。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    pt.persist_turn_node(_make_state())  # turn_01
+    pt.persist_turn_node(_make_state())  # turn_01 重试
+    pt.persist_turn_node(
+        _make_state(query="第二轮", answer="第二轮回答", turn_id="turn_02")
+    )  # turn_02
+
+    with sqlite_engine.connect() as conn:
+        indices = (
+            conn.execute(
+                text("SELECT turn_index FROM conversation_turns ORDER BY turn_index")
+            )
+            .scalars()
+            .all()
+        )
+        assert list(indices) == [1, 2]
+
+
 # ── 异常容错 ────────────────────────────────────────────────
 
 

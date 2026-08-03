@@ -138,6 +138,9 @@ class MemoryContext(BaseModel):
 
 class FinanceResult(BaseModel):
     rule_statuses: dict[str, str] = Field(default_factory=dict)
+    rules: list[Any] = Field(default_factory=list)
+    periods_available: int = 0
+    industry_benchmark: dict = Field(default_factory=dict)
     # 规则明细：rule_id → {rule_name, explanation, severity}（规则引擎产出，供回答展开清单）
     rule_details: dict[str, dict] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
@@ -153,7 +156,32 @@ class EquityResult(BaseModel):
 class EventsResult(BaseModel):
     timeline: list[dict] = Field(default_factory=list)
     clusters: list[dict] = Field(default_factory=list)
+    rating_changes: list[dict] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
+
+
+# ── 交叉验证模型（Phase C 任务 3）──────────────────────────
+
+
+class CrossValidationCheck(BaseModel):
+    """单条交叉验证检查记录."""
+
+    check_id: str
+    check_type: str  # equity_vs_events / financial_vs_cashflow / dependency / identity
+    status: str  # pass / partial / fail / skipped
+    left_module: str
+    right_module: str
+    time_range: dict = Field(default_factory=dict)
+    evidence_ids: list[str] = Field(default_factory=list)
+    warning: str | None = None
+    details: dict = Field(default_factory=dict)
+
+
+class CrossValidationResult(BaseModel):
+    """交叉验证结果."""
+
+    checks: list[CrossValidationCheck] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ModuleResults(BaseModel):
@@ -187,3 +215,5 @@ class AgentState(TypedDict, total=False):
     runtime: RuntimeState
     memory_context: MemoryContext | None
     provenance_report: Any | None
+    cross_validation: CrossValidationResult | None = None
+    risk_output: Any | None = None

@@ -40,11 +40,12 @@ def _highest_severity(claims: list) -> str:
     return "green"
 
 
-def _build_signal_summary(claims: list) -> str:
-    """三类核心信号摘要（V12 §2.6 第二层）。"""
+def _build_signal_summary(claims: list, results=None, risk_output=None) -> str:
+    """多类核心信号摘要（V12 §2.6 第二层，B5 扩展评级/交叉验证）。"""
     financial = [c for c in claims if c.claim_type == "financial"]
     equity = [c for c in claims if c.claim_type == "equity"]
     event = [c for c in claims if c.claim_type == "event"]
+    cross = [c for c in claims if c.claim_type == "cross_validation"]
 
     parts: list[str] = []
     if financial:
@@ -55,6 +56,20 @@ def _build_signal_summary(claims: list) -> str:
         parts.append(f"股权维度发现 {len(equity)} 条控制链")
     if event:
         parts.append(f"事件维度存在 {len(event)} 项信号")
+    if cross:
+        parts.append(f"交叉验证发现 {len(cross)} 处模块间不一致")
+    # 评级拐点（来自 events 结果）
+    if results is not None and results.events is not None:
+        rating = getattr(results.events, "rating_changes", []) or []
+        if rating:
+            downs = sum(1 for r in rating if r.get("direction") == "down")
+            if downs:
+                parts.append(f"研报评级存在 {downs} 次下调")
+    # 综合风险
+    if risk_output is not None:
+        rl = getattr(risk_output, "risk_level", "")
+        if rl in ("red", "orange", "yellow"):
+            parts.append(f"综合风险等级：{rl}")
     return "；".join(parts)
 
 
@@ -263,8 +278,10 @@ def generate_answer_node(state: AgentState) -> dict:
         else:
             conclusion = name_code + "未发现明显异常信号。"
 
-    # ② 三类核心信号摘要
-    summary = _build_signal_summary(claims)
+    # ② 多类核心信号摘要（含评级/交叉验证/综合风险）
+    risk_output = state.get("risk_output")
+    results = state.get("results")
+    summary = _build_signal_summary(claims, results=results, risk_output=risk_output)
     # ③ 财务触发规则明细（V12 §4.3 规则触发清单）
     rule_details = _build_rule_details(state)
 
@@ -272,10 +289,17 @@ def generate_answer_node(state: AgentState) -> dict:
     if rule_details:
         answer += rule_details
 
+    # 风险等级：优先使用 risk 节点输出（否则回退 claim 最高严重度）
+    risk_level = (
+        (getattr(risk_output, "risk_level", "") or _highest_severity(claims))
+        if (risk_output is not None or claims)
+        else "unknown"
+    )
+
     return {
         "final_response": FinalResponse(
             answer=answer,
-            risk_level=_highest_severity(claims) if claims else "unknown",
+            risk_level=risk_level,
             claims=claims,
             evidence=evidence,
             follow_ups=_build_follow_ups(state),

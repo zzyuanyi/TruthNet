@@ -54,7 +54,12 @@ def entity_retention_rate(
 
 
 def unverified_claim_ratio(claims: list[dict]) -> float:
-    """无证据支撑的 Claim 占比（目标 0.0）."""
+    """无证据支撑的 Claim 占比（目标 0.0）.
+
+    空输入（无 Claim）→ 0.0（无 Claim 即无"无证据 Claim"，不得判 100%）。
+    """
+    if not claims:
+        return 0.0
     return 1.0 - evidence_coverage(claims)
 
 
