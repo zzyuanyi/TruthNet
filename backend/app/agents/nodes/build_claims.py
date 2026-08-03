@@ -12,18 +12,6 @@ from app.domain.finance.parent_scope import CLAIM_PARENT_SCOPE_LIMITATION
 from app.domain.provenance.id_factory import make_claim_id
 
 
-# 规则 → 所需财务字段（与 finance_node 解析的 field_path 对应）
-_RULE_FIELD_MAP: dict[str, list[str]] = {
-    "R1": ["acct_rcv", "oper_rev"],
-    "R2": ["net_profit", "oper"],
-    "R3": ["monetary_cap", "borrow"],
-    "R4": ["inventories", "oper_rev"],
-    "R5": ["oper_rev", "oper_cost"],
-    "R6": ["oth_rcv", "tot_assets"],
-    "R7": ["net_profit", "core_profit"],
-}
-
-
 def _collect_evidence(results) -> list[EvidenceRef]:
     """从模块结果中汇总所有 Evidence。"""
     evidence: list[EvidenceRef] = []
@@ -115,24 +103,18 @@ def build_claims_node(state: AgentState) -> dict:
 
     # ── 财务 Claim ───────────────────────────────────────
     if results and results.finance and results.finance.rule_statuses:
+        rule_details = results.finance.rule_details or {}
         for ordinal, (rule_id, status) in enumerate(
             results.finance.rule_statuses.items()
         ):
             if status != "triggered":
                 continue
-            required_fields = _RULE_FIELD_MAP.get(rule_id, [])
-            # 按字段语义绑定真实证据（同一字段多期证据去重保留顺序）
-            actual_ev_ids = []
-            for ev in evidence:
-                if ev.source_type == "financial_statement":
-                    fld = ev.field_path or ""
-                    if fld in required_fields and ev.evidence_id not in actual_ev_ids:
-                        actual_ev_ids.append(ev.evidence_id)
-            # 字段必须完整覆盖
-            covered = {
-                ev.field_path for ev in evidence if ev.evidence_id in actual_ev_ids
-            }
-            if len(covered) < len(set(required_fields)) or not actual_ev_ids:
+            # 直接绑定本规则实际生成的证据（finance_node 生成时记录于
+            # rule_details[rid].evidence_ids；rule_id 已入 Evidence ID，
+            # 跨规则同字段（如 R1/R4 共用 oper_rev）不再互相污染）
+            generated_ids = (rule_details.get(rule_id) or {}).get("evidence_ids") or []
+            actual_ev_ids = [eid for eid in generated_ids if eid in evidence_index]
+            if not actual_ev_ids:
                 continue
 
             text = _build_rule_text(rule_id, company_name, status)

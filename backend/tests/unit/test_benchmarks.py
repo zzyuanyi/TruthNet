@@ -222,15 +222,6 @@ def test_r5_gross_margin_zero_rev_none():
     assert m.compute_from_series(series) is None
 
 
-def test_r7_core_profit_ratio():
-    m = get_metric("r7_core_profit_ratio")
-    series = {
-        "net_profit_after_ded_nr_lp": [4e7],
-        "net_profit_excl_min_int_inc": [1e8],
-    }
-    assert m.compute_from_series(series) == pytest.approx(0.4)
-
-
 def test_r4_turnover_days():
     m = get_metric("r4_turnover_days")
     # inv 100,110；单季成本 (220-200)=20*4=80 年化；avg_inv=105 → 105/80*365
@@ -269,8 +260,9 @@ def test_percentile_rank_non_interp():
 
 def test_metrics_cover_all_rules():
     rule_ids = {m.rule_id for m in all_metrics()}
-    assert rule_ids == {f"R{i}" for i in range(1, 8)}
-    assert len(all_metrics()) >= 8
+    # R7 对标指标已移除（官方数据无扣非净利润字段，永久零样本），仅覆盖 R1-R6
+    assert rule_ids == {f"R{i}" for i in range(1, 7)}
+    assert len(all_metrics()) >= 7
 
 
 # ══════════════════════════════════════════════════════════

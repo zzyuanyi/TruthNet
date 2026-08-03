@@ -58,6 +58,10 @@ def test_finance_claims_generated():
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R2": "triggered"},
+            rule_details={
+                "R1": {"evidence_ids": ["ev_fin_acct_rcv", "ev_fin_oper_rev"]},
+                "R2": {"evidence_ids": ["ev_fin_net_profit", "ev_fin_oper_cf"]},
+            },
             evidence=[
                 _ev("ev_fin_acct_rcv", field_path="acct_rcv"),
                 _ev("ev_fin_oper_rev", field_path="oper_rev"),
@@ -79,13 +83,17 @@ def test_finance_claims_generated():
 
 
 def test_finance_rule_without_evidence_skipped():
-    """规则触发但字段证据不全 → 不生成该 Claim（§9.2 至少一个 Evidence）。"""
+    """规则触发但未产出任何证据 → 不生成该 Claim（§9.2 至少一个 Evidence）。"""
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R3": "triggered"},
+            rule_details={
+                "R1": {"evidence_ids": []},
+                "R3": {"evidence_ids": []},
+            },
             evidence=[
                 _ev("ev_is_oper_rev_20260331", field_path="oper_rev")
-            ],  # R1 缺 acct_rcv、R3 缺 monetary_cap/borrow
+            ],  # 不在任何规则的 evidence_ids 中
         )
     )
     result = build_claims_node(_make_state(results))
@@ -108,8 +116,19 @@ def test_multi_rule_regression():
         _ev("ev_tot_assets", field_path="tot_assets"),
         _ev("ev_core_profit", field_path="core_profit"),
     ]
+    rule_details = {
+        "R1": {"evidence_ids": ["ev_acct_rcv", "ev_oper_rev"]},
+        "R2": {"evidence_ids": ["ev_net_profit", "ev_oper_cf"]},
+        "R3": {"evidence_ids": ["ev_monetary_cap", "ev_borrow"]},
+        "R4": {"evidence_ids": ["ev_inventories", "ev_oper_rev"]},
+        "R5": {"evidence_ids": ["ev_oper_rev", "ev_oper_cost"]},
+        "R6": {"evidence_ids": ["ev_oth_rcv", "ev_tot_assets"]},
+        "R7": {"evidence_ids": ["ev_net_profit", "ev_core_profit"]},
+    }
     results = ModuleResults(
-        finance=FinanceResult(rule_statuses=statuses, evidence=evidence)
+        finance=FinanceResult(
+            rule_statuses=statuses, rule_details=rule_details, evidence=evidence
+        )
     )
     result = build_claims_node(_make_state(results))
 
@@ -222,6 +241,14 @@ def test_evidence_collected_from_all_modules():
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered"},
+            rule_details={
+                "R1": {
+                    "evidence_ids": [
+                        "ev_bs_acct_rcv_20260331",
+                        "ev_is_oper_rev_20260331",
+                    ]
+                }
+            },
             evidence=[
                 _ev("ev_bs_acct_rcv_20260331", field_path="acct_rcv"),
                 _ev("ev_is_oper_rev_20260331", field_path="oper_rev"),

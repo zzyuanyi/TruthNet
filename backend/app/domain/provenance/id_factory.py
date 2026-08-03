@@ -38,20 +38,28 @@ def make_evidence_id(
     period: str | None = None,
     dataset_version: str | None = None,
     company_code: str | None = None,
+    rule_id: str | None = None,
 ) -> str:
     """确定性生成 Evidence ID.
 
-    digest 输入: source_type | source_record_id | field_path | period |
-                 dataset_version | company_code
+    digest 输入（基础六段，保持原算法）:
+        source_type | source_record_id | field_path | period |
+        dataset_version | company_code
+    仅当 rule_id 非空时追加第七段 —— 用于区分同一来源/字段被多条
+    规则引用的情况（如 R1/R4 共用 oper_rev 字段）；equity/events
+    等非规则证据不传 rule_id，ID 与旧算法保持一致。
     """
-    digest = _digest(
+    digest_parts = [
         source_type,
         source_record_id,
         field_path,
         period,
         dataset_version,
         company_code,
-    )
+    ]
+    if rule_id:
+        digest_parts.append(rule_id)
+    digest = _digest(*digest_parts)
     return f"ev_{source_namespace}_{digest}"
 
 

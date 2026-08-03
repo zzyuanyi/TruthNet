@@ -187,6 +187,10 @@ TruthNet/
 # ===== 环境 =====
 conda create -n truthnet python=3.11 -y && conda activate truthnet
 pip install -r requirements.txt
+# ⚠️ 强制约定：所有 Python 命令（测试/脚本/服务/doctor）必须在 truthnet 环境执行
+#    （`conda activate truthnet` 或直接调用 envs/truthnet/python.exe）
+#    禁止使用 base 或其他环境——依赖按 requirements.txt == 固定版本，
+#    环境不匹配会导致测试误报（如 Chroma 持久化测试在 base 下 4 个假失败）。
 
 # ===== 数据导入（首次搭建）=====
 # 0. 准备：从团队共享渠道获取赛方数据文件，放入 data/raw/ 对应子目录（1-5/）

@@ -91,6 +91,21 @@ def validate_evidence_node(state: AgentState) -> dict:
         else:
             claim.verification_status = "verified"
 
+    # 重复/冲突 ID 必须显式告警（收集到却不报告 = 静默放行）
+    if conflicting_ids:
+        issues.append(
+            f"证据 ID 冲突（同 ID 不同内容）: "
+            f"{', '.join(sorted(set(conflicting_ids))[:5])}"
+        )
+    if duplicate_evidence_ids:
+        issues.append(
+            f"重复证据 ID: {', '.join(sorted(set(duplicate_evidence_ids))[:5])}"
+        )
+    if duplicate_claim_ids:
+        issues.append(
+            f"重复 Claim ID: {', '.join(sorted(set(duplicate_claim_ids))[:5])}"
+        )
+
     runtime = state.get("runtime")
     if runtime and issues:
         if hasattr(runtime, "warnings"):
