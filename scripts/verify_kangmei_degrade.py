@@ -83,7 +83,6 @@ def main() -> int:
     d1 = ask(ROUND1)
     ans1 = d1.get("answer", "")
     warns1 = d1.get("warnings") or []
-    claims1 = d1.get("claims") or []
 
     _check("实体解析到康美（600518.SH）", "600518" in ans1 or "康美药业" in ans1, ans1[:40])
     _check(
