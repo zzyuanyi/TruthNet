@@ -164,11 +164,14 @@ def build_records(engine) -> tuple[list[dict], dict[str, int]]:
                 continue
 
             # 报告粒度 Evidence ID（确定性；report_id 缺失时回退组合键防御）
+            # 实际使用的 source_record_id 随记录保存，ID 生成与 EvidenceRef 写入复用同一值
+            src_record_id = str(rec.get("report_id") or "") or (
+                f"{wind_code}|{quarter}|{inst}|{rec.get('publish_date') or ''}"
+            )
             evidence_id = make_evidence_id(
                 source_namespace=NS_REPORT,
                 source_type="research_report",
-                source_record_id=str(rec.get("report_id") or "")
-                or f"{wind_code}|{quarter}|{inst}|{rec.get('publish_date') or ''}",
+                source_record_id=src_record_id,
                 field_path="rating_change",
                 period=str(rec.get("publish_date") or quarter),
                 dataset_version=settings.DATASET_VERSION or "competition-2026",
@@ -194,6 +197,7 @@ def build_records(engine) -> tuple[list[dict], dict[str, int]]:
                     "dataset_version": settings.DATASET_VERSION or "competition-2026",
                     "title": str(rec.get("title") or "")[:200],
                     "source_uri": str(rec.get("source_uri") or ""),
+                    "_src_record_id": src_record_id,
                     "_change_value": f"{prev_rating or ''}→{rec.get('rating_org') or ''}",
                 }
             )
@@ -207,7 +211,12 @@ def _verify(engine, dataset_version: str) -> int:
     if not _table_exists(engine, "rating_changes"):
         print("ERROR: rating_changes 表不存在", file=sys.stderr)
         return 2
+    problems: list[str] = []
     with engine.connect() as conn:
+        total = conn.execute(
+            text("SELECT COUNT(*) FROM rating_changes WHERE dataset_version = :d"),
+            {"d": dataset_version},
+        ).scalar()
         rows = conn.execute(
             text(
                 "SELECT direction, COUNT(*) AS cnt FROM rating_changes "
@@ -215,13 +224,74 @@ def _verify(engine, dataset_version: str) -> int:
             ),
             {"d": dataset_version},
         ).fetchall()
-        total = conn.execute(
-            text("SELECT COUNT(*) FROM rating_changes WHERE dataset_version = :d"),
+        # 新契约验证：evidence_id 非空 / 无重复 / 无孤儿 / evidence_refs 无缺失 / 字段正确
+        nonnull_ev = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM rating_changes WHERE dataset_version = :d "
+                "AND (evidence_id IS NULL OR evidence_id = '')"
+            ),
+            {"d": dataset_version},
+        ).scalar()
+        dup_ev = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM ("
+                "  SELECT evidence_id FROM rating_changes WHERE dataset_version = :d "
+                "  GROUP BY evidence_id HAVING COUNT(*) > 1"
+                ") t"
+            ),
+            {"d": dataset_version},
+        ).scalar()
+        orphan = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM rating_changes rc "
+                "LEFT JOIN companies co ON co.wind_code = rc.wind_code "
+                "WHERE rc.dataset_version = :d AND co.wind_code IS NULL"
+            ),
+            {"d": dataset_version},
+        ).scalar()
+        missing_refs = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM rating_changes rc "
+                "LEFT JOIN evidence_refs er ON er.evidence_id = rc.evidence_id "
+                "WHERE rc.dataset_version = :d AND er.evidence_id IS NULL"
+            ),
+            {"d": dataset_version},
+        ).scalar()
+        bad_fields = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM rating_changes rc "
+                "JOIN evidence_refs er ON er.evidence_id = rc.evidence_id "
+                "WHERE rc.dataset_version = :d AND ("
+                "  er.source_type <> 'research_report' OR "
+                "  er.source_table <> 'research_reports' OR "
+                "  er.field_path <> 'rating_change')"
+            ),
             {"d": dataset_version},
         ).scalar()
     print(f"verify-only: 共 {total} 条 (dataset={dataset_version})")
     for r in rows:
         print(f"  {r[0]}: {r[1]}")
+    checks = [
+        ("evidence_id 全非空", nonnull_ev == 0, f"空值 {nonnull_ev}"),
+        ("Evidence ID 无重复", dup_ev == 0, f"重复组 {dup_ev}"),
+        ("公司孤儿为 0", orphan == 0, f"孤儿 {orphan}"),
+        ("evidence_refs 无缺失", missing_refs == 0, f"缺失 {missing_refs}"),
+        (
+            "source_type/table/field_path 正确",
+            bad_fields == 0,
+            f"异常 {bad_fields}",
+        ),
+    ]
+    failed = 0
+    for name, ok, detail in checks:
+        print(f"  [{'✅' if ok else '❌'}] {name} — {detail}")
+        if not ok:
+            failed += 1
+            problems.append(name)
+    if problems:
+        print(f"VERIFY: FAIL（{failed} 项）→ {', '.join(problems)}")
+        return 1
+    print("VERIFY: OK")
     return 0
 
 
@@ -311,7 +381,7 @@ def main() -> int:
             evidence_rows = [
                 {
                     "eid": r["evidence_id"],
-                    "srid": str(r["report_id"] or ""),
+                    "srid": r["_src_record_id"],
                     "cc": r["wind_code"],
                     "per": str(r["published_at"] or ""),
                     "val": r["_change_value"],

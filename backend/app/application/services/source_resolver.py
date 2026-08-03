@@ -183,6 +183,50 @@ def _resolve_event_cluster(source_record_id: str) -> dict:
         return {"resolved": False, "record": {}}
 
 
+def _resolve_research_report(source_record_id: str) -> dict:
+    """解析研报来源（评级拐点证据的最后一层回溯）。
+
+    返回允许公开的字段：标题、公司、机构、发布日期、评级、摘要与来源 URI。
+    """
+    try:
+        from sqlalchemy import create_engine, text
+
+        from app.core.config import settings
+
+        url = (
+            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
+            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+            "?charset=utf8mb4"
+        )
+        engine = create_engine(url, pool_pre_ping=True)
+        try:
+            with engine.connect() as conn:
+                row = (
+                    conn.execute(
+                        text(
+                            "SELECT report_id, wind_code, sec_name, org_name, "
+                            "publish_date, rating_org, rating_change, title, abstract, "
+                            "source_uri, industry_l1 "
+                            "FROM research_reports WHERE report_id = :rid LIMIT 1"
+                        ),
+                        {"rid": source_record_id},
+                    )
+                    .mappings()
+                    .first()
+                )
+        finally:
+            engine.dispose()
+        if row is None:
+            return {"resolved": False, "record": {}}
+        return {
+            "resolved": True,
+            "record": {k: (str(v) if v is not None else None) for k, v in row.items()},
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("研报来源解析失败: %s", exc)
+        return {"resolved": False, "record": {}}
+
+
 def resolve_source(
     *,
     source_type: str,
@@ -198,4 +242,6 @@ def resolve_source(
         return _resolve_neo4j_relationship(source_record_id)
     if source_type == "event_cluster":
         return _resolve_event_cluster(source_record_id)
+    if source_type == "research_report":
+        return _resolve_research_report(source_record_id)
     return {"resolved": False, "record": {}}
