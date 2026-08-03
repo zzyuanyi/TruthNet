@@ -71,6 +71,8 @@ class EvidenceRef(BaseModel):
     trace_id: str = ""
     company_code: str = ""
     module: str = ""
+    # 运行时规则归属（仅内存用，不落库；持久化归属由 claims.rule_id + links 表达）
+    rule_id: str | None = None
     source_table: str | None = None
     unit: str | None = None
     statement_scope: str | None = None

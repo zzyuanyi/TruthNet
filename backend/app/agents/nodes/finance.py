@@ -32,6 +32,17 @@ _TABLE_CODE_MAP = {
     "cf": "cash_flow",
 }
 
+# 证据字段 → 报表真实列名（规则层字段名与列名不一致时的别名）
+# 取值时按别名读 resolve_source 返回的记录；borrow 拆为两项拼接。
+_FIELD_ALIASES: dict[str, str | tuple[str, str]] = {
+    "net_profit": "net_profit_excl_min_int_inc",
+    "core_profit": "net_profit_after_ded_nr_lp",
+    "oper": "net_cash_flows_oper_act",
+    "oper_cf": "net_cash_flows_oper_act",
+    "oper_cost": "less_oper_cost",
+    "borrow": ("st_borrow", "lt_borrow"),
+}
+
 
 def _parse_rule_evidence(ev_id: str, as_of: str) -> tuple[str, str]:
     """解析规则引擎证据 ID → (source_table, field_path).
@@ -61,6 +72,43 @@ def _dedup(items: list[str]) -> list[str]:
             seen.add(item)
             result.append(item)
     return result
+
+
+def _resolve_record(cache: dict, table: str, src_record_id: str) -> dict:
+    """按 (table, src_record_id) 缓存 resolve_source 返回的报表记录。"""
+    key = (table, src_record_id)
+    if key not in cache:
+        try:
+            from app.application.services.source_resolver import resolve_source
+
+            cache[key] = resolve_source(
+                source_type="financial_statement",
+                source_record_id=src_record_id,
+                source_table=table,
+            ).get("record", {})
+        except Exception:  # noqa: BLE001 — 解析失败按无记录处理
+            cache[key] = {}
+    return cache[key]
+
+
+def _field_value(
+    cache: dict, table: str, src_record_id: str, field: str
+) -> tuple[str | None, str | None]:
+    """取证据字段的原始报表值（货币字段 unit=CNY）。
+
+    无法解析或字段不存在 → (None, None)，不回退 explanation。
+    """
+    rec = _resolve_record(cache, table, src_record_id)
+    alias = _FIELD_ALIASES.get(field, field)
+    if isinstance(alias, tuple):
+        vals = [rec.get(a) for a in alias]
+        if any(v is not None for v in vals):
+            return ("|".join(str(v) for v in vals if v is not None), "CNY")
+        return (None, "CNY")
+    v = rec.get(alias)
+    if v is None:
+        return (None, None)
+    return (str(v), "CNY")
 
 
 def _resolve_as_of(state: AgentState) -> str:
@@ -128,23 +176,27 @@ def finance_node(state: AgentState) -> dict:
     from app.core.config import settings as _settings
     from app.domain.provenance.id_factory import NS_FINANCE, make_evidence_id
 
+    record_cache: dict = {}
     for rid in _RULES:
         r = results.get(rid)
         if r is None:
             continue
         rule_statuses[rid] = r.status
-        # 规则明细（含触发解释/严重度/指标数值，供回答展开规则清单）
+        # 规则明细（含触发解释/严重度/指标数值/本规则证据 ID，
+        # 供回答展开规则清单 + build_claims 按规则归属绑定证据）
         rule_details[rid] = {
             "rule_name": r.rule_name or "",
             "explanation": str(r.explanation or ""),
             "severity": r.severity or "",
             "current": dict(getattr(r, "current", None) or {}),
+            "evidence_ids": [],
         }
         if r.status == "insufficient_data" and W_COMPANY_TYPE_UNKNOWN in r.warnings:
             unknown_type = True
         for w in r.warnings:
             if w:
                 warnings.append(w)
+        generated_ids: list[str] = []
         for ev_id in r.evidence_ids:
             table, field = _parse_rule_evidence(ev_id, as_of)
             src_record_id = f"{code}|{as_of}|{PARENT_STATEMENT_TYPE}"
@@ -156,7 +208,10 @@ def finance_node(state: AgentState) -> dict:
                 period=as_of,
                 dataset_version=_settings.DATASET_VERSION,
                 company_code=code,
+                rule_id=rid,
             )
+            generated_ids.append(evidence_id)
+            value, unit = _field_value(record_cache, table, src_record_id, field)
             evidence.append(
                 EvidenceRef(
                     evidence_id=evidence_id,
@@ -165,16 +220,20 @@ def finance_node(state: AgentState) -> dict:
                     source_table=table,
                     field_path=field,
                     period=as_of,
-                    value=str(r.explanation or "")[:200],
+                    value=value,
+                    unit=unit,
                     source_title=f"母公司报表 · 财务反欺诈规则 {rid}",
+                    source_excerpt=str(r.explanation or "")[:200],
                     statement_scope="parent_company",
                     module="finance",
+                    rule_id=rid,
                     turn_id=turn_id,
                     trace_id=trace_id,
                     company_code=code,
                     dataset_version=_settings.DATASET_VERSION,
                 )
             )
+        rule_details[rid]["evidence_ids"] = generated_ids
 
     # 统一口径说明恰好一次（规则实际执行时才有意义）
     if rule_statuses:

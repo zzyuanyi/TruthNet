@@ -243,9 +243,17 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         },
     )
     result.warnings = field_warnings
+    # 证据 = 实际参与判断的字段（build_claims 按规则归属绑定，不再静态要求全字段）
     result.evidence_ids = [f"ev_is_net_profit_{as_of}"]
     if core_available:
         result.evidence_ids.append(f"ev_is_core_profit_{as_of}")
+    if revenue_div is not None:
+        result.evidence_ids.append(f"ev_is_oper_rev_{as_of}")
+    if cash_div is not None:
+        result.evidence_ids.append(f"ev_cf_oper_{as_of}")
+    if non_oper_ratio is not None:
+        result.evidence_ids.append(f"ev_is_oper_profit_{as_of}")
+        result.evidence_ids.append(f"ev_is_tot_profit_{as_of}")
 
     if simplified:
         result.warnings.append("扣非净利润字段不可用，使用简化版判断（上限 orange）")
