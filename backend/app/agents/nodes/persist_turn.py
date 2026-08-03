@@ -318,33 +318,57 @@ def persist_turn_node(state: AgentState) -> dict:
                     {"sid": session_id, "title": title},
                 )
 
-            # turn upsert
-            turn_index = conn.execute(
+            # turn upsert（幂等：同 turn_id 重试 → UPDATE，不新增行/不新增序号）
+            existing_turn = conn.execute(
                 text(
-                    "SELECT COALESCE(MAX(turn_index), 0) + 1 AS next_index "
-                    "FROM conversation_turns WHERE session_id = :sid"
+                    "SELECT turn_id, turn_index FROM conversation_turns "
+                    "WHERE turn_id = :tid"
                 ),
-                {"sid": session_id},
-            ).scalar_one()
-
-            conn.execute(
-                text(
-                    "INSERT INTO conversation_turns "
-                    "(turn_id, session_id, turn_index, question, answer, "
-                    " company_code, trace_id, module_status, created_at) "
-                    "VALUES (:turn_id, :sid, :index, :q, :a, :cc, :trace, :ms, CURRENT_TIMESTAMP)"
-                ),
-                {
-                    "turn_id": db_turn_id,
-                    "sid": session_id,
-                    "index": turn_index,
-                    "q": question,
-                    "a": answer,
-                    "cc": company_code,
-                    "trace": trace_id,
-                    "ms": module_status_json,
-                },
-            )
+                {"tid": db_turn_id},
+            ).first()
+            if existing_turn:
+                conn.execute(
+                    text(
+                        "UPDATE conversation_turns "
+                        "SET answer = :a, company_code = :cc, "
+                        "trace_id = :trace, module_status = :ms "
+                        "WHERE turn_id = :tid"
+                    ),
+                    {
+                        "a": answer,
+                        "cc": company_code,
+                        "trace": trace_id,
+                        "ms": module_status_json,
+                        "tid": db_turn_id,
+                    },
+                )
+                turn_index = existing_turn[1]
+            else:
+                turn_index = conn.execute(
+                    text(
+                        "SELECT COALESCE(MAX(turn_index), 0) + 1 AS next_index "
+                        "FROM conversation_turns WHERE session_id = :sid"
+                    ),
+                    {"sid": session_id},
+                ).scalar_one()
+                conn.execute(
+                    text(
+                        "INSERT INTO conversation_turns "
+                        "(turn_id, session_id, turn_index, question, answer, "
+                        " company_code, trace_id, module_status, created_at) "
+                        "VALUES (:turn_id, :sid, :index, :q, :a, :cc, :trace, :ms, CURRENT_TIMESTAMP)"
+                    ),
+                    {
+                        "turn_id": db_turn_id,
+                        "sid": session_id,
+                        "index": turn_index,
+                        "q": question,
+                        "a": answer,
+                        "cc": company_code,
+                        "trace": trace_id,
+                        "ms": module_status_json,
+                    },
+                )
 
             # Provenance 持久化（同一事务，顺序满足外键）
             evidence = state.get("evidence", [])

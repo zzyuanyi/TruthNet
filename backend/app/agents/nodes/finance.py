@@ -72,8 +72,8 @@ def _resolve_as_of(state: AgentState) -> str:
 
         if settings.DEFAULT_AS_OF:
             return settings.DEFAULT_AS_OF
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — settings 不可用时回退默认 as_of
+        return "20260331"
     return "20260331"
 
 
@@ -118,6 +118,7 @@ def finance_node(state: AgentState) -> dict:
         }
 
     rule_statuses: dict[str, str] = {}
+    rules_list: list = []
     rule_details: dict[str, dict] = {}
     warnings: list[str] = []
     evidence: list[EvidenceRef] = []
@@ -133,6 +134,7 @@ def finance_node(state: AgentState) -> dict:
         if r is None:
             continue
         rule_statuses[rid] = r.status
+        rules_list.append(r)
         # 规则明细（含触发解释/严重度/指标数值，供回答展开规则清单）
         rule_details[rid] = {
             "rule_name": r.rule_name or "",
@@ -201,14 +203,88 @@ def finance_node(state: AgentState) -> dict:
     else:
         status = "success"
 
+    # periods_available：真实母公司财务期数（B1 验收）
+    periods_available = _query_periods_available(code, as_of)
+    industry_benchmark = _query_industry_benchmark(code, as_of)
+
     return {
         "module_status": {"finance": ModuleStatus(state=status)},
         "results": ModuleResults(
             finance=FinanceResult(
                 rule_statuses=rule_statuses,
+                rules=rules_list,
+                periods_available=periods_available,
+                industry_benchmark=industry_benchmark,
                 rule_details=rule_details,
                 warnings=warnings,
                 evidence=evidence,
             )
         ),
     }
+
+
+def _query_periods_available(company_code: str, as_of: str) -> int:
+    """真实可用母公司财务期数。"""
+    try:
+        from app.domain.finance._fetch import _get_engine
+        from sqlalchemy import text
+
+        engine = _get_engine()
+        with engine.connect() as conn:
+            n = conn.execute(
+                text(
+                    "SELECT COUNT(DISTINCT report_period) FROM balance_sheet "
+                    "WHERE wind_code = :c AND statement_type = :stmt "
+                    "AND report_period <= :asof"
+                ),
+                {"c": company_code, "stmt": "408006000", "asof": as_of},
+            ).scalar()
+        return int(n or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _query_industry_benchmark(company_code: str, as_of: str) -> dict:
+    """行业分位（行业已知时实时计算公司百分位）。"""
+    try:
+        from app.domain.benchmarks.calculator import (
+            MIN_PEER_SAMPLE,
+            compute_metric_values,
+            percentile_rank,
+        )
+        from app.domain.benchmarks.metric_registry import get_metric
+        from app.domain.finance._fetch import _get_engine, fetch_company_field
+
+        industry = fetch_company_field(company_code, "industry_l1")
+        if not industry:
+            return {
+                "industry_l1": "",
+                "percentiles": {},
+                "warnings": ["INDUSTRY_UNKNOWN"],
+            }
+        engine = _get_engine()
+        percentiles = {}
+        for metric_id in (
+            "r1_gap",
+            "r2_cf_ratio",
+            "r3_cash_to_assets",
+            "r4_growth_gap",
+            "r6_oth_rcv_to_assets",
+            "r7_core_profit_ratio",
+        ):
+            try:
+                metric = get_metric(metric_id)
+                pairs = compute_metric_values(engine, metric, industry, as_of)
+                values = [v for _, v in pairs]
+                company_value = next((v for c, v in pairs if c == company_code), None)
+                if len(values) >= MIN_PEER_SAMPLE and company_value is not None:
+                    percentiles[metric_id] = percentile_rank(company_value, values)
+            except Exception:  # noqa: BLE001
+                continue
+        return {
+            "industry_l1": industry,
+            "percentiles": percentiles,
+            "warnings": ["行业分位样本不足"] if not percentiles else [],
+        }
+    except Exception:  # noqa: BLE001
+        return {"industry_l1": "", "percentiles": {}, "warnings": []}

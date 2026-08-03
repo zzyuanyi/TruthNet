@@ -128,7 +128,7 @@ def test_risk_diagnosis_runs_all_modules():
         e["payload"]["module"] for e in events if e["event_type"] == "module.completed"
     }
 
-    expected = {"finance", "equity", "events"}
+    expected = {"finance", "equity", "events", "risk"}
     assert (
         started_modules == expected
     ), f"module.started 应为 {expected}，实际 {started_modules}"
@@ -162,11 +162,13 @@ def test_finance_only_query_runs_finance():
     }
 
     assert started_modules == {
-        "finance"
-    }, f"纯财务问题应只执行 finance，实际 started: {started_modules}"
+        "finance",
+        "risk",
+    }, f"纯财务问题应执行 finance+risk，实际 started: {started_modules}"
     assert completed_modules == {
-        "finance"
-    }, f"纯财务问题应只完成 finance，实际 completed: {completed_modules}"
+        "finance",
+        "risk",
+    }, f"纯财务问题应完成 finance+risk，实际 completed: {completed_modules}"
 
     tc = next(e for e in events if e["event_type"] == "turn.completed")
     assert tc["payload"].get("answer"), "turn.completed 应包含回答文本"

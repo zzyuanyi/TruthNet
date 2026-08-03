@@ -545,8 +545,10 @@ async def websocket_chat_v1(ws: WebSocket):
                             },
                         )
                     )
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 — 错误事件发送失败仅记录，不吞异常
+                    logger.warning(
+                        "WS 错误事件发送失败: session_id=%s", session_id, exc_info=True
+                    )
 
     except WebSocketDisconnect:
         logger.info("WebSocket 客户端断开: session_id=%s", session_id)

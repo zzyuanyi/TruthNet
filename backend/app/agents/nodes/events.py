@@ -116,6 +116,30 @@ def _fetch_event_clusters(wind_code: str) -> list[dict]:
     return clusters
 
 
+def _fetch_rating_changes(wind_code: str) -> list[dict]:
+    """从 rating_changes 表读取该公司真实评级变更（供 EventsResult.rating_changes）。"""
+    if settings.SQL_BACKEND != "mysql":
+        return []
+    try:
+        with _get_engine().connect() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT quarter, institution, previous_rating, current_rating, "
+                        "direction, published_at "
+                        "FROM rating_changes WHERE wind_code = :code "
+                        "ORDER BY quarter DESC LIMIT 30"
+                    ),
+                    {"code": wind_code},
+                )
+                .mappings()
+                .fetchall()
+            )
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — 评级表缺失时无拐点
+        return []
+
+
 def events_node(state: AgentState) -> dict:
     t0 = time.perf_counter()
 
@@ -253,6 +277,9 @@ def events_node(state: AgentState) -> dict:
             )
         )
 
+    # 评级拐点（真实 rating_changes 表）
+    rating_changes = _fetch_rating_changes(company.wind_code)
+
     # 事件簇（优先消费 event_clusters 交接数据，不重新生成/不伪造）
     clusters = _fetch_event_clusters(company.wind_code)
     if not clusters:
@@ -274,6 +301,7 @@ def events_node(state: AgentState) -> dict:
             events=EventsResult(
                 timeline=timeline,
                 clusters=clusters,
+                rating_changes=rating_changes,
                 evidence=evidence_list,
             )
         ),

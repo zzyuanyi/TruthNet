@@ -5,7 +5,7 @@
 
 import pytest
 
-from backend.app.infrastructure.graph.normalizer import (
+from app.infrastructure.graph.normalizer import (
     entity_id_to_wind_code,
     get_exchange_code,
     infer_suffix_from_digits,
