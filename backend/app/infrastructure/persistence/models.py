@@ -1021,3 +1021,177 @@ class RiskAssessment(Base):
 
     def __repr__(self) -> str:
         return f"<RiskAssessment {self.wind_code} [{self.level}]>"
+
+
+# ============================================================================
+# Phase C 派生表 17: industry_benchmarks — 行业分位基准（数据任务 3）
+# ============================================================================
+
+
+class IndustryBenchmark(Base):
+    __tablename__ = "industry_benchmarks"
+    __table_args__ = (
+        UniqueConstraint(
+            "industry_l1",
+            "metric_id",
+            "period",
+            "statement_scope",
+            "dataset_version",
+            name="uq_industry_benchmark_key",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    benchmark_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="基准唯一 ID"
+    )
+    industry_l1: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, comment="申万一级行业"
+    )
+    industry_l2: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="申万二级行业"
+    )
+    metric_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True, comment="指标 ID"
+    )
+    rule_id: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="关联规则 R1-R7"
+    )
+    period: Mapped[str] = mapped_column(
+        String(10), nullable=False, index=True, comment="报告期 YYYYMMDD"
+    )
+    statement_scope: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="parent_company", comment="报表口径"
+    )
+    company_type: Mapped[int | None] = mapped_column(
+        SmallInteger, nullable=True, comment="公司类型代码 (1=非金融)"
+    )
+    sample_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="有效样本数"
+    )
+    mean_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="均值"
+    )
+    std_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="标准差"
+    )
+    min_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="最小值"
+    )
+    p05: Mapped[float | None] = mapped_column(Float, nullable=True, comment="5 分位")
+    p25: Mapped[float | None] = mapped_column(Float, nullable=True, comment="25 分位")
+    p50: Mapped[float | None] = mapped_column(Float, nullable=True, comment="中位数")
+    p75: Mapped[float | None] = mapped_column(Float, nullable=True, comment="75 分位")
+    p95: Mapped[float | None] = mapped_column(Float, nullable=True, comment="95 分位")
+    max_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="最大值"
+    )
+    dataset_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="数据集版本"
+    )
+    rule_set_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="规则集版本"
+    )
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="计算时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndustryBenchmark {self.industry_l1}/{self.metric_id}@{self.period}>"
+
+
+# ============================================================================
+# Phase C 派生表 18: rating_changes — 研报评级拐点（数据任务 5）
+# ============================================================================
+
+
+class RatingChange(Base):
+    __tablename__ = "rating_changes"
+    __table_args__ = (
+        UniqueConstraint(
+            "wind_code",
+            "quarter",
+            "institution",
+            "report_id",
+            name="uq_rating_change_key",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    rating_change_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="拐点唯一 ID"
+    )
+    wind_code: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True, comment="Wind 代码"
+    )
+    quarter: Mapped[str] = mapped_column(
+        String(8), nullable=False, index=True, comment="季度 YYYYQn"
+    )
+    institution: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="研究机构"
+    )
+    previous_rating: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="上次评级（原始）"
+    )
+    current_rating: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="本次评级（原始）"
+    )
+    direction: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="方向: down/up/keep"
+    )
+    report_id: Mapped[str] = mapped_column(
+        String(128), nullable=True, comment="研报 ID"
+    )
+    published_at: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, comment="发布日期 YYYY-MM-DD"
+    )
+    confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="解析置信度 [0,1]"
+    )
+    evidence_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="关联 Evidence ID"
+    )
+    dataset_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="数据集版本"
+    )
+
+    def __repr__(self) -> str:
+        return f"<RatingChange {self.wind_code}/{self.quarter} {self.direction}>"
+
+
+# ============================================================================
+# Phase C 派生表 19: analysis_runs — 直接 REST 分析溯源（任务 16）
+# ============================================================================
+
+
+class AnalysisRun(Base):
+    __tablename__ = "analysis_runs"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+
+    run_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="分析运行唯一 ID"
+    )
+    trace_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, comment="追踪 ID"
+    )
+    endpoint: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="端点标识"
+    )
+    company_codes: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="分析公司列表"
+    )
+    period: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, comment="报告期"
+    )
+    statement_scope: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="报表口径"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="completed", comment="状态"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<AnalysisRun {self.run_id} {self.endpoint}>"

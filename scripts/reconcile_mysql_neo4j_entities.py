@@ -82,10 +82,95 @@ def _load_neo4j_listed(driver) -> list[dict]:
     return [dict(r) for r in records]
 
 
+def _detect_duplicate_shareholder_nodes(driver) -> list[dict]:
+    """检测 c_/corp_ 双前缀重复股东节点（任务 14 验收项）。
+
+    同一 canonical_name 同时以 c_ 与 corp_ 前缀存在 → 重复。
+    返回差异记录（不删除任何节点）。
+    """
+    records, _, _ = driver.execute_query(
+        "MATCH (a:Entity) WHERE a.entity_id STARTS WITH 'c_' "
+        "AND a.canonical_name IS NOT NULL "
+        "WITH a.canonical_name AS name, collect(a.entity_id) AS c_ids "
+        "MATCH (b:Entity) WHERE b.entity_id STARTS WITH 'corp_' "
+        "AND b.canonical_name = name "
+        "RETURN name AS name, c_ids AS c_ids, collect(b.entity_id) AS corp_ids "
+        "LIMIT 50000"
+    )
+    dupes = []
+    for r in records:
+        for corp_id in r["corp_ids"]:
+            dupes.append(
+                {
+                    "canonical_name": r["name"],
+                    "c_entity_id": r["c_ids"][0] if r["c_ids"] else None,
+                    "corp_entity_id": corp_id,
+                }
+            )
+    return dupes
+
+
+def _write_duplicate_report(dupes: list[dict]) -> str:
+    """写差异报告到 docs/reports/（任务 14）。"""
+    out_dir = Path("docs/reports")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report = out_dir / "NEO4J_DUPLICATE_SHAREHOLDER_NODES.md"
+    lines = [
+        "# Neo4j 重复股东节点差异报告 — Phase C 任务 14",
+        "",
+        "> 生成时间: 见脚本运行输出",
+        "> 发现: 同一股东实体以 `c_<hash>` 与 `corp_<hash>` 双前缀重复建节点，",
+        "> 导致图谱股东节点/边翻倍。本报告仅列差异，不删除任何节点/边。",
+        "",
+        f"**重复对数**: {len(dupes)}",
+        "",
+        "| canonical_name | c_ 节点 | corp_ 节点 |",
+        "|---|---|---|",
+    ]
+    for d in dupes[:200]:
+        lines.append(
+            f"| {d['canonical_name']} | {d['c_entity_id']} | {d['corp_entity_id']} |"
+        )
+    lines += [
+        "",
+        "## 幂等修复方式",
+        "",
+        "- 对每个 corp_ 节点 SET `duplicate_of = <c_ 节点 entity_id>`（仅规范属性，不删除）",
+        "- 查询层可依据 `duplicate_of` 去重展示（Phase D 可选）",
+        "",
+    ]
+    report.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    return str(report)
+
+
+def _mark_duplicates(driver, dupes: list[dict], dry_run: bool) -> int:
+    """幂等标记重复节点（SET duplicate_of，不删除）。"""
+    marked = 0
+    for d in dupes:
+        if not d["corp_entity_id"] or not d["c_entity_id"]:
+            continue
+        if dry_run:
+            marked += 1
+            continue
+        driver.execute_query(
+            "MATCH (n:Entity {entity_id: $eid}) "
+            "SET n.duplicate_of = $c_eid, n.is_duplicate = true "
+            "RETURN n.entity_id",
+            {"eid": d["corp_entity_id"], "c_eid": d["c_entity_id"]},
+        )
+        marked += 1
+    return marked
+
+
 def _main():
     parser = argparse.ArgumentParser(description="MySQL↔Neo4j 公司身份对齐")
     parser.add_argument("--verify-only", action="store_true", help="仅核对不一致")
     parser.add_argument("--dry-run", action="store_true", help="预览不执行")
+    parser.add_argument(
+        "--report-duplicates",
+        action="store_true",
+        help="生成 c_/corp_ 重复节点差异报告",
+    )
     args = parser.parse_args()
 
     mysql_listed = _load_mysql_listed()
@@ -98,6 +183,15 @@ def _main():
     print(f"Neo4j company_* 节点: {len(neo4j_listed)}")
 
     neo_by_eid = {r["entity_id"]: r for r in neo4j_listed}
+
+    # ── 0. c_/corp_ 重复股东节点检测（任务 14 验收） ─────
+    dupes = _detect_duplicate_shareholder_nodes(driver)
+    print(f"\n[duplicate] c_/corp_ 重复股东节点对数: {len(dupes)}")
+    if args.report_duplicates:
+        path = _write_duplicate_report(dupes)
+        print(f"[duplicate] 差异报告已写入: {path}")
+        driver.close()
+        return
 
     # ── 1. entity_id 一致性 ──────────────────────────────
     missing_in_neo4j = [e for e in by_eid if e not in neo_by_eid]
@@ -142,13 +236,9 @@ def _main():
         driver.close()
         sys.exit(1 if (missing_in_neo4j or extra_in_neo4j or mismatched_wc) else 0)
 
-    if not label_updates:
-        print("\n无需对齐。")
-        driver.close()
-        return
-
     if args.dry_run:
         print("\n[dry-run] 未写入，以上为预览。")
+        print(f"[duplicate] 将标记 {len(dupes)} 个 corp_ 重复节点（dry-run 不执行）")
         driver.close()
         return
 
@@ -170,6 +260,17 @@ def _main():
         )
         updated += 1
     print(f"\n已对齐 {updated} 个公司节点（canonical_name + dataset_version）。")
+
+    # ── 3.5 幂等标记 c_/corp_ 重复股东节点（SET duplicate_of，不删除） ──
+    if dupes:
+        marked = _mark_duplicates(driver, dupes, dry_run=False)
+        print(f"[duplicate] 已标记 {marked} 个 corp_ 节点 duplicate_of=对应 c_ 节点。")
+        _write_duplicate_report(dupes)
+        print(
+            "[duplicate] 差异报告已写入 docs/reports/NEO4J_DUPLICATE_SHAREHOLDER_NODES.md"
+        )
+    else:
+        print("[duplicate] 无 c_/corp_ 重复节点，无需标记。")
 
     # ── 4. 验证节点/关系数未异常减少 ────────────────────
     node_count = driver.execute_query("MATCH (n) RETURN count(n) AS c")[0][0]["c"]

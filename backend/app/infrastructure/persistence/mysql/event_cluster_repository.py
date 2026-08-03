@@ -222,8 +222,10 @@ class MySQLEventClusterRepository:
                     text(
                         "INSERT INTO event_cluster_sources "
                         "(event_cluster_id, source_type, source_record_id, evidence_id, "
-                        " source_title, source_uri, published_at, content_hash, sequence_no) "
-                        "VALUES (:id, :st, :srid, :ev, :title, :uri, :pub, :ch, :seq)"
+                        " source_title, source_uri, published_at, content_hash, "
+                        " fcode, sequence_no) "
+                        "VALUES (:id, :st, :srid, :ev, :title, :uri, :pub, :ch, "
+                        " :fcode, :seq)"
                     ),
                     {
                         "id": record.event_cluster_id,
@@ -234,6 +236,7 @@ class MySQLEventClusterRepository:
                         "uri": s.source_uri,
                         "pub": s.published_at,
                         "ch": s.content_hash,
+                        "fcode": s.fcode,
                         "seq": seq,
                     },
                 )
@@ -260,7 +263,7 @@ class MySQLEventClusterRepository:
             conn.execute(
                 text(
                     "SELECT source_type, source_record_id, evidence_id, source_title, "
-                    "source_uri, published_at, content_hash "
+                    "source_uri, published_at, content_hash, fcode "
                     "FROM event_cluster_sources WHERE event_cluster_id = :id "
                     "ORDER BY sequence_no, id"
                 ),
@@ -313,6 +316,7 @@ def _row_to_cluster(row: dict, sources: list[dict]) -> EventClusterRecord:
                 published_at=s.get("published_at"),
                 source_uri=s.get("source_uri"),
                 content_hash=s.get("content_hash"),
+                fcode=s.get("fcode"),
             )
             for s in sources
         ],

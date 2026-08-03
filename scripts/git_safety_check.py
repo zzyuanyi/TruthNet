@@ -105,7 +105,10 @@ def main():
             print("  [WARN] 当前在 main 分支。建议创建个人 feature 分支进行开发。")
             print("         示例: git checkout -b feature/<your-name>-<task>")
             warns += 1
-        elif any(branch.startswith(p) for p in ("feature/", "fix/", "docs/", "test/")):
+        elif any(
+            branch.startswith(p)
+            for p in ("feature/", "fix/", "docs/", "test/", "integration/", "chore/")
+        ):
             print(f"  [PASS] 当前在 {branch} 分支，可以安全开发。")
         else:
             print(f"  [WARN] 未识别的分支名 '{branch}'，请确认是否为个人开发分支。")
