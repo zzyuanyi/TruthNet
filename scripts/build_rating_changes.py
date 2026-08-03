@@ -257,14 +257,15 @@ def _verify(engine, dataset_version: str) -> int:
             ),
             {"d": dataset_version},
         ).scalar()
+        # NULL 不参与 <> 比较（NULL <> x 恒不成立），须 COALESCE 后才能计入异常
         bad_fields = conn.execute(
             text(
                 "SELECT COUNT(*) FROM rating_changes rc "
                 "JOIN evidence_refs er ON er.evidence_id = rc.evidence_id "
                 "WHERE rc.dataset_version = :d AND ("
-                "  er.source_type <> 'research_report' OR "
-                "  er.source_table <> 'research_reports' OR "
-                "  er.field_path <> 'rating_change')"
+                "  COALESCE(er.source_type, '') <> 'research_report' OR "
+                "  COALESCE(er.source_table, '') <> 'research_reports' OR "
+                "  COALESCE(er.field_path, '') <> 'rating_change')"
             ),
             {"d": dataset_version},
         ).scalar()
@@ -284,12 +285,13 @@ def _verify(engine, dataset_version: str) -> int:
     ]
     failed = 0
     for name, ok, detail in checks:
-        print(f"  [{'✅' if ok else '❌'}] {name} — {detail}")
+        # ASCII 输出：Windows 默认 GBK 终端下 emoji 会 UnicodeEncodeError
+        print(f"  [{'OK' if ok else 'FAIL'}] {name} - {detail}")
         if not ok:
             failed += 1
             problems.append(name)
     if problems:
-        print(f"VERIFY: FAIL（{failed} 项）→ {', '.join(problems)}")
+        print(f"VERIFY: FAIL ({failed} 项) -> {', '.join(problems)}")
         return 1
     print("VERIFY: OK")
     return 0
