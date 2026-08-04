@@ -1,8 +1,10 @@
-"""GenerateAnswer 节点单元测试 — V12 §7.2/§2.6.
+"""GenerateAnswer 节点单元测试 — V12 §7.2/§2.6 + Phase D #13.
 
 覆盖：四层回答结构、risk_level 分级、追问生成（规则/缺失数据/缺失模块）、
-company None、FinalResponse 字段透传。
+company None、FinalResponse 字段透传、LLM 问答润色（Phase D #13）。
 """
+
+import pytest
 
 from app.agents.nodes.generate_answer import generate_answer_node
 from app.agents.state import (
@@ -15,6 +17,38 @@ from app.agents.state import (
     ModuleStatus,
     RuntimeState,
 )
+
+
+class _PassthroughProvider:
+    """透传 provider：返回用户原文（等效不润色，供现有测试隔离真实 LLM）。"""
+
+    provider_name = "test"
+
+    async def chat(self, messages: list[dict], **kwargs) -> str:
+        return messages[-1]["content"]
+
+    async def chat_stream(self, messages, **kwargs):
+        yield await self.chat(messages, **kwargs)
+
+    async def structured_chat(self, messages, output_schema, **kwargs):
+        return output_schema()
+
+    async def check_connection(self) -> bool:
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _no_real_llm(monkeypatch):
+    """所有 generate_answer 测试禁用真实 LLM：润色透传原文。
+
+    Phase D #13 润色在节点内 create_llm_provider()，本地 deepseek key
+    会导致每个测试真调 LLM。统一 patch 为透传 provider，
+    润色专项测试再各自覆盖。
+    """
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider",
+        lambda backend=None: _PassthroughProvider(),
+    )
 
 
 def _company(name: str = "康美药业", code: str = "600518.SH") -> CompanyRef:
@@ -370,6 +404,116 @@ def test_rule_details_no_metrics_no_section():
         "触发规则明细"
         not in generate_answer_node(state_no_details)["final_response"].answer
     )
+
+
+# ── Phase D #13: LLM 问答润色 ─────────────────────────────
+
+
+class _FakeLLM:
+    """可编程 fake provider：注入润色文本 / 抛异常 / 改关键信息。"""
+
+    provider_name = "fake"
+    result: str = ""
+    raise_error: bool = False
+
+    def __init__(self, result: str = "", raise_error: bool = False):
+        self.result = result
+        self.raise_error = raise_error
+
+    async def chat(self, messages: list[dict], **kwargs) -> str:
+        if self.raise_error:
+            raise RuntimeError("LLM 服务不可用")
+        return self.result or messages[-1]["content"]
+
+    async def chat_stream(self, messages, **kwargs):
+        yield await self.chat(messages, **kwargs)
+
+    async def structured_chat(self, messages, output_schema, **kwargs):
+        return output_schema()
+
+    async def check_connection(self) -> bool:
+        return True
+
+
+def _polish_state(monkeypatch, provider):
+    """构造带触发规则明细的 state，并注入指定 LLM provider。"""
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider",
+        lambda backend=None: provider,
+    )
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
+                "growth_gap": {"value": 166.2, "unit": "percentage_point"},
+            },
+        },
+    }
+    fin = FinanceResult(
+        rule_statuses={"R1": "triggered"},
+        rule_details=rule_details,
+    )
+    return _make_state(
+        company=_company(),
+        claims=[_claim("c1", "financial", "red", "R1")],
+        results=ModuleResults(finance=fin),
+    )
+
+
+def test_polish_applies_when_key_facts_kept(monkeypatch):
+    """LLM 返回流畅润色文本（关键信息一致）→ 采用润色文本。"""
+    polished = (
+        "金牌家居（603180.SH）的综合分析已经完成。"
+        "我们检测到 1 项风险信号。"
+        "触发规则明细：R1 应收-营收背离（高风险）：应收账款增速 149.6%、"
+        "增速差距 166.2pp。"
+    )
+    state = _polish_state(monkeypatch, _FakeLLM(result=polished))
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "综合分析已经完成" in answer  # 润色文本生效
+    assert "R1 应收-营收背离（高风险）" in answer
+    assert "149.6%" in answer
+
+
+def test_polish_fallback_when_key_facts_changed(monkeypatch):
+    """LLM 改动规则 ID/数值 → 回退模板原文。"""
+    tampered = "分析完成，检测到 R2 触发（中风险），增速 50%。"  # R1→R2、149.6→50
+    state = _polish_state(monkeypatch, _FakeLLM(result=tampered))
+    answer = generate_answer_node(state)["final_response"].answer
+    # 回退模板：保留原始 R1 / 149.6% / 166.2pp
+    assert "R1 应收-营收背离（高风险）" in answer
+    assert "149.6%" in answer
+    assert "166.2pp" in answer
+    assert "增速差距 50%" not in answer
+
+
+def test_polish_fallback_when_llm_fails(monkeypatch):
+    """LLM 抛异常 → 原样回退模板。"""
+    state = _polish_state(monkeypatch, _FakeLLM(raise_error=True))
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "R1 应收-营收背离（高风险）" in answer
+    assert "149.6%" in answer
+    assert "共检测到 1 项风险信号" in answer
+
+
+def test_polish_skipped_for_company_none(monkeypatch):
+    """公司未识别 → 不调 LLM，直接返回提示语。"""
+    called = {"n": 0}
+
+    class _CountingProvider(_FakeLLM):
+        async def chat(self, messages, **kwargs):
+            called["n"] += 1
+            return "不应出现"
+
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider",
+        lambda backend=None: _CountingProvider(),
+    )
+    result = generate_answer_node(_make_state(company=None))
+    assert "未能在数据覆盖范围内找到匹配的公司" in result["final_response"].answer
+    assert called["n"] == 0, "company None 时不应调用 LLM"
 
 
 # ── FinalResponse 字段透传 ─────────────────────────────────

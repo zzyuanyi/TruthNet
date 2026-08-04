@@ -7,13 +7,26 @@ V12 §2.6 四层回答结构：
 
 注意：本节点在 validate_evidence 之前执行，verification_status
 尚未生成，不得统计"已核实/部分核实"数量。
+
+Phase D #13（问答润色）：
+  - 模板生成 answer 后 → LLM 只做语言润色（流畅段落）
+  - 不得改变风险等级、规则状态、规则 ID、数值
+  - LLM 失败 / 关键信息被改 → 原样回退模板输出
+  - LLM 调用走独立线程 asyncio.run（REST asyncio.to_thread 与 WS
+    事件循环线程两条路径均安全），超时 ~3s
 """
 
+import logging
+import re
+
+from app.agents.llm_sync import run_llm_chat
 from app.agents.state import AgentState, FinalResponse
 from app.domain.finance.parent_scope import (
     NO_SIGNAL_IN_SCOPE,
     RISK_SIGNAL_IN_SCOPE,
 )
+
+logger = logging.getLogger(__name__)
 
 # 已触发规则 → 对应指标追问（V12 §2.6 示例："查看应收账款近 8 季度趋势"）
 _RULE_FOLLOW_UP: dict[str, str] = {
@@ -157,6 +170,58 @@ def _build_rule_details(state: AgentState) -> str:
     return "触发规则明细：" + "；".join(lines) + "。"
 
 
+# ── Phase D #13: LLM 问答润色 ─────────────────────────────
+
+
+def _extract_key_facts(text: str) -> str:
+    """提取关键事实指纹（规则 ID + 数值 + 单位 + 风险等级，去重）。
+
+    用于润色前后一致性校验：LLM 不得改变这些内容。
+    去重：同一规则 ID 在摘要与明细中可能多次出现，润色合并后
+    次数减少不视为改变——只要规则/数值/等级集合一致即可。
+    """
+    facts: list[str] = []
+    facts.extend(re.findall(r"R\d+", text))  # 规则 ID
+    facts.extend(re.findall(r"-?\d+(?:\.\d+)?%", text))  # 百分比
+    facts.extend(re.findall(r"-?\d+(?:\.\d+)?pp", text))  # 百分点
+    facts.extend(re.findall(r"\d+个季度", text))  # 季度数
+    facts.extend(re.findall(r"\d+(?:\.\d+)?天", text))  # 天数
+    facts.extend(re.findall(r"高风险|中风险|关注|低风险", text))  # 风险等级
+    return "|".join(_dedup(facts))
+
+
+def _polish_answer(answer: str) -> str:
+    """LLM 润色模板回答为流畅段落；失败或改变关键信息 → 回退模板。"""
+    if not answer:
+        return answer
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是资深财报分析师。请将以下分析回答润色为流畅、专业的段落。"
+                "铁律：只做语言润色，绝对不得改变任何规则 ID（R1-R7）、"
+                "风险等级（高风险/中风险/关注/低风险）、数字及其单位"
+                "（如 149.6%、166.2pp、2个季度、20天）、"
+                "不得增删或改写任何事实与结论。直接输出润色后的完整回答，"
+                "不要任何解释或前缀。"
+            ),
+        },
+        {"role": "user", "content": answer},
+    ]
+
+    polished = run_llm_chat(messages)
+    if not polished:
+        return answer  # LLM 失败/超时 → 回退模板
+
+    # 关键信息一致性校验：润色改变规则 ID/数值/等级 → 回退模板
+    if _extract_key_facts(polished) != _extract_key_facts(answer):
+        logger.warning("polish: LLM 输出改变关键信息（规则ID/数值/等级），回退模板")
+        return answer
+
+    return polished
+
+
 def _build_follow_ups(state: AgentState) -> list[str]:
     """追问建议：已触发规则 + 缺失数据/缺失模块生成（V12 §2.6）。
 
@@ -288,6 +353,46 @@ def generate_answer_node(state: AgentState) -> dict:
     answer = conclusion + (summary + "。" if summary else "")
     if rule_details:
         answer += rule_details
+    # Phase D #12: LLM 财务解读段（finance 节点产出；失败时为空则跳过）
+    if results and getattr(results, "finance", None) and results.finance.interpretation:
+        answer += results.finance.interpretation
+    # Phase D #11: 疑似造假模式段（pattern_match 节点产出；命中时回答含模式名）
+    pattern_matches = state.get("pattern_matches", [])
+    if pattern_matches:
+        answer += (
+            "疑似模式："
+            + "；".join(
+                f"{m.get('pattern_name', m.get('pattern_id', ''))}"
+                f"（{m.get('confidence', '')}）"
+                for m in pattern_matches
+            )
+            + "。"
+        )
+
+    # Phase D #10: 研报/公告语义检索（问题涉及研报/行业/评级时可选调用）
+    user_query = state.get("user_query", "")
+    try:
+        from app.application.services.research_search import (
+            is_research_query,
+            report_insights_enabled,
+            search_research_insights_sync,
+        )
+
+        if is_research_query(user_query) and report_insights_enabled():
+            insights = search_research_insights_sync(user_query, top_k=3)
+            if insights:
+                parts = []
+                for it in insights[:3]:
+                    src = it.get("source_title") or "研报"
+                    org = it.get("source_org", "")
+                    label = f"{org}·{src}" if org else src
+                    parts.append(f"{it.get('content', '')[:80]}（来源：{label}）")
+                answer += "近期研报观点：" + "；".join(parts) + "。"
+    except Exception:  # noqa: BLE001 — 检索失败不影响主回答
+        logger.warning("generate_answer: 研报检索段失败，跳过", exc_info=True)
+
+    # Phase D #13: LLM 润色（失败/改变关键信息 → 自动回退模板）
+    answer = _polish_answer(answer)
 
     # 风险等级：优先使用 risk 节点输出（否则回退 claim 最高严重度）
     risk_level = (

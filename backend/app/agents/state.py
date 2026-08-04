@@ -143,6 +143,8 @@ class FinanceResult(BaseModel):
     industry_benchmark: dict = Field(default_factory=dict)
     # 规则明细：rule_id → {rule_name, explanation, severity}（规则引擎产出，供回答展开清单）
     rule_details: dict[str, dict] = Field(default_factory=dict)
+    # Phase D #12: LLM 财务解读（固定四段：预警点/数据对比/可能模式/限制说明）
+    interpretation: str = ""
     warnings: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
 
@@ -213,6 +215,8 @@ class AgentState(TypedDict, total=False):
     claims: Annotated[list[Claim], lambda a, b: a + b]
     final_response: FinalResponse | None
     runtime: RuntimeState
+    # Phase D #11: 造假模式匹配结果（list[dict]，pattern_match 节点产出）
+    pattern_matches: list[dict]
     memory_context: MemoryContext | None
     provenance_report: Any | None
     cross_validation: CrossValidationResult | None = None
