@@ -124,9 +124,13 @@ class BaseOpenAICompatibleProvider:
     # ── 聊天 ──────────────────────────────────────────────
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        """发送对话请求，返回文本回答（带重试）."""
+        """发送对话请求，返回文本回答（带重试）.
+
+        无客户端（API key 缺失）时返回空串——降级语义统一：
+        非空=成功，空=失败（错误文案会被 llm_sync 当成功结果用于回答）。
+        """
         if self._client is None:
-            return self._unavailable_response()
+            return ""
 
         @retry(
             retry=retry_if_exception(_is_transient_error),

@@ -159,6 +159,23 @@ def test_interpretation_rejects_fabricated_numbers(monkeypatch):
     assert "149.6%" in text  # 回退 explanation 含原文数值
 
 
+@pytest.mark.parametrize("pct", ["1%", "2%", "4%", "6%", "7%"])
+def test_interpretation_rejects_rule_id_digit_collision(monkeypatch, pct):
+    """P1 回归：规则 ID 数字（R1→1）不得作为合法数值，编造 1%/2%/… 必须拒绝。
+
+    来源仅含 R1 + 149.6 时，若提取前不移除 R\d+，编造的 1% 会因
+    R1 贡献数字 1 而通过溯源校验。
+    """
+    from app.agents.nodes.finance import _validate_interpretation
+
+    source = '{"R1": {"rule_name": "应收-营收背离", "current": {"acct_rcv_growth": {"value": 149.6}}}}'
+    fabricated = (
+        f"【预警点】应收异常。\n【数据对比】增速 {pct}。\n"
+        "【可能模式】收入虚增。\n【限制说明】无。"
+    )
+    assert not _validate_interpretation(fabricated, source), f"编造 {pct} 应被拒绝"
+
+
 def test_run_llm_chat_safe_inside_event_loop(monkeypatch):
     """WS 路径：事件循环线程内调用 run_llm_chat 不抛 RuntimeError。"""
     from app.agents.llm_sync import run_llm_chat

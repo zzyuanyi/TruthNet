@@ -20,33 +20,54 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _get_provider():
-    """创建 LLM provider；失败 → None（调用方回退）。"""
-    try:
-        from app.infrastructure.llm.factory import create_llm_provider
+def _get_providers() -> tuple:
+    """创建主 provider + 备选（LLM_FALLBACK_BACKEND 配置时）。
 
-        return create_llm_provider()
-    except Exception:  # noqa: BLE001 — provider 创建失败回退
-        logger.warning("llm_sync: LLM provider 创建失败，回退模板", exc_info=True)
-        return None
-
-
-async def _call_and_close(provider, coro_factory):
-    """调用 async LLM 并显式关闭客户端（释放 httpx 连接池）。
-
-    背景：asyncio.run 结束后 AsyncOpenAI 客户端不关闭会泄漏连接
-    （每个客户端独立连接池），连续调用 → SYN_SENT 堆积 → 连接耗尽
-    （Connection error / 卡死）。每次调用后必须 aclose。
+    返回 (primary, fallback)，任一创建失败 → None（调用方回退）。
     """
     try:
-        return await coro_factory()
-    finally:
-        client = getattr(provider, "_client", None)
-        if client is not None:
+        from app.core.config import settings
+        from app.infrastructure.llm.factory import create_llm_provider
+
+        primary = create_llm_provider()
+        fallback_backend = settings.LLM_FALLBACK_BACKEND
+        fallback = None
+        if fallback_backend and fallback_backend != settings.LLM_BACKEND:
+            fallback = create_llm_provider(fallback_backend)
+        return primary, fallback
+    except Exception:  # noqa: BLE001 — provider 创建失败回退
+        logger.warning("llm_sync: LLM provider 创建失败，回退模板", exc_info=True)
+        return None, None
+
+
+async def _call_with_fallback(primary, fallback, coro_factory):
+    """主 provider → 失败（空/异常）→ 备选 → 全败返回 None；关闭全部客户端。
+
+    背景：asyncio.run 结束后 AsyncOpenAI 客户端不关闭会泄漏连接
+    （每个客户端独立连接池），连续调用 → SYN_SENT 堆积 → 连接耗尽。
+    每次调用后必须 aclose 所有客户端。
+    """
+    providers = [p for p in (primary, fallback) if p is not None]
+    try:
+        for p in providers:
             try:
-                await client.close()
-            except Exception:  # noqa: BLE001 — 关闭失败不影响结果
-                pass
+                result = await coro_factory(p)
+                if result:
+                    return result
+                logger.warning("llm_sync: %s 返回空，视为失败", p.provider_name)
+            except Exception:  # noqa: BLE001 — 单个 provider 失败尝试下一个
+                logger.warning(
+                    "llm_sync: %s 调用失败，尝试下一个", p.provider_name, exc_info=True
+                )
+        return None
+    finally:
+        for p in providers:
+            client = getattr(p, "_client", None)
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001 — 关闭失败不影响结果
+                    pass
 
 
 def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
@@ -62,16 +83,17 @@ def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
         from app.core.config import settings
 
         timeout = float(settings.LLM_REQUEST_TIMEOUT)
-    provider = _get_provider()
-    if provider is None:
+    primary, fallback = _get_providers()
+    if primary is None:
         return ""
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = ex.submit(
-        asyncio.run, _call_and_close(provider, lambda: provider.chat(messages))
+        asyncio.run,
+        _call_with_fallback(primary, fallback, lambda p: p.chat(messages)),
     )
     try:
-        return future.result(timeout=timeout)
+        return future.result(timeout=timeout) or ""
     except concurrent.futures.TimeoutError:
         logger.warning("llm_sync: LLM 调用超时（>%ss），回退模板", timeout)
         return ""
@@ -96,15 +118,17 @@ def run_llm_structured(
         from app.core.config import settings
 
         timeout = float(settings.LLM_REQUEST_TIMEOUT)
-    provider = _get_provider()
-    if provider is None:
+    primary, fallback = _get_providers()
+    if primary is None:
         return None
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = ex.submit(
         asyncio.run,
-        _call_and_close(
-            provider, lambda: provider.structured_chat(messages, output_schema)
+        _call_with_fallback(
+            primary,
+            fallback,
+            lambda p: p.structured_chat(messages, output_schema),
         ),
     )
     try:

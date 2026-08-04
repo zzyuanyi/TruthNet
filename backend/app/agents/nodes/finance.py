@@ -128,13 +128,23 @@ def _validate_interpretation(text: str, source_json: str) -> bool:
 
     任一不满足 → 拒绝（调用方回退 explanation），防止 LLM 输出
     缺段/编造数值（如新增 999%）被原样采用。
+
+    数值提取前先移除规则 ID（R\d+）——否则 R1 会贡献合法数字 1，
+    使 LLM 编造的 "1%" 通过溯源校验。
     """
     if not all(m in text for m in _INTERP_MARKERS):
         return False
     import re
 
-    out_nums = set(re.findall(r"-?\d+(?:\.\d+)?", text))
-    src_nums = set(re.findall(r"-?\d+(?:\.\d+)?", source_json))
+    def _nums(s: str) -> set[str]:
+        # 先整体移除规则 ID（R1/R2…，含其数字），再移除其余字母序列，
+        # 避免 R1 的数字 1 污染数值集合（编造 "1%" 会因此通过校验）
+        cleaned = re.sub(r"R\d+", "", s)
+        cleaned = re.sub(r"[A-Za-z]+", "", cleaned)
+        return set(re.findall(r"-?\d+(?:\.\d+)?", cleaned))
+
+    out_nums = _nums(text)
+    src_nums = _nums(source_json)
     if not out_nums <= src_nums:
         return False
     return True

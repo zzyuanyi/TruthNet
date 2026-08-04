@@ -129,13 +129,17 @@ class TestDeepSeekProviderChat:
         mock_client.chat.completions.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_chat_without_client_returns_unavailable(self):
+    async def test_chat_without_client_returns_empty(self):
+        """无客户端（API key 缺失）→ 返回空串（降级语义：非空=成功，空=失败）。
+
+        错误文案会被 llm_sync 当成功结果用于回答（P1 回归）。
+        """
         provider = DeepSeekProvider()
         provider._client = None
         provider._available = False
 
         result = await provider.chat([{"role": "user", "content": "分析"}])
-        assert "未激活" in result or "API_KEY" in result
+        assert result == ""
 
 
 class TestDeepSeekProviderChatStream:
