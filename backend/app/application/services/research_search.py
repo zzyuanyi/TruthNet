@@ -146,7 +146,7 @@ def search_research_insights_sync(query: str, top_k: int = 5) -> list[dict]:
     try:
         return future.result(timeout=10.0)
     except concurrent.futures.TimeoutError:
-        logger.warning("research_search: 检索超时（>3s），返回空")
+        logger.warning("research_search: 检索超时（>10s），返回空")
         return []
     except Exception:  # noqa: BLE001
         logger.warning("research_search: 检索异常，返回空", exc_info=True)

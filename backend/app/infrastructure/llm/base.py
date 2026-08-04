@@ -151,7 +151,10 @@ class BaseOpenAICompatibleProvider:
             return await _call()
         except Exception as e:
             logger.error("%s: chat 调用失败（重试已用尽）: %s", self.provider_name, e)
-            return f"[{self.provider_name}] 服务暂时不可用，请稍后重试。错误: {e}"
+            # 失败必须返回空字符串（降级语义统一：非空=成功，空=失败）。
+            # 返回"[provider] 服务不可用"式非空文本会被 llm_sync 当成功结果
+            # 用于回答，甚至替换整个回答（模板无规则/数值时指纹校验为空==空）。
+            return ""
 
     # ── 流式聊天 ──────────────────────────────────────────
 

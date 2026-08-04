@@ -131,6 +131,34 @@ def test_interpretation_empty_when_no_triggered(monkeypatch):
     assert text == ""
 
 
+def test_interpretation_rejects_missing_markers(monkeypatch):
+    """P1 验收：缺四段标记的 LLM 输出 → 拒绝，回退 explanation。"""
+    bad = "预警点：应收异常。数据对比：增速差大。可能模式：收入虚增。限制说明：无。"  # 无【】
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider",
+        lambda backend=None: _FakeProvider(result=bad),
+    )
+    text = _build_llm_interpretation(_RULE_DETAILS, _rule_statuses("R1"))
+    assert text.startswith("【预警点】")
+    assert "应收账款增速 149.6%" in text  # 回退 explanation 原文
+
+
+def test_interpretation_rejects_fabricated_numbers(monkeypatch):
+    """P1 验收：新增编造数值（999%）→ 拒绝，回退 explanation。"""
+    fabricated = (
+        "【预警点】应收异常。\n【数据对比】增速差距 999%。\n"
+        "【可能模式】收入虚增。\n【限制说明】无。"
+    )
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider",
+        lambda backend=None: _FakeProvider(result=fabricated),
+    )
+    text = _build_llm_interpretation(_RULE_DETAILS, _rule_statuses("R1"))
+    assert text.startswith("【预警点】")
+    assert "999%" not in text  # 编造数值未进入输出
+    assert "149.6%" in text  # 回退 explanation 含原文数值
+
+
 def test_run_llm_chat_safe_inside_event_loop(monkeypatch):
     """WS 路径：事件循环线程内调用 run_llm_chat 不抛 RuntimeError。"""
     from app.agents.llm_sync import run_llm_chat

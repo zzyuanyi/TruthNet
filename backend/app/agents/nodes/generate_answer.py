@@ -173,6 +173,11 @@ def _build_rule_details(state: AgentState) -> str:
 # ── Phase D #13: LLM 问答润色 ─────────────────────────────
 
 
+def _extract_markers(text: str) -> set[str]:
+    """提取【】段落标记集合（如【预警点】），用于润色保留校验。"""
+    return set(re.findall(r"【[^】]+】", text))
+
+
 def _extract_key_facts(text: str) -> str:
     """提取关键事实指纹（规则 ID + 数值 + 单位 + 风险等级，去重）。
 
@@ -222,6 +227,12 @@ def _polish_answer(answer: str) -> str:
     # 关键信息一致性校验：润色改变规则 ID/数值/等级 → 回退模板
     if _extract_key_facts(polished) != _extract_key_facts(answer):
         logger.warning("polish: LLM 输出改变关键信息（规则ID/数值/等级），回退模板")
+        return answer
+
+    # 段落标记校验：模板含【】标记（解读段等）时，润色必须全部保留
+    src_markers = _extract_markers(answer)
+    if src_markers and not src_markers <= _extract_markers(polished):
+        logger.warning("polish: LLM 输出删除段落标记（%s），回退模板", src_markers)
         return answer
 
     return polished

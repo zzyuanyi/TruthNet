@@ -436,7 +436,7 @@ class _FakeLLM:
 
 
 def _polish_state(monkeypatch, provider):
-    """构造带触发规则明细的 state，并注入指定 LLM provider。"""
+    """构造带触发规则明细 + 解读段（含【】标记）的 state，注入指定 LLM provider。"""
     monkeypatch.setattr(
         "app.infrastructure.llm.factory.create_llm_provider",
         lambda backend=None: provider,
@@ -454,6 +454,7 @@ def _polish_state(monkeypatch, provider):
     fin = FinanceResult(
         rule_statuses={"R1": "triggered"},
         rule_details=rule_details,
+        interpretation="【预警点】应收异常。【可能模式】收入虚增。",
     )
     return _make_state(
         company=_company(),
@@ -463,12 +464,13 @@ def _polish_state(monkeypatch, provider):
 
 
 def test_polish_applies_when_key_facts_kept(monkeypatch):
-    """LLM 返回流畅润色文本（关键信息一致）→ 采用润色文本。"""
+    """LLM 返回流畅润色文本（关键信息一致、标记保留）→ 采用润色文本。"""
     polished = (
         "金牌家居（603180.SH）的综合分析已经完成。"
         "我们检测到 1 项风险信号。"
         "触发规则明细：R1 应收-营收背离（高风险）：应收账款增速 149.6%、"
         "增速差距 166.2pp。"
+        "【预警点】应收异常。【可能模式】收入虚增。"  # 标记必须保留
     )
     state = _polish_state(monkeypatch, _FakeLLM(result=polished))
     answer = generate_answer_node(state)["final_response"].answer
@@ -496,6 +498,18 @@ def test_polish_fallback_when_llm_fails(monkeypatch):
     assert "R1 应收-营收背离（高风险）" in answer
     assert "149.6%" in answer
     assert "共检测到 1 项风险信号" in answer
+
+
+def test_polish_rejects_deleted_markers(monkeypatch):
+    """P1 回归：润色删除【】段落标记 → 回退模板。"""
+    stripped = (
+        "金牌家居综合分析完成，检测到1项风险信号。"
+        "预警点：应收异常。可能模式：收入虚增。"  # 【】全删
+    )
+    state = _polish_state(monkeypatch, _FakeLLM(result=stripped))
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "【预警点】" in answer, "标记被删应回退模板"
+    assert "【可能模式】" in answer
 
 
 def test_polish_skipped_for_company_none(monkeypatch):

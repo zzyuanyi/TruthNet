@@ -66,16 +66,29 @@ class FallbackLLMProvider:
         return self._primary.provider_name
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        """带降级的 chat."""
+        """带降级的 chat.
+
+        主 Provider 失败（抛异常或返回空串——base 失败语义统一为空串）
+        → 尝试备选 → 全部失败返回降级文案。
+        """
         try:
-            return await self._primary.chat(messages, **kwargs)
+            result = await self._primary.chat(messages, **kwargs)
+            if result:
+                return result
+            logger.warning("主 Provider (%s) chat 返回空，视为失败", self.provider_name)
         except Exception as e:
             logger.warning("主 Provider (%s) chat 失败: %s", self.provider_name, e)
 
         if self._fallback is not None:
             try:
                 logger.info("尝试备选 Provider (%s)", self._fallback.provider_name)
-                return await self._fallback.chat(messages, **kwargs)
+                result = await self._fallback.chat(messages, **kwargs)
+                if result:
+                    return result
+                logger.warning(
+                    "备选 Provider (%s) chat 返回空，视为失败",
+                    self._fallback.provider_name,
+                )
             except Exception as e:
                 logger.warning("备选 Provider chat 也失败: %s", e)
 

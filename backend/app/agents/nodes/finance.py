@@ -120,11 +120,31 @@ def _field_value(
     return (str(v), "CNY")
 
 
+_INTERP_MARKERS = ("【预警点】", "【数据对比】", "【可能模式】", "【限制说明】")
+
+
+def _validate_interpretation(text: str, source_json: str) -> bool:
+    """解读事实与格式验收：四段标记齐全 + 数值全部可溯源原文。
+
+    任一不满足 → 拒绝（调用方回退 explanation），防止 LLM 输出
+    缺段/编造数值（如新增 999%）被原样采用。
+    """
+    if not all(m in text for m in _INTERP_MARKERS):
+        return False
+    import re
+
+    out_nums = set(re.findall(r"-?\d+(?:\.\d+)?", text))
+    src_nums = set(re.findall(r"-?\d+(?:\.\d+)?", source_json))
+    if not out_nums <= src_nums:
+        return False
+    return True
+
+
 def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
     """Phase D #12: LLM 组织固定四段财务解读（预警点/数据对比/可能模式/限制说明）。
 
     数据来源：仅 rule_details 原文（rule_name/explanation/severity/current 数值）。
-    LLM 失败/超时/无 key → 回退规则 explanation 串（不伪造内容）。
+    LLM 失败/超时/无 key/输出未过验收（缺段/编造数值）→ 回退规则 explanation 串。
     """
     triggered = [
         rid
@@ -145,6 +165,7 @@ def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
         for rid in sorted(triggered)
     }
 
+    source_json = f"规则触发结果（JSON，仅作数据来源，不得新增数值）：\n{detail_json}"
     messages = [
         {
             "role": "system",
@@ -160,13 +181,7 @@ def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
                 "不要编造规则 ID、指标或数值。每段一行。"
             ),
         },
-        {
-            "role": "user",
-            "content": (
-                f"规则触发结果（JSON，仅作数据来源，不得新增数值；"
-                f"数值明细会在回答中单独展示，此处勿重列）：\n{detail_json}"
-            ),
-        },
+        {"role": "user", "content": source_json},
     ]
 
     try:
@@ -175,8 +190,8 @@ def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
         text = run_llm_chat(messages)
     except Exception:  # noqa: BLE001 — LLM 链路异常回退 explanation
         text = ""
-    if not text:
-        # 回退：规则 explanation 串（LLM 失败/无 key 时保持信息不丢失）
+    if not text or not _validate_interpretation(text, source_json):
+        # 回退：规则 explanation 串（LLM 失败/无 key/输出未过验收时保持信息不丢失）
         parts = [
             rule_details[rid].get("explanation", "")
             for rid in sorted(triggered)
