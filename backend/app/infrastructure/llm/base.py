@@ -62,10 +62,19 @@ class BaseOpenAICompatibleProvider:
         self._client: AsyncOpenAI | None = None
 
         if self._available:
+            # 分层超时：connect 10s 快速失败（网络问题不傻等），
+            # read = 配置超时（长文本生成 20-60s），write/pool 10s
+            from httpx import Timeout
+
             self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=float(timeout),
+                timeout=Timeout(
+                    connect=10.0,
+                    read=float(timeout),
+                    write=10.0,
+                    pool=10.0,
+                ),
             )
             logger.info(
                 "%s: 客户端已初始化 (model=%s, base_url=%s)",

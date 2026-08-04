@@ -70,7 +70,9 @@ class Settings(BaseSettings):
     LLM_RETRY_MAX_ATTEMPTS: int = 2  # 共 2 次尝试 = 1 次重试
     LLM_RETRY_MIN_WAIT: float = 1.0  # 秒
     LLM_RETRY_MAX_WAIT: float = 5.0  # 秒
-    LLM_REQUEST_TIMEOUT: int = 30  # 秒
+    LLM_REQUEST_TIMEOUT: int = (
+        60  # 秒 — read 超时（长文本生成 20-60s）；connect 超时固定 10s 快速失败
+    )
 
     # ===== 嵌入模型（兼容旧字段）=====
     LLM_API_KEY: str = ""
