@@ -122,8 +122,8 @@ def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
 
     Args:
         messages: OpenAI 兼容 messages 列表。
-        timeout: 秒，默认 settings.LLM_REQUEST_TIMEOUT（30s）——真实 LLM
-        生成响应通常 5-15s，3s 会让所有真实调用超时回退；降级语义是
+        timeout: 秒，默认取 settings.LLM_REQUEST_TIMEOUT——真实 LLM
+        生成响应通常 5-15s，过短会让所有真实调用超时回退；降级语义是
         "异常/超时才回退"，异常（连接失败/401）即时返回。
     """
     if timeout is None:

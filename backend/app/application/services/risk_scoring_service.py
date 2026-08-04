@@ -73,7 +73,8 @@ async def assemble_and_score(
 
     rec = await resolve_company(code)
     if rec is None:
-        raise ValueError(f"COMPANY_NOT_FOUND: {code}")
+        # 与 V12 错误码契约一致（COMPANY_NOT_FOUND 已更名为 COMPANY_NOT_COVERED）
+        raise ValueError(f"COMPANY_NOT_COVERED: {code}")
     wind_code = rec.wind_code
     sec_name = rec.sec_name
     industry_l1 = rec.industry_l1 or ""
