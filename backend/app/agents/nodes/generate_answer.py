@@ -177,16 +177,19 @@ def _extract_key_facts(text: str) -> str:
     """提取关键事实指纹（规则 ID + 数值 + 单位 + 风险等级，去重）。
 
     用于润色前后一致性校验：LLM 不得改变这些内容。
+    归一化：LLM 可能把 "166.2pp" 改写为 "166.2个百分点"（语义等价），
+    先归一为 "166.2pp" 再提取，避免误判"数值被改"。
     去重：同一规则 ID 在摘要与明细中可能多次出现，润色合并后
     次数减少不视为改变——只要规则/数值/等级集合一致即可。
     """
+    norm = re.sub(r"(-?\d+(?:\.\d+)?)\s*个百分点", r"\1pp", text)
     facts: list[str] = []
-    facts.extend(re.findall(r"R\d+", text))  # 规则 ID
-    facts.extend(re.findall(r"-?\d+(?:\.\d+)?%", text))  # 百分比
-    facts.extend(re.findall(r"-?\d+(?:\.\d+)?pp", text))  # 百分点
-    facts.extend(re.findall(r"\d+个季度", text))  # 季度数
-    facts.extend(re.findall(r"\d+(?:\.\d+)?天", text))  # 天数
-    facts.extend(re.findall(r"高风险|中风险|关注|低风险", text))  # 风险等级
+    facts.extend(re.findall(r"R\d+", norm))  # 规则 ID
+    facts.extend(re.findall(r"-?\d+(?:\.\d+)?\s*%", norm))  # 百分比（容忍空格）
+    facts.extend(re.findall(r"-?\d+(?:\.\d+)?\s*pp", norm))  # 百分点
+    facts.extend(re.findall(r"\d+\s*个季度", norm))  # 季度数
+    facts.extend(re.findall(r"\d+(?:\.\d+)?\s*天", norm))  # 天数
+    facts.extend(re.findall(r"高风险|中风险|关注|低风险", norm))  # 风险等级
     return "|".join(_dedup(facts))
 
 

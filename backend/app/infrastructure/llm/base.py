@@ -29,13 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 def _is_transient_error(exception: BaseException) -> bool:
-    """判断是否为可重试的瞬时错误."""
-    try:
-        from openai import APIStatusError, APITimeoutError, APIConnectionError
+    """判断是否为可重试的瞬时错误.
 
-        return isinstance(
-            exception, (APIStatusError, APITimeoutError, APIConnectionError)
-        )
+    只重试服务端可恢复错误（5xx/429/读取超时）；
+    连接错误（APIConnectionError）不重试——网络问题重试成功率低，
+    且每次重试叠加等待（connect 10s + 退避），直接快速降级。
+    """
+    try:
+        from openai import APIStatusError, APITimeoutError
+
+        return isinstance(exception, (APIStatusError, APITimeoutError))
     except ImportError:
         return False
 
