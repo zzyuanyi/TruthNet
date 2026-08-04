@@ -11,7 +11,8 @@
     问题顺序一致、company_code=603180.SH、REST turn ID 与 WS 一致
 
 用法:
-  D:/anaconda/envs/truthnet/python.exe scripts/demo_ws_multi_turn.py
+  python scripts/demo_ws_multi_turn.py
+  （需在 truthnet 环境执行，见 CLAUDE.md 环境约定）
 
 前置:
   - MySQL 全量数据 + comp_type_code 回填

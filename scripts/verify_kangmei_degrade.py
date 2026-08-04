@@ -7,8 +7,9 @@
   - 本地模式：落库逐 Claim 验证（仅 equity、verified、绑定证据）
 
 用法:
-  D:/anaconda/envs/truthnet/python.exe scripts/verify_kangmei_degrade.py
-  D:/anaconda/envs/truthnet/python.exe scripts/verify_kangmei_degrade.py --url http://127.0.0.1:8000
+  python scripts/verify_kangmei_degrade.py
+  python scripts/verify_kangmei_degrade.py --url http://127.0.0.1:8000
+  （需在 truthnet 环境执行，见 CLAUDE.md 环境约定）
 
 注意:
   --url 远端模式禁止查询本机 MySQL（本机库 ≠ 远端库），
