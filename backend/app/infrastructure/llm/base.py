@@ -78,6 +78,9 @@ class BaseOpenAICompatibleProvider:
                     write=10.0,
                     pool=10.0,
                 ),
+                # openai 库层不重试（默认 2 次），统一由 tenacity 管理，
+                # 避免连接错误时双重重试（最多 4 次 × 等待）拉长失败路径
+                max_retries=0,
             )
             logger.info(
                 "%s: 客户端已初始化 (model=%s, base_url=%s)",

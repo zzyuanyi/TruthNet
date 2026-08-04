@@ -31,6 +31,24 @@ def _get_provider():
         return None
 
 
+async def _call_and_close(provider, coro_factory):
+    """调用 async LLM 并显式关闭客户端（释放 httpx 连接池）。
+
+    背景：asyncio.run 结束后 AsyncOpenAI 客户端不关闭会泄漏连接
+    （每个客户端独立连接池），连续调用 → SYN_SENT 堆积 → 连接耗尽
+    （Connection error / 卡死）。每次调用后必须 aclose。
+    """
+    try:
+        return await coro_factory()
+    finally:
+        client = getattr(provider, "_client", None)
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001 — 关闭失败不影响结果
+                pass
+
+
 def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
     """同步调用 async LLM chat，返回文本；超时/异常 → ""。
 
@@ -49,7 +67,9 @@ def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
         return ""
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = ex.submit(asyncio.run, provider.chat(messages))
+    future = ex.submit(
+        asyncio.run, _call_and_close(provider, lambda: provider.chat(messages))
+    )
     try:
         return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
@@ -81,7 +101,12 @@ def run_llm_structured(
         return None
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = ex.submit(asyncio.run, provider.structured_chat(messages, output_schema))
+    future = ex.submit(
+        asyncio.run,
+        _call_and_close(
+            provider, lambda: provider.structured_chat(messages, output_schema)
+        ),
+    )
     try:
         return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
