@@ -79,4 +79,4 @@ async def test_events_company_not_found_404():
     ) as client:
         response = await client.get("/api/v1/companies/999999.XSHG/events")
     assert response.status_code == 404
-    assert response.json().get("error_code") == "COMPANY_NOT_FOUND"
+    assert response.json().get("error_code") == "COMPANY_NOT_COVERED"

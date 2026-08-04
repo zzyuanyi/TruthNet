@@ -21,9 +21,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.v1.exception_handlers import general_exception_handler, not_found_handler
+from app.api.v1.exception_handlers import (
+    general_exception_handler,
+    http_exception_handler,
+    not_found_handler,
+    validation_exception_handler,
+)
 from app.api.v1.routers import benchmarks as benchmarks_v1
 from app.api.v1.routers import chat as chat_v1
 from app.api.v1.routers import companies as companies_v1
@@ -60,6 +67,8 @@ app.add_middleware(
 # ===== V12 异常处理器 =====
 app.add_exception_handler(Exception, general_exception_handler)
 app.add_exception_handler(404, not_found_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 
 # ===== 兼容路由 =====
 
