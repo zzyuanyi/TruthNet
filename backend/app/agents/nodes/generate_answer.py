@@ -203,6 +203,8 @@ def _polish_answer(answer: str) -> str:
                 "铁律：只做语言润色，绝对不得改变任何规则 ID（R1-R7）、"
                 "风险等级（高风险/中风险/关注/低风险）、数字及其单位"
                 "（如 149.6%、166.2pp、2个季度、20天）、"
+                "必须原样保留【预警点】【数据对比】【可能模式】【限制说明】"
+                "等段落标记，不得改写或删除；"
                 "不得增删或改写任何事实与结论。直接输出润色后的完整回答，"
                 "不要任何解释或前缀。"
             ),
@@ -307,6 +309,42 @@ def generate_answer_node(state: AgentState) -> dict:
     )
 
     if company is None:
+        # Phase D #10: 行业级研报问题（无公司也能检索，如"白酒行业近期研报观点"）
+        user_query = state.get("user_query", "")
+        try:
+            from app.application.services.research_search import (
+                is_research_query,
+                report_insights_enabled,
+                search_research_insights_sync,
+            )
+
+            if is_research_query(user_query) and report_insights_enabled():
+                insights = search_research_insights_sync(user_query, top_k=3)
+                if insights:
+                    parts = []
+                    for it in insights[:3]:
+                        src = it.get("source_title") or "研报"
+                        org = it.get("source_org", "")
+                        label = f"{org}·{src}" if org else src
+                        parts.append(f"{it.get('content', '')[:120]}（来源：{label}）")
+                    answer = (
+                        "未匹配到具体公司，以下是相关研报观点摘要："
+                        + "；".join(parts)
+                        + "。如需针对某家公司分析，请提供公司名称或股票代码。"
+                    )
+                    return {
+                        "final_response": FinalResponse(
+                            answer=answer,
+                            risk_level="unknown",
+                            claims=[],
+                            evidence=[],
+                        )
+                    }
+        except Exception:  # noqa: BLE001 — 研报检索失败不影响主流程
+            logger.warning(
+                "generate_answer: 行业研报检索失败，回退提示语", exc_info=True
+            )
+
         return {
             "final_response": FinalResponse(
                 answer="未能在数据覆盖范围内找到匹配的公司，请提供完整公司名称或股票代码。",

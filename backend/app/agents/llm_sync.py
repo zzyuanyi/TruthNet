@@ -31,13 +31,19 @@ def _get_provider():
         return None
 
 
-def run_llm_chat(messages: list[dict], timeout: float = 3.0) -> str:
+def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
     """同步调用 async LLM chat，返回文本；超时/异常 → ""。
 
     Args:
         messages: OpenAI 兼容 messages 列表。
-        timeout: 秒，超过视为 LLM 不可用（默认 3s，对齐 Phase D 降级要求）。
+        timeout: 秒，默认 settings.LLM_REQUEST_TIMEOUT（30s）——真实 LLM
+        生成响应通常 5-15s，3s 会让所有真实调用超时回退；降级语义是
+        "异常/超时才回退"，异常（连接失败/401）即时返回。
     """
+    if timeout is None:
+        from app.core.config import settings
+
+        timeout = float(settings.LLM_REQUEST_TIMEOUT)
     provider = _get_provider()
     if provider is None:
         return ""
@@ -60,12 +66,16 @@ def run_llm_chat(messages: list[dict], timeout: float = 3.0) -> str:
 def run_llm_structured(
     messages: list[dict],
     output_schema,
-    timeout: float = 3.0,
+    timeout: float | None = None,
 ):
     """同步调用 async LLM structured_chat，返回 Pydantic 模型；失败 → None。
 
     用于意图识别等需要结构化输出的同步节点场景（REST/WS 双路径安全）。
     """
+    if timeout is None:
+        from app.core.config import settings
+
+        timeout = float(settings.LLM_REQUEST_TIMEOUT)
     provider = _get_provider()
     if provider is None:
         return None

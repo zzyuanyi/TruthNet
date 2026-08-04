@@ -32,12 +32,31 @@ def _semantic_to_insight(hit: dict) -> dict:
     }
 
 
+_STOP_WORDS = frozenset(
+    {"什么", "如何", "为什么", "怎么样", "是否", "多少", "哪些", "最近"}
+)
+
+
 def _split_keywords(query: str) -> list[str]:
-    """问题 → 过滤关键词（去停用词，保留 2 字以上词元）。"""
+    """问题 → 过滤关键词（去停用词 + 2-gram 切分）。
+
+    整段连续汉字（如"白酒行业"）直接 LIKE 匹配不到标题，拆出 2-gram
+    （白酒/酒行/行业）提高召回；按出现顺序去重返回。
+    """
     import re
 
     tokens = re.findall(r"[一-鿿]{2,}|[A-Za-z]{2,}", query)
-    return [t for t in tokens if t not in ("什么", "如何", "为什么", "怎么样", "是否")]
+    kws: list[str] = []
+    for t in tokens:
+        if t in _STOP_WORDS or t in kws:
+            continue
+        kws.append(t)
+        if len(t) >= 4:
+            for i in range(len(t) - 1):
+                gram = t[i : i + 2]
+                if gram not in _STOP_WORDS and gram not in kws:
+                    kws.append(gram)
+    return kws
 
 
 async def search_research_insights(
@@ -116,14 +135,16 @@ async def _fallback_sql_filter(query: str, top_k: int) -> list[dict]:
 
 
 def search_research_insights_sync(query: str, top_k: int = 5) -> list[dict]:
-    """同步包装（graph 节点调用）：独立线程 asyncio.run，超时 ~3s。
+    """同步包装（graph 节点调用）：独立线程 asyncio.run，超时 10s。
 
     REST（asyncio.to_thread）与 WS（事件循环线程内同步 invoke）双路径安全。
+    10s 覆盖：Chroma 模型加载 + SQL 兜底 LIKE 扫描（55k 行）等实际耗时，
+    远超 3s 会让兜底查询被截断。
     """
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = ex.submit(asyncio.run, search_research_insights(query, top_k=top_k))
     try:
-        return future.result(timeout=3.0)
+        return future.result(timeout=10.0)
     except concurrent.futures.TimeoutError:
         logger.warning("research_search: 检索超时（>3s），返回空")
         return []
