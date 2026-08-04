@@ -20,6 +20,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _get_provider():
+    """创建 LLM provider；失败 → None（调用方回退）。"""
+    try:
+        from app.infrastructure.llm.factory import create_llm_provider
+
+        return create_llm_provider()
+    except Exception:  # noqa: BLE001 — provider 创建失败回退
+        logger.warning("llm_sync: LLM provider 创建失败，回退模板", exc_info=True)
+        return None
+
+
 def run_llm_chat(messages: list[dict], timeout: float = 3.0) -> str:
     """同步调用 async LLM chat，返回文本；超时/异常 → ""。
 
@@ -27,12 +38,8 @@ def run_llm_chat(messages: list[dict], timeout: float = 3.0) -> str:
         messages: OpenAI 兼容 messages 列表。
         timeout: 秒，超过视为 LLM 不可用（默认 3s，对齐 Phase D 降级要求）。
     """
-    try:
-        from app.infrastructure.llm.factory import create_llm_provider
-
-        provider = create_llm_provider()
-    except Exception:  # noqa: BLE001 — provider 创建失败回退
-        logger.warning("llm_sync: LLM provider 创建失败，回退模板", exc_info=True)
+    provider = _get_provider()
+    if provider is None:
         return ""
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -47,4 +54,31 @@ def run_llm_chat(messages: list[dict], timeout: float = 3.0) -> str:
         return ""
     finally:
         # 不等待后台线程：超时后 LLM 线程可能仍挂起，wait=True 会阻塞到完成
+        ex.shutdown(wait=False)
+
+
+def run_llm_structured(
+    messages: list[dict],
+    output_schema,
+    timeout: float = 3.0,
+):
+    """同步调用 async LLM structured_chat，返回 Pydantic 模型；失败 → None。
+
+    用于意图识别等需要结构化输出的同步节点场景（REST/WS 双路径安全）。
+    """
+    provider = _get_provider()
+    if provider is None:
+        return None
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = ex.submit(asyncio.run, provider.structured_chat(messages, output_schema))
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        logger.warning("llm_sync: structured 调用超时（>%ss），返回 None", timeout)
+        return None
+    except Exception:  # noqa: BLE001
+        logger.warning("llm_sync: structured 调用失败，返回 None", exc_info=True)
+        return None
+    finally:
         ex.shutdown(wait=False)
