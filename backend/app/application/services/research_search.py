@@ -134,19 +134,28 @@ async def _fallback_sql_filter(query: str, top_k: int) -> list[dict]:
         return []
 
 
+def _run_search_coro(query: str, top_k: int) -> list[dict]:
+    """线程内执行 async 检索；解释器关闭竞态（RuntimeError）不污染 stderr。"""
+    try:
+        return asyncio.run(search_research_insights(query, top_k=top_k))
+    except RuntimeError:
+        logger.warning("research_search: 解释器关闭竞态，返回空")
+        return []
+
+
 def search_research_insights_sync(query: str, top_k: int = 5) -> list[dict]:
-    """同步包装（graph 节点调用）：独立线程 asyncio.run，超时 10s。
+    """同步包装（graph 节点调用）：独立线程 asyncio.run，超时 20s。
 
     REST（asyncio.to_thread）与 WS（事件循环线程内同步 invoke）双路径安全。
-    10s 覆盖：Chroma 模型加载 + SQL 兜底 LIKE 扫描（55k 行）等实际耗时，
-    远超 3s 会让兜底查询被截断。
+    20s 覆盖：首次 BGE 模型加载（~5s，后续缓存）+ Chroma 查询 + SQL 兜底
+    LIKE 扫描（55k 行）。
     """
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = ex.submit(asyncio.run, search_research_insights(query, top_k=top_k))
+    future = ex.submit(_run_search_coro, query, top_k)
     try:
-        return future.result(timeout=10.0)
+        return future.result(timeout=20.0)
     except concurrent.futures.TimeoutError:
-        logger.warning("research_search: 检索超时（>10s），返回空")
+        logger.warning("research_search: 检索超时（>20s），返回空")
         return []
     except Exception:  # noqa: BLE001
         logger.warning("research_search: 检索异常，返回空", exc_info=True)
