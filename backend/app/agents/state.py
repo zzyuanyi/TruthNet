@@ -9,6 +9,9 @@ from typing import Annotated, Any, Literal, TypedDict
 from langgraph.graph import add_messages
 from pydantic import BaseModel, Field
 
+# canonical 模型定义于 domain/evidence/models.py，此处 re-export 保持导入兼容
+from app.domain.evidence.models import Claim, EvidenceRef
+
 
 # ── V12 §7.3 模型 ──────────────────────────────────────────
 
@@ -56,53 +59,6 @@ class RuntimeState(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class EvidenceRef(BaseModel):
-    """证据引用 — V12 §9.1 + Phase C 全局追溯字段."""
-
-    evidence_id: str
-    source_type: str = ""
-    source_record_id: str = ""
-    field_path: str | None = None
-    period: str | None = None
-    value: str | None = None
-    source_title: str = ""
-    # Phase C: 全局追溯字段
-    turn_id: str = ""
-    trace_id: str = ""
-    company_code: str = ""
-    module: str = ""
-    # 运行时规则归属（仅内存用，不落库；持久化归属由 claims.rule_id + links 表达）
-    rule_id: str | None = None
-    source_table: str | None = None
-    unit: str | None = None
-    statement_scope: str | None = None
-    source_uri: str | None = None
-    source_excerpt: str | None = None
-    dataset_version: str = ""
-    retrieved_at: str = ""
-
-
-class Claim(BaseModel):
-    """结论声明 — V12 §9.2 + Phase C 全局追溯字段."""
-
-    claim_id: str
-    text: str
-    claim_type: str = ""
-    severity: str = "unknown"
-    confidence: float | None = None
-    rule_id: str | None = None
-    rule_version: str | None = None
-    evidence_ids: list[str] = Field(default_factory=list)
-    verification_status: str = "pending"
-    limitations: list[str] = Field(default_factory=list)
-    # Phase C: 全局追溯字段
-    turn_id: str = ""
-    trace_id: str = ""
-    company_code: str = ""
-    module: str = ""
-    generated_at: str = ""
-
-
 class FinalResponse(BaseModel):
     """最终响应 — V12 §11.4."""
 
@@ -143,6 +99,8 @@ class FinanceResult(BaseModel):
     industry_benchmark: dict = Field(default_factory=dict)
     # 规则明细：rule_id → {rule_name, explanation, severity}（规则引擎产出，供回答展开清单）
     rule_details: dict[str, dict] = Field(default_factory=dict)
+    # Phase D #12: LLM 财务解读（固定四段：预警点/数据对比/可能模式/限制说明）
+    interpretation: str = ""
     warnings: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
 
@@ -213,6 +171,8 @@ class AgentState(TypedDict, total=False):
     claims: Annotated[list[Claim], lambda a, b: a + b]
     final_response: FinalResponse | None
     runtime: RuntimeState
+    # Phase D #11: 造假模式匹配结果（list[dict]，pattern_match 节点产出）
+    pattern_matches: list[dict]
     memory_context: MemoryContext | None
     provenance_report: Any | None
     cross_validation: CrossValidationResult | None = None

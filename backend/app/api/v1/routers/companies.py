@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
+from app.core.errors import ErrorCode
 from app.application.services.company_resolver import CompanyResolver
 from app.core.config import settings
 from app.domain.company.models import CompanyRecord
@@ -123,7 +124,7 @@ async def company_profile(code: str):
                 "title": "Company Not Found",
                 "status": 404,
                 "detail": f"未找到公司: {code}",
-                "error_code": "COMPANY_NOT_FOUND",
+                "error_code": ErrorCode.COMPANY_NOT_COVERED,
                 "trace_id": trace_id,
                 "recoverable": True,
             },

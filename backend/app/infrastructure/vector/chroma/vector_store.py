@@ -63,9 +63,14 @@ class ChromaVectorStore:
         if self._client is None:
             try:
                 import chromadb
+                from chromadb.config import Settings as ChromaSettings
 
                 os.makedirs(self._persist_dir, exist_ok=True)
-                self._client = chromadb.PersistentClient(path=self._persist_dir)
+                # 关闭匿名遥测：消除测试输出噪声 + 离线环境兼容
+                self._client = chromadb.PersistentClient(
+                    path=self._persist_dir,
+                    settings=ChromaSettings(anonymized_telemetry=False),
+                )
                 self._available = True
             except Exception:
                 logger.exception("ChromaDB 客户端初始化失败")

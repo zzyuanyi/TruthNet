@@ -84,8 +84,16 @@
   "data": {
     "answer": "贵州茅台2023年营收为1505.60亿元，销售商品提供劳务收到的现金为1652.35亿元，收现比约109.74%...",
     "evidence": [
-      {"source": "利润表", "field": "营业收入", "value": "1505.60亿"},
-      {"source": "现金流量表", "field": "销售商品收到的现金", "value": "1652.35亿"}
+      {"source": "2023年报 利润表", "field": "营业收入", "value": "1505.60亿",
+       "evidence_id": "ev_fin_2023_bs_01", "source_type": "financial_statement",
+       "source_record_id": "600519_2023_balance_sheet", "source_title": "2023年报 利润表",
+       "field_path": "营业收入", "period": "2023-12-31", "unit": "亿元",
+       "source_uri": "", "dataset_version": "2026-07-19"},
+      {"source": "2023年报 现金流量表", "field": "销售商品收到的现金", "value": "1652.35亿",
+       "evidence_id": "ev_fin_2023_cf_01", "source_type": "financial_statement",
+       "source_record_id": "600519_2023_cash_flow", "source_title": "2023年报 现金流量表",
+       "field_path": "销售商品收到的现金", "period": "2023-12-31", "unit": "亿元",
+       "source_uri": "", "dataset_version": "2026-07-19"}
     ],
     "graph": {
       "nodes": [{"id": "600519", "label": "贵州茅台", "type": "company"}],

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
+from app.core.errors import ErrorCode
 from app.api.v1.schemas.risk import (
     DataCoverage,
     MitigatingFactor,
@@ -69,7 +70,7 @@ async def get_company_risk(
                 "title": "Company Not Found",
                 "status": 404,
                 "detail": str(exc),
-                "error_code": "COMPANY_NOT_FOUND",
+                "error_code": ErrorCode.COMPANY_NOT_COVERED,
                 "trace_id": trace_id,
                 "recoverable": True,
             },

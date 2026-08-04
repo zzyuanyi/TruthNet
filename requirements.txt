@@ -26,6 +26,12 @@ networkx==3.3
 
 # === Vector Database ===
 chromadb==0.5.23
+# chromadb 0.5.23 使用旧签名 capture(distinct_id, event, properties)；
+# posthog>=6 改为 capture(event, **kwargs)，导致 Chroma 遥测日志持续报
+# "Failed to send telemetry event ... capture() takes 1 positional argument but 3 were given"
+# （anonymized_telemetry=False 只禁实际上报，不防参数错误日志）。
+# 必须固定 posthog<6，当前 5.2.0 已验证兼容（探针 + 全量测试）。
+posthog==5.2.0
 
 # === Data Processing ===
 pandas==2.2.3

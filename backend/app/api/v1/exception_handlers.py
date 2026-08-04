@@ -6,9 +6,12 @@
 import uuid
 
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.errors import ProblemDetail
+from app.core.errors import ErrorCode, ProblemDetail
 
 
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -27,6 +30,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     return JSONResponse(
         status_code=500,
         content=detail.model_dump(),
+        media_type="application/problem+json",
     )
 
 
@@ -40,7 +44,11 @@ async def not_found_handler(request: Request, exc: Exception) -> JSONResponse:
     detail_dict = getattr(exc, "detail", None)
     if isinstance(detail_dict, dict):
         content = {**detail_dict, "trace_id": trace_id}
-        return JSONResponse(status_code=404, content=content)
+        return JSONResponse(
+            status_code=404,
+            content=content,
+            media_type="application/problem+json",
+        )
 
     detail = ProblemDetail(
         type="https://truthnet/errors/not-found",
@@ -55,4 +63,80 @@ async def not_found_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=404,
         content=detail.model_dump(),
+        media_type="application/problem+json",
+    )
+
+
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """422 请求校验错误 → 顶层 ProblemDetail（SCHEMA_VALIDATION_FAILED）.
+
+    修复：之前 RequestValidationError 未注册，422 返回 FastAPI 默认
+    {"detail": [...]} 结构，与 V12 错误码体系（§11.6）断档。
+    """
+    trace_id = str(uuid.uuid4())
+    detail = ProblemDetail(
+        type="about:blank",
+        title="Validation Error",
+        status=422,
+        detail="请求参数校验失败",
+        instance=str(request.url),
+        error_code=ErrorCode.SCHEMA_VALIDATION_FAILED,
+        trace_id=trace_id,
+        recoverable=False,
+        extra={"errors": jsonable_encoder(exc.errors())},
+    )
+    return JSONResponse(
+        status_code=422,
+        content=detail.model_dump(),
+        media_type="application/problem+json",
+    )
+
+
+async def http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """非 404 HTTPException → 统一顶层 ProblemDetail.
+
+    修复：之前未注册，其他 HTTPException 走 FastAPI 默认 {"detail": {...}}
+    嵌套结构；dict detail 携带的业务错误码/可恢复性现在透传到顶层，
+    media_type 统一为 application/problem+json（RFC 9457）。
+    """
+    trace_id = str(uuid.uuid4())
+    detail = exc.detail
+    if isinstance(detail, dict):
+        content = {
+            # type 由路由层指定（如 https://truthnet.dev/errors/invalid-period），
+            # 不得固定覆盖为 about:blank
+            "type": detail.get("type", "about:blank"),
+            "title": detail.get("title", str(exc.status_code)),
+            "status": exc.status_code,
+            "detail": detail.get("detail", ""),
+            "instance": str(request.url),
+            "error_code": detail.get("error_code", "HTTP_ERROR"),
+            "trace_id": detail.get("trace_id", trace_id),
+            "recoverable": detail.get("recoverable", False),
+            "extra": detail.get("extra", {}),
+        }
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=content,
+            media_type="application/problem+json",
+            headers=dict(exc.headers or {}),
+        )
+    problem = ProblemDetail(
+        type="about:blank",
+        title=str(exc.status_code),
+        status=exc.status_code,
+        detail=str(detail),
+        instance=str(request.url),
+        error_code="HTTP_ERROR",
+        trace_id=trace_id,
+        recoverable=False,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=problem.model_dump(),
+        media_type="application/problem+json",
     )

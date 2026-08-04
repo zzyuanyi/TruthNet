@@ -120,6 +120,97 @@ def _field_value(
     return (str(v), "CNY")
 
 
+_INTERP_MARKERS = ("【预警点】", "【数据对比】", "【可能模式】", "【限制说明】")
+
+
+def _validate_interpretation(text: str, source_json: str) -> bool:
+    """解读事实与格式验收：四段标记齐全 + 数值全部可溯源原文。
+
+    任一不满足 → 拒绝（调用方回退 explanation），防止 LLM 输出
+    缺段/编造数值（如新增 999%）被原样采用。
+
+    数值提取前先移除规则 ID（R\d+）——否则 R1 会贡献合法数字 1，
+    使 LLM 编造的 "1%" 通过溯源校验。
+    """
+    if not all(m in text for m in _INTERP_MARKERS):
+        return False
+    import re
+
+    def _nums(s: str) -> set[str]:
+        # 先整体移除规则 ID（R1/R2…，含其数字），再移除其余字母序列，
+        # 避免 R1 的数字 1 污染数值集合（编造 "1%" 会因此通过校验）
+        cleaned = re.sub(r"R\d+", "", s)
+        cleaned = re.sub(r"[A-Za-z]+", "", cleaned)
+        return set(re.findall(r"-?\d+(?:\.\d+)?", cleaned))
+
+    out_nums = _nums(text)
+    src_nums = _nums(source_json)
+    if not out_nums <= src_nums:
+        return False
+    return True
+
+
+def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
+    """Phase D #12: LLM 组织固定四段财务解读（预警点/数据对比/可能模式/限制说明）。
+
+    数据来源：仅 rule_details 原文（rule_name/explanation/severity/current 数值）。
+    LLM 失败/超时/无 key/输出未过验收（缺段/编造数值）→ 回退规则 explanation 串。
+    """
+    triggered = [
+        rid
+        for rid, st in rule_statuses.items()
+        if st == "triggered" and rid in rule_details
+    ]
+    if not triggered:
+        return ""
+
+    # 构造仅含原文的数据摘要（数值原文透传，供 LLM 组织，禁止新增事实）
+    detail_json = {
+        rid: {
+            "rule_name": rule_details[rid].get("rule_name", ""),
+            "severity": rule_details[rid].get("severity", ""),
+            "explanation": rule_details[rid].get("explanation", ""),
+            "current": rule_details[rid].get("current", {}),
+        }
+        for rid in sorted(triggered)
+    }
+
+    source_json = f"规则触发结果（JSON，仅作数据来源，不得新增数值）：\n{detail_json}"
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是财报反欺诈分析师。规则明细已单独列出（含全部数值），"
+                "你的解读段不得重复罗列数值，聚焦因果解释与手法判断。"
+                "输出固定四段，每段 1-2 句，总字数 350 字以内："
+                "【预警点】这些指标异常说明什么；"
+                "【数据对比】只说关键对比关系（一句话）；"
+                "【可能模式】指向什么造假手法（不确定写'需进一步验证'）；"
+                "【限制说明】数据口径限制。"
+                "铁律：数值必须取自给定 JSON 原文，禁止新增任何未经给出的数据或事实；"
+                "不要编造规则 ID、指标或数值。每段一行。"
+            ),
+        },
+        {"role": "user", "content": source_json},
+    ]
+
+    try:
+        from app.agents.llm_sync import run_llm_chat
+
+        text = run_llm_chat(messages)
+    except Exception:  # noqa: BLE001 — LLM 链路异常回退 explanation
+        text = ""
+    if not text or not _validate_interpretation(text, source_json):
+        # 回退：规则 explanation 串（LLM 失败/无 key/输出未过验收时保持信息不丢失）
+        parts = [
+            rule_details[rid].get("explanation", "")
+            for rid in sorted(triggered)
+            if rule_details[rid].get("explanation")
+        ]
+        return "【预警点】" + "；".join(parts) if parts else ""
+    return text
+
+
 def _resolve_as_of(state: AgentState) -> str:
     plan = state.get("plan")
     if plan is not None and plan.as_of:
@@ -282,6 +373,9 @@ def finance_node(state: AgentState) -> dict:
     periods_available = _query_periods_available(code, as_of)
     industry_benchmark = _query_industry_benchmark(code, as_of)
 
+    # Phase D #12: LLM 财务解读（四段；失败回退 explanation）
+    interpretation = _build_llm_interpretation(rule_details, rule_statuses)
+
     return {
         "module_status": {"finance": ModuleStatus(state=status)},
         "results": ModuleResults(
@@ -291,6 +385,7 @@ def finance_node(state: AgentState) -> dict:
                 periods_available=periods_available,
                 industry_benchmark=industry_benchmark,
                 rule_details=rule_details,
+                interpretation=interpretation,
                 warnings=warnings,
                 evidence=evidence,
             )

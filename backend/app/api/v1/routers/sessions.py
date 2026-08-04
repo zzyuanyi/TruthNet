@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
+from app.core.errors import ErrorCode
 from app.core.config import settings
 
 router = APIRouter(tags=["sessions"])
@@ -100,13 +101,13 @@ def list_sessions():
             ]
         except Exception:
             raise HTTPException(
-                status_code=500,
+                status_code=503,
                 detail={
                     "type": "https://truthnet.dev/errors/db-unavailable",
                     "title": "Database Unavailable",
-                    "status": 500,
+                    "status": 503,
                     "detail": "会话列表查询失败",
-                    "error_code": "DB_UNAVAILABLE",
+                    "error_code": ErrorCode.DATASTORE_UNAVAILABLE,
                     "trace_id": trace_id,
                     "recoverable": True,
                 },
@@ -159,13 +160,13 @@ def create_session(request: SessionCreateRequest):
                 )
         except Exception:
             raise HTTPException(
-                status_code=500,
+                status_code=503,
                 detail={
                     "type": "https://truthnet.dev/errors/db-unavailable",
                     "title": "Database Unavailable",
-                    "status": 500,
+                    "status": 503,
                     "detail": "会话创建失败",
-                    "error_code": "DB_UNAVAILABLE",
+                    "error_code": ErrorCode.DATASTORE_UNAVAILABLE,
                     "trace_id": trace_id,
                     "recoverable": True,
                 },
@@ -263,13 +264,13 @@ def get_session(session_id: str):
                     ]
         except Exception:
             raise HTTPException(
-                status_code=500,
+                status_code=503,
                 detail={
                     "type": "https://truthnet.dev/errors/db-unavailable",
                     "title": "Database Unavailable",
-                    "status": 500,
+                    "status": 503,
                     "detail": "会话详情查询失败",
-                    "error_code": "DB_UNAVAILABLE",
+                    "error_code": ErrorCode.DATASTORE_UNAVAILABLE,
                     "trace_id": trace_id,
                     "recoverable": True,
                 },

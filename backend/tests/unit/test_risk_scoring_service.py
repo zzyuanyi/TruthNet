@@ -164,3 +164,57 @@ def test_evidence_ids_collected():
         benchmarks=None,
     )
     assert "ev_fin_abc" in out.evidence_ids
+
+
+def test_risk_failure_path_in_compiled_graph():
+    """P1 回归：RiskScoringService.score 异常时，risk 失败状态经 reducer 合并。
+
+    必须通过编译后的 LangGraph 执行——module_status 的 reducer
+    （{**a, **b}）只在合并时触发；直接调用 risk_node() 测不出值形态错误
+    （失败路径曾返回裸 ModuleStatus，导致整个 graph 中断）。
+    """
+    from unittest.mock import patch
+
+    from langgraph.graph import END, StateGraph
+
+    from app.agents.nodes.risk import risk_node
+    from app.agents.state import (
+        AgentState,
+        CompanyRef,
+        ModuleResults,
+        ModuleStatus,
+        RuntimeState,
+    )
+
+    def _pass_through(state: dict) -> dict:
+        return {"user_query": state.get("user_query", "")}
+
+    g = StateGraph(AgentState)
+    g.add_node("risk", risk_node)
+    g.add_node("end", _pass_through)
+    g.set_entry_point("risk")
+    g.add_edge("risk", "end")
+    g.add_edge("end", END)
+    compiled = g.compile()
+
+    state = {
+        "user_query": "康美有风险吗",
+        "company": CompanyRef(
+            entity_id="600518.SH",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange="SH",
+        ),
+        "results": ModuleResults(),
+        "module_status": {"finance": ModuleStatus(state="success")},
+        "runtime": RuntimeState(trace_id="t1", session_id="s1", turn_id="t1"),
+        "pattern_matches": [],
+    }
+    with patch.object(RiskScoringService, "score", side_effect=RuntimeError("failed")):
+        result = compiled.invoke(state)
+
+    assert result["module_status"]["risk"].state == "failed"
+    assert (
+        result["module_status"]["finance"].state == "success"
+    ), "失败路径不得破坏既有模块状态"
+    assert result["risk_output"] is None

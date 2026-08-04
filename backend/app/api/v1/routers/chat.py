@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.v1.schemas.chat import ChatDataV1, ChatRequestV1
+from app.api.v1.schemas.chat import ChatDataV1, ChatEvidenceV1, ChatRequestV1
 from app.api.v1.schemas.common import ApiMeta, V12Response
 
 logger = logging.getLogger(__name__)
@@ -45,58 +45,26 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
     从 Agent State 中提取结构化数据并转换为 API DTO。
     """
     final_response = result.get("final_response")
-    claims = result.get("claims", [])
     evidence = result.get("evidence", [])
     module_status = result.get("module_status", {})
     results = result.get("results")
 
-    # 提取 risk_score
-    triggered = [c for c in claims if getattr(c, "severity", "") == "red"]
-    risk_score = {
-        "overall": min(1.0, len(triggered) * 0.25),
-        "financial": 0.8
-        if any(
-            getattr(c, "claim_type", "") == "financial"
-            and getattr(c, "severity", "") == "red"
-            for c in claims
-        )
-        else 0.1,
-        "ownership": 0.3
-        if any(
-            getattr(c, "claim_type", "") == "equity"
-            and getattr(c, "severity", "") == "red"
-            for c in claims
-        )
-        else 0.1,
-        "sentiment": 0.5
-        if any(
-            getattr(c, "claim_type", "") == "event"
-            and getattr(c, "severity", "") == "red"
-            for c in claims
-        )
-        else 0.05,
-    }
+    # 提取 risk_score — 优先使用 risk 节点真实评分（RiskOutput），
+    # 不再编造启发式分数（曾返回 overall=0.0 掩盖真实 0.73 的用户可见错误）
+    risk_output = result.get("risk_output")
+    risk_score: dict = {}
+    if risk_output is not None:
+        scores = {item.dimension: item.score for item in risk_output.sub_scores}
+        risk_score = {
+            "overall": risk_output.overall_score,
+            "financial": scores.get("finance", 0.0),
+            "ownership": scores.get("equity", 0.0),
+            "sentiment": scores.get("events", 0.0),
+        }
 
-    # 提取 evidence
-    evidence_items = []
-    for ev in evidence:
-        if isinstance(ev, dict):
-            evidence_items.append(
-                {
-                    "source": ev.get("source_type", ev.get("source_title", "")),
-                    "field": ev.get("field_path", ""),
-                    "value": str(ev.get("value", "")),
-                }
-            )
-        elif hasattr(ev, "source_type"):
-            evidence_items.append(
-                {
-                    "source": getattr(ev, "source_title", "")
-                    or getattr(ev, "source_type", ""),
-                    "field": getattr(ev, "field_path", ""),
-                    "value": str(getattr(ev, "value", "")),
-                }
-            )
+    # 提取 evidence — 统一经 ChatEvidenceV1.from_evidence 映射
+    # （旧契约 source/field/value + canonical 字段；无证据返回 []，不编造）
+    evidence_items = [ChatEvidenceV1.from_evidence(ev) for ev in evidence]
 
     # 提取 graph
     graph_data: dict = {"nodes": [], "edges": []}
@@ -141,15 +109,7 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
     return V12Response(
         data=ChatDataV1(
             answer=answer or "分析完成，未生成结构化答案。",
-            evidence=evidence_items
-            if evidence_items
-            else [
-                {
-                    "source": "Agent",
-                    "field": "state",
-                    "value": f"{len(claims)} claims, {len(evidence)} evidence refs",
-                }
-            ],
+            evidence=evidence_items,
             graph=graph_data,
             timeline=timeline,
             risk_score=risk_score,

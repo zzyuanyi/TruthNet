@@ -121,12 +121,16 @@ def risk_node(state: AgentState) -> dict:
             cross_validation=cross_validation,
         )
     except Exception:  # noqa: BLE001 — 明确降级，不伪造风险结果
+        # 必须 dict 包装（与其他节点一致）：module_status reducer 是 {**a, **b}，
+        # 裸 ModuleStatus 对象会让合并抛 TypeError，导致整个 graph 中断
         return {
-            "module_status": ModuleStatus(
-                state="failed",
-                error_code="RISK_SCORING_ERROR",
-                recoverable=True,
-            ),
+            "module_status": {
+                "risk": ModuleStatus(
+                    state="failed",
+                    error_code="RISK_SCORING_ERROR",
+                    recoverable=True,
+                )
+            },
             "messages": [],
             "risk_output": None,
         }
