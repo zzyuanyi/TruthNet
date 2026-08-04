@@ -190,12 +190,8 @@ class BaseOpenAICompatibleProvider:
         messages: list[dict],
         output_schema: type[BaseModel],
         **kwargs,
-    ) -> BaseModel:
-        """结构化对话请求，返回 Pydantic 模型实例.
-
-        使用 JSON 模式确保输出符合指定的 Pydantic schema。
-        验证失败时自动重试一次。
-        """
+    ) -> BaseModel | None:
+        """返回结构化模型；失败时返回 None，由上层切换备用 Provider."""
         if self._client is None:
             return None  # 失败语义：None=失败（llm_sync 据此切换备用）
 

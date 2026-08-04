@@ -193,30 +193,87 @@ def test_run_llm_chat_safe_inside_event_loop(monkeypatch):
     assert text == "ok"
 
 
-def test_run_llm_chat_timeout_fallback():
-    """LLM 超时（>3s）→ 返回空串，调用方回退。"""
+def test_fallback_creation_failure_keeps_primary(monkeypatch):
+    """P2 回归：备用 Provider 构造失败时，不得丢弃已创建的主 Provider."""
+    from app.agents.llm_sync import _get_providers
+    from app.core.config import settings
+
+    class _Primary:
+        provider_name = "primary"
+        _client = None
+
+    primary = _Primary()
+    calls = []
+
+    def _fake_create(backend=None):
+        calls.append(backend)
+        if backend == "qwen":
+            raise RuntimeError("fallback init failed")
+        return primary
+
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    monkeypatch.setattr(settings, "LLM_FALLBACK_BACKEND", "qwen")
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider",
+        _fake_create,
+    )
+
+    actual_primary, actual_fallback = _get_providers()
+
+    assert actual_primary is primary
+    assert actual_fallback is None
+    assert calls == [None, "qwen"]
+
+
+def test_run_llm_chat_timeout_cancels_task_and_closes_client(monkeypatch):
+    """P2 回归：超时后底层 asyncio task 被真正取消，客户端关闭，备用不调用."""
+    import threading
     import time
 
     from app.agents.llm_sync import run_llm_chat
 
-    class _SlowProvider(_FakeProvider):
-        async def chat(self, messages, **kwargs):
-            await asyncio.sleep(30)
-            return "太慢"
+    cancelled = threading.Event()
+    closed = threading.Event()
+    fallback_called = threading.Event()
 
-    # 直接注入需要 patch；此处手动替换 factory 属性
-    from app.infrastructure.llm import factory as llm_factory
+    class _Client:
+        async def close(self):
+            closed.set()
 
-    original = llm_factory.create_llm_provider
-    llm_factory.create_llm_provider = lambda backend=None: _SlowProvider()
-    try:
-        start = time.monotonic()
-        text = run_llm_chat([{"role": "user", "content": "hi"}], timeout=1.0)
-        elapsed = time.monotonic() - start
-    finally:
-        llm_factory.create_llm_provider = original
-    assert text == ""
-    assert elapsed < 5, "超时应在 1s 附近返回（后台请求被真正取消，不阻塞调用方）"
+    class _SlowPrimary:
+        provider_name = "primary"
+        _client = _Client()
+
+        async def chat(self, messages):
+            try:
+                await asyncio.sleep(30)
+                return "late result"
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    class _Fallback:
+        provider_name = "fallback"
+        _client = None
+
+        async def chat(self, messages):
+            fallback_called.set()
+            return "fallback result"
+
+    monkeypatch.setattr(
+        "app.agents.llm_sync._get_providers",
+        lambda: (_SlowPrimary(), _Fallback()),
+    )
+
+    started = time.monotonic()
+    result = run_llm_chat([], timeout=0.1)
+    elapsed = time.monotonic() - started
+
+    assert result == ""
+    assert elapsed < 2
+    assert cancelled.wait(2), "底层 asyncio task 未收到取消"
+    assert closed.wait(2), "取消后 Provider 客户端未关闭"
+    assert not fallback_called.is_set(), "总超时后不应继续调用备用 Provider"
 
 
 def test_structured_none_switches_to_fallback():

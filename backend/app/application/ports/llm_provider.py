@@ -30,12 +30,8 @@ class LLMProvider(Protocol):
         messages: list[dict],
         output_schema: type[BaseModel],
         **kwargs,
-    ) -> BaseModel:
-        """结构化对话请求，返回 Pydantic 模型实例.
-
-        Provider 使用 JSON 模式或工具调用，
-        确保输出可解析为 output_schema 指定的模型。
-        """
+    ) -> BaseModel | None:
+        """返回结构化模型；Provider 不可用、调用失败或解析失败时返回 None."""
         ...
 
     async def check_connection(self) -> bool:
