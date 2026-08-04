@@ -9,6 +9,9 @@ from typing import Annotated, Any, Literal, TypedDict
 from langgraph.graph import add_messages
 from pydantic import BaseModel, Field
 
+# canonical 模型定义于 domain/evidence/models.py，此处 re-export 保持导入兼容
+from app.domain.evidence.models import Claim, EvidenceRef
+
 
 # ── V12 §7.3 模型 ──────────────────────────────────────────
 
@@ -54,53 +57,6 @@ class RuntimeState(BaseModel):
     turn_id: str = ""
     sequence: int = 0
     warnings: list[str] = Field(default_factory=list)
-
-
-class EvidenceRef(BaseModel):
-    """证据引用 — V12 §9.1 + Phase C 全局追溯字段."""
-
-    evidence_id: str
-    source_type: str = ""
-    source_record_id: str = ""
-    field_path: str | None = None
-    period: str | None = None
-    value: str | None = None
-    source_title: str = ""
-    # Phase C: 全局追溯字段
-    turn_id: str = ""
-    trace_id: str = ""
-    company_code: str = ""
-    module: str = ""
-    # 运行时规则归属（仅内存用，不落库；持久化归属由 claims.rule_id + links 表达）
-    rule_id: str | None = None
-    source_table: str | None = None
-    unit: str | None = None
-    statement_scope: str | None = None
-    source_uri: str | None = None
-    source_excerpt: str | None = None
-    dataset_version: str = ""
-    retrieved_at: str = ""
-
-
-class Claim(BaseModel):
-    """结论声明 — V12 §9.2 + Phase C 全局追溯字段."""
-
-    claim_id: str
-    text: str
-    claim_type: str = ""
-    severity: str = "unknown"
-    confidence: float | None = None
-    rule_id: str | None = None
-    rule_version: str | None = None
-    evidence_ids: list[str] = Field(default_factory=list)
-    verification_status: str = "pending"
-    limitations: list[str] = Field(default_factory=list)
-    # Phase C: 全局追溯字段
-    turn_id: str = ""
-    trace_id: str = ""
-    company_code: str = ""
-    module: str = ""
-    generated_at: str = ""
 
 
 class FinalResponse(BaseModel):

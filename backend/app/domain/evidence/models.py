@@ -1,65 +1,58 @@
-"""Evidence 证据领域模型 — V12 baseline.
+"""Evidence 证据领域模型 — V12 §9.1/9.2 canonical 模型.
 
-EvidenceRef 和 Claim 是回答可信性的核心边界。
+Agent 运行时、持久化与 API 统一使用本文件定义的 EvidenceRef/Claim
+（agents/state.py re-export 保持导入兼容；ORM 列名镜像见
+infrastructure/persistence/models.py）。
+
+历史说明：旧版（id/type/source/field + confidence 枚举）与运行链字段
+不一致且零引用，已由本 canonical 版替换（审查对齐）。
 """
-
-from datetime import datetime
-from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
-class EvidenceType(str, Enum):
-    """证据类型."""
-
-    FINANCIAL_STATEMENT = "financial_statement"
-    OWNERSHIP_RECORD = "ownership_record"
-    NEWS_ARTICLE = "news_article"
-    REGULATION = "regulation"
-    CALCULATION = "calculation"
-    EXPERT_OPINION = "expert_opinion"
-
-
-class ConfidenceLevel(str, Enum):
-    """置信度等级."""
-
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    UNVERIFIED = "unverified"
-
-
 class EvidenceRef(BaseModel):
-    """证据引用 — V12 核心模型.
+    """证据引用 — V12 §9.1 + Phase C 全局追溯字段."""
 
-    每条回答中的证据锚点，将结论与原始数据关联。
-    """
-
-    id: str = Field(..., description="证据唯一标识")
-    type: EvidenceType = Field(..., description="证据类型")
-    source: str = Field(..., description="数据来源，如'2023年报 利润表'")
-    field: str = Field(..., description="字段名，如'营业收入'")
-    value: str = Field(..., description="字段值")
-    page: str | None = Field(None, description="年报页码或文档位置")
-    retrieval_score: float | None = Field(
-        None, ge=0.0, le=1.0, description="检索相关性分数"
-    )
+    evidence_id: str
+    source_type: str = ""
+    source_record_id: str = ""
+    field_path: str | None = None
+    period: str | None = None
+    value: str | None = None
+    source_title: str = ""
+    # Phase C: 全局追溯字段
+    turn_id: str = ""
+    trace_id: str = ""
+    company_code: str = ""
+    module: str = ""
+    # 运行时规则归属（仅内存用，不落库；持久化归属由 claims.rule_id + links 表达）
+    rule_id: str | None = None
+    source_table: str | None = None
+    unit: str | None = None
+    statement_scope: str | None = None
+    source_uri: str | None = None
+    source_excerpt: str | None = None
+    dataset_version: str = ""
+    retrieved_at: str = ""
 
 
 class Claim(BaseModel):
-    """结论声明 — V12 核心模型.
+    """结论声明 — V12 §9.2 + Phase C 全局追溯字段."""
 
-    每个回答由若干 Claim 组成，每个 Claim 有独立的证据链和置信度。
-    """
-
-    id: str = Field(..., description="声明唯一标识")
-    statement: str = Field(..., description="声明内容")
-    confidence: ConfidenceLevel = Field(default=ConfidenceLevel.UNVERIFIED)
-    evidence: list[EvidenceRef] = Field(default_factory=list, description="支撑证据")
-    counter_evidence: list[EvidenceRef] = Field(
-        default_factory=list, description="反面证据"
-    )
-    generated_at: str = Field(
-        default_factory=lambda: datetime.now().isoformat(),
-        description="生成时间 (ISO 8601)",
-    )
+    claim_id: str
+    text: str
+    claim_type: str = ""
+    severity: str = "unknown"
+    confidence: float | None = None
+    rule_id: str | None = None
+    rule_version: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    verification_status: str = "pending"
+    limitations: list[str] = Field(default_factory=list)
+    # Phase C: 全局追溯字段
+    turn_id: str = ""
+    trace_id: str = ""
+    company_code: str = ""
+    module: str = ""
+    generated_at: str = ""
