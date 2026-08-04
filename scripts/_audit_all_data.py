@@ -37,7 +37,9 @@ def check(name: str, actual, expect, note: str = ""):
     flag = "✅" if ok else "❌"
     print(f"  {flag} {name}: {actual} (预期 {expect}){(' ' + note) if note else ''}")
     if not ok:
-        issues.append(f"{name}: {actual} != 预期 {expect}{(' ' + note) if note else ''}")
+        issues.append(
+            f"{name}: {actual} != 预期 {expect}{(' ' + note) if note else ''}"
+        )
 
 
 print("=== 一、主数据 ===")
@@ -58,7 +60,8 @@ check(
     "cash_flow 总数", q("SELECT COUNT(*) FROM cash_flow"), 39985, "(母公司 408006000)"
 )
 three_total = sum(
-    q(f"SELECT COUNT(*) FROM {t}") for t in ("balance_sheet", "income_statement", "cash_flow")
+    q(f"SELECT COUNT(*) FROM {t}")
+    for t in ("balance_sheet", "income_statement", "cash_flow")
 )
 check("三表合计", three_total, 117214)
 # 母公司口径行数（R1-R7 实际使用）
@@ -89,10 +92,14 @@ check(
 # 股东表名探测
 tables = [
     r[0]
-    for r in e.connect().execute(
-        text("SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = :s"),
+    for r in e.connect()
+    .execute(
+        text(
+            "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = :s"
+        ),
         {"s": settings.MYSQL_DATABASE},
-    ).fetchall()
+    )
+    .fetchall()
 ]
 print(f"  ℹ️ 数据库表清单: {sorted(tables)}")
 e.dispose()
@@ -100,7 +107,12 @@ e.dispose()
 print()
 print("=== 二、衍生数据（Phase C 8/3 导入）===")
 with e.connect() as c:
-    for t in ("industry_benchmarks", "rating_changes", "event_clusters", "event_cluster_sources"):
+    for t in (
+        "industry_benchmarks",
+        "rating_changes",
+        "event_clusters",
+        "event_cluster_sources",
+    ):
         n = c.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar()
         print(f"  ℹ️ {t}: {n}")
         if t == "industry_benchmarks" and n != 279:
