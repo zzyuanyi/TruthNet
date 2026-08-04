@@ -4,40 +4,87 @@ LangGraph 节点是同步 def（agents/graph.py 全同步 add_node），而
 LLM Provider 接口（chat/structured_chat）是 async。两条调用路径：
 
 - REST：chat.py 用 asyncio.to_thread(graph.invoke) → 节点运行在线程池
-  线程（无事件循环），asyncio.run 直接可用；
+  线程（无事件循环）；
 - WS：chat.py 在事件循环线程内同步 _compiled_graph.invoke() → 节点运行
   在事件循环线程，直接 asyncio.run 抛 RuntimeError。
 
-统一方案：在独立线程中 asyncio.run + future.result(timeout)，两条路径
-均安全，且天然满足"LLM 失败 3s 内降级"。超时/异常 → 返回 ""，
-调用方回退模板。
+统一方案：常驻事件循环线程 + asyncio.run_coroutine_threadsafe：
+- 任意线程（REST/WS）提交协程到常驻 loop，安全；
+- future.result(timeout) 超时 → future.cancel() 真正取消底层 asyncio
+  task（中断 httpx 请求），不残留后台线程/请求；
+- 客户端在协程 finally 中 close（连接释放，不泄漏）。
+超时/异常 → 返回空（调用方回退模板）。
 """
 
 import asyncio
 import concurrent.futures
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
+
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_lock = threading.Lock()
+
+
+def _ensure_loop() -> asyncio.AbstractEventLoop:
+    """获取常驻事件循环（daemon 线程，随进程生命周期）。"""
+    global _loop
+    with _loop_lock:
+        if _loop is None or _loop.is_closed():
+            _loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=_loop.run_forever,
+                daemon=True,
+                name="llm-sync-loop",
+            ).start()
+        return _loop
+
+
+def _run_coro(coro_factory, timeout: float, empty_value):
+    """提交协程到常驻 loop 并等待；超时 → 真正取消并返回空值。"""
+    loop = _ensure_loop()
+    future = asyncio.run_coroutine_threadsafe(coro_factory(), loop)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        # 真正取消底层 asyncio task（中断 httpx 请求），不残留后台请求
+        future.cancel()
+        logger.warning("llm_sync: LLM 调用超时（>%ss），已取消，回退", timeout)
+        return empty_value
+    except Exception:  # noqa: BLE001 — LLM 任意异常回退
+        logger.warning("llm_sync: LLM 调用失败，回退", exc_info=True)
+        return empty_value
 
 
 def _get_providers() -> tuple:
     """创建主 provider + 备选（LLM_FALLBACK_BACKEND 配置时）。
 
-    返回 (primary, fallback)，任一创建失败 → None（调用方回退）。
+    主、备分别 try：备用创建异常不连带丢弃可用的主 Provider。
+    返回 (primary, fallback)，主创建失败 → (None, None)（调用方回退）。
     """
-    try:
-        from app.core.config import settings
-        from app.infrastructure.llm.factory import create_llm_provider
+    from app.core.config import settings
+    from app.infrastructure.llm.factory import create_llm_provider
 
+    try:
         primary = create_llm_provider()
-        fallback_backend = settings.LLM_FALLBACK_BACKEND
-        fallback = None
-        if fallback_backend and fallback_backend != settings.LLM_BACKEND:
-            fallback = create_llm_provider(fallback_backend)
-        return primary, fallback
-    except Exception:  # noqa: BLE001 — provider 创建失败回退
-        logger.warning("llm_sync: LLM provider 创建失败，回退模板", exc_info=True)
+    except Exception:  # noqa: BLE001 — 主创建失败回退
+        logger.warning("llm_sync: 主 LLM provider 创建失败，回退模板", exc_info=True)
         return None, None
+
+    fallback = None
+    fallback_backend = settings.LLM_FALLBACK_BACKEND
+    if fallback_backend and fallback_backend != settings.LLM_BACKEND:
+        try:
+            fallback = create_llm_provider(fallback_backend)
+        except Exception:  # noqa: BLE001 — 备用创建失败不丢主
+            logger.warning(
+                "llm_sync: 备用 LLM provider（%s）创建失败，仅用主",
+                fallback_backend,
+                exc_info=True,
+            )
+            fallback = None
+    return primary, fallback
 
 
 async def _call_with_fallback(primary, fallback, coro_factory):
@@ -87,22 +134,14 @@ def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
     if primary is None:
         return ""
 
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = ex.submit(
-        asyncio.run,
-        _call_with_fallback(primary, fallback, lambda p: p.chat(messages)),
+    return (
+        _run_coro(
+            lambda: _call_with_fallback(primary, fallback, lambda p: p.chat(messages)),
+            timeout,
+            "",
+        )
+        or ""
     )
-    try:
-        return future.result(timeout=timeout) or ""
-    except concurrent.futures.TimeoutError:
-        logger.warning("llm_sync: LLM 调用超时（>%ss），回退模板", timeout)
-        return ""
-    except Exception:  # noqa: BLE001 — LLM 任意异常回退模板
-        logger.warning("llm_sync: LLM 调用失败，回退模板", exc_info=True)
-        return ""
-    finally:
-        # 不等待后台线程：超时后 LLM 线程可能仍挂起，wait=True 会阻塞到完成
-        ex.shutdown(wait=False)
 
 
 def run_llm_structured(
@@ -122,22 +161,12 @@ def run_llm_structured(
     if primary is None:
         return None
 
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = ex.submit(
-        asyncio.run,
-        _call_with_fallback(
+    return _run_coro(
+        lambda: _call_with_fallback(
             primary,
             fallback,
             lambda p: p.structured_chat(messages, output_schema),
         ),
+        timeout,
+        None,
     )
-    try:
-        return future.result(timeout=timeout)
-    except concurrent.futures.TimeoutError:
-        logger.warning("llm_sync: structured 调用超时（>%ss），返回 None", timeout)
-        return None
-    except Exception:  # noqa: BLE001
-        logger.warning("llm_sync: structured 调用失败，返回 None", exc_info=True)
-        return None
-    finally:
-        ex.shutdown(wait=False)

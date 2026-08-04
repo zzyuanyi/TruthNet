@@ -216,4 +216,37 @@ def test_run_llm_chat_timeout_fallback():
     finally:
         llm_factory.create_llm_provider = original
     assert text == ""
-    assert elapsed < 5, "超时应在 1s 附近返回（线程不阻塞调用方）"
+    assert elapsed < 5, "超时应在 1s 附近返回（后台请求被真正取消，不阻塞调用方）"
+
+
+def test_structured_none_switches_to_fallback():
+    """P2-1 回归：主 provider 结构化返回 None（失败语义）→ 切换备用。"""
+    from pydantic import BaseModel
+
+    from app.agents.llm_sync import _call_with_fallback
+
+    class _Schema(BaseModel):
+        finance: bool = False
+
+    class _PrimaryNone:
+        provider_name = "primary"
+        calls = 0
+
+        async def structured_chat(self, messages, schema, **kwargs):
+            self.calls += 1
+            return None  # 失败语义（base provider 降级后返回 None）
+
+    class _FallbackOk:
+        provider_name = "fallback"
+        calls = 0
+
+        async def structured_chat(self, messages, schema, **kwargs):
+            self.calls += 1
+            return schema(finance=True)
+
+    primary, fallback = _PrimaryNone(), _FallbackOk()
+    result = asyncio.run(
+        _call_with_fallback(primary, fallback, lambda p: p.structured_chat([], _Schema))
+    )
+    assert fallback.calls == 1, "主返回 None 应切换备用"
+    assert result.finance is True

@@ -197,7 +197,7 @@ class BaseOpenAICompatibleProvider:
         验证失败时自动重试一次。
         """
         if self._client is None:
-            return self._degraded_structured(output_schema, "Provider 不可用")
+            return None  # 失败语义：None=失败（llm_sync 据此切换备用）
 
         schema_json = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
 
@@ -256,9 +256,7 @@ class BaseOpenAICompatibleProvider:
                             self.provider_name,
                             ve.errors(),
                         )
-                        return self._degraded_structured(
-                            output_schema, f"JSON 解析失败: {ve.errors()}"
-                        )
+                        return None
             except Exception as e:
                 if attempt == 0:
                     logger.warning(
@@ -274,9 +272,9 @@ class BaseOpenAICompatibleProvider:
                         self.provider_name,
                         e,
                     )
-                    return self._degraded_structured(output_schema, str(e))
+                    return None
 
-        return self._degraded_structured(output_schema, "未知错误")
+        return None
 
     # ── 内部辅助 ──────────────────────────────────────────
 
@@ -286,20 +284,3 @@ class BaseOpenAICompatibleProvider:
             f"[{self.provider_name}] Provider 未激活，请配置 "
             f"{self.provider_name.upper()}_API_KEY。"
         )
-
-    def _degraded_structured(
-        self,
-        output_schema: type[BaseModel],
-        reason: str,
-    ) -> BaseModel:
-        """返回降级的结构化结果——使用模型默认值."""
-        logger.warning(
-            "%s: 返回降级结构化结果 (schema=%s, reason=%s)",
-            self.provider_name,
-            output_schema.__name__,
-            reason,
-        )
-        try:
-            return output_schema()
-        except Exception:
-            return output_schema.model_validate({})

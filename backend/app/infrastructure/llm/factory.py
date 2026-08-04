@@ -116,10 +116,20 @@ class FallbackLLMProvider:
         yield create_degradation_response(self._task_type)
 
     async def structured_chat(self, messages: list[dict], output_schema, **kwargs):
-        """带降级的 structured_chat."""
+        """带降级的 structured_chat.
+
+        主 Provider 失败（抛异常或返回 None——base 失败语义统一为 None）
+        → 尝试备选 → 全部失败返回降级结构化对象。
+        """
         try:
-            return await self._primary.structured_chat(
+            result = await self._primary.structured_chat(
                 messages, output_schema, **kwargs
+            )
+            if result is not None:
+                return result
+            logger.warning(
+                "主 Provider (%s) structured_chat 返回 None，视为失败",
+                self.provider_name,
             )
         except Exception as e:
             logger.warning(
@@ -128,9 +138,12 @@ class FallbackLLMProvider:
 
         if self._fallback is not None:
             try:
-                return await self._fallback.structured_chat(
+                result = await self._fallback.structured_chat(
                     messages, output_schema, **kwargs
                 )
+                if result is not None:
+                    return result
+                logger.warning("备选 Provider structured_chat 返回 None，视为失败")
             except Exception as e:
                 logger.warning("备选 Provider structured_chat 也失败: %s", e)
 

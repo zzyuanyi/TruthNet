@@ -228,7 +228,11 @@ class TestDeepSeekProviderStructuredChat:
         assert result.confidence == 0.85
 
     @pytest.mark.asyncio
-    async def test_structured_chat_no_client(self):
+    async def test_structured_chat_no_client_returns_none(self):
+        """无客户端 → 返回 None（失败语义统一，llm_sync 据此切换备用）。
+
+        P2-1 回归：返回降级默认实例会被 llm_sync 当成功，备用 LLM 永不生效。
+        """
         provider = DeepSeekProvider()
         provider._client = None
         provider._available = False
@@ -237,7 +241,7 @@ class TestDeepSeekProviderStructuredChat:
             [{"role": "user", "content": "分析"}],
             OutputFixture,
         )
-        assert isinstance(result, OutputFixture)
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_structured_chat_json_parse_error_retry(self):
