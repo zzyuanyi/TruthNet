@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { PageTransition } from '@/components/page-transition';
 import { AppHeader } from './app-header';
 
 export default function Layout() {
@@ -6,7 +7,7 @@ export default function Layout() {
     <div className="min-h-screen bg-background">
       <AppHeader />
       <main className="pt-16">
-        <Outlet />
+        <PageTransition><Outlet /></PageTransition>
       </main>
     </div>
   );

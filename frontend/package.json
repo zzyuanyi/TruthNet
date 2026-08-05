@@ -84,6 +84,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "server": "^1.0.42",
     "tailwindcss": "^4.3.0",
+    "terser": "^5.49.1",
     "typescript": "^5",
     "vite": "^6.3.5"
   },

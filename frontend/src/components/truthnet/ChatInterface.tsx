@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { ThinkingBubble } from '@/components/thinking-bubble';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Send, Loader2, User, Bot, AlertTriangle } from 'lucide-react';
+import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText } from 'lucide-react';
 import type { Message, RiskLevel } from '@/types/truthnet';
-import ReactMarkdown from 'react-markdown';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 
 interface ChatInterfaceProps {
   messages: Message[];
@@ -23,6 +24,7 @@ const riskColors: Record<RiskLevel, string> = {
   yellow: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20',
   blue: 'text-blue-500 bg-blue-500/10 border-blue-500/20',
   green: 'text-green-500 bg-green-500/10 border-green-500/20',
+  unknown: 'text-gray-500 bg-gray-500/10 border-gray-500/20',
 };
 
 export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterfaceProps) {
@@ -57,14 +59,28 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="p-4 space-y-4">
           {messages.length === 0 && (
-            <div className="text-center py-12">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
-                <AlertTriangle className="h-8 w-8 text-primary" />
+            <div className="text-center py-8">
+              <Shield className="h-10 w-10 text-primary/40 mx-auto mb-3" />
+              <h3 className="text-base font-medium text-foreground mb-1">织网鉴真 · 财报反欺诈助手</h3>
+              <p className="text-xs text-muted-foreground mb-6">输入上市公司名称或股票代码，穿透股权 · 交叉验证 · 对齐舆情</p>
+              <div className="grid grid-cols-2 gap-2 max-w-lg mx-auto">
+                {[
+                  { icon: TrendingUp, label: '财务勾稽', text: '分析康美药业是否存在收入虚增' },
+                  { icon: Zap, label: '股权穿透', text: '查看乐视网的关联交易链路' },
+                  { icon: FileText, label: '舆情对齐', text: '瑞幸咖啡负面公告与财务数据是否一致' },
+                  { icon: Shield, label: '综合风险', text: '对比宁德时代与比亚迪的财务健康度' },
+                ].map((card, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setInput(card.text); setTimeout(() => { if (card.text.trim()) onSendMessage(card.text.trim()); setInput(''); }, 0); }}
+                    className="text-left p-3 rounded-md border border-border/60 hover:border-primary/30 hover:bg-muted/30 transition-colors group"
+                  >
+                    <card.icon className="h-4 w-4 text-primary/60 mb-1.5 group-hover:text-primary transition-colors" />
+                    <p className="text-xs font-medium text-foreground mb-0.5">{card.label}</p>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">{card.text}</p>
+                  </button>
+                ))}
               </div>
-              <h3 className="text-lg font-medium mb-2">开始分析</h3>
-              <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                输入公司名称或问题，开始财报反欺诈分析。例如："帮我分析康美药业的财务异常情况"
-              </p>
             </div>
           )}
 
@@ -83,7 +99,7 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
       </ScrollArea>
 
       {/* 输入区域 */}
-      <div className="border-t border-border p-4">
+      <div className="border-t border-border p-4 bg-gradient-to-t from-muted/20 to-background">
         <div className="flex gap-2">
           <Textarea
             value={input}
@@ -119,7 +135,7 @@ function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>
+    <div className={cn('flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300', isUser ? 'justify-end' : 'justify-start')}>
       {/* 头像 */}
       <div className={cn(
         'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
@@ -135,9 +151,7 @@ function MessageBubble({ message }: { message: Message }) {
       )}>
         {/* 思考过程 */}
         {message.thinking && !isUser && (
-          <div className="text-xs text-muted-foreground mb-2 italic">
-            💭 {message.thinking}
-          </div>
+          <ThinkingBubble content={message.thinking} />
         )}
 
         {/* 主要内容 */}
@@ -145,7 +159,7 @@ function MessageBubble({ message }: { message: Message }) {
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <MarkdownRenderer content={message.content} />
           </div>
         )}
 
@@ -175,6 +189,31 @@ function MessageBubble({ message }: { message: Message }) {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* 证据分级标注 */}
+        {!isUser && (
+          <div className="mt-2 pt-2 border-t border-border/30">
+            {message.evidence_ids && message.evidence_ids.length > 0 ? (
+              <div className="flex items-center gap-1 flex-wrap">
+                <Badge variant="outline" className="text-xs bg-green-500/10 text-green-600 border-green-500/20">
+                  有据可查
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {message.evidence_ids.length} 条证据支撑
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-600 border-yellow-500/20">
+                  仅供参考
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  无直接证据支撑
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

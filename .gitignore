@@ -96,3 +96,7 @@ htmlcov/
 .safetensors
 data/model_cache/
 .env.lite.bak
+.codegraph/
+.preview
+frontend-source.tar.gz
+public/*.tar.gz

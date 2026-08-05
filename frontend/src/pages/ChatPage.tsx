@@ -1,221 +1,266 @@
 // 织网鉴真 TruthNet - 对话主页
 // T1: 三栏布局（会话侧边栏 + 对话区 + 分析面板）
-// Phase B: 会话管理本地 mock，对话通过 V12 WebSocket 连接后端
+// Phase 1: 对接真实 API
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { SessionSidebar } from '@/components/truthnet/SessionSidebar';
 import { ChatInterface } from '@/components/truthnet/ChatInterface';
 import { AnalysisPanel } from '@/components/truthnet/AnalysisPanel';
-import { mockSessions, mockMessages } from '@/data/mock';
-import type { Session, Message, PanelData, PanelState } from '@/types/truthnet';
-import type { WSEvent } from '@/types/truthnet';
+import { apiClient, wsClient } from '@/lib/api-client';
+import type { Session, Message, PanelData, PanelState, ChatDataV1 } from '@/types/truthnet';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-/** 按当前页面协议和 host 生成 WS URL */
-function wsUrl(): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/api/v1/chat/ws`;
-}
-
 export default function ChatPage() {
-  // ── 会话管理（Phase B 本地 mock） ──
-  const [sessions, setSessions] = useState<Session[]>(mockSessions);
-  const [currentSessionId, setCurrentSessionId] = useState<string>(mockSessions[0]?.id || '');
-  const [messages, setMessages] = useState<Message[]>(mockMessages);
+  // 状态管理
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const [messages, setMessages] = useState<Message[]>([]);
   const [panelData, setPanelData] = useState<PanelData | null>(null);
-  const [panelState, setPanelState] = useState<PanelState>('done');
-  const [panelError, setPanelError] = useState<string>('');
+  const [panelState, setPanelState] = useState<PanelState>('empty');
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const wsRef = useRef<ReturnType<typeof wsClient.create> | null>(null);
 
-  // ── 活动 WebSocket（useRef 避免闭包陈旧值，卸载时关闭） ──
-  const wsRef = useRef<WebSocket | null>(null);
-  const pendingMsgRef = useRef<string>(''); // 本轮待累积的回答文本
+  // Task 7: 面板联动状态
+  const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
+  const [filteredEvidenceIds, setFilteredEvidenceIds] = useState<string[] | null>(null);
 
-  // 组件卸载 → 关闭连接
+  // 当前会话
+  const currentSession = sessions.find(s => s.session_id === currentSessionId);
+
+  // 加载会话列表
   useEffect(() => {
-    return () => {
-      wsRef.current?.close();
+    const loadSessions = async () => {
+      try {
+        const response = await apiClient.getSessions();
+        setSessions(response.data || []);
+        if (response.data && response.data.length > 0 && !currentSessionId) {
+          setCurrentSessionId(response.data[0].session_id);
+        }
+      } catch (error) {
+        console.error('Failed to load sessions:', error);
+      }
     };
+    loadSessions();
   }, []);
 
-  const closeWs = () => {
-    wsRef.current?.close();
-    wsRef.current = null;
-  };
-
-  const currentSession = sessions.find(s => s.id === currentSessionId);
-
-  // ── 会话操作（Phase B 本地 mock，不做后端持久化） ──
-  const handleNewSession = () => {
-    const newSession: Session = {
-      id: `session-${Date.now()}`,
-      title: '新对话',
-      company_code: '',
-      company_name: '',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      message_count: 0,
-    };
-    setSessions([newSession, ...sessions]);
-    setCurrentSessionId(newSession.id);
+  // 加载会话消息
+  useEffect(() => {
+    if (!currentSessionId) return;
+    
+    // 会话消息通过 WebSocket 实时获取，这里不需要额外加载
     setMessages([]);
-    setPanelData(null);
-    setPanelState('empty');
-  };
+    setPanelState('done');
+  }, [currentSessionId]);
 
-  const handleSelectSession = (sessionId: string) => {
-    setCurrentSessionId(sessionId);
-    const session = sessions.find(s => s.id === sessionId);
-    if (session) {
-      setMessages(mockMessages.filter(m => m.session_id === sessionId));
-      setPanelState('done');
-    }
-  };
-
-  const handleDeleteSession = (sessionId: string) => {
-    const newSessions = sessions.filter(s => s.id !== sessionId);
-    setSessions(newSessions);
-    if (currentSessionId === sessionId) {
-      setCurrentSessionId(newSessions[0]?.id || '');
+  // 创建新会话
+  const handleNewSession = async () => {
+    try {
+      const response = await apiClient.createSession('新对话');
+      const newSession: Session = {
+        session_id: response.data?.session_id || `session-${Date.now()}`,
+        title: '新对话',
+        created_at: response.data?.created_at || new Date().toISOString(),
+        updated_at: response.data?.updated_at || new Date().toISOString(),
+        message_count: 0,
+      };
+      setSessions([newSession, ...sessions]);
+      setCurrentSessionId(newSession.session_id);
       setMessages([]);
       setPanelData(null);
       setPanelState('empty');
+    } catch (error) {
+      console.error('Failed to create session:', error);
     }
   };
 
-  // ── 发送消息 → V12 WebSocket ──
-  const handleSendMessage = (content: string) => {
-    // 关闭上一次连接（如果有）
-    closeWs();
+  // 切换会话
+  const handleSelectSession = (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+  };
 
-    // 用户消息
+  // 删除会话
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await apiClient.deleteSession(sessionId);
+      const newSessions = sessions.filter(s => s.session_id !== sessionId);
+      setSessions(newSessions);
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId(newSessions[0]?.session_id || '');
+        setMessages([]);
+        setPanelData(null);
+        setPanelState('empty');
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+    }
+  };
+
+  // 处理 WebSocket 事件 (V12 信封协议)
+  const handleWSEvent = useCallback((event: { event_type: string; payload?: unknown; type?: string; data?: unknown }) => {
+    const eventType = event.event_type || event.type || '';
+    const payload = event.payload || event.data;
+    switch (eventType) {
+      case 'thinking':
+        setPanelState('thinking');
+        break;
+      case 'text_chunk': {
+        const chunk = payload as { content: string };
+        setMessages(prev => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            return [...prev.slice(0, -1), { ...lastMsg, content: lastMsg.content + chunk.content }];
+          }
+          return [...prev, { id: `msg-${Date.now()}`, role: 'assistant', content: chunk.content, created_at: new Date().toISOString() }];
+        });
+        setPanelState('streaming');
+        break;
+      }
+      case 'structured_data': {
+        setPanelData(payload as PanelData);
+        break;
+      }
+      case 'evidence': {
+        const ev = payload as { evidence_ids: string[] };
+        if (ev.evidence_ids) {
+          setFilteredEvidenceIds(ev.evidence_ids);
+          setMessages(prev => {
+            const updated = [...prev];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].role === 'assistant') {
+                updated[i] = { ...updated[i], evidence_ids: ev.evidence_ids };
+                break;
+              }
+            }
+            return updated;
+          });
+        }
+        break;
+      }
+      case 'done': {
+        const result = payload as { follow_ups?: string[]; evidence_ids?: string[]; trace_id?: string };
+        if (result?.follow_ups) {
+          setMessages(prev => {
+            const updated = [...prev];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].role === 'assistant') {
+                updated[i] = { ...updated[i], follow_ups: result.follow_ups };
+                break;
+              }
+            }
+            return updated;
+          });
+        }
+        setPanelState('done');
+        setIsLoading(false);
+        break;
+      }
+      case 'error':
+        console.error('WebSocket error:', payload);
+        setPanelState('error');
+        setIsLoading(false);
+        break;
+      // 旧格式兼容
+      case 'turn.accepted':
+        setPanelState('thinking');
+        break;
+      case 'answer.delta': {
+        const delta = payload as { content: string };
+        setMessages(prev => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            return [...prev.slice(0, -1), { ...lastMsg, content: lastMsg.content + delta.content }];
+          }
+          return [...prev, { id: `msg-${Date.now()}`, role: 'assistant', content: delta.content, created_at: new Date().toISOString() }];
+        });
+        setPanelState('streaming');
+        break;
+      }
+      case 'turn.completed': {
+        const result = payload as { follow_ups?: string[]; evidence_ids?: string[]; trace_id?: string };
+        setMessages(prev => {
+          const updated = [...prev];
+          for (let i = updated.length - 1; i >= 0; i--) {
+            if (updated[i].role === 'assistant') {
+              updated[i] = { ...updated[i], evidence_ids: result?.evidence_ids || [], follow_ups: result?.follow_ups || [] };
+              break;
+            }
+          }
+          return updated;
+        });
+        setPanelState('done');
+        setIsLoading(false);
+        break;
+      }
+      case 'turn.failed':
+        setPanelState('error');
+        setIsLoading(false);
+        break;
+      case 'company.candidates':
+        break;
+      case 'heartbeat':
+        break;
+    }
+  }, [currentSessionId]);
+
+  // 连接 WebSocket
+  useEffect(() => {
+    if (!currentSessionId) return;
+    
+    wsRef.current = wsClient.create(currentSessionId, handleWSEvent);
+    
+    return () => {
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [currentSessionId, handleWSEvent]);
+
+  // 发送消息
+  const handleSendMessage = async (content: string) => {
+    if (!currentSessionId || isLoading) return;
+    
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
-      session_id: currentSessionId,
       role: 'user',
       content,
       created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
     setPanelState('thinking');
-    pendingMsgRef.current = '';
 
-    // 占位 assistant 消息
-    const assistantId = `msg-${Date.now() + 1}`;
-    const assistantMessage: Message = {
-      id: assistantId,
-      session_id: currentSessionId,
-      role: 'assistant',
-      content: '',
-      created_at: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, assistantMessage]);
-
-    // 建立 WebSocket
-    const ws = new WebSocket(wsUrl());
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        event_type: 'chat.query',
-        payload: { text: content, session_id: currentSessionId },
-      }));
-    };
-
-    ws.onmessage = (event) => {
-      let msg: WSEvent;
-      try {
-        msg = JSON.parse(event.data) as WSEvent;
-      } catch {
-        return;
-      }
-
-      switch (msg.event_type) {
-        case 'module.started':
-        case 'module.completed':
-          setPanelState('streaming');
-          break;
-
-        case 'answer.delta':
-          // 累积流式文本
-          pendingMsgRef.current += (msg.payload?.text as string) || '';
-          setMessages(prev => prev.map(m =>
-            m.id === assistantId
-              ? { ...m, content: pendingMsgRef.current }
-              : m
-          ));
-          break;
-
-        case 'artifact.upsert': {
-          // 当前后端仅提供 risk_level，补齐空数组避免面板崩溃
-          const raw = (msg.payload?.data || {}) as Record<string, unknown>;
-          const level = raw.risk_level as string | undefined;
-          const VALID_LEVELS = ['red', 'orange', 'yellow', 'blue', 'green'];
-          if (level && VALID_LEVELS.includes(level)) {
-            setPanelData({
-              risk_level: level as PanelData['risk_level'],
-              triggered_rules: [],
-              key_metrics: [],
-            });
-          }
-          break;
-        }
-
-        case 'turn.completed': {
-          const payload = msg.payload as Record<string, unknown>;
-          const answer = (payload?.answer as string) || pendingMsgRef.current;
-          setMessages(prev => prev.map(m =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  content: answer,
-                  follow_ups: (payload?.follow_ups as string[]) || [],
-                }
-              : m
-          ));
-          setPanelState('done');
-          setPanelError('');
-          closeWs();
-          break;
-        }
-
-        case 'turn.failed': {
-          const reason = (msg.payload as Record<string, unknown>)?.message as string || '处理请求时发生内部错误';
-          setPanelState('error');
-          setPanelError(reason);
-          setMessages(prev => prev.map(m =>
-            m.id === assistantId
-              ? { ...m, content: `⚠️ ${reason}` }
-              : m
-          ));
-          closeWs();
-          break;
-        }
-
-        case 'turn.cancelled':
-          setPanelState('done');
-          setPanelError('');
-          closeWs();
-          break;
-      }
-    };
-
-    ws.onerror = () => {
+    try {
+      wsRef.current?.send(content);
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      setIsLoading(false);
       setPanelState('error');
-      setPanelError('网络连接失败，请检查后端服务是否启动');
-      closeWs();
-    };
+    }
   };
 
-  // ── 追问 ──
+  // 点击追问建议
   const handleFollowUp = (suggestion: string) => {
     handleSendMessage(suggestion);
   };
 
+  // Task 7: 面板联动 - 点击规则
+  const handleRuleClick = useCallback((ruleId: string) => {
+    setActiveRuleId(ruleId);
+    const msgIndex = messages.findIndex(m => 
+      m.role === 'assistant' && m.evidence_ids && m.evidence_ids.length > 0
+    );
+    if (msgIndex >= 0) {
+      const msgElement = document.getElementById(`msg-${msgIndex}`);
+      msgElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setPanelCollapsed(false);
+  }, [messages]);
+
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+      {/* 左侧：会话侧边栏 */}
       <SessionSidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
@@ -224,34 +269,34 @@ export default function ChatPage() {
         onDeleteSession={handleDeleteSession}
       />
 
+      {/* 中间：对话区 */}
       <div className="flex-1 flex flex-col min-w-0">
         <ChatInterface
           messages={messages}
           onSendMessage={handleSendMessage}
-          isLoading={panelState === 'thinking' || panelState === 'streaming'}
+          isLoading={isLoading}
         />
       </div>
 
+      {/* 右侧：分析面板 */}
       <div
         className={cn(
           'transition-all duration-300 border-l border-border',
-          panelCollapsed ? 'w-0 overflow-hidden' : 'w-[380px]'
+          panelCollapsed ? 'w-0 overflow-hidden' : 'w-[clamp(360px,25vw,440px)]'
         )}
       >
         {!panelCollapsed && (
           <AnalysisPanel
             state={panelState}
             data={panelData}
-            errorMessage={panelError}
-            company={currentSession ? {
-              code: currentSession.company_code,
-              name: currentSession.company_name,
-            } : undefined}
+            company={undefined}
             onFollowUp={handleFollowUp}
+            onRuleClick={handleRuleClick}
           />
         )}
       </div>
 
+      {/* 面板折叠/展开按钮 */}
       <Button
         variant="ghost"
         size="icon"
