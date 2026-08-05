@@ -35,9 +35,12 @@ export default function ChatPage() {
     const loadSessions = async () => {
       try {
         const response = await apiClient.getSessions();
-        setSessions(response.data || []);
-        if (response.data && response.data.length > 0 && !currentSessionId) {
-          setCurrentSessionId(response.data[0].session_id);
+        // 后端 V12 envelope: data.sessions（对象内数组）；兼容旧结构 data 直接为数组
+        const data = response.data as { sessions?: Session[] } | Session[] | null;
+        const sessionsData = Array.isArray(data) ? data : (data?.sessions || []);
+        setSessions(sessionsData);
+        if (sessionsData.length > 0 && !currentSessionId) {
+          setCurrentSessionId(sessionsData[0].session_id);
         }
       } catch (error) {
         console.error('Failed to load sessions:', error);

@@ -124,7 +124,8 @@ export interface FinanceRuleItem {
   severity: string;  // red / orange / yellow / green / unknown
   current: Record<string, { value: number; unit: string }>;
   history: Array<Record<string, unknown>>;  // 每期一条，字段名不固定
-  industry: Record<string, number>;  // {p50, p75, p90}
+  industry: Record<string, number>;  // 旧结构（deprecated）
+  industry_metrics?: IndustryPercentile[];  // typed 行业分位（V12 契约）
   quality: Record<string, unknown>;
   explanation: string;
   evidence_ids: string[];
@@ -337,21 +338,35 @@ export interface BenchmarksResponseData {
 // ============ 股权穿透 (对齐 EquityResponseData) ============
 
 export interface EquityNodeDTO {
+  id: string;
   entity_id: string;
-  wind_code: string | null;
   name: string;
-  node_type: 'company' | 'person' | 'fund';
-  match_confidence: number;
+  entity_type: string;
+  wind_code: string | null;
+  match_confidence: number | null;
+  risk_level: string | null;
   mock: boolean;
-  depth?: number;
+  source_system: string;
 }
 
 export interface EquityEdgeDTO {
-  source_id: string;
-  target_id: string;
-  ownership: number;
-  relation: string;
-  path_depth: number;
+  id: string;
+  source: string;
+  target: string;
+  relation_type: string;
+  ownership_pct: number | null;
+  control_pct: number | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  source_id: string | null; // provenance，不是图节点 ID
+  match_confidence: number | null;
+  relationship_id: string | null;
+  source_record_id: string | null;
+  report_period: string | null;
+  ann_dt: string | null;
+  is_latest: boolean;
+  mock: boolean;
+  source_system: string;
 }
 
 export interface EquityPathDTO {

@@ -291,7 +291,7 @@ export default function CompanyProfilePage() {
                     <EquityGraph
                       nodes={equityData.nodes}
                       edges={equityData.edges}
-                      companyName={profile?.sec_name || code}
+                      targetId={equityData.target?.entity_id || ''}
                     />
                   </div>
                 </CardContent>

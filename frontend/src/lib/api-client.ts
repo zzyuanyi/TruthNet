@@ -29,6 +29,12 @@ import type {
   CompanyRiskSummary,
 } from '@/types/truthnet';
 
+// 会话列表响应（V12 envelope: data.sessions + data.total）
+interface SessionListData {
+  sessions: Session[];
+  total: number;
+}
+
 // 类型别名：API 方法返回类型
 type FinanceData = FinanceResponseData;
 type EventsData = EventsResponseData;
@@ -130,8 +136,8 @@ export const truthnetAPI = {
       }),
     }),
 
-  // 会话列表: GET /api/v1/sessions
-  getSessions: () => request<Session[]>('GET', '/sessions'),
+  // 会话列表: GET /api/v1/sessions（V12 envelope: data.sessions + total）
+  getSessions: () => request<SessionListData>('GET', '/sessions'),
 
   // 创建会话: POST /api/v1/sessions
   createSession: (title: string = '新对话') =>

@@ -1,6 +1,7 @@
 // 织网鉴真 TruthNet - 关联方表格组件
 // Phase 3: 关联方表 + 图谱联动 (九列)
 
+import { Fragment } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -42,24 +43,28 @@ const nodeTypeConfig = {
 export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighlightPath }: RelatedPartyTableProps) {
   const { nodes, edges } = equityData;
 
-  // 获取目标公司的直接关联方
-  const targetNode = nodes.find(n => n.entity_id === equityData.target?.entity_id);
+  // 获取目标公司的直接关联方（V12 契约：edges 用 source/target；节点按 id/entity_id 匹配）
+  const targetNode = nodes.find(
+    n => n.id === equityData.target?.entity_id || n.entity_id === equityData.target?.entity_id
+  );
   const relatedNodes = edges
-    .filter(l => l.source_id === targetNode?.entity_id || l.target_id === targetNode?.entity_id)
+    .filter(l => l.source === targetNode?.id || l.source === targetNode?.entity_id
+      || l.target === targetNode?.id || l.target === targetNode?.entity_id)
     .map(l => {
-      const relatedId = l.source_id === targetNode?.entity_id ? l.target_id : l.source_id;
-      const relatedNode = nodes.find(n => n.entity_id === relatedId);
+      const isUpstream = l.target === targetNode?.id || l.target === targetNode?.entity_id;
+      const relatedId = isUpstream ? l.source : l.target;
+      const relatedNode = nodes.find(n => n.id === relatedId || n.entity_id === relatedId);
       return {
         node: relatedNode,
         link: l,
-        isUpstream: l.target_id === targetNode?.entity_id,
+        isUpstream,
       };
     })
     .filter(r => r.node);
 
   // 按关系类型分组
   const groupedByRelation = relatedNodes.reduce((groups, item) => {
-    const relation = item.link.relation || 'unknown';
+    const relation = item.link.relation_type || 'unknown';
     if (!groups[relation]) {
       groups[relation] = [];
     }
@@ -99,7 +104,7 @@ export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighl
             </TableHeader>
             <TableBody>
               {Object.entries(groupedByRelation).map(([relation, items]) => (
-                <>
+                <Fragment key={relation}>
                   <TableRow key={`header-${relation}`} className="bg-muted/50">
                     <TableCell colSpan={9} className="font-medium text-xs py-2">
                       {relationLabels[relation] || relation}
@@ -116,7 +121,7 @@ export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighl
                       onHighlightPath={onHighlightPath}
                     />
                   ))}
-                </>
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -162,7 +167,10 @@ interface RelatedPartyRowProps {
 }
 
 function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, onHighlightPath }: RelatedPartyRowProps) {
-  const typeConfig = nodeTypeConfig[node.node_type as keyof typeof nodeTypeConfig] || nodeTypeConfig.company;
+  // entity_type（ListedCompany/Company/Person/其他）→ 节点类型映射
+  const nodeType = node.entity_type === 'Person' ? 'person'
+    : (node.entity_type === 'ListedCompany' || node.entity_type === 'Company') ? 'company' : 'fund';
+  const typeConfig = nodeTypeConfig[nodeType] || nodeTypeConfig.company;
   const Icon = typeConfig.icon;
 
   return (
@@ -173,7 +181,7 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
       {/* 关系 */}
       <TableCell>
         <Badge variant="outline" className="text-xs">
-          {link.relation || '投资'}
+          {relationLabels[link.relation_type] || link.relation_type || '投资'}
         </Badge>
       </TableCell>
       {/* 关联方 */}
@@ -194,10 +202,10 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
           </div>
         </div>
       </TableCell>
-      {/* 持股比例 */}
+      {/* 持股比例（ownership_pct 已是百分数值，null → '--'） */}
       <TableCell>
         <span className="font-mono text-sm">
-          {(link.ownership * 100).toFixed(2)}%
+          {link.ownership_pct != null ? `${link.ownership_pct.toFixed(2)}%` : '--'}
         </span>
       </TableCell>
       {/* 方向 */}
@@ -216,14 +224,14 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
           )}
         </div>
       </TableCell>
-      {/* 风险等级 */}
+      {/* 风险等级（阈值：>50 高、>20 中） */}
       <TableCell>
         <Badge variant="outline" className={cn('text-xs',
-          link.ownership > 0.5 ? 'bg-red-500/10 text-red-600' :
-          link.ownership > 0.2 ? 'bg-yellow-500/10 text-yellow-600' :
+          (link.ownership_pct ?? 0) > 50 ? 'bg-red-500/10 text-red-600' :
+          (link.ownership_pct ?? 0) > 20 ? 'bg-yellow-500/10 text-yellow-600' :
           'bg-green-500/10 text-green-600'
         )}>
-          {link.ownership > 0.5 ? '高' : link.ownership > 0.2 ? '中' : '低'}
+          {(link.ownership_pct ?? 0) > 50 ? '高' : (link.ownership_pct ?? 0) > 20 ? '中' : '低'}
         </Badge>
       </TableCell>
       {/* 事件数 */}
@@ -242,7 +250,7 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
           className="h-7 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={(e) => {
             e.stopPropagation();
-            onHighlightPath?.([link.source_id, link.target_id]);
+            onHighlightPath?.([link.source, link.target]);
           }}
         >
           定位
@@ -254,6 +262,7 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
 
 // 关系类型标签映射
 const relationLabels: Record<string, string> = {
+  OWNS: '持股',
   holding: '控股',
   investment: '投资',
   shareholder: '股东',
@@ -266,47 +275,58 @@ const relationLabels: Record<string, string> = {
   director: '董事',
 };
 
+// 最大穿透深度（从 paths 计算，节点无 depth 字段）
+function maxPathDepth(equityData: EquityResponseData): number {
+  const paths = equityData.paths || [];
+  return paths.length > 0 ? Math.max(...paths.map(p => p.depth || 0)) : 0;
+}
+
 // 检查是否有风险指标
 function hasRiskIndicators(equityData: EquityResponseData): boolean {
-  const { nodes, edges } = equityData;
-  const hasCircular = checkCircularHolding(nodes, edges);
-  const maxDepth = Math.max(...nodes.map(n => n.depth || 0));
+  const { edges } = equityData;
+  const hasCircular = checkCircularHolding(equityData);
+  const maxDepth = maxPathDepth(equityData);
   const hasComplexStructure = maxDepth > 3;
-  const hasHighOwnership = edges.some(l => l.ownership > 0.5);
+  const hasHighOwnership = edges.some(l => (l.ownership_pct ?? 0) > 50);
   return hasCircular || hasComplexStructure || hasHighOwnership;
 }
 
 // 获取风险指标列表
 function getRiskIndicators(equityData: EquityResponseData): string[] {
   const risks: string[] = [];
-  const { nodes, edges } = equityData;
-  
-  if (checkCircularHolding(nodes, edges)) {
+  const { edges } = equityData;
+
+  if (checkCircularHolding(equityData)) {
     risks.push('存在循环持股结构，可能存在资本虚增风险');
   }
-  
-  const highOwnershipLinks = edges.filter(l => l.ownership > 0.5);
+
+  const highOwnershipLinks = edges.filter(l => (l.ownership_pct ?? 0) > 50);
   if (highOwnershipLinks.length > 0) {
     risks.push(`${highOwnershipLinks.length} 条股权持股比例超过 50%`);
   }
-  
-  const maxDepth = Math.max(...nodes.map(n => n.depth || 0));
+
+  const maxDepth = maxPathDepth(equityData);
   if (maxDepth > 3) {
     risks.push(`股权结构复杂，穿透深度达 ${maxDepth} 层`);
   }
-  
+
   return risks;
 }
 
-// 检查循环持股
-function checkCircularHolding(nodes: EquityNodeDTO[], edges: EquityEdgeDTO[]): boolean {
+// 检查循环持股（邻接表基于 source/target）
+function checkCircularHolding(equityData: EquityResponseData): boolean {
+  const { edges } = equityData;
   const adjacencyList = new Map<string, string[]>();
-  
+
   edges.forEach(link => {
-    if (!adjacencyList.has(link.source_id)) {
-      adjacencyList.set(link.source_id, []);
+    const src = link.source;
+    const tgt = link.target;
+    if (src && tgt) {
+      if (!adjacencyList.has(src)) {
+        adjacencyList.set(src, []);
+      }
+      adjacencyList.get(src)!.push(tgt);
     }
-    adjacencyList.get(link.source_id)!.push(link.target_id);
   });
   
   // DFS 检测环
@@ -332,8 +352,8 @@ function checkCircularHolding(nodes: EquityNodeDTO[], edges: EquityEdgeDTO[]): b
     return false;
   }
   
-  for (const node of nodes) {
-    if (hasCycle(node.entity_id)) {
+  for (const node of equityData.nodes) {
+    if (hasCycle(node.id || node.entity_id)) {
       return true;
     }
   }
