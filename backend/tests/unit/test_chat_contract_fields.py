@@ -126,3 +126,80 @@ def test_failure_path_defaults():
     d = ChatDataV1(answer="处理请求时发生内部错误，请稍后重试。", trace_id="t")
     assert d.claims == []
     assert d.module_status == {}
+    assert d.risk_level == "unknown"
+
+
+# ── 6. risk_level 透出（最终阶段等级，不从 risk_score 换算）─
+
+
+def _stub_risk_result(final_risk: str | None, risk_output_level=None) -> dict:
+    from app.agents.state import FinalResponse
+
+    return {
+        "final_response": FinalResponse(answer="t", risk_level=final_risk or ""),
+        "risk_output": (
+            type(
+                "RO",
+                (),
+                {
+                    "risk_level": risk_output_level,
+                    "sub_scores": [],
+                    "overall_score": 0.8,
+                },
+            )()
+            if risk_output_level
+            else None
+        ),
+        "claims": [],
+        "module_status": {},
+        "evidence": [],
+        "results": None,
+        "runtime": None,
+    }
+
+
+def test_build_chat_response_exposes_risk_level():
+    data = _build_chat_response(_stub_risk_result("orange"), "tr").data
+    assert data.risk_level == "orange"
+
+
+def test_risk_level_all_levels():
+    for lv in ("green", "orange", "red", "yellow"):
+        data = _build_chat_response(_stub_risk_result(lv), "tr").data
+        assert data.risk_level == lv
+
+
+def test_risk_level_fallback_to_risk_output():
+    """final_response 缺失 → 回退 risk_output（异常/中间状态备用）。"""
+    data = _build_chat_response(
+        {
+            "final_response": None,
+            "risk_output": type(
+                "RO", (), {"risk_level": "red", "sub_scores": [], "overall_score": 0.8}
+            )(),
+            "claims": [],
+            "module_status": {},
+            "evidence": [],
+            "results": None,
+            "runtime": None,
+        },
+        "tr",
+    ).data
+    assert data.risk_level == "red"
+
+
+def test_risk_level_unknown_when_none():
+    """两者都没有 → unknown（不伪造等级）。"""
+    data = _build_chat_response(
+        {
+            "final_response": None,
+            "risk_output": None,
+            "claims": [],
+            "module_status": {},
+            "evidence": [],
+            "results": None,
+            "runtime": None,
+        },
+        "tr",
+    ).data
+    assert data.risk_level == "unknown"

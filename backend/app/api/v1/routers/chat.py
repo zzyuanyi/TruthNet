@@ -118,6 +118,13 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
     claims_items = [ClaimV1.from_claim(c) for c in result.get("claims", [])]
     # module_status — 兼容 ModuleStatus 对象 / dict / 字符串三种输入
     module_status_str = {k: _status_value(v) for k, v in module_status.items()}
+    # risk_level — 优先 final_response（最终阶段确定的等级），
+    # 不从 risk_score.overall 换算（避免双口径偏差）；risk_output 仅作备用
+    risk_level = "unknown"
+    if final_response:
+        risk_level = getattr(final_response, "risk_level", None) or "unknown"
+    elif risk_output is not None:
+        risk_level = getattr(risk_output, "risk_level", None) or "unknown"
 
     return V12Response(
         data=ChatDataV1(
@@ -132,6 +139,7 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             follow_ups=follow_ups,
             claims=claims_items,
             module_status=module_status_str,
+            risk_level=risk_level,
         ),
         meta=ApiMeta(
             request_id=trace_id,
@@ -190,6 +198,7 @@ async def chat_v1(request: ChatRequestV1):
                 warnings=["内部错误"],
                 missing_modules=["Agent 执行失败"],
                 trace_id=trace_id,
+                risk_level="unknown",  # 显式返回（异常无等级结论）
             ),
             meta=ApiMeta(
                 request_id=trace_id,

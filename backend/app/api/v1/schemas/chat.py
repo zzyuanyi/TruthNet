@@ -113,3 +113,7 @@ class ChatDataV1(BaseModel):
         default_factory=dict,
         description="各模块执行状态 success/partial/failed/skipped",
     )
+    risk_level: str = Field(
+        default="unknown",
+        description="风险等级：red/orange/yellow/green/unknown",
+    )
