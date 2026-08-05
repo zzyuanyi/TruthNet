@@ -9,12 +9,13 @@ export interface ThinkingStep {
 }
 
 export interface ThinkingData {
-  steps: ThinkingStep[];
+  steps?: ThinkingStep[];
   duration: string;
 }
 
 interface ThinkingBubbleProps {
-  steps: ThinkingStep[];
+  content?: string;
+  steps?: ThinkingStep[];
   duration?: string;
   defaultOpen?: boolean;
 }
