@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.v1.schemas.chat import ChatDataV1, ChatEvidenceV1, ChatRequestV1, ClaimV1
+from app.api.v1.schemas.chat import (
+    ChatDataV1,
+    ChatEvidenceV1,
+    ChatRequestV1,
+    ClaimV1,
+    ModuleStatusV1,
+)
 from app.api.v1.schemas.common import ApiMeta, V12Response
 
 logger = logging.getLogger(__name__)
@@ -37,14 +43,6 @@ def _get_graph():
         _compiled_graph = create_agent_graph().compile()
         logger.info("Agent graph 已编译")
     return _compiled_graph
-
-
-def _status_value(value) -> str:
-    """模块状态转字符串 — 兼容 ModuleStatus 对象 / dict / 字符串三种输入."""
-    if isinstance(value, dict):
-        return str(value.get("state", "pending"))
-    state = getattr(value, "state", None)
-    return str(state) if state is not None else str(value)
 
 
 def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]:
@@ -116,8 +114,10 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
 
     # claims — 从 Agent State 透出（结构化问答结论声明，API 公共投影）
     claims_items = [ClaimV1.from_claim(c) for c in result.get("claims", [])]
-    # module_status — 兼容 ModuleStatus 对象 / dict / 字符串三种输入
-    module_status_str = {k: _status_value(v) for k, v in module_status.items()}
+    # module_status — typed ModuleStatusV1（对象/dict/字符串/None 全兼容）
+    module_status_items = {
+        k: ModuleStatusV1.from_status(v) for k, v in module_status.items()
+    }
     # risk_level — 优先 final_response（最终阶段确定的等级），
     # 不从 risk_score.overall 换算（避免双口径偏差）；risk_output 仅作备用
     risk_level = "unknown"
@@ -138,7 +138,7 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             trace_id=trace_id,
             follow_ups=follow_ups,
             claims=claims_items,
-            module_status=module_status_str,
+            module_status=module_status_items,
             risk_level=risk_level,
         ),
         meta=ApiMeta(

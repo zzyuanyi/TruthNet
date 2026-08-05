@@ -92,8 +92,11 @@ async def search_research_insights(
         return []
 
 
-async def _fallback_sql_filter(query: str, top_k: int) -> list[dict]:
-    """结构化过滤兜底（V12 §10.10）：research_reports 按关键词 LIKE 检索。"""
+def _fallback_sql_filter_sync(query: str, top_k: int) -> list[dict]:
+    """结构化过滤兜底（V12 §10.10）同步核心：research_reports 关键词 LIKE。
+
+    同步实现供 async 入口（to_thread）与同步超时降级共用。
+    """
     keywords = _split_keywords(query)
     if not keywords:
         return []
@@ -134,6 +137,11 @@ async def _fallback_sql_filter(query: str, top_k: int) -> list[dict]:
         return []
 
 
+async def _fallback_sql_filter(query: str, top_k: int) -> list[dict]:
+    """结构化过滤兜底 async 入口（同步 SQL 经 to_thread，不阻塞事件循环）。"""
+    return await asyncio.to_thread(_fallback_sql_filter_sync, query, top_k)
+
+
 def _run_search_coro(query: str, top_k: int) -> list[dict]:
     """线程内执行 async 检索；解释器关闭竞态（RuntimeError）不污染 stderr。"""
     try:
@@ -143,25 +151,37 @@ def _run_search_coro(query: str, top_k: int) -> list[dict]:
         return []
 
 
+# 语义检索降级超时（Phase D "每级 3s 内完成"）：超过即走 SQL 兜底
+_SEARCH_TIMEOUT_SECONDS = 3.0
+# 单例 executor：常驻复用，不每次新建线程（消除线程残留/排队竞态）
+_SYNC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+
 def search_research_insights_sync(query: str, top_k: int = 5) -> list[dict]:
-    """同步包装（graph 节点调用）：独立线程 asyncio.run，超时 20s。
+    """同步包装（graph 节点调用）：单例 executor 提交，超时降级 SQL 兜底。
 
     REST（asyncio.to_thread）与 WS（事件循环线程内同步 invoke）双路径安全。
-    20s 覆盖：首次 BGE 模型加载（~5s，后续缓存）+ Chroma 查询 + SQL 兜底
-    LIKE 扫描（55k 行）。
+    超时后立即执行 SQL 兜底（不再 20s 后返回空）；排队任务可被 cancel。
     """
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = ex.submit(_run_search_coro, query, top_k)
+    future = _SYNC_EXECUTOR.submit(_run_search_coro, query, top_k)
     try:
-        return future.result(timeout=20.0)
+        return future.result(timeout=_SEARCH_TIMEOUT_SECONDS)
     except concurrent.futures.TimeoutError:
-        logger.warning("research_search: 检索超时（>20s），返回空")
-        return []
+        # 取消排队/未完成任务（正在运行的模型加载无法强停，由预热脚本解决）；
+        # 立即 SQL 兜底——降级等待 ≈3s
+        future.cancel()
+        logger.warning(
+            "research_search: 语义检索超时（>%ss），降级 SQL 兜底",
+            _SEARCH_TIMEOUT_SECONDS,
+        )
+        try:
+            return _fallback_sql_filter_sync(query, top_k)
+        except Exception:  # noqa: BLE001 — SQL 兜底异常也返回空
+            logger.warning("research_search: SQL 兜底失败，返回空", exc_info=True)
+            return []
     except Exception:  # noqa: BLE001
         logger.warning("research_search: 检索异常，返回空", exc_info=True)
         return []
-    finally:
-        ex.shutdown(wait=False)
 
 
 def is_research_query(query: str) -> bool:

@@ -172,3 +172,67 @@ def test_is_research_query():
     assert is_research_query("券商评级如何")
     assert not is_research_query("金牌家居有财务造假风险吗")
     assert not is_research_query("它的应收账款增速为什么异常")
+
+
+# ── P1-4 回归：语义检索超时 → 立即 SQL 兜底（≤3s，不返回空） ────────
+
+
+def test_sync_timeout_falls_back_to_sql(monkeypatch):
+    """P1-4：语义检索超时（>3s）→ 立即 SQL 兜底（不等 20s、不返回空）。
+
+    曾返回空 + 后台线程继续跑；修复后降级等待 ≈3s。
+    """
+    import time as _time
+
+    from app.application.services import research_search as rs
+
+    def _slow_semantic(query, top_k):
+        _time.sleep(0.1)  # 模拟冷启动模型加载（慢于超时阈值）
+        return []
+
+    def _sql_result(query, top_k):
+        return [{"content": "sql 兜底结果", "source_title": "t"}]
+
+    monkeypatch.setattr(rs, "_SEARCH_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(rs, "_run_search_coro", _slow_semantic)
+    monkeypatch.setattr(rs, "_fallback_sql_filter_sync", _sql_result)
+
+    start = _time.monotonic()
+    result = rs.search_research_insights_sync("白酒行业", top_k=5)
+    elapsed = _time.monotonic() - start
+
+    assert result and result[0]["content"] == "sql 兜底结果"
+    assert elapsed < 2, f"降级应在 3s 内完成，实际 {elapsed:.2f}s"
+
+
+def test_sync_timeout_sql_failure_returns_empty(monkeypatch):
+    """超时后 SQL 兜底也失败 → 返回空（绝不抛异常阻塞主流程）。"""
+    import time as _time
+
+    from app.application.services import research_search as rs
+
+    def _slow_semantic(query, top_k):
+        _time.sleep(0.1)
+        return []
+
+    def _sql_broken(query, top_k):
+        raise RuntimeError("sql down")
+
+    monkeypatch.setattr(rs, "_SEARCH_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(rs, "_run_search_coro", _slow_semantic)
+    monkeypatch.setattr(rs, "_fallback_sql_filter_sync", _sql_broken)
+
+    result = rs.search_research_insights_sync("白酒行业")
+    assert result == []
+
+
+def test_sync_executor_is_singleton(monkeypatch):
+    """executor 为模块级单例（常驻复用，不每次新建线程）."""
+    from app.application.services import research_search as rs
+
+    monkeypatch.setattr(rs, "_fallback_sql_filter_sync", lambda q, k: [])
+    monkeypatch.setattr(rs, "_run_search_coro", lambda q, k: [])
+
+    first = rs._SYNC_EXECUTOR
+    rs.search_research_insights_sync("x")
+    assert rs._SYNC_EXECUTOR is first, "executor 应为模块级单例"

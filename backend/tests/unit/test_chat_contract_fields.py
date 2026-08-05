@@ -12,8 +12,8 @@
 """
 
 from app.agents.state import Claim, ModuleStatus
-from app.api.v1.routers.chat import _build_chat_response, _status_value
-from app.api.v1.schemas.chat import ChatDataV1, ClaimV1
+from app.api.v1.routers.chat import _build_chat_response
+from app.api.v1.schemas.chat import ChatDataV1, ClaimV1, ModuleStatusV1
 
 
 # ── 1. ClaimV1.from_claim 两种输入 ──────────────────────────
@@ -90,32 +90,32 @@ def test_build_chat_response_assembles_claims_and_module_status():
     # claims 透出
     assert data.claims[0].claim_id == "c1"
     assert data.claims[0].rule_id == "R1"
-    # module_status 透出（三种输入形态全部转换）
-    assert data.module_status["finance"] == "partial"
-    assert data.module_status["equity"] == "success"
-    assert data.module_status["risk"] == "failed"
+    # module_status 透出（三种输入形态全部转换 → typed ModuleStatusV1）
+    assert data.module_status["finance"].state == "partial"
+    assert data.module_status["equity"].state == "success"
+    assert data.module_status["risk"].state == "failed"
     # 无 claims 时默认空列表
     result_empty = _stub_result()
     result_empty["claims"] = []
     assert _build_chat_response(result_empty, "tr2").data.claims == []
 
 
-# ── 4. _status_value 状态转换 ───────────────────────────────
+# ── 4. ModuleStatusV1.from_status 三种输入形态（typed 化后）──
 
 
 def test_status_value_object():
-    assert _status_value(ModuleStatus(state="partial")) == "partial"
-    assert _status_value(ModuleStatus(state="failed")) == "failed"
-    assert _status_value(ModuleStatus(state="skipped")) == "skipped"
+    assert ModuleStatusV1.from_status(ModuleStatus(state="partial")).state == "partial"
+    assert ModuleStatusV1.from_status(ModuleStatus(state="failed")).state == "failed"
+    assert ModuleStatusV1.from_status(ModuleStatus(state="skipped")).state == "skipped"
 
 
 def test_status_value_dict():
-    assert _status_value({"state": "partial"}) == "partial"
-    assert _status_value({}) == "pending"  # 缺 state 缺省 pending
+    assert ModuleStatusV1.from_status({"state": "partial"}).state == "partial"
+    assert ModuleStatusV1.from_status({}).state == "pending"  # 缺 state 缺省 pending
 
 
 def test_status_value_string():
-    assert _status_value("success") == "success"
+    assert ModuleStatusV1.from_status("success").state == "success"
 
 
 # ── 5. REST 失败路径默认（schema 默认值已保证）──────────────

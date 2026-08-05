@@ -1,5 +1,7 @@
 """API v1 对话 Schema — V12 baseline."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -94,6 +96,49 @@ class ClaimV1(BaseModel):
         )
 
 
+# 模块状态合法值（模块级常量：pydantic 会私有化下划线前缀类属性，不能用类属性）
+_MODULE_STATUS_STATES = frozenset(
+    {"pending", "running", "success", "partial", "failed", "skipped", "cancelled"}
+)
+
+
+class ModuleStatusV1(BaseModel):
+    """chat 响应模块状态 — typed（非字符串），与 Agent ModuleStatus 对齐.
+
+    含 error_code/recoverable/duration_ms，供前端错误 UI 与评测指标
+    （partial 比例 / 模块超时率）消费。
+    """
+
+    state: Literal[
+        "pending", "running", "success", "partial", "failed", "skipped", "cancelled"
+    ] = "pending"
+    error_code: str | None = None
+    recoverable: bool = False
+    duration_ms: int | None = None
+
+    @classmethod
+    def from_status(cls, v) -> "ModuleStatusV1":
+        """兼容 ModuleStatus 对象 / dict / 字符串 / None 四种输入.
+
+        未知 state 值或未知对象一律回退 pending——响应组装绝不再失败。
+        """
+        if v is None:
+            return cls()
+        if isinstance(v, str):
+            return cls(state=v if v in _MODULE_STATUS_STATES else "pending")
+        if isinstance(v, BaseModel):
+            return cls.from_status(v.model_dump())
+        if isinstance(v, dict):
+            raw = v.get("state", "pending")
+            return cls(
+                state=raw if raw in _MODULE_STATUS_STATES else "pending",
+                error_code=v.get("error_code"),
+                recoverable=bool(v.get("recoverable", False)),
+                duration_ms=v.get("duration_ms"),
+            )
+        return cls()
+
+
 class ChatDataV1(BaseModel):
     """对话响应核心数据 — V12."""
 
@@ -109,9 +154,9 @@ class ChatDataV1(BaseModel):
     claims: list[ClaimV1] = Field(
         default_factory=list, description="结论声明列表（结构化问答）"
     )
-    module_status: dict[str, str] = Field(
+    module_status: dict[str, ModuleStatusV1] = Field(
         default_factory=dict,
-        description="各模块执行状态 success/partial/failed/skipped",
+        description="各模块状态（typed：state/error_code/recoverable/duration_ms）",
     )
     risk_level: str = Field(
         default="unknown",

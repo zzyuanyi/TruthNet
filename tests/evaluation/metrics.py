@@ -98,7 +98,9 @@ def module_timeout_rate(
         name = m.get("module_name", "unknown")
         counts[name] = counts.get(name, 0) + 1
         deadline = deadlines.get(name, 8000)
-        if m.get("duration_ms", 0) > deadline:
+        # duration_ms=None（未采集耗时的模块）不算超时，避免 NoneType 比较崩溃
+        duration = m.get("duration_ms")
+        if duration is not None and duration > deadline:
             timeouts[name] = timeouts.get(name, 0) + 1
     return {name: timeouts.get(name, 0) / cnt for name, cnt in counts.items()}
 

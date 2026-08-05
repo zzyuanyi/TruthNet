@@ -193,6 +193,65 @@ def test_run_llm_chat_safe_inside_event_loop(monkeypatch):
     assert text == "ok"
 
 
+def test_finance_failure_path_in_compiled_graph():
+    """P1 回归：规则引擎异常时 finance 失败状态经 reducer 合并（不崩溃 graph）。
+
+    曾与 risk.py 同类：失败路径返回裸 ModuleStatus，module_status reducer
+    {**a, **b} 抛 TypeError，整个 graph 中断。
+    """
+    from unittest.mock import patch
+
+    from langgraph.graph import END, StateGraph
+
+    from app.agents.nodes.finance import finance_node
+    from app.agents.state import (
+        AgentState,
+        CompanyRef,
+        ExecutionPlan,
+        ModuleResults,
+        ModuleStatus,
+        RuntimeState,
+    )
+
+    def _pass_through(state: dict) -> dict:
+        return {"user_query": state.get("user_query", "")}
+
+    g = StateGraph(AgentState)
+    g.add_node("finance", finance_node)
+    g.add_node("end", _pass_through)
+    g.set_entry_point("finance")
+    g.add_edge("finance", "end")
+    g.add_edge("end", END)
+    compiled = g.compile()
+
+    state = {
+        "user_query": "康美财务",
+        "company": CompanyRef(
+            entity_id="600518.SH",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange="SH",
+        ),
+        "plan": ExecutionPlan(requested_modules=["finance"]),
+        "results": ModuleResults(),
+        "module_status": {"equity": ModuleStatus(state="success")},
+        "runtime": RuntimeState(trace_id="t1", session_id="s1", turn_id="t1"),
+        "pattern_matches": [],
+    }
+    with patch(
+        "app.domain.finance.rule_engine.evaluate_all_rules",
+        side_effect=RuntimeError("engine down"),
+    ):
+        result = compiled.invoke(state)
+
+    assert result["module_status"]["finance"].state == "failed"
+    assert (
+        result["module_status"]["equity"].state == "success"
+    ), "失败路径不得破坏既有模块状态"
+    assert result["results"].finance is not None, "应产出降级 FinanceResult"
+    assert result["results"].finance.rule_statuses == {}
+
+
 def test_fallback_creation_failure_keeps_primary(monkeypatch):
     """P2 回归：备用 Provider 构造失败时，不得丢弃已创建的主 Provider."""
     from app.agents.llm_sync import _get_providers
