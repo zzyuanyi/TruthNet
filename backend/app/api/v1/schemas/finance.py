@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field
 
+from app.api.v1.schemas.benchmarks import IndustryPercentile
+
 
 class FinanceRuleItem(BaseModel):
     """单条规则结果 — 对齐 V12 RuleResult."""
@@ -23,7 +25,12 @@ class FinanceRuleItem(BaseModel):
     history: list[dict] = Field(default_factory=list, description="历史序列，每期一条")
     industry: dict = Field(
         default_factory=dict,
-        description="行业分位，如 {'p50': 12.0, 'p75': 25.0, 'p90': 40.0}",
+        description="行业分位（旧结构，deprecated——请使用 industry_metrics）",
+        deprecated=True,
+    )
+    industry_metrics: list[IndustryPercentile] = Field(
+        default_factory=list,
+        description="行业分位指标（typed：rule_id/metric_id/p50/p75/p95/company_percentile）",
     )
     quality: dict = Field(default_factory=dict, description="数据质量标记")
     explanation: str = Field(default="", description="LLM 解读文本")

@@ -101,12 +101,12 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* 当前值与行业基准 */}
+        {/* 当前值与行业基准（industry_metrics typed 分位，R3/R4/R5 多指标逐行） */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <div className="text-xs text-muted-foreground mb-1">当前值</div>
             <div className="text-lg font-semibold">
-              {currentValue?.value.toFixed(2)}
+              {typeof currentValue?.value === 'number' ? currentValue.value.toFixed(2) : '--'}
               <span className="text-xs text-muted-foreground ml-1">
                 {currentValue?.unit}
               </span>
@@ -117,12 +117,22 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
           </div>
           <div>
             <div className="text-xs text-muted-foreground mb-1">行业基准</div>
-            <div className="text-sm">
-              <span className="font-medium">P50: {rule.industry.p50.toFixed(2)}</span>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              P75: {rule.industry.p75.toFixed(2)} | P90: {rule.industry.p90.toFixed(2)}
-            </div>
+            {rule.industry_metrics && rule.industry_metrics.length > 0 ? (
+              rule.industry_metrics.map(m => (
+                <div key={m.metric_id} className="text-xs leading-5">
+                  <span className="font-medium">
+                    {m.label}: P50 {m.p50 != null ? m.p50.toFixed(2) : '--'} |
+                    P75 {m.p75 != null ? m.p75.toFixed(2) : '--'} |
+                    P95 {m.p95 != null ? m.p95.toFixed(2) : '--'}
+                  </span>
+                  <span className="text-muted-foreground ml-1">
+                    {m.company_percentile != null ? `(分位 ${m.company_percentile.toFixed(1)}%)` : ''}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="text-sm text-muted-foreground">--</div>
+            )}
           </div>
         </div>
 

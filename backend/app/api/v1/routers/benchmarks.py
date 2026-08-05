@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Path, Query
 
-from app.api.v1.schemas.benchmarks import BenchmarksResponseData, IndustryPercentile
+from app.api.v1.schemas.benchmarks import BenchmarksResponseData
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.core.errors import ErrorCode
 from app.core.config import settings
@@ -44,11 +44,7 @@ async def get_company_benchmarks(
     """行业对标 — 真实分位值 + 公司值百分位。"""
     from app.domain.benchmarks.calculator import (
         MIN_PEER_SAMPLE,
-        aggregate_stats,
-        compute_metric_values,
-        percentile_rank,
     )
-    from app.domain.benchmarks.metric_registry import all_metrics
 
     trace_id = _trace()
     warnings: list[WarningItem] = []
@@ -111,79 +107,24 @@ async def get_company_benchmarks(
             warnings=warnings,
         )
 
-    from app.domain.finance._fetch import _get_engine
+    # 共享服务计算（与 /finance 规则明细同口径，避免双口径漂移）
+    from app.application.services.industry_benchmark_service import (
+        compute_industry_percentiles,
+    )
 
-    engine = _get_engine()
-    percentiles: list[IndustryPercentile] = []
-    peer_count = 0
-    is_sufficient = False
-
-    for metric in all_metrics():
-        try:
-            pairs = compute_metric_values(engine, metric, industry_l1, period_ymd)
-        except Exception as exc:  # noqa: BLE001 — 单指标失败不阻塞整体
-            warnings.append(
-                WarningItem(
-                    code="BENCHMARK_METRIC_ERROR",
-                    message=f"指标 {metric.metric_id} 计算失败: {exc}",
-                    module="benchmarks",
-                    recoverable=True,
-                )
-            )
-            continue
-        values = [v for _, v in pairs]
-        stats = aggregate_stats(values)
-        company_value = next((v for c, v in pairs if c == wind_code), None)
-        peer_count = max(peer_count, stats["sample_count"])
-
-        if stats["sample_count"] < MIN_PEER_SAMPLE:
-            percentiles.append(
-                IndustryPercentile(
-                    indicator=metric.metric_id,
-                    label=metric.name,
-                    rule_id=metric.rule_id,
-                    metric_id=metric.metric_id,
-                    company_value=company_value,
-                    company_percentile=None,
-                    unit=metric.unit,
-                    sample_count=stats["sample_count"],
-                    p05=None,
-                    p25=None,
-                    p50=None,
-                    p75=None,
-                    p95=None,
-                    peer_count=stats["sample_count"],
-                    statement_scope="parent_company",
-                )
-            )
-            continue
-
-        is_sufficient = True
-        company_percentile = (
-            percentile_rank(company_value, values)
-            if company_value is not None
-            else None
-        )
-        percentiles.append(
-            IndustryPercentile(
-                indicator=metric.metric_id,
-                label=metric.name,
-                rule_id=metric.rule_id,
-                metric_id=metric.metric_id,
-                company_value=company_value,
-                company_percentile=company_percentile,
-                unit=metric.unit,
-                sample_count=stats["sample_count"],
-                p05=stats["p05"],
-                p25=stats["p25"],
-                p50=stats["p50"],
-                p75=stats["p75"],
-                p95=stats["p95"],
-                peer_count=stats["sample_count"],
-                statement_scope="parent_company",
+    result = compute_industry_percentiles(wind_code, industry_l1, period_ymd)
+    percentiles = result["percentiles"]
+    peer_count = result["peer_count"]
+    is_sufficient = result["is_sufficient"]
+    for w in result["warnings"]:
+        warnings.append(
+            WarningItem(
+                code="BENCHMARK_METRIC_ERROR",
+                message=w,
+                module="benchmarks",
+                recoverable=True,
             )
         )
-
     if not is_sufficient:
         warnings.append(
             WarningItem(

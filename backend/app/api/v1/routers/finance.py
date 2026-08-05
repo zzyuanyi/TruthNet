@@ -108,6 +108,23 @@ async def get_company_finance(
 
     # 3. 运行规则引擎（异常 → unknown，不伪造）
     rules: list[FinanceRuleItem] = []
+    # 行业分位（共享服务，与 /benchmarks 同口径）——按 rule_id 分组供规则明细填充
+    industry_result = None
+    industry_by_rule: dict[str, list] = {}
+    if industry_l1:
+        try:
+            from app.application.services.industry_benchmark_service import (
+                compute_industry_percentiles,
+            )
+
+            industry_result = compute_industry_percentiles(
+                wind_code, industry_l1, as_of_str
+            )
+            for _p in industry_result["percentiles"]:
+                industry_by_rule.setdefault(_p.rule_id or "", []).append(_p)
+        except Exception:  # noqa: BLE001 — 行业分位失败不阻塞财务分析
+            industry_result = None
+
     rule_engine_ok = True
     engine_error = ""
     try:
@@ -163,6 +180,7 @@ async def get_company_finance(
                     current=r.current,
                     history=r.history,
                     industry=r.industry,
+                    industry_metrics=industry_by_rule.get(r.rule_id, []),
                     quality=r.quality,
                     explanation=r.explanation,
                     evidence_ids=unified_evidence,
@@ -237,7 +255,21 @@ async def get_company_finance(
         risk_level = _derive_risk_level(rules)
 
     # 6. 行业对标（真实 industry_benchmarks）
-    industry_benchmark = _build_industry_benchmark(wind_code, industry_l1, as_of_str)
+    if industry_result is not None:
+        industry_benchmark = IndustryBenchmark(
+            industry_l1=industry_l1,
+            peer_count=industry_result["peer_count"],
+            percentile={
+                _p.metric_id: _p.company_percentile
+                for _p in industry_result["percentiles"]
+                if _p.company_percentile is not None
+            },
+            warnings=industry_result["warnings"],
+        )
+    else:
+        industry_benchmark = _build_industry_benchmark(
+            wind_code, industry_l1, as_of_str
+        )
 
     # 7. periods_available（真实）
     periods_available = _query_periods_available(wind_code, as_of_str)
