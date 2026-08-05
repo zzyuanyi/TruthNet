@@ -145,6 +145,13 @@ GET /api/v1/companies?query=康美&limit=10
 
 请求: `{ "question": "...", "session_id": "...", "context": {...} }`
 
+响应（V12 envelope `data` 字段）:
+- `answer`: string — Markdown 主回答
+- `evidence`: list — 证据项（ChatEvidenceV1：source/field/value + canonical 字段）
+- `claims`: list — 结论声明（ClaimV1：claim_id/text/claim_type/severity/confidence/rule_id/rule_version/evidence_ids/verification_status/limitations）※ 2026-08-04 追加
+- `module_status`: dict[string, string] — 各模块执行状态 success/partial/failed/skipped ※ 2026-08-04 追加
+- `graph` / `timeline` / `risk_score` / `warnings` / `missing_modules` / `trace_id` / `follow_ups`
+
 ### WS /api/v1/chat/ws — 流式问答 ✅
 
 V12 event envelope 格式，支持 turn.accepted / module.started / answer.delta / artifact.upsert / turn.completed / turn.failed / heartbeat。

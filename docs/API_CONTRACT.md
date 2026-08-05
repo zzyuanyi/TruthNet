@@ -124,6 +124,8 @@
 |------|------|------|
 | `answer` | string | Markdown 格式的主回答 |
 | `evidence` | list | 证据列表，每项标注来源 |
+| `claims` | list | 结论声明列表（ClaimV1：claim_id/text/claim_type/severity/confidence/rule_id/rule_version/evidence_ids/verification_status/limitations）※ 2026-08-04 追加（主契约见 API_CONTRACT_V1.md）|
+| `module_status` | object | 各模块执行状态 success/partial/failed/skipped ※ 2026-08-04 追加 |
 | `graph` | object | 股权/关联关系图谱（nodes + edges） |
 | `timeline` | list | 相关事件时间线 |
 | `risk_score` | object | 风险评分对象（Prompt4 冻结） |

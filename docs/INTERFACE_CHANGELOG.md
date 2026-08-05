@@ -31,6 +31,19 @@
 
 ---
 
+## 2026-08-04 — POST /api/v1/chat 追加 claims + module_status
+
+### Added
+- `ChatDataV1` 追加 `claims`（list[ClaimV1]：结论声明，含 rule_version/limitations）与 `module_status`（dict[str, str]：各模块执行状态）
+- 原因：前端 Phase D #1（partial 场景 UI）需要 module_status；评测需走对外接口；claims 是结构化问答创新点载体
+- 影响范围：仅追加字段（不删除不重命名），旧响应兼容；REST 与 WS 契约不变
+
+### Breaking Changes
+- 是否有破坏性修改：无（纯追加）
+- 是否已由项目负责人审阅：✅
+
+---
+
 ## 2026-07-02 — Prompt4：前端初始化 + 接口冻结 + GitHub 协作简化
 
 ### Changed

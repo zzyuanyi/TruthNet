@@ -59,6 +59,41 @@ class ChatEvidenceV1(BaseModel):
         )
 
 
+class ClaimV1(BaseModel):
+    """chat 响应结论声明项 — API 公共投影（非完整 domain/ORM 字段集）.
+
+    透出结论声明的可展示字段；limitations 对 partial/证据不足/降级场景重要。
+    """
+
+    claim_id: str = ""
+    text: str = ""
+    claim_type: str = ""
+    severity: str = "unknown"
+    confidence: float | None = None
+    rule_id: str | None = None
+    rule_version: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    verification_status: str = "pending"
+    limitations: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_claim(cls, c) -> "ClaimV1":
+        """从 domain Claim（模型对象或 dict）构造."""
+        src = c if isinstance(c, dict) else c.model_dump()
+        return cls(
+            claim_id=src.get("claim_id", ""),
+            text=src.get("text", ""),
+            claim_type=src.get("claim_type", ""),
+            severity=src.get("severity", "unknown"),
+            confidence=src.get("confidence"),
+            rule_id=src.get("rule_id"),
+            rule_version=src.get("rule_version"),
+            evidence_ids=src.get("evidence_ids") or [],
+            verification_status=src.get("verification_status", "pending"),
+            limitations=src.get("limitations") or [],
+        )
+
+
 class ChatDataV1(BaseModel):
     """对话响应核心数据 — V12."""
 
@@ -71,3 +106,10 @@ class ChatDataV1(BaseModel):
     missing_modules: list[str] = Field(default_factory=list, description="暂缺模块列表")
     trace_id: str = Field(..., description="追踪 ID")
     follow_ups: list[str] = Field(default_factory=list, description="追问建议")
+    claims: list[ClaimV1] = Field(
+        default_factory=list, description="结论声明列表（结构化问答）"
+    )
+    module_status: dict[str, str] = Field(
+        default_factory=dict,
+        description="各模块执行状态 success/partial/failed/skipped",
+    )
