@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, MessageSquare, Trash2, Building2, BarChart3 } from 'lucide-react';
-import type { Session, RiskLevel } from '@/types/truthnet';
+import type { Session } from '@/types/truthnet';
 
 interface SessionSidebarProps {
   sessions: Session[];
@@ -16,15 +16,6 @@ interface SessionSidebarProps {
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
 }
-
-// 风险等级颜色映射
-const riskLevelColors: Record<RiskLevel, string> = {
-  red: 'bg-red-500',
-  orange: 'bg-orange-500',
-  yellow: 'bg-yellow-500',
-  blue: 'bg-blue-500',
-  green: 'bg-green-500',
-};
 
 export function SessionSidebar({
   sessions,
@@ -36,7 +27,7 @@ export function SessionSidebar({
   const navigate = useNavigate();
 
   return (
-    <div className="w-[260px] border-r border-border flex flex-col bg-muted/30">
+    <div className="w-60 border-r border-border flex flex-col bg-muted/30">
       {/* 头部：新建会话按钮 */}
       <div className="p-4 border-b border-border">
         <Button
@@ -74,29 +65,21 @@ export function SessionSidebar({
         <div className="p-2 space-y-1">
           {sessions.map(session => (
             <div
-              key={session.id}
+              key={session.session_id}
               className={cn(
                 'group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
                 'hover:bg-accent',
-                currentSessionId === session.id && 'bg-accent'
+                currentSessionId === session.session_id && 'bg-accent'
               )}
-              onClick={() => onSelectSession(session.id)}
+              onClick={() => onSelectSession(session.session_id)}
             >
-              {/* 风险等级指示器 */}
-              {session.risk_level && (
-                <div className={cn(
-                  'w-2 h-2 rounded-full flex-shrink-0',
-                  riskLevelColors[session.risk_level]
-                )} />
-              )}
-
               {/* 会话信息 */}
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">
                   {session.title}
                 </div>
                 <div className="text-xs text-muted-foreground truncate">
-                  {session.company_name || '未选择公司'}
+                  {session.message_count > 0 ? `${session.message_count} 条消息` : '新对话'}
                 </div>
               </div>
 
@@ -112,7 +95,7 @@ export function SessionSidebar({
                 className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDeleteSession(session.id);
+                  onDeleteSession(session.session_id);
                 }}
               >
                 <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />

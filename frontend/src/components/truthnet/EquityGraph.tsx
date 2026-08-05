@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import type { EquityNode, EquityEdge } from '@/types/truthnet';
+import type { EquityNodeDTO, EquityEdgeDTO } from '@/types/truthnet';
 
 interface EquityGraphProps {
-  nodes: EquityNode[];
-  edges: EquityEdge[];
+  nodes: EquityNodeDTO[];
+  edges: EquityEdgeDTO[];
   companyName: string;
 }
 
