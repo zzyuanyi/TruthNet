@@ -483,6 +483,5 @@ export const FIELD_MAPPINGS = {
   'cluster_id': 'event_cluster_id',
   
   // EquityNode
-  'id': 'entity_id',
 } as const;
 

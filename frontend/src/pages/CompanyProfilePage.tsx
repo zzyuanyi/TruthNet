@@ -18,6 +18,7 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
+  Shield,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
 import { EquityGraph } from '@/components/truthnet/EquityGraph';

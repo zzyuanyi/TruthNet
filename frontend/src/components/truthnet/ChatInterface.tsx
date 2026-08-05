@@ -72,7 +72,7 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
                 ].map((card, i) => (
                   <button
                     key={i}
-                    onClick={() => handleSend(card.text)}
+                    onClick={() => { setInput(card.text); setTimeout(() => { if (card.text.trim()) onSendMessage(card.text.trim()); setInput(''); }, 0); }}
                     className="text-left p-3 rounded-md border border-border/60 hover:border-primary/30 hover:bg-muted/30 transition-colors group"
                   >
                     <card.icon className="h-4 w-4 text-primary/60 mb-1.5 group-hover:text-primary transition-colors" />

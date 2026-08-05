@@ -191,7 +191,7 @@ export const wsClient = {
 
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
-      onMessage({ type: 'error', content: '连接错误' });
+      onMessage({ event_type: 'error', payload: { message: '连接错误' } });
     };
 
     ws.onclose = () => {

@@ -77,14 +77,14 @@ export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
     // Transform nodes to include type classification
     const simNodes = nodes.map(n => ({
       ...n,
-      nodeType: n.is_target ? 'target' : n.type,
+      nodeType: (n.name === companyName) ? 'target' : n.node_type,
     }));
 
     // Transform edges to links
     const simLinks = edges.map(e => ({
       ...e,
-      source: e.source,
-      target: e.target,
+      source: e.source_id,
+      target: e.target_id,
     }));
 
     // Create force simulation
@@ -123,7 +123,7 @@ export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
       .attr('fill', '#94a3b8')
       .attr('text-anchor', 'middle')
       .attr('dy', 10)
-      .text(d => d.ratio != null ? `${d.ratio.toFixed(1)}%` : '');
+      .text(d => (d as any).ownership != null ? `${(d as any).ownership.toFixed(1)}%` : '');
 
     // Draw nodes
     const node = g.append('g')
@@ -186,7 +186,7 @@ export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
         else if (d.nodeType === 'person') text += '\n类型: 自然人';
         else if (d.nodeType === 'fund') text += '\n类型: 机构投资者';
         else text += '\n类型: 公司';
-        if (d.share_ratio) text += `\n持股比例: ${d.share_ratio.toFixed(1)}%`;
+        if ((d as any).ownership) text += `\n持股比例: ${(d as any).ownership.toFixed(1)}%`;
         return text;
       });
 
