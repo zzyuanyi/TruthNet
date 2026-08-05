@@ -64,10 +64,11 @@ export default function ChatPage() {
       const response = await apiClient.createSession('新对话');
       const newSession: Session = {
         session_id: response.data?.session_id || `session-${Date.now()}`,
-        title: '新对话',
+        title: response.data?.title || '新对话',
         created_at: response.data?.created_at || new Date().toISOString(),
         updated_at: response.data?.updated_at || new Date().toISOString(),
-        message_count: 0,
+        status: response.data?.status,
+        turn_count: 0,
       };
       setSessions([newSession, ...sessions]);
       setCurrentSessionId(newSession.session_id);
@@ -272,8 +273,8 @@ export default function ChatPage() {
         onDeleteSession={handleDeleteSession}
       />
 
-      {/* 中间：对话区 */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* 中间：对话区（h-full：父级 h-[calc(100vh-64px)] 为 definite，补齐百分比高度链，否则 ChatInterface h-full 失效导致聊天区无滚动） */}
+      <div className="flex-1 flex flex-col min-w-0 h-full">
         <ChatInterface
           messages={messages}
           onSendMessage={handleSendMessage}

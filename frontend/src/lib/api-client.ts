@@ -35,6 +35,9 @@ interface SessionListData {
   total: number;
 }
 
+// 创建会话响应（后端 POST /sessions 不返回 turn_count，Omit 掉保持真实契约）
+type SessionCreateData = Omit<Session, 'turn_count'>;
+
 // 类型别名：API 方法返回类型
 type FinanceData = FinanceResponseData;
 type EventsData = EventsResponseData;
@@ -139,9 +142,9 @@ export const truthnetAPI = {
   // 会话列表: GET /api/v1/sessions（V12 envelope: data.sessions + total）
   getSessions: () => request<SessionListData>('GET', '/sessions'),
 
-  // 创建会话: POST /api/v1/sessions
+  // 创建会话: POST /api/v1/sessions（后端创建接口不返回 turn_count，用 Omit 表达）
   createSession: (title: string = '新对话') =>
-    request<Session>('POST', '/sessions', {
+    request<SessionCreateData>('POST', '/sessions', {
       body: JSON.stringify({ title }),
     }),
 

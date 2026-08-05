@@ -50,13 +50,40 @@ const statusLabels = {
   insufficient_data: '数据不足',
 };
 
+// 图表指标映射：rule_id → history 数值字段 + 行业基准 metric_id
+// R6/R7 无配置（R7 无行业指标）→ 回退找第一个数值字段
+const chartMetricConfig: Partial<Record<string, { seriesKey: string; benchmarkId: string }>> = {
+  R1: { seriesKey: 'gap', benchmarkId: 'r1_gap' },
+  R2: { seriesKey: 'cf_to_profit_ratio', benchmarkId: 'r2_cf_ratio' },
+  R3: { seriesKey: 'cash_to_assets', benchmarkId: 'r3_cash_to_assets' },
+  R4: { seriesKey: 'growth_gap', benchmarkId: 'r4_growth_gap' },
+  R5: { seriesKey: 'gross_margin', benchmarkId: 'r5_gross_margin' },
+};
+
+// history 值可能是裸数值（R1）或 {value, unit} 对象（R2-R7 由 rule_engine 兜底填充 current），统一提取
+function extractSeriesValue(item: Record<string, unknown>, key: string): number | null {
+  const v = item[key];
+  if (typeof v === 'number') return v;
+  if (v && typeof v === 'object' && typeof (v as { value?: unknown }).value === 'number') {
+    return (v as { value: number }).value;
+  }
+  return null;
+}
+
 export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) {
-  // 动态从 history 中提取折线图数据
+  const chartConfig = chartMetricConfig[rule.rule_id];
+  // 动态从 history 中提取折线图数据（优先配置的 seriesKey，R6/R7 回退找第一个数值字段）
   const chartData = rule.history.map(item => {
     const period = (item.period as string) || '';
-    // 找到第一个数值型字段作为 Y 值（排除 period 等非数值字段）
-    const valueKey = Object.keys(item).find(k => k !== 'period' && typeof item[k] === 'number');
-    const value = valueKey ? (item[valueKey] as number) : 0;
+    let valueKey: string | undefined;
+    let value: number | null = null;
+    if (chartConfig) {
+      valueKey = chartConfig.seriesKey;
+      value = extractSeriesValue(item, chartConfig.seriesKey);
+    } else {
+      valueKey = Object.keys(item).find(k => k !== 'period' && extractSeriesValue(item, k) !== null);
+      value = valueKey ? extractSeriesValue(item, valueKey) : null;
+    }
     return { period, value, valueKey };
   });
   // 获取用于展示的指标名
@@ -64,9 +91,18 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
     ? chartData[0].valueKey
     : Object.keys(rule.current)[0];
 
-  // 获取当前值
-  const currentValue = Object.values(rule.current)[0];
-  const currentMetric = Object.keys(rule.current)[0];
+  // 行业基准参考指标（按配置 benchmarkId 从 typed industry_metrics 找，不再读已废弃 rule.industry）
+  const benchmarkMetric = chartConfig
+    ? rule.industry_metrics?.find(m => m.metric_id === chartConfig.benchmarkId)
+    : undefined;
+
+  // 当前值指标：优先图表配置的 seriesKey（R1 gap / R4 growth_gap 与折线、P50 可比），无配置时取第一个
+  const preferredMetric = chartConfig?.seriesKey;
+  const currentMetric =
+    preferredMetric && preferredMetric in rule.current
+      ? preferredMetric
+      : Object.keys(rule.current)[0];
+  const currentValue = currentMetric ? rule.current[currentMetric] : undefined;
 
   return (
     <Card className={cn(
@@ -158,13 +194,15 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
                   fontSize: '12px'
                 }}
               />
-              {/* 行业基准参考线 */}
-              <ReferenceLine 
-                y={rule.industry.p50} 
-                stroke="hsl(var(--muted-foreground))" 
-                strokeDasharray="3 3"
-                label={{ value: 'P50', position: 'right', fontSize: 10 }}
-              />
+              {/* 行业基准参考线（仅指标匹配且有 P50 时显示，不再读已废弃 rule.industry） */}
+              {typeof benchmarkMetric?.p50 === 'number' && (
+                <ReferenceLine
+                  y={benchmarkMetric.p50}
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeDasharray="3 3"
+                  label={{ value: 'P50', position: 'right', fontSize: 10 }}
+                />
+              )}
               <Line 
                 type="monotone" 
                 dataKey="value" 

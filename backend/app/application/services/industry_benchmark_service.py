@@ -7,9 +7,6 @@
 
 from __future__ import annotations
 
-import logging
-
-from app.core.config import settings
 from app.domain.benchmarks.calculator import (
     MIN_PEER_SAMPLE,
     aggregate_stats,
@@ -18,8 +15,6 @@ from app.domain.benchmarks.calculator import (
 )
 from app.domain.benchmarks.metric_registry import all_metrics
 from app.domain.finance._fetch import _get_engine
-
-logger = logging.getLogger(__name__)
 
 
 def compute_industry_percentiles(

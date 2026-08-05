@@ -27,7 +27,7 @@ export function SessionSidebar({
   const navigate = useNavigate();
 
   return (
-    <div className="w-60 border-r border-border flex flex-col bg-muted/30">
+    <div className="w-60 border-r border-border flex flex-col bg-muted/30 h-full">
       {/* 头部：新建会话按钮 */}
       <div className="p-4 border-b border-border">
         <Button
@@ -60,8 +60,8 @@ export function SessionSidebar({
         </Button>
       </div>
 
-      {/* 会话列表 */}
-      <ScrollArea className="flex-1">
+      {/* 会话列表（min-h-0：flex item 默认 min-height:auto 会按内容高度阻止收缩，导致列表撑开布局） */}
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-2 space-y-1">
           {sessions.map(session => (
             <div
@@ -79,13 +79,13 @@ export function SessionSidebar({
                   {session.title}
                 </div>
                 <div className="text-xs text-muted-foreground truncate">
-                  {session.message_count > 0 ? `${session.message_count} 条消息` : '新对话'}
+                  {session.turn_count > 0 ? `${session.turn_count} 轮问答` : '新对话'}
                 </div>
               </div>
 
-              {/* 消息数量 */}
+              {/* 会话轮数徽标 */}
               <Badge variant="secondary" className="text-xs px-1.5 py-0">
-                {session.message_count}
+                {session.turn_count}
               </Badge>
 
               {/* 删除按钮 */}

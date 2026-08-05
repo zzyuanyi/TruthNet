@@ -55,8 +55,8 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
 
   return (
     <div className="flex flex-col h-full">
-      {/* 消息列表 */}
-      <ScrollArea className="flex-1" ref={scrollRef}>
+      {/* 消息列表（min-h-0：防止 flex item 被内容撑开，确保内部滚动 + 自动滚底生效） */}
+      <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
         <div className="p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-8">

@@ -74,9 +74,10 @@ export interface Company {
 export interface Session {
   session_id: string;      // 后端是 session_id，不是 id
   title: string;
+  status?: string;
   created_at: string;
   updated_at: string;
-  message_count: number;
+  turn_count: number;      // 后端是 turn_count（会话轮数），不是 message_count
 }
 
 // ============ 消息 ============
