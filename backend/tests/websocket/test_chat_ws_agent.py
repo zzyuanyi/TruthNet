@@ -8,9 +8,17 @@
 
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
+
+# 需要真实 MySQL（WS Agent 持久化断言）；CI 默认 sqlite → skip
+_NEED_MYSQL = pytest.mark.skipif(
+    settings.SQL_BACKEND != "mysql",
+    reason="需要真实 MySQL（CI 默认 sqlite）",
+)
 
 ENVELOPE_KEYS = {
     "schema_version",
@@ -118,6 +126,7 @@ def test_chat_query_legacy_format(ws_session_tracker):
     assert "turn.completed" in event_types
 
 
+@_NEED_MYSQL
 def test_payload_session_id_persists(ws_session_tracker):
     """P0-1 回归: payload.session_id 决定会话归属（信封一致 + REST 可回读）。
 
@@ -147,6 +156,7 @@ def test_payload_session_id_persists(ws_session_tracker):
     assert len(turns) >= 1, f"会话 {sid} 应有至少 1 轮，实际 {len(turns)}"
 
 
+@_NEED_MYSQL
 def test_panel_rule_evidence_ids_exist_in_db(ws_session_tracker):
     """DB 存在性（对齐审计 P1-2）：面板 triggered_rules 的 evidence_ids
     必须全部命中 evidence_refs（canonical ev_fin_*，非规则引擎内部 ID）。
@@ -234,6 +244,7 @@ def test_missing_text():
     assert event["payload"]["error_code"] == "MISSING_QUESTION"
 
 
+@_NEED_MYSQL
 def test_risk_diagnosis_runs_all_modules(ws_session_tracker):
     """综合风险问题 → finance + equity + events 全部执行。"""
     client = TestClient(app)
@@ -261,6 +272,7 @@ def test_risk_diagnosis_runs_all_modules(ws_session_tracker):
     ), f"module.completed 应为 {expected}，实际 {completed_modules}"
 
 
+@_NEED_MYSQL
 def test_finance_only_query_runs_finance(ws_session_tracker):
     """纯财务问题 → 只执行 finance，回答完整。
 
