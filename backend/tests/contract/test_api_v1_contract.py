@@ -106,12 +106,19 @@ async def test_legacy_health_still_works():
 
 
 @pytest.mark.asyncio
-async def test_legacy_chat_still_works():
-    """POST /api/v1/chat 返回 V12 格式（旧格式已移除）."""
+async def test_legacy_chat_still_works(ws_session_tracker):
+    """POST /api/v1/chat 返回 V12 格式（旧格式已移除）.
+
+    REST chat 会持久化会话（归属化清理：先建会话并显式传 session_id，
+    测试结束删除——对齐审计 P1-4 并发安全）。
+    """
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create = await client.post("/api/v1/sessions", json={"title": "chat-test"})
+        sid = create.json()["data"]["session_id"]
         response = await client.post(
-            "/api/v1/chat", json={"question": "康美药业有造假风险吗"}
+            "/api/v1/chat",
+            json={"question": "康美药业有造假风险吗", "session_id": sid},
         )
 
     assert response.status_code == 200
@@ -120,6 +127,9 @@ async def test_legacy_chat_still_works():
     assert "data" in body
     assert "meta" in body
     assert "answer" in body["data"]
+
+    # 归属清理（tracker 走 TestClient DELETE，级联 + 证据保护）
+    ws_session_tracker([{"session_id": sid}])
 
 
 # ── 错误信封契约（RFC 9457 ProblemDetail 顶层结构） ────────

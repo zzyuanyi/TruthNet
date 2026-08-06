@@ -18,7 +18,7 @@ def test_ws_v1_route_registered():
 
 
 @pytest.mark.asyncio
-async def test_ws_v1_event_envelope_format():
+async def test_ws_v1_event_envelope_format(ws_session_tracker):
     """WebSocket V12 消息使用 event envelope 格式."""
     from fastapi.testclient import TestClient
 
@@ -74,6 +74,8 @@ async def test_ws_v1_event_envelope_format():
         else:
             msg_types = [m["type"] for m in messages if "type" in m]
             assert len(msg_types) > 0, "未收到任何消息类型"
+
+        ws_session_tracker(messages)
 
 
 @pytest.mark.asyncio

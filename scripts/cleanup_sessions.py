@@ -67,6 +67,75 @@ _ORPHAN_CLAIM_SQL = """
 """
 
 
+def _integrity_stats(conn) -> dict[str, int]:
+    """清理后完整性复查（与 restore_evidence.py 同口径）.
+
+    曾出现清理后残留无效 turn_id 证据（turn 被删但 evidence 未被置空/
+    删除）。清理后必须复查，残留时提示运行 restore_evidence.py --confirm。
+    """
+    return {
+        "rating_missing": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM rating_changes r
+                WHERE r.evidence_id IS NOT NULL AND r.evidence_id != ''
+                  AND NOT EXISTS (SELECT 1 FROM evidence_refs e
+                                  WHERE e.evidence_id = r.evidence_id)
+                """
+            )
+        ).scalar(),
+        "cluster_missing": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM event_cluster_sources s
+                WHERE s.evidence_id IS NOT NULL AND s.evidence_id != ''
+                  AND NOT EXISTS (SELECT 1 FROM evidence_refs e
+                                  WHERE e.evidence_id = s.evidence_id)
+                """
+            )
+        ).scalar(),
+        "invalid_turn": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM evidence_refs e
+                LEFT JOIN conversation_turns t ON e.turn_id = t.turn_id
+                WHERE e.turn_id IS NOT NULL AND e.turn_id != ''
+                  AND t.turn_id IS NULL
+                """
+            )
+        ).scalar(),
+        "broken_claims": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM claims c
+                LEFT JOIN claim_evidence_links l ON l.claim_id = c.claim_id
+                WHERE l.claim_id IS NULL
+                """
+            )
+        ).scalar(),
+    }
+
+
+def _report_integrity(engine) -> int:
+    """打印完整性复查，返回是否通过（0=通过）。"""
+    with engine.connect() as conn:
+        st = _integrity_stats(conn)
+    print("\n完整性复查:")
+    print(f"  评级证据缺失: {st['rating_missing']}")
+    print(f"  事件簇证据缺失: {st['cluster_missing']}")
+    print(f"  无效 turn_id: {st['invalid_turn']}")
+    print(f"  断链 Claim: {st['broken_claims']}")
+    ok = all(v == 0 for v in st.values())
+    if ok:
+        print("✅ 完整性通过")
+    else:
+        print(
+            "⚠️ 仍有残留（无效 turn_id 等）——运行 "
+            "scripts/restore_evidence.py --confirm 修复"
+        )
+    return 0 if ok else 1
+
+
 def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
     """清理无主 claims（turn 无效）+ 其 links + 无引用孤儿 evidence.
 
@@ -147,6 +216,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # 安全闸（对齐审计 P2-7）：--confirm 必须显式 --keep，
+    # 防止默认白名单（仅仓库固定演示会话）未覆盖真实演示会话时误删
+    if args.confirm and not args.keep:
+        print(
+            "⚠️ 拒绝执行：--confirm 必须显式指定 --keep <session_id>（至少一个），"
+            "默认白名单不保护随机 UUID 演示会话。\n"
+            "请先运行 --dry-run --keep <id> 确认保留对象，再带同一 --keep 执行。"
+        )
+        return 2
+
     keep = set(DEFAULT_KEEP) | set(args.keep)
     execute = args.confirm  # 无 --confirm 则默认 dry-run
 
@@ -169,7 +248,7 @@ def main() -> int:
                 delta = before[table] - after[table]
                 mark = "" if delta == 0 else f"  (-{delta})"
                 print(f"  {table}: {before[table]} → {after[table]}{mark}")
-            return 0
+            return _report_integrity(engine)
         all_rows = conn.execute(
             text(
                 "SELECT session_id, "
@@ -259,7 +338,7 @@ def main() -> int:
         mark = "" if delta == 0 else f"  (-{delta})"
         print(f"  {table}: {before[table]} → {after[table]}{mark}")
     print(f"合计删除: {len(to_delete)} 会话 / {deleted_turns} 轮")
-    return 0
+    return _report_integrity(engine)
 
 
 if __name__ == "__main__":

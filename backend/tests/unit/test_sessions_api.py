@@ -156,6 +156,61 @@ def test_get_session_not_found(mysql_client):
     assert body["title"] == "Session Not Found"
 
 
+def test_get_session_returns_panel_data(mysql_client):
+    """详情：turn 返回 panel_data（v7 历史面板恢复，对齐审计 P1-3）.
+
+    旧数据 panel_data=None 时同样 200（不伪造风险等级）。
+    """
+    engine = sessions_router._get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_panel', '面板', 'active', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, panel_data, created_at) "
+                "VALUES ('turn_panel_1', 'ses_panel', 1, '问题', "
+                ":pd, CURRENT_TIMESTAMP)"
+            ),
+            {
+                "pd": '{"risk_level": "red", "triggered_rules": '
+                '[{"rule_id": "R1", "rule_name": "应收-营收背离", '
+                '"evidence_ids": []}], "key_metrics": {}, "follow_ups": []}'
+            },
+        )
+
+    resp = mysql_client.get("/api/v1/sessions/ses_panel")
+    assert resp.status_code == 200
+    turns = resp.json()["data"]["turns"]
+    assert len(turns) == 1
+    panel = turns[0]["panel_data"]
+    assert isinstance(panel, dict), f"panel_data 应为对象，实际 {type(panel)}"
+    assert panel["risk_level"] == "red"
+    assert panel["triggered_rules"][0]["rule_name"] == "应收-营收背离"
+
+    # 旧数据（无 panel_data）→ None，不崩溃
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, created_at) "
+                "VALUES ('turn_panel_2', 'ses_panel', 2, '旧轮次', "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+    resp2 = mysql_client.get("/api/v1/sessions/ses_panel")
+    assert resp2.status_code == 200
+    turns2 = resp2.json()["data"]["turns"]
+    assert len(turns2) == 2
+    assert turns2[1]["panel_data"] is None
+
+
 def test_get_session_empty_turns(mysql_client):
     """会话存在但无轮次 → 200 空 turns。"""
     engine = sessions_router._get_engine()

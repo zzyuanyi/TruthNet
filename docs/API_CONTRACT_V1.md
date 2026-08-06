@@ -105,21 +105,21 @@
 |------|:---:|------|:---:|:---:|
 | 存活检查 | GET | `/healthz` | P0 | ✅ 已实现 |
 | 就绪检查 | GET | `/readyz` | P0 | ✅ 已实现 |
-| 公司搜索 | GET | `/api/v1/companies?query=康美&limit=10` | P0 | ✅ 已实现 (mock) |
-| 企业画像摘要 | GET | `/api/v1/companies/{code}` | P0 | 🔸 待实现 |
-| 财务分析 | GET | `/api/v1/companies/{code}/finance` | P0 | 🔸 待实现 |
-| 股权穿透 | GET | `/api/v1/companies/{code}/equity` | P0 | 🔸 待实现 |
-| 舆情事件 | GET | `/api/v1/companies/{code}/events` | P0 | 🔸 待实现 |
-| 综合风险 | GET | `/api/v1/companies/{code}/risk` | P0 | 🔸 待实现 |
-| 行业对标 | GET | `/api/v1/companies/{code}/benchmarks` | P0 | 🔸 待实现 |
-| 会话列表 | GET | `/api/v1/sessions` | P0 | 🔸 待实现 |
-| 创建会话 | POST | `/api/v1/sessions` | P0 | 🔸 待实现 |
-| 非流式问答 | POST | `/api/v1/chat` | P0 | ✅ 已实现 (mock) |
-| 流式问答 | WS | `/api/v1/chat/ws` | P0 | ✅ 已实现 (mock) |
-| 创建比较 | POST | `/api/v1/comparisons` | P1 | 🔸 待实现 |
-| 创建报告 | POST | `/api/v1/reports` | P1 | 🔸 待实现 |
-| 报告状态 | GET | `/api/v1/reports/{report_id}` | P1 | 🔸 待实现 |
-| 报告下载 | GET | `/api/v1/reports/{report_id}/file` | P1 | 🔸 待实现 |
+| 公司搜索 | GET | `/api/v1/companies?query=康美&limit=10` | P0 | ✅ 已实现（真实数据，2026-08-06 对齐审计） |
+| 企业画像摘要 | GET | `/api/v1/companies/{code}` | P0 | ✅ 已实现（真实数据） |
+| 财务分析 | GET | `/api/v1/companies/{code}/finance` | P0 | ✅ 已实现（真实数据） |
+| 股权穿透 | GET | `/api/v1/companies/{code}/equity` | P0 | ✅ 已实现（Neo4j/NetworkX） |
+| 舆情事件 | GET | `/api/v1/companies/{code}/events` | P0 | ✅ 已实现（真实数据） |
+| 综合风险 | GET | `/api/v1/companies/{code}/risk` | P0 | ✅ 已实现（真实数据） |
+| 行业对标 | GET | `/api/v1/companies/{code}/benchmarks` | P0 | ✅ 已实现（⚠️ 前端独立入口未接，经 /finance 内嵌指标间接展示） |
+| 会话列表 | GET | `/api/v1/sessions` | P0 | ✅ 已实现 |
+| 创建会话 | POST | `/api/v1/sessions` | P0 | ✅ 已实现 |
+| 非流式问答 | POST | `/api/v1/chat` | P0 | ✅ 已实现（⚠️ 当前页面主链路走 WS） |
+| 流式问答 | WS | `/api/v1/chat/ws` | P0 | ✅ 已实现（⚠️ answer.delta 为伪流式，真流式 Phase D #1） |
+| 创建比较 | POST | `/api/v1/comparisons` | P1 | ✅ 已实现（⚠️ 需 /compare?codes= 或选股器入口） |
+| 创建报告 | POST | `/api/v1/reports` | P1 | 🔸 待实现（排期 Phase D/E 报告任务，含 ReportPage 与前端路由） |
+| 报告状态 | GET | `/api/v1/reports/{report_id}` | P1 | 🔸 待实现（同上） |
+| 报告下载 | GET | `/api/v1/reports/{report_id}/file` | P1 | 🔸 待实现（同上） |
 
 ---
 

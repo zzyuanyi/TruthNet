@@ -47,11 +47,15 @@ async def test_companies_search():
 
 
 @pytest.mark.asyncio
-async def test_chat_v1_contract():
+async def test_chat_v1_contract(ws_session_tracker):
+    """REST chat 契约（归属化清理，对齐审计 P1-4）。"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create = await client.post("/api/v1/sessions", json={"title": "chat-test"})
+        sid = create.json()["data"]["session_id"]
         response = await client.post(
-            "/api/v1/chat", json={"question": "康美药业有造假风险吗"}
+            "/api/v1/chat",
+            json={"question": "康美药业有造假风险吗", "session_id": sid},
         )
     assert response.status_code == 200
     body = response.json()
@@ -59,6 +63,8 @@ async def test_chat_v1_contract():
     assert "meta" in body
     assert body["meta"]["schema_version"] == "1.0"
     assert "answer" in body["data"]
+
+    ws_session_tracker([{"session_id": sid}])
 
 
 @pytest.mark.asyncio
