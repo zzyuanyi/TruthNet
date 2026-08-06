@@ -15,6 +15,9 @@ interface ChatInterfaceProps {
   messages: Message[];
   onSendMessage: (content: string) => void;
   isLoading: boolean;
+  highlightedEvidenceIds?: string[] | null;
+  activeRuleName?: string | null;
+  onClearEvidenceHighlight?: () => void;
 }
 
 // 风险等级颜色
@@ -27,7 +30,14 @@ const riskColors: Record<RiskLevel, string> = {
   unknown: 'text-gray-500 bg-gray-500/10 border-gray-500/20',
 };
 
-export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterfaceProps) {
+export function ChatInterface({
+  messages,
+  onSendMessage,
+  isLoading,
+  highlightedEvidenceIds,
+  activeRuleName,
+  onClearEvidenceHighlight,
+}: ChatInterfaceProps) {
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +67,21 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
     <div className="flex flex-col h-full">
       {/* 消息列表（min-h-0：防止 flex item 被内容撑开，确保内部滚动 + 自动滚底生效） */}
       <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
+        {highlightedEvidenceIds && highlightedEvidenceIds.length > 0 && (
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-primary/20 bg-background/95 px-4 py-2 text-xs backdrop-blur-sm">
+            <span className="truncate text-primary">
+              已定位 {activeRuleName || '当前规则'}的 {highlightedEvidenceIds.length} 条证据
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={onClearEvidenceHighlight}
+            >
+              取消定位
+            </Button>
+          </div>
+        )}
         <div className="p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-8">
@@ -84,9 +109,20 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
             </div>
           )}
 
-          {messages.map(message => (
-            <MessageBubble key={message.id} message={message} />
-          ))}
+          {messages.map(message => {
+            const isEvidenceMatch = Boolean(
+              highlightedEvidenceIds?.length &&
+              message.role === 'assistant' &&
+              (message.evidence_ids || []).some(id => highlightedEvidenceIds.includes(id))
+            );
+            return (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                evidenceHighlighted={isEvidenceMatch}
+              />
+            );
+          })}
 
           {/* 加载指示器 */}
           {isLoading && (
@@ -131,16 +167,34 @@ export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterf
 }
 
 // 消息气泡组件
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  evidenceHighlighted = false,
+}: {
+  message: Message;
+  evidenceHighlighted?: boolean;
+}) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={cn('flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300', isUser ? 'justify-end' : 'justify-start')}>
+    <div
+      id={message.id}
+      className={cn(
+        'flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300',
+        isUser ? 'justify-end' : 'justify-start',
+      )}
+    >
       {/* 头像 */}
       <div className={cn(
         'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
-        isUser ? 'bg-primary text-primary-foreground' : 'bg-muted'
+        isUser ? 'bg-primary text-primary-foreground' : 'bg-muted',
+        evidenceHighlighted && 'ring-2 ring-primary/50 bg-primary/5'
       )}>
+        {evidenceHighlighted && (
+          <Badge variant="outline" className="mb-2 border-primary/30 bg-background text-xs text-primary">
+            匹配当前规则
+          </Badge>
+        )}
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
 

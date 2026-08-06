@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
 import {
   ArrowLeft,
   TrendingUp,
@@ -17,9 +18,112 @@ import {
   Newspaper,
   BarChart3,
   Building2,
+  Search,
+  X,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
 import type { CompanyRiskSummary, ComparisonsResponseData, RiskLevel } from '@/types/truthnet';
+import type { CompanyCandidate } from '@/lib/api-client';
+
+// 对比公司选择器（无 codes 默认入口，审计 P1-2）
+function CompanySelector({ onSelect }: { onSelect: (codes: string[]) => void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<CompanyCandidate[]>([]);
+  const [selected, setSelected] = useState<CompanyCandidate[]>([]);
+  const [searching, setSearching] = useState(false);
+  const MAX_COMPANIES = 5;
+
+  const doSearch = async () => {
+    if (!query.trim()) return;
+    setSearching(true);
+    try {
+      const res = await truthnetAPI.searchCompanies(query.trim());
+      setResults(res.data?.candidates || []);
+    } catch {
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const toggle = (c: CompanyCandidate) => {
+    setSelected(prev => {
+      if (prev.find(x => x.wind_code === c.wind_code)) {
+        return prev.filter(x => x.wind_code !== c.wind_code);
+      }
+      if (prev.length >= MAX_COMPANIES) return prev;
+      return [...prev, c];
+    });
+  };
+
+  return (
+    <div className="w-full text-left">
+      <div className="flex gap-2">
+        <Input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="输入公司名称或代码（如 金牌家居 / 600518）"
+          onKeyDown={e => e.key === 'Enter' && doSearch()}
+        />
+        <Button onClick={doSearch} disabled={searching || !query.trim()}>
+          <Search className="h-4 w-4 mr-1" />
+          {searching ? '搜索中…' : '搜索'}
+        </Button>
+      </div>
+      {results.length > 0 && (
+        <div className="mt-3 border rounded-lg divide-y max-h-64 overflow-auto">
+          {results.map(c => {
+            const isSelected = selected.some(x => x.wind_code === c.wind_code);
+            return (
+              <button
+                key={c.wind_code}
+                onClick={() => toggle(c)}
+                className="w-full flex items-center justify-between px-3 py-2 hover:bg-accent text-left"
+              >
+                <div>
+                  <div className="text-sm font-medium">{c.sec_name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {c.wind_code} · {c.exchange || '-'}
+                  </div>
+                </div>
+                <Badge variant={isSelected ? 'default' : 'outline'}>
+                  {isSelected ? '已选' : '选择'}
+                </Badge>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-muted-foreground mb-1">
+            已选 {selected.length}/{MAX_COMPANIES}：
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {selected.map(c => (
+              <Badge key={c.wind_code} variant="secondary" className="gap-1 pr-1">
+                {c.sec_name}
+                <button
+                  onClick={() => toggle(c)}
+                  className="ml-1 rounded-sm hover:bg-muted p-0.5"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+          <Button
+            className="mt-3 w-full"
+            disabled={selected.length < 2}
+            onClick={() => onSelect(selected.map(c => c.wind_code))}
+          >
+            {selected.length < 2 ? '至少选择 2 家公司' : `开始对比（${selected.length} 家）`}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // 风险等级配置
 const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
@@ -122,6 +226,8 @@ export default function ComparePage() {
   }
 
   if (error) {
+    // 无 codes 默认入口 → 内置选股器（审计 P1-2，替代原"请选择公司"错误页）
+    const showSelector = error === '请选择要对比的公司';
     return (
       <div className="h-full flex flex-col bg-background">
         <header className="border-b px-6 py-4 flex items-center gap-4">
@@ -130,14 +236,29 @@ export default function ComparePage() {
           </Button>
           <h1 className="text-lg font-medium">跨公司对比</h1>
         </header>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
-            <p className="text-muted-foreground">{error}</p>
-            <Button variant="outline" className="mt-4" onClick={() => navigate(-1)}>
-              返回
-            </Button>
-          </div>
+        <div className="flex-1 flex items-center justify-center p-6">
+          {showSelector ? (
+            <div className="w-full max-w-xl">
+              <div className="text-center mb-6">
+                <Building2 className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+                <h2 className="text-lg font-medium">选择要对比的公司</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  支持 2~5 家，搜索后勾选即可
+                </p>
+              </div>
+              <CompanySelector
+                onSelect={codes => navigate(`/compare?codes=${codes.join(',')}`)}
+              />
+            </div>
+          ) : (
+            <div className="text-center">
+              <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
+              <p className="text-muted-foreground">{error}</p>
+              <Button variant="outline" className="mt-4" onClick={() => navigate(-1)}>
+                返回
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );

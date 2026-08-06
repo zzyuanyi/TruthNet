@@ -6,7 +6,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
-      <main className="pt-16">
+      <main className="min-h-0">
         <PageTransition><Outlet /></PageTransition>
       </main>
     </div>

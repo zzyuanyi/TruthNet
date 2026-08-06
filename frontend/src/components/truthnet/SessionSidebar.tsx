@@ -12,6 +12,8 @@ import type { Session } from '@/types/truthnet';
 interface SessionSidebarProps {
   sessions: Session[];
   currentSessionId: string;
+  currentCompanyCode?: string | null;
+  isBusy?: boolean;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
@@ -20,6 +22,8 @@ interface SessionSidebarProps {
 export function SessionSidebar({
   sessions,
   currentSessionId,
+  currentCompanyCode,
+  isBusy = false,
   onSelectSession,
   onNewSession,
   onDeleteSession,
@@ -34,6 +38,7 @@ export function SessionSidebar({
           className="w-full justify-start gap-2"
           variant="outline"
           onClick={onNewSession}
+          disabled={isBusy}
         >
           <Plus className="h-4 w-4" />
           新建对话
@@ -45,7 +50,9 @@ export function SessionSidebar({
         <Button
           variant="ghost"
           className="w-full justify-start gap-2 h-9"
-          onClick={() => navigate('/company/600518.SH')}
+          onClick={() => currentCompanyCode && navigate(`/company/${encodeURIComponent(currentCompanyCode)}`)}
+          disabled={!currentCompanyCode || isBusy}
+          title={currentCompanyCode ? `查看 ${currentCompanyCode} 企业画像` : '当前会话尚未解析企业'}
         >
           <Building2 className="h-4 w-4" />
           企业画像
@@ -54,6 +61,7 @@ export function SessionSidebar({
           variant="ghost"
           className="w-full justify-start gap-2 h-9"
           onClick={() => navigate('/compare')}
+          disabled={isBusy}
         >
           <BarChart3 className="h-4 w-4" />
           跨公司对比
@@ -69,9 +77,15 @@ export function SessionSidebar({
               className={cn(
                 'group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
                 'hover:bg-accent',
+                isBusy && session.session_id !== currentSessionId && 'cursor-not-allowed opacity-60',
                 currentSessionId === session.session_id && 'bg-accent'
               )}
-              onClick={() => onSelectSession(session.session_id)}
+              onClick={() => {
+                if (!isBusy || session.session_id === currentSessionId) {
+                  onSelectSession(session.session_id);
+                }
+              }}
+              aria-disabled={isBusy && session.session_id !== currentSessionId}
             >
               {/* 会话信息 */}
               <div className="flex-1 min-w-0">
@@ -84,15 +98,18 @@ export function SessionSidebar({
               </div>
 
               {/* 会话轮数徽标 */}
-              <Badge variant="secondary" className="text-xs px-1.5 py-0">
-                {session.turn_count}
+              <Badge variant="secondary" className="shrink-0 text-xs px-1.5 py-0">
+                {isBusy && session.session_id === currentSessionId ? '分析中' : session.turn_count}
               </Badge>
 
               {/* 删除按钮 */}
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="h-7 w-7 shrink-0 opacity-60 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                aria-label={`删除会话：${session.title}`}
+                title="删除会话"
+                disabled={isBusy}
                 onClick={(e) => {
                   e.stopPropagation();
                   onDeleteSession(session.session_id);

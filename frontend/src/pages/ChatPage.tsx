@@ -8,7 +8,7 @@ import { SessionSidebar } from '@/components/truthnet/SessionSidebar';
 import { ChatInterface } from '@/components/truthnet/ChatInterface';
 import { AnalysisPanel } from '@/components/truthnet/AnalysisPanel';
 import { apiClient, wsClient } from '@/lib/api-client';
-import type { Session, Message, PanelData, PanelState, ChatDataV1 } from '@/types/truthnet';
+import type { Session, Message, PanelData, PanelState, ChatDataV1, RiskLevel } from '@/types/truthnet';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -16,6 +16,7 @@ export default function ChatPage() {
   // 状态管理
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const [currentCompanyCode, setCurrentCompanyCode] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [panelData, setPanelData] = useState<PanelData | null>(null);
   const [panelState, setPanelState] = useState<PanelState>('empty');
@@ -49,13 +50,54 @@ export default function ChatPage() {
     loadSessions();
   }, []);
 
-  // 加载会话消息
+  // 加载会话消息：切换会话时从后端拉取历史 turns（GET /sessions/{id}）
   useEffect(() => {
     if (!currentSessionId) return;
-    
-    // 会话消息通过 WebSocket 实时获取，这里不需要额外加载
+    let cancelled = false;
     setMessages([]);
-    setPanelState('done');
+    setPanelData(null);
+    setPanelState('thinking');
+    apiClient
+      .getSession(currentSessionId)
+      .then(res => {
+        if (cancelled) return;
+        const turns = res.data?.turns || [];
+        const latestCompanyCode = [...turns]
+          .reverse()
+          .find(turn => turn.company_code)?.company_code || null;
+        setCurrentCompanyCode(latestCompanyCode);
+        const msgs: Message[] = turns.flatMap(t => [
+          {
+            id: `q-${t.turn_id}`,
+            role: 'user',
+            content: t.question || '',
+            created_at: t.created_at || '',
+          },
+          {
+            id: `a-${t.turn_id}`,
+            role: 'assistant',
+            content: t.answer || '',
+            created_at: t.created_at || '',
+            // 历史会话证据链：后端 get_session 已带每轮 evidence_ids
+            evidence_ids: t.evidence_ids || [],
+          },
+        ]);
+        setMessages(msgs);
+        // 历史面板恢复：取最后一个带 panel_data 的 turn（对齐审计 P1-3）
+        const latestPanel = [...turns]
+          .reverse()
+          .find(turn => turn.panel_data)?.panel_data;
+        setPanelData(latestPanel || null);
+        setPanelState(latestPanel ? 'done' : msgs.length > 0 ? 'done' : 'empty');
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('Failed to load session messages:', err);
+        setPanelState('empty');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentSessionId]);
 
   // 创建新会话
@@ -75,6 +117,7 @@ export default function ChatPage() {
       setMessages([]);
       setPanelData(null);
       setPanelState('empty');
+      setCurrentCompanyCode(null);
     } catch (error) {
       console.error('Failed to create session:', error);
     }
@@ -82,7 +125,11 @@ export default function ChatPage() {
 
   // 切换会话
   const handleSelectSession = (sessionId: string) => {
+    if (isLoading && sessionId !== currentSessionId) return;
     setCurrentSessionId(sessionId);
+    // 切换会话时清空规则筛选（对齐审计 P1-3）
+    setActiveRuleId(null);
+    setFilteredEvidenceIds(null);
   };
 
   // 删除会话
@@ -96,6 +143,7 @@ export default function ChatPage() {
         setMessages([]);
         setPanelData(null);
         setPanelState('empty');
+        setCurrentCompanyCode(null);
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
@@ -184,6 +232,20 @@ export default function ChatPage() {
         setPanelState('streaming');
         break;
       }
+      case 'artifact.upsert': {
+        // P0-2: V12 artifact 驱动分析面板（risk_assessment → risk_level）
+        const artifact = payload as {
+          artifact_type?: string;
+          data?: { risk_level?: string };
+        };
+        if (artifact?.artifact_type === 'risk_assessment' && artifact.data?.risk_level) {
+          setPanelData(prev => ({
+            ...(prev || {}),
+            risk_level: artifact.data!.risk_level as RiskLevel,
+          }));
+        }
+        break;
+      }
       case 'turn.completed': {
         // turn.completed 带完整 answer（V12 权威值）：delta 流丢失时用最终 answer 覆盖
         const result = payload as {
@@ -191,7 +253,45 @@ export default function ChatPage() {
           follow_ups?: string[];
           evidence_ids?: string[];
           trace_id?: string;
+          risk_level?: string;
+          finance?: {
+            rule_statuses?: Record<string, string>;
+            triggered_rules?: Array<{
+              rule_id: string;
+              rule_name?: string;
+              evidence_ids?: string[];
+            }>;
+          };
         };
+        // P0-2: 结构化载荷 → 分析面板（审计：V12 事件未驱动 AnalysisPanel）
+        // 优先用后端透出的完整 triggered_rules（canonical evidence_ids）；
+        // 旧载荷回退 rule_statuses 拼装（无证据 ID，仅占位）
+        const triggeredRules =
+          result.finance?.triggered_rules && result.finance.triggered_rules.length > 0
+            ? result.finance.triggered_rules.map(r => ({
+                rule_id: r.rule_id,
+                rule_name: r.rule_name || r.rule_id,
+                evidence_ids: r.evidence_ids || [],
+              }))
+            : result.finance?.rule_statuses
+              ? Object.entries(result.finance.rule_statuses)
+                  .filter(([, status]) => status === 'triggered')
+                  .map(([ruleId]) => ({
+                    rule_id: ruleId,
+                    rule_name: ruleId,
+                    evidence_ids: [],
+                  }))
+              : undefined;
+        // 合并更新：不覆盖 artifact.upsert 已写入的字段
+        setPanelData(prev => ({
+          ...(prev || {}),
+          risk_level: (result.risk_level as RiskLevel | undefined) ?? prev?.risk_level,
+          triggered_rules:
+            triggeredRules && triggeredRules.length > 0
+              ? triggeredRules
+              : prev?.triggered_rules,
+          follow_ups: result.follow_ups ?? prev?.follow_ups,
+        }));
         setMessages(prev => {
           const updated = [...prev];
           // 只更新"最后一个 user 消息之后"的 assistant（避免误更新上一轮回答）
@@ -233,6 +333,13 @@ export default function ChatPage() {
         });
         setPanelState('done');
         setIsLoading(false);
+        // WS completed 载荷不含 company_code，完成后从会话详情同步画像入口。
+        void apiClient.getSession(currentSessionId).then(res => {
+          const latestCompanyCode = [...(res.data?.turns || [])]
+            .reverse()
+            .find(turn => turn.company_code)?.company_code || null;
+          setCurrentCompanyCode(latestCompanyCode);
+        }).catch(() => undefined);
         break;
       }
       case 'turn.failed':
@@ -286,10 +393,19 @@ export default function ChatPage() {
     handleSendMessage(suggestion);
   };
 
-  // Task 7: 面板联动 - 点击规则
+  // Task 7: 面板联动 - 点击规则（对齐审计 P1-3：筛选证据而非仅滚动）
   const handleRuleClick = useCallback((ruleId: string) => {
+    // 再次点击已激活规则 → 取消筛选
+    if (activeRuleId === ruleId) {
+      setActiveRuleId(null);
+      setFilteredEvidenceIds(null);
+      return;
+    }
     setActiveRuleId(ruleId);
-    const msgIndex = messages.findIndex(m => 
+    const rule = (panelData?.triggered_rules || []).find(r => r.rule_id === ruleId);
+    const ids = rule?.evidence_ids && rule.evidence_ids.length > 0 ? rule.evidence_ids : null;
+    setFilteredEvidenceIds(ids);
+    const msgIndex = messages.findIndex(m =>
       m.role === 'assistant' && m.evidence_ids && m.evidence_ids.length > 0
     );
     if (msgIndex >= 0) {
@@ -297,33 +413,54 @@ export default function ChatPage() {
       msgElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     setPanelCollapsed(false);
-  }, [messages]);
+  }, [activeRuleId, panelData, messages]);
+
+  useEffect(() => {
+    if (currentCompanyCode) {
+      sessionStorage.setItem('truthnet.currentCompanyCode', currentCompanyCode);
+    } else {
+      sessionStorage.removeItem('truthnet.currentCompanyCode');
+    }
+    window.dispatchEvent(new Event('truthnet:company-change'));
+  }, [currentCompanyCode]);
+
+  const activeRuleName = panelData?.triggered_rules?.find(
+    rule => rule.rule_id === activeRuleId,
+  )?.rule_name || null;
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+    <div className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden">
       {/* 左侧：会话侧边栏 */}
       <SessionSidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
+        currentCompanyCode={currentCompanyCode}
+        isBusy={isLoading}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
       />
 
       {/* 中间：对话区（h-full：父级 h-[calc(100vh-64px)] 为 definite，补齐百分比高度链，否则 ChatInterface h-full 失效导致聊天区无滚动） */}
-      <div className="flex-1 flex flex-col min-w-0 h-full">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col h-full">
         <ChatInterface
           messages={messages}
           onSendMessage={handleSendMessage}
           isLoading={isLoading}
+          highlightedEvidenceIds={filteredEvidenceIds}
+          activeRuleName={activeRuleName}
+          onClearEvidenceHighlight={() => {
+            setActiveRuleId(null);
+            setFilteredEvidenceIds(null);
+          }}
         />
       </div>
 
       {/* 右侧：分析面板 */}
       <div
         className={cn(
-          'transition-all duration-300 border-l border-border',
-          panelCollapsed ? 'w-0 overflow-hidden' : 'w-[clamp(360px,25vw,440px)]'
+          'relative shrink-0 border-l border-border transition-[width] duration-300',
+          panelCollapsed ? 'w-0' : 'w-[clamp(360px,25vw,440px)]',
         )}
       >
         {!panelCollapsed && (
@@ -331,21 +468,22 @@ export default function ChatPage() {
             state={panelState}
             data={panelData}
             company={undefined}
+            activeRuleId={activeRuleId}
             onFollowUp={handleFollowUp}
             onRuleClick={handleRuleClick}
           />
         )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute right-2 top-2 z-20 h-9 w-9 bg-background/90 shadow-sm"
+          aria-label={panelCollapsed ? '展开分析面板' : '收起分析面板'}
+          title={panelCollapsed ? '展开分析面板' : '收起分析面板'}
+          onClick={() => setPanelCollapsed(!panelCollapsed)}
+        >
+          {panelCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+        </Button>
       </div>
-
-      {/* 面板折叠/展开按钮 */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="absolute right-4 top-20 z-10"
-        onClick={() => setPanelCollapsed(!panelCollapsed)}
-      >
-        {panelCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-      </Button>
     </div>
   );
 }

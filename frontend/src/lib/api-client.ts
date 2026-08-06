@@ -35,6 +35,56 @@ interface SessionListData {
   total: number;
 }
 
+// 公司搜索候选（对齐后端 CompanyCandidateV1）
+export interface CompanyCandidate {
+  entity_id: string;
+  wind_code: string;
+  sec_name: string;
+  exchange?: string | null;
+  industry_l1?: string | null;
+  industry_l2?: string | null;
+  comp_type_code?: string | number | null;
+  company_type?: string | null;
+  listing_date?: string | null;
+}
+
+// 公司搜索响应（对齐后端 CompanySearchData: {query, total, candidates}）
+export interface CompanySearchData {
+  query: string;
+  total: number;
+  candidates: CompanyCandidate[];
+}
+
+export interface EvidenceLookupData {
+  evidence: Record<string, unknown>;
+  claims: Array<Record<string, unknown>>;
+  source: {
+    resolved?: boolean;
+    record?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+// 会话历史轮次（GET /sessions/{id} 的 turns 元素）
+export interface SessionTurnData {
+  turn_id: string;
+  turn_index: number;
+  question: string;
+  answer: string | null;
+  company_code?: string | null;
+  trace_id?: string | null;
+  module_status?: Record<string, unknown> | null;
+  panel_data?: PanelData | null; // 面板摘要（v7；历史旧数据为 null）
+  evidence_ids?: string[];
+  created_at?: string;
+}
+
+// 会话详情响应（V12 envelope: data.session + data.turns）
+interface SessionDetailData {
+  session: Session;
+  turns: SessionTurnData[];
+}
+
 // 创建会话响应（后端 POST /sessions 不返回 turn_count，Omit 掉保持真实契约）
 type SessionCreateData = Omit<Session, 'turn_count'>;
 
@@ -96,12 +146,12 @@ async function request<T>(
 // ---------------------------------------------------------------------------
 
 export const truthnetAPI = {
-  // 健康检查
-  health: () => request<{ status: string }>('GET', '/health'),
+  // 健康检查（后端实际路径为 /api/v1/healthz，审计 P2-1 修正原 /health 404）
+  health: () => request<{ status: string; version?: string; profile?: string }>('GET', '/healthz'),
 
-  // 公司搜索: GET /api/v1/companies?query=xxx
+  // 公司搜索: GET /api/v1/companies?query=xxx（data={query,total,candidates}，审计 P1-6）
   searchCompanies: (query: string) =>
-    request<Company[]>('GET', '/companies', { params: { query } }),
+    request<CompanySearchData>('GET', '/companies', { params: { query } }),
 
   // 公司详情: GET /api/v1/companies/{code}
   getCompanyProfile: (code: string) =>
@@ -134,13 +184,21 @@ export const truthnetAPI = {
     request<ComparisonsResponseData>('POST', '/comparisons', {
       body: JSON.stringify({
         company_codes: companyCodes,
-        period: period || '2023',
-        indicators: indicators || [],
+        ...(period ? { period } : {}),
+        ...(indicators && indicators.length > 0 ? { indicators } : {}),
       }),
     }),
 
+  // 证据详情: GET /api/v1/evidence/{evidence_id}
+  getEvidence: (evidenceId: string) =>
+    request<EvidenceLookupData>('GET', `/evidence/${encodeURIComponent(evidenceId)}`),
+
   // 会话列表: GET /api/v1/sessions（V12 envelope: data.sessions + total）
   getSessions: () => request<SessionListData>('GET', '/sessions'),
+
+  // 会话详情: GET /api/v1/sessions/{sessionId}（session + turns 历史）
+  getSession: (sessionId: string) =>
+    request<SessionDetailData>('GET', `/sessions/${encodeURIComponent(sessionId)}`),
 
   // 创建会话: POST /api/v1/sessions（后端创建接口不返回 turn_count，用 Omit 表达）
   createSession: (title: string = '新对话') =>
@@ -215,7 +273,8 @@ export const wsClient = {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             event_type: 'chat.query',
-            payload: { text: question },
+            // V12 契约: payload.session_id 是会话归属的唯一来源（审计 P0-1）
+            payload: { text: question, session_id: sessionId },
             type: 'chat.query',
             question,
           }));
@@ -232,6 +291,7 @@ export const wsClient = {
 
 export const apiClient = {
   getSessions: truthnetAPI.getSessions,
+  getSession: truthnetAPI.getSession,
   createSession: truthnetAPI.createSession,
   deleteSession: truthnetAPI.deleteSession,
   sendChatMessage: truthnetAPI.sendChatMessage,

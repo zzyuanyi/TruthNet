@@ -1,18 +1,33 @@
 // 织网鉴真 TruthNet - 应用头部
 
 import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { MessageSquare, Shield, TrendingUp } from 'lucide-react';
-
-const navItems = [
-  { href: '/', label: '智能问答', icon: MessageSquare },
-  { href: '/company/000002', label: '企业画像', icon: Shield },
-  { href: '/compare', label: '跨公司对比', icon: TrendingUp },
-];
 
 export function AppHeader() {
   const location = useLocation();
   const pathname = location.pathname;
+  const [companyCode, setCompanyCode] = useState<string | null>(() => (
+    sessionStorage.getItem('truthnet.currentCompanyCode')
+  ));
+
+  useEffect(() => {
+    const syncCompany = () => setCompanyCode(sessionStorage.getItem('truthnet.currentCompanyCode'));
+    window.addEventListener('truthnet:company-change', syncCompany);
+    return () => window.removeEventListener('truthnet:company-change', syncCompany);
+  }, []);
+
+  const navItems = [
+    { id: 'chat', href: '/', label: '智能问答', icon: MessageSquare },
+    {
+      id: 'company',
+      href: companyCode ? `/company/${encodeURIComponent(companyCode)}` : '/',
+      label: '企业画像',
+      icon: Shield,
+    },
+    { id: 'compare', href: '/compare', label: '跨公司对比', icon: TrendingUp },
+  ];
 
   return (
     <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border/60 bg-background/95 px-4 md:px-5 backdrop-blur-sm">
@@ -31,7 +46,7 @@ export function AppHeader() {
         <nav className="hidden md:flex items-center gap-1">
           {navItems.map(item => (
             <Link
-              key={item.href}
+              key={item.id}
               to={item.href}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors',

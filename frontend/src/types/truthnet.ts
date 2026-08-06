@@ -66,7 +66,7 @@ export interface Company {
   industry_l1?: string;
   industry_l2?: string;
   province?: string;
-  list_date?: string;
+  listing_date?: string; // 后端字段为 listing_date（审计修正，原误写 list_date）
 }
 
 // ============ 会话 ============
@@ -298,7 +298,7 @@ export interface RiskResponseData {
   mitigating_factors: MitigatingFactor[];
   strategy_version: string;
   rule_set_version: string;
-  evidence: ChatEvidenceV1[];
+  evidence: RiskEvidence[]; // /risk 返回 RiskEvidence（审计 P1-1 修正原 ChatEvidenceV1）
   warnings: string[];
 }
 
@@ -458,12 +458,46 @@ export interface ChatEvidenceV1 {
 export interface EvidenceCategory {
   category: string;       // 'finance' | 'equity' | 'event' | 'audit' | 'regulatory'
   label: string;          // 中文标签
-  items: ChatEvidenceV1[];
+  items: RiskEvidence[];  // 画像页证据链消费 RiskEvidence（审计 P1-1）
+}
+
+// Chat 响应结论声明（对齐后端 ClaimV1，对齐审计 P2-6）
+export interface ClaimV1 {
+  claim_id: string;
+  text: string;
+  claim_type: string;
+  severity: string;
+  confidence: number | null;
+  rule_id: string | null;
+  rule_version: string | null;
+  evidence_ids: string[];
+  verification_status: string;
+  limitations: string[];
+}
+
+// 模块状态（对齐后端 ModuleStatusV1 typed 对象，非字符串）
+export type ModuleStatusState =
+  | 'pending'
+  | 'running'
+  | 'success'
+  | 'partial'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled';
+
+export interface ModuleStatusV1 {
+  state: ModuleStatusState;
+  error_code: string | null;
+  recoverable: boolean;
+  duration_ms: number | null;
 }
 
 export interface ChatDataV1 {
   answer: string;
   evidence: ChatEvidenceV1[];
+  claims: ClaimV1[];
+  module_status: Record<string, ModuleStatusV1>;
+  risk_level: RiskLevel;
   graph: Record<string, unknown>;
   timeline: Array<Record<string, unknown>>;
   risk_score: Record<string, unknown>;

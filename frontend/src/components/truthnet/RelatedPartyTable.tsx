@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Building2, User, Network, ArrowRight, AlertTriangle } from 'lucide-react';
 import type { EquityNodeDTO, EquityEdgeDTO, EquityResponseData, EventsResponseData } from '@/types/truthnet';
 import { cn } from '@/lib/utils';
@@ -87,8 +86,8 @@ export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighl
       </CardHeader>
 
       <CardContent>
-        <ScrollArea className="h-[400px]">
-          <Table>
+        <div className="h-[400px] max-w-full overflow-auto">
+          <Table className="min-w-[900px]">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[80px]">关系</TableHead>
@@ -133,7 +132,7 @@ export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighl
               <span className="text-sm">暂无关联方数据</span>
             </div>
           )}
-        </ScrollArea>
+        </div>
 
         {/* 风险提示 */}
         {hasRiskIndicators(equityData) && (

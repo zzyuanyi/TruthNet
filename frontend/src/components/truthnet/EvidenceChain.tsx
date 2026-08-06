@@ -6,14 +6,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { FileText, ExternalLink, ChevronDown, Link2, AlertCircle } from 'lucide-react';
-import type { ChatEvidenceV1, EvidenceCategory } from '@/types/truthnet';
+import { FileText, ChevronDown, Link2, AlertCircle } from 'lucide-react';
+import type { RiskEvidence, EvidenceCategory } from '@/types/truthnet';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 
 interface EvidenceChainProps {
   categories: EvidenceCategory[];
-  onViewSource?: (evidence: ChatEvidenceV1) => void;
+  onViewSource?: (evidence: RiskEvidence) => void;
   onLinkToRule?: (evidenceId: string) => void;
   // Task 8: 过滤 prop
   filterEvidenceIds?: string[];
@@ -114,7 +114,7 @@ interface RiskEvidenceSectionProps {
   category: EvidenceCategory;
   isOpen: boolean;
   onToggle: () => void;
-  onViewSource?: (evidence: ChatEvidenceV1) => void;
+  onViewSource?: (evidence: RiskEvidence) => void;
   onLinkToRule?: (evidenceId: string) => void;
 }
 
@@ -165,26 +165,27 @@ function RiskEvidenceSection({
 
 // 证据单项卡片
 function RiskEvidenceCard({ item, onViewSource, onLinkToRule }: {
-  item: ChatEvidenceV1;
-  onViewSource?: (e: ChatEvidenceV1) => void;
+  item: RiskEvidence;
+  onViewSource?: (e: RiskEvidence) => void;
   onLinkToRule?: (id: string) => void;
 }) {
   return (
     <div className="group relative p-3 rounded-lg border border-border hover:border-primary/50 hover:shadow-sm transition-all">
-      {/* 字段名 + 数值（核心 2 列） */}
-      <div className="font-medium text-sm">{item.field}</div>
-      <div className="text-sm text-muted-foreground font-mono mt-0.5">{item.value} {item.unit || ''}</div>
+      {/* 证据摘要（RiskEvidence 正式 schema，审计 P1-1 适配） */}
+      <div className="font-medium text-sm">{item.summary || '风险证据'}</div>
 
-      {/* 来源 + 时间 + 版本号 */}
+      {/* 来源类型 + claim 关联 */}
       <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground flex-wrap">
         <span className="flex items-center gap-1">
           <Link2 className="h-3 w-3" />
-          {item.source_title || item.source_type}
+          {item.source_type || '未知来源'}
         </span>
-        <span>·</span>
-        <span>{item.period || '-'}</span>
-        <span>·</span>
-        <span className="text-muted-foreground/70">v{item.dataset_version}</span>
+        {item.claim_ids && item.claim_ids.length > 0 && (
+          <span>·</span>
+        )}
+        {item.claim_ids && item.claim_ids.length > 0 && (
+          <span>{item.claim_ids.length} 条声明关联</span>
+        )}
       </div>
 
       {/* evidence_id 标注 */}
@@ -194,13 +195,6 @@ function RiskEvidenceCard({ item, onViewSource, onLinkToRule }: {
 
       {/* 操作按钮 */}
       <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        {item.source_uri && (
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
-            onClick={() => window.open(item.source_uri!, '_blank')}>
-            <ExternalLink className="h-3 w-3" />
-            查看原文
-          </Button>
-        )}
         {onViewSource && (
           <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
             onClick={() => onViewSource(item)}>
