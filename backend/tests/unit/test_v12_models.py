@@ -77,6 +77,63 @@ class TestEvidenceModelUnity:
         assert StateClaim is Claim
 
 
+class TestModuleStatusV1:
+    """ModuleStatusV1.from_status 输入兼容与防御."""
+
+    def test_from_string(self):
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        assert ModuleStatusV1.from_status("success").state == "success"
+
+    def test_from_dict(self):
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        m = ModuleStatusV1.from_status(
+            {
+                "state": "failed",
+                "error_code": "X",
+                "recoverable": True,
+                "duration_ms": 12,
+            }
+        )
+        assert m.state == "failed"
+        assert m.error_code == "X"
+        assert m.recoverable is True
+        assert m.duration_ms == 12
+
+    def test_from_model_object(self):
+        from app.agents.state import ModuleStatus
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        m = ModuleStatusV1.from_status(
+            ModuleStatus(state="partial", error_code="E", duration_ms=99)
+        )
+        assert m.state == "partial"
+        assert m.duration_ms == 99
+
+    def test_none_and_unknown_fallback_pending(self):
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        assert ModuleStatusV1.from_status(None).state == "pending"
+        assert ModuleStatusV1.from_status(object()).state == "pending"
+        # 未知 state 值回退 pending，响应组装不再失败
+        assert ModuleStatusV1.from_status("weird-state").state == "pending"
+        assert ModuleStatusV1.from_status({"state": "weird-state"}).state == "pending"
+
+    def test_serialization_shape(self):
+        from app.api.v1.schemas.chat import ChatDataV1, ModuleStatusV1
+
+        data = ChatDataV1(
+            answer="x",
+            trace_id="t",
+            module_status={"finance": ModuleStatusV1.from_status("success")},
+        )
+        payload = data.model_dump()
+        assert payload["module_status"]["finance"]["state"] == "success"
+        assert payload["module_status"]["finance"]["error_code"] is None
+        assert "duration_ms" in payload["module_status"]["finance"]
+
+
 class TestChatEvidenceV1:
     """ChatEvidenceV1.from_evidence 映射细节."""
 

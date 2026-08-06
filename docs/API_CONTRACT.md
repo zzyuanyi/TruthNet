@@ -1,8 +1,12 @@
 # API 接口契约
 
-> ⚠️ **文档版本说明**：本文档描述当前运行中的 mock 端点格式（`{code, data, message}` 响应信封）。
-> 新开发请参考 [API_CONTRACT_V1.md](API_CONTRACT_V1.md)，该文档使用 V12 `{data, meta, warnings}` 信封格式。
-> 迁移完成后本文档将归档。
+> ⚠️ **文档版本说明**：本文档描述历史 mock 端点格式（`{code, data, message}` 响应信封），
+> 已归档（2026-08-06 对齐审计）。新开发请参考 [API_CONTRACT_V1.md](API_CONTRACT_V1.md)（V12 `{data, meta, warnings}` 信封）。
+>
+> **已失效端点（勿按此开发）**：
+> - `POST /api/v1/files/upload` — 后端无实现，无前端消费
+> - `GET /api/v1/companies/{company_id}/ownership` — 已迁移为 `GET /api/v1/companies/{code}/equity`
+> - `GET /api/v1/companies/{company_id}/timeline` — 已迁移为 `GET /api/v1/companies/{code}/events`
 
 > **接口先行原则**：后端必须先定 Pydantic schema → 更新本文档 → 提供 mock JSON → 再写实现。
 > 前端依据此文档和 mock JSON 独立并行开发。
@@ -124,6 +128,8 @@
 |------|------|------|
 | `answer` | string | Markdown 格式的主回答 |
 | `evidence` | list | 证据列表，每项标注来源 |
+| `claims` | list | 结论声明列表（ClaimV1：claim_id/text/claim_type/severity/confidence/rule_id/rule_version/evidence_ids/verification_status/limitations）※ 2026-08-04 追加（主契约见 API_CONTRACT_V1.md）|
+| `module_status` | object | 各模块状态（ModuleStatusV1：state/error_code/recoverable/duration_ms，typed 非字符串）※ 2026-08-04 追加，8/4 类型化 |
 | `graph` | object | 股权/关联关系图谱（nodes + edges） |
 | `timeline` | list | 相关事件时间线 |
 | `risk_score` | object | 风险评分对象（Prompt4 冻结） |

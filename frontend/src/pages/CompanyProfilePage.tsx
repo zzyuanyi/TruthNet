@@ -10,6 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   ArrowLeft,
   AlertTriangle,
   TrendingUp,
@@ -20,17 +27,17 @@ import {
   ChevronRight,
   Shield,
 } from 'lucide-react';
-import { truthnetAPI } from '@/lib/api-client';
+import { truthnetAPI, type EvidenceLookupData } from '@/lib/api-client';
 import { EquityGraph } from '@/components/truthnet/EquityGraph';
 import { RuleCard } from '@/components/truthnet/RuleCard';
 import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
 import { RelatedPartyTable } from '@/components/truthnet/RelatedPartyTable';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, ChatEvidenceV1, EvidenceCategory, Company } from '@/types/truthnet';
+import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
-function groupEvidenceBySource(evidences: ChatEvidenceV1[]): EvidenceCategory[] {
+function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
   const sourceToCategory: Record<string, string> = {
     finance: 'finance',
     equity: 'equity',
@@ -49,7 +56,7 @@ function groupEvidenceBySource(evidences: ChatEvidenceV1[]): EvidenceCategory[] 
     regulatory: '监管证据',
   };
 
-  const groups = new Map<string, ChatEvidenceV1[]>();
+  const groups = new Map<string, RiskEvidence[]>();
   for (const e of evidences) {
     const cat = sourceToCategory[e.source_type] || e.source_type;
     if (!groups.has(cat)) groups.set(cat, []);
@@ -92,10 +99,16 @@ export default function CompanyProfilePage() {
   const [equityData, setEquityData] = useState<EquityResponseData | null>(null);
   const [sentimentEvents, setSentimentEvents] = useState<TimelineEvent[]>([]);
   const [eventClusters, setEventClusters] = useState<EventCluster[]>([]);
-  const [evidences, setEvidences] = useState<ChatEvidenceV1[]>([]);
   const [riskData, setRiskData] = useState<RiskResponseData | null>(null);
   const [activeSection, setActiveSection] = useState('overview');
-  const [expandedRules, setExpandedRules] = useState<Set<string>>(new Set());
+  const [evidenceDialogOpen, setEvidenceDialogOpen] = useState(false);
+  const [evidenceDialogTitle, setEvidenceDialogTitle] = useState('证据详情');
+  const [evidenceDialogItems, setEvidenceDialogItems] = useState<Array<{
+    evidenceId: string;
+    data?: EvidenceLookupData;
+    error?: string;
+  }>>([]);
+  const [evidenceDialogLoading, setEvidenceDialogLoading] = useState(false);
 
   const sectionRefs = {
     overview: useRef<HTMLDivElement>(null),
@@ -128,8 +141,7 @@ export default function CompanyProfilePage() {
       setEquityData(equityRes.data);
       setSentimentEvents(eventsRes.data?.timeline || []);
       setEventClusters(eventsRes.data?.event_clusters || []);
-      setEvidences(riskRes.data?.evidence || []);
-      setRiskData(riskRes.data);
+       setRiskData(riskRes.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -143,13 +155,28 @@ export default function CompanyProfilePage() {
     ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const toggleRule = (ruleId: string) => {
-    setExpandedRules((prev) => {
-      const next = new Set(prev);
-      if (next.has(ruleId)) next.delete(ruleId);
-      else next.add(ruleId);
-      return next;
-    });
+  const openEvidenceDetails = async (evidenceIds: string[], title: string) => {
+    setEvidenceDialogTitle(title);
+    setEvidenceDialogItems(evidenceIds.map(evidenceId => ({ evidenceId })));
+    setEvidenceDialogLoading(true);
+    setEvidenceDialogOpen(true);
+    const results = await Promise.allSettled(
+      evidenceIds.map(evidenceId => truthnetAPI.getEvidence(evidenceId)),
+    );
+    setEvidenceDialogItems(results.map((result, index) => ({
+      evidenceId: evidenceIds[index],
+      ...(result.status === 'fulfilled'
+        ? { data: result.value.data }
+        : { error: result.reason instanceof Error ? result.reason.message : '证据加载失败' }),
+    })));
+    setEvidenceDialogLoading(false);
+  };
+
+  const handleViewRuleEvidence = (ruleId: string) => {
+    const rule = financialAnomalies.find(item => item.rule_id === ruleId);
+    if (rule) {
+      void openEvidenceDetails(rule.evidence_ids, `${rule.rule_name || rule.rule_id} · 证据详情`);
+    }
   };
 
   if (loading) {
@@ -183,7 +210,7 @@ export default function CompanyProfilePage() {
   const riskConfig = riskLevelConfig[(riskData?.risk_level || 'unknown') as RiskLevel];
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 bg-background">
       {/* 左侧锚点导航 */}
       <div className="w-40 border-r border-border bg-card">
         <div className="p-4">
@@ -261,8 +288,7 @@ export default function CompanyProfilePage() {
                     <RuleCard
                       key={anomaly.rule_id}
                       rule={anomaly}
-                      onViewEvidence={() => toggleRule(anomaly.rule_id)}
-                      onViewDetail={() => toggleRule(anomaly.rule_id)}
+                      onViewEvidence={handleViewRuleEvidence}
                     />
                   ))}
               </div>
@@ -287,11 +313,11 @@ export default function CompanyProfilePage() {
               <Card>
                 <CardContent className="p-4">
                   <RelatedPartyTable equityData={equityData} />
-                  <div className="mt-4 h-96">
+                  <div className="mt-4">
                     <EquityGraph
                       nodes={equityData.nodes}
                       edges={equityData.edges}
-                      companyName={profile?.sec_name || code}
+                      targetId={equityData.target?.entity_id || ''}
                     />
                   </div>
                 </CardContent>
@@ -340,7 +366,12 @@ export default function CompanyProfilePage() {
               证据引用
             </h2>
             {riskData && riskData.evidence.length > 0 ? (
-              <EvidenceChain categories={groupEvidenceBySource(riskData.evidence)} />
+              <EvidenceChain
+                categories={groupEvidenceBySource(riskData.evidence)}
+                onViewSource={evidence => {
+                  void openEvidenceDetails([evidence.evidence_id], `${evidence.evidence_id} · 来源详情`);
+                }}
+              />
             ) : (
               <Card>
                 <CardContent className="py-8 text-center text-muted-foreground">
@@ -351,6 +382,60 @@ export default function CompanyProfilePage() {
           </div>
         </div>
       </div>
+      <Dialog open={evidenceDialogOpen} onOpenChange={setEvidenceDialogOpen}>
+        <DialogContent className="max-h-[80vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{evidenceDialogTitle}</DialogTitle>
+            <DialogDescription>
+              证据 ID、报表记录和关联声明均来自后端 provenance 查询。
+            </DialogDescription>
+          </DialogHeader>
+          {evidenceDialogLoading ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">正在加载证据详情…</div>
+          ) : (
+            <div className="space-y-4">
+              {evidenceDialogItems.map(item => {
+                const evidence = item.data?.evidence || {};
+                const source = item.data?.source || {};
+                const record = source.record || {};
+                return (
+                  <div key={item.evidenceId} className="rounded-md border border-border p-4">
+                    <code className="text-xs text-muted-foreground">{item.evidenceId}</code>
+                    {item.error ? (
+                      <p className="mt-2 text-sm text-destructive">{item.error}</p>
+                    ) : (
+                      <>
+                        <dl className="mt-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+                          <div><dt className="text-xs text-muted-foreground">来源标题</dt><dd>{String(evidence.source_title || '-')}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">来源类型</dt><dd>{String(evidence.source_type || '-')}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">记录</dt><dd>{String(evidence.source_record_id || '-')}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">报表期间</dt><dd>{String(evidence.period || '-')}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">字段</dt><dd>{String(evidence.field_path || '-')}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">解析状态</dt><dd>{source.resolved ? '已解析' : '未解析'}</dd></div>
+                        </dl>
+                        {Object.keys(record).length > 0 && (
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-xs text-muted-foreground">查看来源记录</summary>
+                            <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{JSON.stringify(record, null, 2)}</pre>
+                          </details>
+                        )}
+                        {item.data?.claims?.length ? (
+                          <div className="mt-3 border-t border-border pt-3">
+                            <div className="text-xs text-muted-foreground">关联声明</div>
+                            {item.data.claims.map((claim, index) => (
+                              <p key={String(claim.claim_id || index)} className="mt-1 text-sm">{String(claim.text || claim.claim_id || '-')}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

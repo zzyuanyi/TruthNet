@@ -35,16 +35,30 @@ from pathlib import Path
 
 
 def run_cmd(cmd: list[str]) -> tuple[int, str, str]:
-    """运行命令并返回 (返回码, stdout, stderr)"""
+    """运行命令并返回 (返回码, stdout, stderr)。
+
+    Windows 下 shell=True + list 会因引号处理出错（CreateProcess 直接失败）。
+    改为：shutil.which 解析可执行文件（pnpm.CMD/node.exe/git.exe），
+    .CMD/.BAT 经 cmd.exe /c 执行，其余 shell=False + 参数列表。
+    """
+    import shutil
+
+    executable = shutil.which(cmd[0])
+    if executable is None:
+        return -1, "", "command not found"
     try:
+        if executable.lower().endswith((".cmd", ".bat")):
+            argv = ["cmd.exe", "/c", *cmd]
+        else:
+            argv = [executable, *cmd[1:]]
         result = subprocess.run(
-            cmd,
+            argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            shell=sys.platform == "win32",
+            shell=False,
         )
         stdout = result.stdout.strip() if result.stdout else ""
         stderr = result.stderr.strip() if result.stderr else ""
@@ -54,7 +68,6 @@ def run_cmd(cmd: list[str]) -> tuple[int, str, str]:
     except subprocess.TimeoutExpired:
         return -2, "", "timeout"
     except OSError:
-        # Windows: some commands (e.g. pnpm.CMD) fail with CreateProcess
         return -1, "", "command not found"
 
 
@@ -65,12 +78,22 @@ def check(label: str, passed: bool, detail: str = "") -> str:
     return f"  [WARN] {label} — {detail}"
 
 
+def warn(label: str, detail: str = "") -> str:
+    """格式化警告结果（区别于 PASS——曾出现 check(True)+warnings+=1 导致
+    明细显示 [PASS]、汇总计作 WARN 的不一致）"""
+    return f"  [WARN] {label} — {detail}"
+
+
 def fail(label: str, detail: str = "") -> str:
     """格式化失败结果"""
     return f"  [FAIL] {label} — {detail}"
 
 
 def main():
+    import time
+
+    start_time = time.monotonic()
+
     parser = argparse.ArgumentParser(description="TruthNet 环境检测")
     parser.add_argument("--ci", action="store_true", help="CI 模式：放宽部分检查")
     args = parser.parse_args()
@@ -126,7 +149,7 @@ def main():
     elif stdout_ok:
         r = check("stdout UTF-8 正常", True)
     else:
-        r = fail("stdout 不支持 UTF-8 输出", "Windows 可能需要 chcp 65001")
+        r = warn("stdout 不支持 UTF-8 输出", "Windows 可能需要 chcp 65001")
         warnings += 1
     results.append(r)
 
@@ -173,9 +196,8 @@ def main():
     cwd_str = str(Path.cwd())
     has_non_ascii = any(ord(c) > 127 for c in cwd_str)
     if has_non_ascii:
-        r = check(
+        r = warn(
             "工作路径包含非 ASCII 字符",
-            True,
             "部分工具可能不兼容，建议使用纯 ASCII 路径",
         )
         warnings += 1
@@ -279,15 +301,18 @@ def main():
     print("\n--- 编码与路径审计 ---")
     audit_script = repo_root / "scripts" / "encoding_path_audit.py"
     if audit_script.exists():
-        code, out, err = run_cmd([sys.executable, str(audit_script), "--ci"])
+        # 始终以严格模式运行（不带 --ci）：审计脚本 --ci 下 FAIL 仍返回 0，
+        # doctor 会误显示通过；是否阻断由 doctor 按 ci_mode 决定
+        code, out, err = run_cmd([sys.executable, str(audit_script)])
         if code == 0:
-            r = check("encoding_path_audit.py --ci 通过", True)
+            r = check("encoding_path_audit.py 通过", True)
+        elif ci_mode:
+            # CI 模式：审计问题不阻断，明细 [WARN] 与计数一致
+            r = warn("encoding_path_audit.py 有告警/超时", err or out[-200:])
+            warnings += 1
         else:
             r = fail("encoding_path_audit.py 发现 FAIL 项", err or out[-200:])
-            if ci_mode:
-                warnings += 1
-            else:
-                failures += 1
+            failures += 1
         results.append(r)
     else:
         r = fail("encoding_path_audit.py 缺失", "该脚本应在 Prompt3 中创建")
@@ -425,6 +450,9 @@ def main():
     gh_available = bool(shutil.which("gh"))
     if gh_available:
         r = check("GitHub CLI (gh) 已安装", True)
+    elif ci_mode:
+        # CI 的 doctor 步骤在 setup-node 之前，工具未必就绪——如实标注跳过
+        r = check("GitHub CLI (gh)（CI 模式跳过检查）", True)
     else:
         r = check(
             "GitHub CLI (gh) 未安装",
@@ -576,10 +604,11 @@ def main():
         if frontend_initialized and not ci_mode:
             r = fail("Node.js 未安装", "前端已初始化，需要 Node.js")
             failures += 1
+        elif ci_mode:
+            r = check("Node.js（CI 模式跳过检查）", True)
         else:
             r = check("Node.js 未安装", False, "前端开发需要，后端不受影响")
-            if not ci_mode:
-                warnings += 1
+            warnings += 1
     results.append(r)
 
     code, out, _ = run_cmd(["pnpm", "--version"])
@@ -589,11 +618,19 @@ def main():
         if frontend_initialized and not ci_mode:
             r = fail("pnpm 未安装", "前端已初始化，需要 pnpm")
             failures += 1
+        elif ci_mode:
+            r = check("pnpm（CI 模式跳过检查）", True)
         else:
             r = check("pnpm 未安装", False, "前端开发需要，后端不受影响")
-            if not ci_mode:
-                warnings += 1
+            warnings += 1
     results.append(r)
+
+    # ===== 明细（汇总前逐项打印，避免明细与计数不一致） =====
+    print("\n" + "=" * 60)
+    print("  检查明细")
+    print("=" * 60)
+    for r in results:
+        print(r)
 
     # ===== 汇总 =====
     print("\n" + "=" * 60)
@@ -603,6 +640,8 @@ def main():
     total = len(results)
     passes = total - warnings - failures
 
+    elapsed = time.monotonic() - start_time
+    print(f"  ⏱️  总耗时: {elapsed:.1f}s")
     print(f"  ✅ PASS:  {passes}/{total}")
     if warnings > 0:
         print(f"  ⚠️  WARN:  {warnings}/{total}")

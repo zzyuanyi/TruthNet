@@ -5,7 +5,14 @@ import type { EquityNodeDTO, EquityEdgeDTO } from '@/types/truthnet';
 interface EquityGraphProps {
   nodes: EquityNodeDTO[];
   edges: EquityEdgeDTO[];
-  companyName: string;
+  targetId: string;
+}
+
+// 后端 entity_type 值域 → 图节点类型（ListedCompany/Company → company、Person → person、其他 → fund）
+function mapEntityType(entityType: string): string {
+  if (entityType === 'Person') return 'person';
+  if (entityType === 'ListedCompany' || entityType === 'Company') return 'company';
+  return 'fund';
 }
 
 const NODE_COLORS: Record<string, string> = {
@@ -22,7 +29,7 @@ const NODE_RADIUS: Record<string, number> = {
   fund: 18,
 };
 
-export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
+export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
@@ -77,14 +84,14 @@ export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
     // Transform nodes to include type classification
     const simNodes = nodes.map(n => ({
       ...n,
-      nodeType: (n.name === companyName) ? 'target' : n.node_type,
+      nodeType: (n.id === targetId || n.entity_id === targetId) ? 'target' : mapEntityType(n.entity_type || ''),
     }));
 
-    // Transform edges to links
+    // Transform edges to links（V12 契约：source/target 为节点 ID）
     const simLinks = edges.map(e => ({
       ...e,
-      source: e.source_id,
-      target: e.target_id,
+      source: e.source,
+      target: e.target,
     }));
 
     // Create force simulation
@@ -116,14 +123,14 @@ export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
       .attr('fill', '#64748b')
       .attr('text-anchor', 'middle')
       .attr('dy', -5)
-      .text(d => d.relation);
+      .text(d => d.relation_type);
 
     linkLabel.append('text')
       .attr('font-size', '10px')
       .attr('fill', '#94a3b8')
       .attr('text-anchor', 'middle')
       .attr('dy', 10)
-      .text(d => (d as any).ownership != null ? `${(d as any).ownership.toFixed(1)}%` : '');
+      .text(d => (d as any).ownership_pct != null ? `${(d as any).ownership_pct.toFixed(1)}%` : '');
 
     // Draw nodes
     const node = g.append('g')
@@ -186,7 +193,7 @@ export function EquityGraph({ nodes, edges, companyName }: EquityGraphProps) {
         else if (d.nodeType === 'person') text += '\n类型: 自然人';
         else if (d.nodeType === 'fund') text += '\n类型: 机构投资者';
         else text += '\n类型: 公司';
-        if ((d as any).ownership) text += `\n持股比例: ${(d as any).ownership.toFixed(1)}%`;
+        if ((d as any).ownership_pct != null) text += `\n持股比例: ${(d as any).ownership_pct.toFixed(1)}%`;
         return text;
       });
 

@@ -66,7 +66,7 @@ export interface Company {
   industry_l1?: string;
   industry_l2?: string;
   province?: string;
-  list_date?: string;
+  listing_date?: string; // 后端字段为 listing_date（审计修正，原误写 list_date）
 }
 
 // ============ 会话 ============
@@ -74,9 +74,10 @@ export interface Company {
 export interface Session {
   session_id: string;      // 后端是 session_id，不是 id
   title: string;
+  status?: string;
   created_at: string;
   updated_at: string;
-  message_count: number;
+  turn_count: number;      // 后端是 turn_count（会话轮数），不是 message_count
 }
 
 // ============ 消息 ============
@@ -124,7 +125,8 @@ export interface FinanceRuleItem {
   severity: string;  // red / orange / yellow / green / unknown
   current: Record<string, { value: number; unit: string }>;
   history: Array<Record<string, unknown>>;  // 每期一条，字段名不固定
-  industry: Record<string, number>;  // {p50, p75, p90}
+  industry: Record<string, number>;  // 旧结构（deprecated）
+  industry_metrics?: IndustryPercentile[];  // typed 行业分位（V12 契约）
   quality: Record<string, unknown>;
   explanation: string;
   evidence_ids: string[];
@@ -296,7 +298,7 @@ export interface RiskResponseData {
   mitigating_factors: MitigatingFactor[];
   strategy_version: string;
   rule_set_version: string;
-  evidence: ChatEvidenceV1[];
+  evidence: RiskEvidence[]; // /risk 返回 RiskEvidence（审计 P1-1 修正原 ChatEvidenceV1）
   warnings: string[];
 }
 
@@ -337,21 +339,35 @@ export interface BenchmarksResponseData {
 // ============ 股权穿透 (对齐 EquityResponseData) ============
 
 export interface EquityNodeDTO {
+  id: string;
   entity_id: string;
-  wind_code: string | null;
   name: string;
-  node_type: 'company' | 'person' | 'fund';
-  match_confidence: number;
+  entity_type: string;
+  wind_code: string | null;
+  match_confidence: number | null;
+  risk_level: string | null;
   mock: boolean;
-  depth?: number;
+  source_system: string;
 }
 
 export interface EquityEdgeDTO {
-  source_id: string;
-  target_id: string;
-  ownership: number;
-  relation: string;
-  path_depth: number;
+  id: string;
+  source: string;
+  target: string;
+  relation_type: string;
+  ownership_pct: number | null;
+  control_pct: number | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  source_id: string | null; // provenance，不是图节点 ID
+  match_confidence: number | null;
+  relationship_id: string | null;
+  source_record_id: string | null;
+  report_period: string | null;
+  ann_dt: string | null;
+  is_latest: boolean;
+  mock: boolean;
+  source_system: string;
 }
 
 export interface EquityPathDTO {
@@ -442,12 +458,46 @@ export interface ChatEvidenceV1 {
 export interface EvidenceCategory {
   category: string;       // 'finance' | 'equity' | 'event' | 'audit' | 'regulatory'
   label: string;          // 中文标签
-  items: ChatEvidenceV1[];
+  items: RiskEvidence[];  // 画像页证据链消费 RiskEvidence（审计 P1-1）
+}
+
+// Chat 响应结论声明（对齐后端 ClaimV1，对齐审计 P2-6）
+export interface ClaimV1 {
+  claim_id: string;
+  text: string;
+  claim_type: string;
+  severity: string;
+  confidence: number | null;
+  rule_id: string | null;
+  rule_version: string | null;
+  evidence_ids: string[];
+  verification_status: string;
+  limitations: string[];
+}
+
+// 模块状态（对齐后端 ModuleStatusV1 typed 对象，非字符串）
+export type ModuleStatusState =
+  | 'pending'
+  | 'running'
+  | 'success'
+  | 'partial'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled';
+
+export interface ModuleStatusV1 {
+  state: ModuleStatusState;
+  error_code: string | null;
+  recoverable: boolean;
+  duration_ms: number | null;
 }
 
 export interface ChatDataV1 {
   answer: string;
   evidence: ChatEvidenceV1[];
+  claims: ClaimV1[];
+  module_status: Record<string, ModuleStatusV1>;
+  risk_level: RiskLevel;
   graph: Record<string, unknown>;
   timeline: Array<Record<string, unknown>>;
   risk_score: Record<string, unknown>;

@@ -11,7 +11,16 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.routers import sessions as sessions_router
 from app.core.config import settings
-from app.infrastructure.persistence.models import ConversationSession, ConversationTurn
+from app.infrastructure.persistence.models import (
+    Claim,
+    ClaimEvidenceLink,
+    ConversationSession,
+    ConversationTurn,
+    EventCluster,
+    EventClusterSource,
+    EvidenceRef,
+    RatingChange,
+)
 from app.main import app
 
 
@@ -39,8 +48,18 @@ def mysql_client(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    ConversationSession.__table__.create(engine)
-    ConversationTurn.__table__.create(engine)
+    # 建全量会话/证据表（DELETE 级联路径依赖：links → claims → evidence）
+    for tbl in (
+        ConversationSession,
+        ConversationTurn,
+        EvidenceRef,
+        Claim,
+        ClaimEvidenceLink,
+        EventCluster,
+        EventClusterSource,
+        RatingChange,
+    ):
+        tbl.__table__.create(engine)
 
     monkeypatch.setattr(settings, "SQL_BACKEND", "mysql")
     monkeypatch.setattr(sessions_router, "_get_engine", lambda: engine)
@@ -137,6 +156,61 @@ def test_get_session_not_found(mysql_client):
     assert body["title"] == "Session Not Found"
 
 
+def test_get_session_returns_panel_data(mysql_client):
+    """详情：turn 返回 panel_data（v7 历史面板恢复，对齐审计 P1-3）.
+
+    旧数据 panel_data=None 时同样 200（不伪造风险等级）。
+    """
+    engine = sessions_router._get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_panel', '面板', 'active', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, panel_data, created_at) "
+                "VALUES ('turn_panel_1', 'ses_panel', 1, '问题', "
+                ":pd, CURRENT_TIMESTAMP)"
+            ),
+            {
+                "pd": '{"risk_level": "red", "triggered_rules": '
+                '[{"rule_id": "R1", "rule_name": "应收-营收背离", '
+                '"evidence_ids": []}], "key_metrics": {}, "follow_ups": []}'
+            },
+        )
+
+    resp = mysql_client.get("/api/v1/sessions/ses_panel")
+    assert resp.status_code == 200
+    turns = resp.json()["data"]["turns"]
+    assert len(turns) == 1
+    panel = turns[0]["panel_data"]
+    assert isinstance(panel, dict), f"panel_data 应为对象，实际 {type(panel)}"
+    assert panel["risk_level"] == "red"
+    assert panel["triggered_rules"][0]["rule_name"] == "应收-营收背离"
+
+    # 旧数据（无 panel_data）→ None，不崩溃
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, created_at) "
+                "VALUES ('turn_panel_2', 'ses_panel', 2, '旧轮次', "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+    resp2 = mysql_client.get("/api/v1/sessions/ses_panel")
+    assert resp2.status_code == 200
+    turns2 = resp2.json()["data"]["turns"]
+    assert len(turns2) == 2
+    assert turns2[1]["panel_data"] is None
+
+
 def test_get_session_empty_turns(mysql_client):
     """会话存在但无轮次 → 200 空 turns。"""
     engine = sessions_router._get_engine()
@@ -169,3 +243,266 @@ def test_list_with_turn_count(mysql_client):
     by_id = {s["session_id"]: s for s in sessions}
     assert by_id["ses_old"]["turn_count"] == 2
     assert by_id["ses_new"]["turn_count"] == 0
+
+
+# ── 删除（级联 + 全局证据保护回归）─────────────────────────
+
+
+def _seed_delete_scenario(engine) -> None:
+    """预置删除场景：1 会话 1 turn + 4 类证据.
+
+    - ev_local:   仅 turn 关联（→ 删除）
+    - ev_claim:   被本会话 Claim 引用（Claim 随 turn 删除后无引用 → 删除）
+    - ev_rating:  被 rating_changes 引用（全局资产 → 保留，turn_id 置 NULL）
+    - ev_cluster: 被 event_cluster_sources 引用（全局资产 → 保留，turn_id 置 NULL）
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_del', '待删', 'active', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, created_at) "
+                "VALUES ('turn_del', 'ses_del', 1, '问题', CURRENT_TIMESTAMP)"
+            )
+        )
+        for eid in ("ev_local", "ev_claim", "ev_rating", "ev_cluster"):
+            conn.execute(
+                text(
+                    "INSERT INTO evidence_refs "
+                    "(evidence_id, source_type, source_record_id, turn_id, "
+                    " dataset_version, retrieved_at) "
+                    "VALUES (:e, 'financial_statement', :e, 'turn_del', "
+                    " 'mock-v12', CURRENT_TIMESTAMP)"
+                ),
+                {"e": eid},
+            )
+        conn.execute(
+            text(
+                "INSERT INTO claims "
+                "(claim_id, turn_id, text, severity, verification_status, "
+                " generated_at) "
+                "VALUES ('claim_1', 'turn_del', '断言', 'high', 'verified', "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO claim_evidence_links "
+                "(claim_id, evidence_id, relation_type, sequence_no, created_at) "
+                "VALUES ('claim_1', 'ev_claim', 'supports', 0, CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO rating_changes "
+                "(rating_change_id, wind_code, quarter, institution, "
+                " current_rating, direction, evidence_id, dataset_version) "
+                "VALUES ('rc_1', '600518', '2024Q1', 'test', '买入', 'up', "
+                " 'ev_rating', 'mock-v12')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO event_clusters "
+                "(event_cluster_id, entity_id, wind_code, topic, summary, "
+                " cluster_method, start_date, end_date, event_count, sentiment, "
+                " cluster_version, dataset_version, created_at) "
+                "VALUES ('ec_1', 'e1', '600518', '主题', '', 'v1', "
+                " '2024-01-01', '2024-01-02', 1, 'negative', 'v1', 'mock-v12', "
+                " CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO event_cluster_sources "
+                "(event_cluster_id, source_type, source_record_id, evidence_id, "
+                " sequence_no) "
+                "VALUES ('ec_1', 'announcement', 'src_1', 'ev_cluster', 0)"
+            )
+        )
+
+
+def test_delete_session_cascade_preserves_global_evidence(mysql_client):
+    """DELETE /sessions/{id}：级联删除，全局证据保留且 turn_id 置 NULL。
+
+    回归（P1 事故）：曾无条件按 turn 删除 evidence_refs，导致 rating_changes /
+    event_cluster_sources 引用的共享证据丢失。
+    """
+    engine = sessions_router._get_engine()
+    _seed_delete_scenario(engine)
+
+    resp = mysql_client.delete("/api/v1/sessions/ses_del")
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"deleted": True, "session_id": "ses_del"}
+
+    with engine.connect() as conn:
+        # 会话/turn/claims/links 全删
+        for table in (
+            "conversation_sessions",
+            "conversation_turns",
+            "claims",
+            "claim_evidence_links",
+        ):
+            n = conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
+            assert n == 0, f"{table} 应清空，实际 {n}"
+        # 本地证据删除；全局证据保留且 turn_id 置 NULL（无无效引用）
+        rows = conn.execute(
+            text("SELECT evidence_id, turn_id FROM evidence_refs ORDER BY evidence_id")
+        ).all()
+        assert [(r[0], r[1]) for r in rows] == [
+            ("ev_cluster", None),
+            ("ev_rating", None),
+        ]
+        invalid = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM evidence_refs e "
+                "LEFT JOIN conversation_turns t ON e.turn_id = t.turn_id "
+                "WHERE e.turn_id IS NOT NULL AND t.turn_id IS NULL"
+            )
+        ).scalar()
+        assert invalid == 0, "不应存在指向已删 turn 的证据引用"
+        # 全局引用表完好
+        assert conn.execute(text("SELECT COUNT(*) FROM rating_changes")).scalar() == 1
+        assert (
+            conn.execute(text("SELECT COUNT(*) FROM event_cluster_sources")).scalar()
+            == 1
+        )
+
+
+def test_delete_empty_session(mysql_client):
+    """零轮次会话也可删除（曾因 turn_rows 为空误判 404）。"""
+    engine = sessions_router._get_engine()
+    _seed_session(engine, sid="ses_empty", turns=0)
+
+    resp = mysql_client.delete("/api/v1/sessions/ses_empty")
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"deleted": True, "session_id": "ses_empty"}
+    with engine.connect() as conn:
+        assert (
+            conn.execute(text("SELECT COUNT(*) FROM conversation_sessions")).scalar()
+            == 0
+        )
+
+
+def test_delete_session_not_found(mysql_client):
+    """不存在的会话 → 404 SESSION_NOT_FOUND。"""
+    resp = mysql_client.delete("/api/v1/sessions/ses_missing")
+    assert resp.status_code == 404
+    assert resp.json()["error_code"] == "SESSION_NOT_FOUND"
+
+
+def _seed_cross_session_scenario(engine) -> None:
+    """跨会话共享证据场景（事故核心场景回归）。
+
+    ev_shared 的 turn_id 属于被删会话 A，但被保留会话 B 的 Claim 引用：
+    - 删除 A 前曾无条件删除 ev_shared → B 的 Claim 失去证据链接（P1 事故）
+    - 现在应保留 ev_shared、保留 B 的 link，并将 turn_id 置 NULL
+    """
+    with engine.begin() as conn:
+        # 会话 A（将被删除）
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_del', '待删', 'active', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, created_at) "
+                "VALUES ('turn_del', 'ses_del', 1, '问题', CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO evidence_refs "
+                "(evidence_id, source_type, source_record_id, turn_id, "
+                " dataset_version, retrieved_at) "
+                "VALUES ('ev_shared', 'financial_statement', 'src_shared', "
+                " 'turn_del', 'mock-v12', CURRENT_TIMESTAMP)"
+            )
+        )
+        # 会话 B（保留），其 Claim 引用 ev_shared
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_keep', '保留', 'active', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, created_at) "
+                "VALUES ('turn_keep', 'ses_keep', 1, '问题', CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO claims "
+                "(claim_id, turn_id, text, severity, verification_status, "
+                " generated_at) "
+                "VALUES ('claim_keep', 'turn_keep', '保留会话的断言', 'medium', "
+                " 'verified', CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO claim_evidence_links "
+                "(claim_id, evidence_id, relation_type, sequence_no, created_at) "
+                "VALUES ('claim_keep', 'ev_shared', 'supports', 0, CURRENT_TIMESTAMP)"
+            )
+        )
+
+
+def test_delete_session_preserves_cross_session_shared_evidence(mysql_client):
+    """跨会话共享证据：删 A 后保留 ev_shared + B 的 link，turn_id 置 NULL。
+
+    回归（P1 事故根因）：sessions.py 删除共享 evidence_refs 后，外键级联删除
+    其他 Claim 的 links——曾导致保留会话的证据链断裂。
+    """
+    engine = sessions_router._get_engine()
+    _seed_cross_session_scenario(engine)
+
+    resp = mysql_client.delete("/api/v1/sessions/ses_del")
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"deleted": True, "session_id": "ses_del"}
+
+    with engine.connect() as conn:
+        # 会话 A 已删，B 保留
+        sessions = (
+            conn.execute(text("SELECT session_id FROM conversation_sessions"))
+            .scalars()
+            .all()
+        )
+        assert sessions == ["ses_keep"]
+        # ev_shared 保留且 turn_id 置 NULL
+        rows = conn.execute(
+            text("SELECT evidence_id, turn_id FROM evidence_refs")
+        ).all()
+        assert rows == [("ev_shared", None)]
+        # B 的 link 与 Claim 完好（未被级联误删）
+        assert (
+            conn.execute(text("SELECT COUNT(*) FROM claim_evidence_links")).scalar()
+            == 1
+        )
+        assert conn.execute(text("SELECT COUNT(*) FROM claims")).scalar() == 1
+        # 无指向已删 turn 的无效引用
+        invalid = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM evidence_refs e "
+                "LEFT JOIN conversation_turns t ON e.turn_id = t.turn_id "
+                "WHERE e.turn_id IS NOT NULL AND t.turn_id IS NULL"
+            )
+        ).scalar()
+        assert invalid == 0

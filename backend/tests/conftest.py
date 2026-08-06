@@ -4,8 +4,63 @@ import logging
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, text
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ── WS/REST 测试会话兜底清理（对齐审计 P2-2）────────────────
+# 单个测试的 autouse fixture 在全量并发场景偶发失效，
+# session 级基线+兜底确保测试产生的会话不污染演示数据库。
+
+_session_baseline: set[str] | None = None
+
+
+def _session_ids() -> set[str]:
+    if settings.SQL_BACKEND != "mysql":
+        return set()
+    url = (
+        f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
+        f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+    )
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            return set(
+                conn.execute(
+                    text("SELECT session_id FROM conversation_sessions")
+                ).scalars()
+            )
+    finally:
+        engine.dispose()
+
+
+def pytest_sessionstart(session) -> None:
+    """记录测试开始前的会话基线（仅 mysql）。"""
+    global _session_baseline
+    _session_baseline = _session_ids()
+    logger.info("[ws-cleanup] sessionstart baseline=%s", len(_session_baseline))
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """测试结束后检查会话数量（对齐审计 P1-4：只告警，不删除）.
+
+    删除仅由各测试的 ws_session_tracker 按信封归属执行；
+    此处若发现测试产生未清理会话，只记录告警（可能来自并发智能体/
+    用户操作，不得代删）。
+    """
+    global _session_baseline
+    if _session_baseline is None:
+        return
+    after = _session_ids()
+    new_ids = after - _session_baseline
+    if new_ids:
+        logger.warning(
+            "[ws-cleanup] 测试后有 %s 个未清理会话（仅告警，不删除）：%s",
+            len(new_ids),
+            ", ".join(sorted(new_ids))[:200],
+        )
 
 
 def pytest_configure(config):

@@ -245,17 +245,27 @@ def finance_node(state: AgentState) -> dict:
     code = company.wind_code or company.entity_id
     as_of = _resolve_as_of(state)
 
+    # 模块耗时采集（duration_ms → module_status，供评测指标 6 与前端状态展示）
+    from time import perf_counter
+
+    _module_start = perf_counter()
+
     try:
         from app.domain.finance.rule_engine import evaluate_all_rules
 
         results = evaluate_all_rules(code, as_of)
     except Exception as e:  # noqa: BLE001 — 规则引擎异常降级，不伪造结果
+        # 必须 dict 包装（与 risk/equity/events 一致）：module_status reducer
+        # 是 {**a, **b}，裸 ModuleStatus 会让合并抛 TypeError 导致 graph 崩溃
         return {
-            "module_status": ModuleStatus(
-                state="failed",
-                error_code="RULE_ENGINE_ERROR",
-                recoverable=True,
-            ),
+            "module_status": {
+                "finance": ModuleStatus(
+                    state="failed",
+                    error_code="RULE_ENGINE_ERROR",
+                    recoverable=True,
+                    duration_ms=round((perf_counter() - _module_start) * 1000),
+                )
+            },
             "results": ModuleResults(
                 finance=FinanceResult(
                     rule_statuses={},
@@ -377,7 +387,11 @@ def finance_node(state: AgentState) -> dict:
     interpretation = _build_llm_interpretation(rule_details, rule_statuses)
 
     return {
-        "module_status": {"finance": ModuleStatus(state=status)},
+        "module_status": {
+            "finance": ModuleStatus(
+                state=status, duration_ms=round((perf_counter() - _module_start) * 1000)
+            )
+        },
         "results": ModuleResults(
             finance=FinanceResult(
                 rule_statuses=rule_statuses,

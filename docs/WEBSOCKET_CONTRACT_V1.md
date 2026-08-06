@@ -59,6 +59,7 @@
 | `warning.raised` | 数据不足/超时/降级 | 🔸 |
 | `turn.completed` | 最终结果 + 追问建议 | ✅ |
 | `turn.failed` | 本轮无法继续 | ✅ |
+| `turn.cancelled` | 客户端 `turn.cancel` 后的取消确认（后端已实现） | 🔸 |
 | `heartbeat` | 服务端心跳 | 🔸 |
 
 ---

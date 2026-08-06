@@ -262,6 +262,42 @@ def _persist_links(conn, claims: list[Claim], turn_id: str) -> None:
             conn.execute(sql, {"cid": cl.claim_id, "eid": eid, "seq": seq})
 
 
+def _build_panel_data(state: AgentState) -> dict | None:
+    """构建本轮面板摘要（历史会话分析面板恢复，对齐审计 P1-3）.
+
+    最小结构 {risk_level, triggered_rules, key_metrics, follow_ups}；
+    final_response 缺失时返回 None（不伪造风险等级）。
+    """
+    final_response = state.get("final_response")
+    if final_response is None:
+        return None
+    panel: dict = {
+        "risk_level": getattr(final_response, "risk_level", None),
+        "triggered_rules": [],
+        "key_metrics": {},
+        "follow_ups": getattr(final_response, "follow_ups", None) or [],
+    }
+    results = state.get("results")
+    finance = getattr(results, "finance", None) if results is not None else None
+    if finance is not None:
+        details = finance.rule_details or {}
+        for rid, status in (finance.rule_statuses or {}).items():
+            if status == "triggered":
+                detail = details.get(rid, {}) or {}
+                panel["triggered_rules"].append(
+                    {
+                        "rule_id": rid,
+                        "rule_name": detail.get("rule_name") or rid,
+                        # canonical 证据 ID：rule_details 由 finance.py 写入
+                        # ev_fin_<hash>（与 evidence_refs 一致）。勿用
+                        # FinanceRuleItem.evidence_ids（ev_bs_*/ev_is_* 不落库）
+                        # ——对齐审计 P1-2
+                        "evidence_ids": detail.get("evidence_ids") or [],
+                    }
+                )
+    return panel
+
+
 def persist_turn_node(state: AgentState) -> dict:
     """持久化当前轮次 + Claim/Evidence/关联关系（单事务）。"""
     session_id = _session_id(state)
@@ -286,6 +322,7 @@ def persist_turn_node(state: AgentState) -> dict:
     db_turn_id = turn_id or f"turn_{uuid.uuid4().hex[:12]}"
 
     module_status_json = _to_json(state.get("module_status", {}))
+    panel_data_json = _to_json(_build_panel_data(state))
     title = question[:30]
     provenance_ok = True
     provenance_error = ""
@@ -331,7 +368,8 @@ def persist_turn_node(state: AgentState) -> dict:
                     text(
                         "UPDATE conversation_turns "
                         "SET answer = :a, company_code = :cc, "
-                        "trace_id = :trace, module_status = :ms "
+                        "trace_id = :trace, module_status = :ms, "
+                        "panel_data = :pd "
                         "WHERE turn_id = :tid"
                     ),
                     {
@@ -339,6 +377,7 @@ def persist_turn_node(state: AgentState) -> dict:
                         "cc": company_code,
                         "trace": trace_id,
                         "ms": module_status_json,
+                        "pd": panel_data_json,
                         "tid": db_turn_id,
                     },
                 )
@@ -355,8 +394,9 @@ def persist_turn_node(state: AgentState) -> dict:
                     text(
                         "INSERT INTO conversation_turns "
                         "(turn_id, session_id, turn_index, question, answer, "
-                        " company_code, trace_id, module_status, created_at) "
-                        "VALUES (:turn_id, :sid, :index, :q, :a, :cc, :trace, :ms, CURRENT_TIMESTAMP)"
+                        " company_code, trace_id, module_status, panel_data, created_at) "
+                        "VALUES (:turn_id, :sid, :index, :q, :a, :cc, :trace, :ms, :pd, "
+                        "CURRENT_TIMESTAMP)"
                     ),
                     {
                         "turn_id": db_turn_id,
@@ -367,6 +407,7 @@ def persist_turn_node(state: AgentState) -> dict:
                         "cc": company_code,
                         "trace": trace_id,
                         "ms": module_status_json,
+                        "pd": panel_data_json,
                     },
                 )
 

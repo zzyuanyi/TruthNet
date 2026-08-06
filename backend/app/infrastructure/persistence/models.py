@@ -610,6 +610,11 @@ class ConversationTurn(Base):
     module_status: Mapped[dict | None] = mapped_column(
         JSON, nullable=True, comment="各模块执行状态"
     )
+    panel_data: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="面板摘要 {risk_level, triggered_rules, key_metrics, follow_ups}（v7）",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="创建时间"
     )

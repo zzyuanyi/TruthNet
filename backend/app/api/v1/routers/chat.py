@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.v1.schemas.chat import ChatDataV1, ChatEvidenceV1, ChatRequestV1
+from app.api.v1.schemas.chat import (
+    ChatDataV1,
+    ChatEvidenceV1,
+    ChatRequestV1,
+    ClaimV1,
+    ModuleStatusV1,
+)
 from app.api.v1.schemas.common import ApiMeta, V12Response
 
 logger = logging.getLogger(__name__)
@@ -106,6 +112,20 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
         answer = getattr(final_response, "answer", "")
         follow_ups = getattr(final_response, "follow_ups", []) or []
 
+    # claims — 从 Agent State 透出（结构化问答结论声明，API 公共投影）
+    claims_items = [ClaimV1.from_claim(c) for c in result.get("claims", [])]
+    # module_status — typed ModuleStatusV1（对象/dict/字符串/None 全兼容）
+    module_status_items = {
+        k: ModuleStatusV1.from_status(v) for k, v in module_status.items()
+    }
+    # risk_level — 优先 final_response（最终阶段确定的等级），
+    # 不从 risk_score.overall 换算（避免双口径偏差）；risk_output 仅作备用
+    risk_level = "unknown"
+    if final_response:
+        risk_level = getattr(final_response, "risk_level", None) or "unknown"
+    elif risk_output is not None:
+        risk_level = getattr(risk_output, "risk_level", None) or "unknown"
+
     return V12Response(
         data=ChatDataV1(
             answer=answer or "分析完成，未生成结构化答案。",
@@ -117,6 +137,9 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             missing_modules=missing_modules,
             trace_id=trace_id,
             follow_ups=follow_ups,
+            claims=claims_items,
+            module_status=module_status_items,
+            risk_level=risk_level,
         ),
         meta=ApiMeta(
             request_id=trace_id,
@@ -175,6 +198,7 @@ async def chat_v1(request: ChatRequestV1):
                 warnings=["内部错误"],
                 missing_modules=["Agent 执行失败"],
                 trace_id=trace_id,
+                risk_level="unknown",  # 显式返回（异常无等级结论）
             ),
             meta=ApiMeta(
                 request_id=trace_id,
@@ -217,7 +241,8 @@ async def websocket_chat_v1(ws: WebSocket):
     import asyncio
 
     await ws.accept()
-    session_id = str(uuid.uuid4())
+    # URL query 兼容（部分客户端在连接时携带）；payload.session_id 仍优先覆盖
+    session_id = ws.query_params.get("session_id") or str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
     trace_id = str(uuid.uuid4())
     sequence = 0
@@ -464,6 +489,26 @@ async def websocket_chat_v1(ws: WebSocket):
                                     warnings.append(w)
                         finance_payload = {
                             "rule_statuses": fin.rule_statuses,
+                            # 规则级 canonical 证据 ID（实时面板筛选，对齐审计 P1-2）
+                            "triggered_rules": [
+                                {
+                                    "rule_id": rid,
+                                    "rule_name": (
+                                        (fin.rule_details or {})
+                                        .get(rid, {})
+                                        .get("rule_name")
+                                        or rid
+                                    ),
+                                    "evidence_ids": (
+                                        (fin.rule_details or {})
+                                        .get(rid, {})
+                                        .get("evidence_ids")
+                                        or []
+                                    ),
+                                }
+                                for rid, status in (fin.rule_statuses or {}).items()
+                                if status == "triggered"
+                            ],
                             "warnings": list(fin.warnings),
                             "evidence_count": len(fin.evidence or []),
                         }
@@ -481,6 +526,13 @@ async def websocket_chat_v1(ws: WebSocket):
                                 "claims_count": len(result.get("claims", [])),
                                 "follow_ups": getattr(final_response, "follow_ups", []),
                                 "evidence_count": len(result.get("evidence", [])),
+                                # evidence_ids：前端证据链区域按 ID 关联展示（
+                                # 只发 count 时 139 条证据仍显示"无直接证据支撑"）
+                                "evidence_ids": [
+                                    getattr(ev, "evidence_id", None)
+                                    for ev in result.get("evidence", [])
+                                    if getattr(ev, "evidence_id", None)
+                                ],
                                 "warnings": warnings,
                                 "finance": finance_payload,
                             },

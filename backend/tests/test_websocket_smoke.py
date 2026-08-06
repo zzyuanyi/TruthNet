@@ -7,8 +7,28 @@
 import json
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.main import app
+from tests._ws_cleanup import ws_envelope_sids
+
+
+@pytest.fixture
+def ws_session_tracker():
+    """记录测试内 WS 信封产生的 session_id，teardown 只删这些（并发安全）."""
+    client = TestClient(app)
+    created: list[str] = []
+
+    def track(events: list[dict]) -> None:
+        for sid in ws_envelope_sids(events):
+            if sid not in created:
+                created.append(sid)
+
+    yield track
+    for sid in created:
+        resp = client.delete(f"/api/v1/sessions/{sid}")
+        if resp.status_code != 200:
+            print(f"⚠️ WS 测试会话清理失败: {sid} → {resp.status_code}")
 
 
 @pytest.mark.asyncio
@@ -68,7 +88,7 @@ async def test_websocket_error_on_missing_text():
 
 
 @pytest.mark.asyncio
-async def test_websocket_full_flow_with_v12_client():
+async def test_websocket_full_flow_with_v12_client(ws_session_tracker):
     """完整 V12 WebSocket 流程测试."""
     from fastapi.testclient import TestClient
 
@@ -126,3 +146,5 @@ async def test_websocket_full_flow_with_v12_client():
         assert "payload" in tc
         if tc["event_type"] == "turn.completed":
             assert "answer" in tc["payload"]
+
+        ws_session_tracker(messages_received)

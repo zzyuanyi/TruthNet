@@ -13,11 +13,17 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
-from app.core.errors import ErrorCode
+from app.api.v1.schemas.sessions import (
+    SessionCreateDataV1,
+    SessionDeleteDataV1,
+    SessionDetailDataV1,
+    SessionListDataV1,
+)
+from app.core.errors import ErrorCode, ProblemDetail
 from app.core.config import settings
 
 router = APIRouter(tags=["sessions"])
@@ -62,7 +68,11 @@ class SessionCreateRequest(BaseModel):
     title: str | None = Field(default=None, description="会话标题")
 
 
-@router.get("/sessions")
+@router.get(
+    "/sessions",
+    response_model=V12Response[SessionListDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 def list_sessions():
     """会话列表 — V12 §11.2 (P0)。"""
     trace_id = _trace()
@@ -134,7 +144,11 @@ def list_sessions():
     )
 
 
-@router.post("/sessions")
+@router.post(
+    "/sessions",
+    response_model=V12Response[SessionCreateDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 def create_session(request: SessionCreateRequest):
     """创建会话 — V12 §11.2 (P0)。"""
     trace_id = _trace()
@@ -199,7 +213,11 @@ def create_session(request: SessionCreateRequest):
     )
 
 
-@router.get("/sessions/{session_id}")
+@router.get(
+    "/sessions/{session_id}",
+    response_model=V12Response[SessionDetailDataV1],
+    responses={404: {"model": ProblemDetail}, 503: {"model": ProblemDetail}},
+)
 def get_session(session_id: str):
     """会话详情 + turns 历史 — V12 §11.2 (P0)。"""
     trace_id = _trace()
@@ -236,7 +254,8 @@ def get_session(session_id: str):
                         conn.execute(
                             text(
                                 "SELECT turn_id, turn_index, question, answer, "
-                                "       company_code, trace_id, module_status, created_at "
+                                "       company_code, trace_id, module_status, "
+                                "       panel_data, created_at "
                                 "FROM conversation_turns "
                                 "WHERE session_id = :sid "
                                 "ORDER BY turn_index ASC"
@@ -246,6 +265,35 @@ def get_session(session_id: str):
                         .mappings()
                         .all()
                     )
+                    # 每轮证据 ID 列表（前端证据链按 evidence_ids 展示，
+                    # 历史会话必须携带，否则一律显示"无直接证据支撑"）。
+                    # 证据来源 = turn 直接关联 ∪ 该轮 claims 的证据链接
+                    # （全局证据 turn_id 多为 NULL，经 claims→links 关联）
+                    ev_map: dict[str, list[str]] = {}
+                    if turn_rows:
+                        tids = tuple(t["turn_id"] for t in turn_rows)
+                        rows = conn.execute(
+                            text(
+                                "SELECT turn_id, evidence_id FROM evidence_refs "
+                                "WHERE turn_id IN :tids"
+                            ).bindparams(bindparam("tids", expanding=True)),
+                            {"tids": tids},
+                        ).all()
+                        for tr in rows:
+                            ev_map.setdefault(str(tr[0]), []).append(str(tr[1]))
+                        rows = conn.execute(
+                            text(
+                                "SELECT c.turn_id, l.evidence_id FROM claims c "
+                                "JOIN claim_evidence_links l "
+                                "  ON l.claim_id = c.claim_id "
+                                "WHERE c.turn_id IN :tids"
+                            ).bindparams(bindparam("tids", expanding=True)),
+                            {"tids": tids},
+                        ).all()
+                        for tr in rows:
+                            lst = ev_map.setdefault(str(tr[0]), [])
+                            if str(tr[1]) not in lst:
+                                lst.append(str(tr[1]))
                     turns = [
                         {
                             "turn_id": str(t["turn_id"]),
@@ -258,6 +306,11 @@ def get_session(session_id: str):
                             "module_status": json.loads(t["module_status"])
                             if t["module_status"]
                             else None,
+                            # 面板摘要（历史会话分析面板恢复，v7；旧数据为 None）
+                            "panel_data": json.loads(t["panel_data"])
+                            if t["panel_data"]
+                            else None,
+                            "evidence_ids": ev_map.get(str(t["turn_id"]), []),
                             "created_at": _iso(t["created_at"]),
                         }
                         for t in turn_rows
@@ -292,6 +345,142 @@ def get_session(session_id: str):
 
     return V12Response(
         data={"session": session, "turns": turns},
+        meta=ApiMeta(
+            request_id=trace_id,
+            trace_id=trace_id,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        ),
+        warnings=[],
+    )
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    response_model=V12Response[SessionDeleteDataV1],
+    responses={404: {"model": ProblemDetail}, 503: {"model": ProblemDetail}},
+)
+def delete_session(session_id: str):
+    """删除会话（级联清理：links → claims → evidence → turns → session）.
+
+    单独删除只清理该会话 turns 关联的证据（evidence_refs.turn_id）；
+    与 claims 无关的全局 evidence 不在删除范围（批量清理见
+    scripts/cleanup_sessions.py：白名单 + --dry-run）。
+    """
+    trace_id = _trace()
+
+    if settings.SQL_BACKEND != "mysql":
+        return V12Response(
+            data={"deleted": False, "session_id": session_id},
+            meta=ApiMeta(
+                request_id=trace_id,
+                trace_id=trace_id,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+            ),
+            warnings=[],
+        )
+
+    try:
+        with _get_engine().connect() as conn:
+            # 先确认会话存在（不能以 turn_rows 判断：零轮次会话也应可删除）
+            exists = conn.execute(
+                text("SELECT 1 FROM conversation_sessions " "WHERE session_id = :sid"),
+                {"sid": session_id},
+            ).scalar()
+            if not exists:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "type": "https://truthnet.dev/errors/session-not-found",
+                        "title": "Session Not Found",
+                        "status": 404,
+                        "detail": f"未找到会话: {session_id}",
+                        "error_code": "SESSION_NOT_FOUND",
+                        "trace_id": trace_id,
+                        "recoverable": True,
+                    },
+                )
+            turn_rows = (
+                conn.execute(
+                    text(
+                        "SELECT turn_id FROM conversation_turns "
+                        "WHERE session_id = :sid"
+                    ),
+                    {"sid": session_id},
+                )
+                .mappings()
+                .all()
+            )
+            # 级联删除（依赖顺序：links → claims → evidence → turns → session）
+            for t in turn_rows:
+                conn.execute(
+                    text(
+                        "DELETE FROM claim_evidence_links WHERE claim_id IN "
+                        "(SELECT claim_id FROM claims WHERE turn_id = :t)"
+                    ),
+                    {"t": t["turn_id"]},
+                )
+                conn.execute(
+                    text("DELETE FROM claims WHERE turn_id = :t"),
+                    {"t": t["turn_id"]},
+                )
+                # evidence_refs 是全局资产（曾无条件按 turn 删除导致共享证据
+                # 丢失——P1 教训）：
+                # 1) 仍被 Claim/评级/事件簇引用的证据：清空 turn_id，
+                #    避免对已删 turn 产生无效引用（IN 子查询写法，
+                #    MySQL/SQLite 通用，不用 MySQL 特有表别名）
+                conn.execute(
+                    text(
+                        "UPDATE evidence_refs SET turn_id = NULL "
+                        "WHERE turn_id = :t AND ("
+                        "  evidence_id IN (SELECT l.evidence_id "
+                        "                   FROM claim_evidence_links l) "
+                        "  OR evidence_id IN (SELECT r.evidence_id "
+                        "                      FROM rating_changes r) "
+                        "  OR evidence_id IN (SELECT s.evidence_id "
+                        "                      FROM event_cluster_sources s))"
+                    ),
+                    {"t": t["turn_id"]},
+                )
+                # 2) 不再被任何地方引用的会话本地证据：删除
+                conn.execute(
+                    text(
+                        "DELETE FROM evidence_refs WHERE turn_id = :t "
+                        "AND NOT EXISTS (SELECT 1 FROM claim_evidence_links l "
+                        "  WHERE l.evidence_id = evidence_refs.evidence_id) "
+                        "AND NOT EXISTS (SELECT 1 FROM rating_changes r "
+                        "  WHERE r.evidence_id = evidence_refs.evidence_id) "
+                        "AND NOT EXISTS (SELECT 1 FROM event_cluster_sources s "
+                        "  WHERE s.evidence_id = evidence_refs.evidence_id)"
+                    ),
+                    {"t": t["turn_id"]},
+                )
+            conn.execute(
+                text("DELETE FROM conversation_turns WHERE session_id = :sid"),
+                {"sid": session_id},
+            )
+            conn.execute(
+                text("DELETE FROM conversation_sessions WHERE session_id = :sid"),
+                {"sid": session_id},
+            )
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "type": "https://truthnet.dev/errors/db-unavailable",
+                "title": "Database Unavailable",
+                "status": 503,
+                "detail": "会话删除失败",
+                "error_code": ErrorCode.DATASTORE_UNAVAILABLE,
+                "trace_id": trace_id,
+                "recoverable": True,
+            },
+        )
+
+    return V12Response(
+        data={"deleted": True, "session_id": session_id},
         meta=ApiMeta(
             request_id=trace_id,
             trace_id=trace_id,

@@ -127,6 +127,54 @@ def test_persist_first_turn(monkeypatch, sqlite_engine):
         assert "finance" in turn["module_status"]
 
 
+def test_panel_data_has_rule_evidence_ids(monkeypatch, sqlite_engine):
+    """面板摘要：triggered 规则携带 canonical 证据 ID（对齐审计 P1-2）.
+
+    曾硬编码 evidence_ids=[]；后又误用 FinanceRuleItem.evidence_ids
+    （ev_bs_*/ev_is_* 不落 evidence_refs）。正确来源是
+    rule_details[rid]["evidence_ids"]（finance.py 写入的 ev_fin_* canonical ID）。
+    """
+    from app.agents.state import FinanceResult, ModuleResults
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    state = _make_state()
+    state["results"] = ModuleResults(
+        finance=FinanceResult(
+            rule_statuses={"R1": "triggered", "R2": "not_triggered"},
+            rule_details={
+                "R1": {
+                    "rule_name": "应收-营收背离",
+                    "evidence_ids": ["ev_fin_hash_r1_a", "ev_fin_hash_r1_b"],
+                }
+            },
+        )
+    )
+
+    pt.persist_turn_node(state)
+
+    with sqlite_engine.connect() as conn:
+        turn = (
+            conn.execute(text("SELECT panel_data FROM conversation_turns"))
+            .mappings()
+            .one()
+        )
+    import json
+
+    panel = (
+        json.loads(turn["panel_data"])
+        if isinstance(turn["panel_data"], str)
+        else turn["panel_data"]
+    )
+    assert panel["risk_level"] == "red"
+    rules = panel["triggered_rules"]
+    assert [r["rule_id"] for r in rules] == ["R1"], "仅 triggered 规则入面板"
+    assert rules[0]["rule_name"] == "应收-营收背离"
+    assert rules[0]["evidence_ids"] == [
+        "ev_fin_hash_r1_a",
+        "ev_fin_hash_r1_b",
+    ], "R1 应携带 rule_details 的 canonical 证据 ID（ev_fin_*）"
+
+
 def test_persist_with_company_code(monkeypatch, sqlite_engine):
     """company 存在时写入 wind_code。"""
     from app.agents.state import CompanyRef

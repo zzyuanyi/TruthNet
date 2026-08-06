@@ -27,6 +27,7 @@ interface AnalysisPanelProps {
   onViewDetails?: (type: 'rules' | 'equity' | 'sentiment' | 'evidence') => void;
   onRuleClick?: (ruleId: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
+  activeRuleId?: string | null; // 规则筛选高亮（对齐审计 P1-3）
 }
 
 // 风险等级配置
@@ -39,14 +40,15 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string; icon: t
   unknown: { label: '未知', color: 'bg-gray-500 text-white', icon: AlertTriangle },
 };
 
-export function AnalysisPanel({ 
-  state, 
-  data, 
-  company, 
+export function AnalysisPanel({
+  state,
+  data,
+  company,
   onFollowUp,
   onViewDetails,
   onRuleClick,
   onMetricClick,
+  activeRuleId,
 }: AnalysisPanelProps) {
   return (
     <div className="h-full flex flex-col bg-background">
@@ -68,12 +70,13 @@ export function AnalysisPanel({
           {state === 'streaming' && <StreamingState data={data} />}
           {state === 'ready' && <ReadyState data={data} />}
           {state === 'done' && data && (
-            <DoneState 
-              data={data} 
+            <DoneState
+              data={data}
               onFollowUp={onFollowUp}
               onViewDetails={onViewDetails}
               onRuleClick={onRuleClick}
               onMetricClick={onMetricClick}
+              activeRuleId={activeRuleId}
             />
           )}
           {state === 'done' && !data && <EmptyState />}
@@ -189,18 +192,20 @@ function ReadyState({ data }: { data: PanelData | null }) {
 }
 
 // 完成状态
-function DoneState({ 
-  data, 
+function DoneState({
+  data,
   onFollowUp,
   onViewDetails,
   onRuleClick,
   onMetricClick,
-}: { 
+  activeRuleId,
+}: {
   data: PanelData;
   onFollowUp?: (suggestion: string) => void;
   onViewDetails?: (type: 'rules' | 'equity' | 'sentiment' | 'evidence') => void;
   onRuleClick?: (rule: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
+  activeRuleId?: string | null;
 }) {
   return (
     <div className="space-y-4">
@@ -208,7 +213,14 @@ function DoneState({
       <Separator />
       <KeyMetrics data={data} onMetricClick={onMetricClick} />
       <Separator />
-      <TriggeredRules data={data} onRuleClick={onRuleClick} onViewDetails={onViewDetails} />
+      <TriggeredRules
+        data={data}
+        onRuleClick={onRuleClick}
+        onViewDetails={onViewDetails}
+        activeRuleId={activeRuleId}
+      />
+
+      {/* 追问建议 */}
       
       {/* 追问建议 */}
       {data.follow_ups && data.follow_ups.length > 0 && (
@@ -302,14 +314,16 @@ function KeyMetrics({ data, onMetricClick }: { data: PanelData; onMetricClick?: 
 }
 
 // 触发规则
-function TriggeredRules({ 
-  data, 
+function TriggeredRules({
+  data,
   onRuleClick,
   onViewDetails,
-}: { 
+  activeRuleId,
+}: {
   data: PanelData;
   onRuleClick?: (ruleId: string) => void;
   onViewDetails?: (type: 'rules') => void;
+  activeRuleId?: string | null;
 }) {
   const rules = data.triggered_rules || [];
   const displayRules = rules.slice(0, 3);
@@ -335,9 +349,12 @@ function TriggeredRules({
       </div>
       <div className="space-y-2">
         {displayRules.map((rule, index) => (
-          <Card 
-            key={index} 
-            className="cursor-pointer hover:bg-muted/50 transition-colors"
+          <Card
+            key={index}
+            className={cn(
+              'cursor-pointer hover:bg-muted/50 transition-colors',
+              activeRuleId === rule.rule_id && 'border-primary/60 bg-primary/5',
+            )}
             onClick={() => onRuleClick?.(rule.rule_id)}
           >
             <CardContent className="p-3">
@@ -345,9 +362,24 @@ function TriggeredRules({
                 {typeof rule === 'string' ? rule : rule.rule_name}
               </div>
               {typeof rule !== 'string' && rule.evidence_ids && rule.evidence_ids.length > 0 && (
-                <div className="text-xs text-muted-foreground mt-1">
-                  {rule.evidence_ids.length} 条证据
-                </div>
+                <>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {rule.evidence_ids.length} 条证据
+                  </div>
+                  {activeRuleId === rule.rule_id && (
+                    <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
+                      {rule.evidence_ids.map(evidenceId => (
+                        <code
+                          key={evidenceId}
+                          className="block truncate rounded bg-muted px-1.5 py-1 text-[10px] text-muted-foreground"
+                          title={evidenceId}
+                        >
+                          {evidenceId}
+                        </code>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
