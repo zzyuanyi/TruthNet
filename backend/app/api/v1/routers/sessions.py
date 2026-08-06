@@ -299,3 +299,135 @@ def get_session(session_id: str):
         ),
         warnings=[],
     )
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str):
+    """删除会话（级联清理：links → claims → evidence → turns → session）.
+
+    单独删除只清理该会话 turns 关联的证据（evidence_refs.turn_id）；
+    与 claims 无关的全局 evidence 不在删除范围（批量清理见
+    scripts/cleanup_sessions.py：白名单 + --dry-run）。
+    """
+    trace_id = _trace()
+
+    if settings.SQL_BACKEND != "mysql":
+        return V12Response(
+            data={"deleted": False, "session_id": session_id},
+            meta=ApiMeta(
+                request_id=trace_id,
+                trace_id=trace_id,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+            ),
+            warnings=[],
+        )
+
+    try:
+        with _get_engine().connect() as conn:
+            # 先确认会话存在（不能以 turn_rows 判断：零轮次会话也应可删除）
+            exists = conn.execute(
+                text("SELECT 1 FROM conversation_sessions " "WHERE session_id = :sid"),
+                {"sid": session_id},
+            ).scalar()
+            if not exists:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "type": "https://truthnet.dev/errors/session-not-found",
+                        "title": "Session Not Found",
+                        "status": 404,
+                        "detail": f"未找到会话: {session_id}",
+                        "error_code": "SESSION_NOT_FOUND",
+                        "trace_id": trace_id,
+                        "recoverable": True,
+                    },
+                )
+            turn_rows = (
+                conn.execute(
+                    text(
+                        "SELECT turn_id FROM conversation_turns "
+                        "WHERE session_id = :sid"
+                    ),
+                    {"sid": session_id},
+                )
+                .mappings()
+                .all()
+            )
+            # 级联删除（依赖顺序：links → claims → evidence → turns → session）
+            for t in turn_rows:
+                conn.execute(
+                    text(
+                        "DELETE FROM claim_evidence_links WHERE claim_id IN "
+                        "(SELECT claim_id FROM claims WHERE turn_id = :t)"
+                    ),
+                    {"t": t["turn_id"]},
+                )
+                conn.execute(
+                    text("DELETE FROM claims WHERE turn_id = :t"),
+                    {"t": t["turn_id"]},
+                )
+                # evidence_refs 是全局资产（曾无条件按 turn 删除导致共享证据
+                # 丢失——P1 教训）：
+                # 1) 仍被 Claim/评级/事件簇引用的证据：清空 turn_id，
+                #    避免对已删 turn 产生无效引用（IN 子查询写法，
+                #    MySQL/SQLite 通用，不用 MySQL 特有表别名）
+                conn.execute(
+                    text(
+                        "UPDATE evidence_refs SET turn_id = NULL "
+                        "WHERE turn_id = :t AND ("
+                        "  evidence_id IN (SELECT l.evidence_id "
+                        "                   FROM claim_evidence_links l) "
+                        "  OR evidence_id IN (SELECT r.evidence_id "
+                        "                      FROM rating_changes r) "
+                        "  OR evidence_id IN (SELECT s.evidence_id "
+                        "                      FROM event_cluster_sources s))"
+                    ),
+                    {"t": t["turn_id"]},
+                )
+                # 2) 不再被任何地方引用的会话本地证据：删除
+                conn.execute(
+                    text(
+                        "DELETE FROM evidence_refs WHERE turn_id = :t "
+                        "AND NOT EXISTS (SELECT 1 FROM claim_evidence_links l "
+                        "  WHERE l.evidence_id = evidence_refs.evidence_id) "
+                        "AND NOT EXISTS (SELECT 1 FROM rating_changes r "
+                        "  WHERE r.evidence_id = evidence_refs.evidence_id) "
+                        "AND NOT EXISTS (SELECT 1 FROM event_cluster_sources s "
+                        "  WHERE s.evidence_id = evidence_refs.evidence_id)"
+                    ),
+                    {"t": t["turn_id"]},
+                )
+            conn.execute(
+                text("DELETE FROM conversation_turns WHERE session_id = :sid"),
+                {"sid": session_id},
+            )
+            conn.execute(
+                text("DELETE FROM conversation_sessions WHERE session_id = :sid"),
+                {"sid": session_id},
+            )
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "type": "https://truthnet.dev/errors/db-unavailable",
+                "title": "Database Unavailable",
+                "status": 503,
+                "detail": "会话删除失败",
+                "error_code": ErrorCode.DATASTORE_UNAVAILABLE,
+                "trace_id": trace_id,
+                "recoverable": True,
+            },
+        )
+
+    return V12Response(
+        data={"deleted": True, "session_id": session_id},
+        meta=ApiMeta(
+            request_id=trace_id,
+            trace_id=trace_id,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        ),
+        warnings=[],
+    )
