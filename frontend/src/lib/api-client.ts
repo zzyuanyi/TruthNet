@@ -150,7 +150,10 @@ export const truthnetAPI = {
 
   // 删除会话: DELETE /api/v1/sessions/{sessionId}
   deleteSession: (sessionId: string) =>
-    request<{ ok: boolean }>('DELETE', `/sessions/${sessionId}`),
+    request<{ deleted: boolean; session_id: string }>(
+      'DELETE',
+      `/sessions/${sessionId}`,
+    ),
 
   // 发送消息: POST /api/v1/chat
   sendChatMessage: (question: string, sessionId?: string) =>

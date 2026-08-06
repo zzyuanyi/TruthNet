@@ -505,6 +505,13 @@ async def websocket_chat_v1(ws: WebSocket):
                                 "claims_count": len(result.get("claims", [])),
                                 "follow_ups": getattr(final_response, "follow_ups", []),
                                 "evidence_count": len(result.get("evidence", [])),
+                                # evidence_ids：前端证据链区域按 ID 关联展示（
+                                # 只发 count 时 139 条证据仍显示"无直接证据支撑"）
+                                "evidence_ids": [
+                                    getattr(ev, "evidence_id", None)
+                                    for ev in result.get("evidence", [])
+                                    if getattr(ev, "evidence_id", None)
+                                ],
                                 "warnings": warnings,
                                 "finance": finance_payload,
                             },

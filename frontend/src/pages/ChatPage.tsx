@@ -171,26 +171,63 @@ export default function ChatPage() {
         setPanelState('thinking');
         break;
       case 'answer.delta': {
-        const delta = payload as { content: string };
+        // 服务器 V12 契约 payload.text 优先；旧 content 仅作兼容回退
+        const delta = payload as { content?: string; text?: string };
+        const chunkText = delta.text ?? delta.content ?? '';
         setMessages(prev => {
           const lastMsg = prev[prev.length - 1];
           if (lastMsg && lastMsg.role === 'assistant') {
-            return [...prev.slice(0, -1), { ...lastMsg, content: lastMsg.content + delta.content }];
+            return [...prev.slice(0, -1), { ...lastMsg, content: lastMsg.content + chunkText }];
           }
-          return [...prev, { id: `msg-${Date.now()}`, role: 'assistant', content: delta.content, created_at: new Date().toISOString() }];
+          return [...prev, { id: `msg-${Date.now()}`, role: 'assistant', content: chunkText, created_at: new Date().toISOString() }];
         });
         setPanelState('streaming');
         break;
       }
       case 'turn.completed': {
-        const result = payload as { follow_ups?: string[]; evidence_ids?: string[]; trace_id?: string };
+        // turn.completed 带完整 answer（V12 权威值）：delta 流丢失时用最终 answer 覆盖
+        const result = payload as {
+          answer?: string;
+          follow_ups?: string[];
+          evidence_ids?: string[];
+          trace_id?: string;
+        };
         setMessages(prev => {
           const updated = [...prev];
+          // 只更新"最后一个 user 消息之后"的 assistant（避免误更新上一轮回答）
+          let lastUserIdx = -1;
           for (let i = updated.length - 1; i >= 0; i--) {
-            if (updated[i].role === 'assistant') {
-              updated[i] = { ...updated[i], evidence_ids: result?.evidence_ids || [], follow_ups: result?.follow_ups || [] };
+            if (updated[i].role === 'user') {
+              lastUserIdx = i;
               break;
             }
+          }
+          let targetIdx = -1;
+          for (let i = updated.length - 1; i > lastUserIdx; i--) {
+            if (updated[i].role === 'assistant') {
+              targetIdx = i;
+              break;
+            }
+          }
+          if (targetIdx >= 0) {
+            updated[targetIdx] = {
+              ...updated[targetIdx],
+              // 最终 answer 为权威值：delta 部分丢失时用其补全（非仅空兜底）
+              content: result?.answer || updated[targetIdx].content,
+              evidence_ids: result?.evidence_ids || [],
+              follow_ups: result?.follow_ups || [],
+              is_streaming: false,
+            };
+          } else if (result?.answer) {
+            // 无 assistant 消息 → 新建（异常兜底）
+            updated.push({
+              id: `msg-${Date.now()}`,
+              role: 'assistant',
+              content: result.answer,
+              evidence_ids: result?.evidence_ids || [],
+              follow_ups: result?.follow_ups || [],
+              created_at: new Date().toISOString(),
+            });
           }
           return updated;
         });

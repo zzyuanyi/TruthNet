@@ -63,8 +63,36 @@ def test_chat_query_v12_format():
     # turn.completed payload
     tc = next(e for e in events if e["event_type"] == "turn.completed")
     assert tc["sequence"] == len(events)
-    assert "answer" in tc["payload"]
-    assert "risk_level" in tc["payload"]
+
+
+def test_turn_completed_evidence_ids_consistent():
+    """turn.completed 的 evidence_ids 与 evidence_count 一致（前端证据链依赖）.
+
+    曾只发 evidence_count——139 条证据时前端仍显示"无直接证据支撑"。
+    """
+    client = TestClient(app)
+    with client.websocket_connect("/api/v1/chat/ws") as ws:
+        ws.send_json(
+            {"event_type": "chat.query", "payload": {"text": "康美药业有造假风险吗"}}
+        )
+        events = _collect(ws)
+
+    completed = [e for e in events if e["event_type"] == "turn.completed"]
+    assert completed, "应收到 turn.completed"
+    payload = completed[-1]["payload"]
+    assert "evidence_ids" in payload, "turn.completed 必须携带 evidence_ids"
+    assert len(payload["evidence_ids"]) == payload.get("evidence_count", 0), (
+        f"evidence_ids({len(payload['evidence_ids'])}) "
+        f"与 evidence_count({payload.get('evidence_count')}) 不一致"
+    )
+    # answer.delta 主路径：payload.text 非空
+    deltas = [e for e in events if e["event_type"] == "answer.delta"]
+    if deltas:
+        assert all(
+            e["payload"].get("text") for e in deltas
+        ), "answer.delta.payload.text 应为非空"
+    assert "answer" in payload
+    assert "risk_level" in payload
 
 
 def test_chat_query_legacy_format():
