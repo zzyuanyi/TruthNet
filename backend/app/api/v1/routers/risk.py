@@ -37,7 +37,10 @@ def _trace() -> str:
     return str(uuid.uuid4())
 
 
-@router.get("/companies/{code}/risk")
+@router.get(
+    "/companies/{code}/risk",
+    response_model=V12Response[RiskResponseData],
+)
 async def get_company_risk(
     code: str = Path(..., description="公司代码，如 600518.SH"),
     as_of: str | None = Query(default=None, description="数据截止日期 (YYYY-MM-DD)"),

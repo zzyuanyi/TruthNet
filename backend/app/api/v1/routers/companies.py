@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
+from app.api.v1.schemas.companies import CompanyProfileV1, CompanySearchData
 from app.core.errors import ErrorCode
 from app.application.services.company_resolver import CompanyResolver
 from app.core.config import settings
@@ -80,7 +81,10 @@ def _profile_body(record: CompanyRecord, source: str) -> dict:
     }
 
 
-@router.get("/companies")
+@router.get(
+    "/companies",
+    response_model=V12Response[CompanySearchData],
+)
 async def search_companies(
     query: str = Query(default="", description="公司名称或代码"),
     limit: int = Query(default=10, ge=1, le=50),
@@ -105,7 +109,10 @@ async def search_companies(
     )
 
 
-@router.get("/companies/{code}")
+@router.get(
+    "/companies/{code}",
+    response_model=V12Response[CompanyProfileV1],
+)
 async def company_profile(code: str):
     """企业画像摘要 — 真实 MySQL/SQLite 数据.
 

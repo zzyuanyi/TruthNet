@@ -20,6 +20,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
+from app.api.v1.schemas.provenance import (
+    ClaimLookupDataV1,
+    EvidenceLookupDataV1,
+    TraceProvenanceDataV1,
+)
+from app.core.errors import ProblemDetail
 from app.application.services.source_resolver import resolve_source
 from app.core.config import settings
 
@@ -168,7 +174,11 @@ def _jsonable(value):
     return value
 
 
-@router.get("/evidence/{evidence_id}")
+@router.get(
+    "/evidence/{evidence_id}",
+    response_model=V12Response[EvidenceLookupDataV1],
+    responses={404: {"model": ProblemDetail}, 422: {"model": ProblemDetail}},
+)
 async def get_evidence_lookup(
     evidence_id: str = FPath(..., description="Evidence ID"),
 ):
@@ -224,7 +234,11 @@ async def get_evidence_lookup(
     )
 
 
-@router.get("/claims/{claim_id}")
+@router.get(
+    "/claims/{claim_id}",
+    response_model=V12Response[ClaimLookupDataV1],
+    responses={404: {"model": ProblemDetail}, 422: {"model": ProblemDetail}},
+)
 async def get_claim_lookup(
     claim_id: str = FPath(..., description="Claim ID"),
 ):
@@ -261,7 +275,11 @@ async def get_claim_lookup(
     )
 
 
-@router.get("/traces/{trace_id}/provenance")
+@router.get(
+    "/traces/{trace_id}/provenance",
+    response_model=V12Response[TraceProvenanceDataV1],
+    responses={404: {"model": ProblemDetail}, 422: {"model": ProblemDetail}},
+)
 async def get_trace_provenance(
     trace_id: str = FPath(..., description="Trace ID"),
 ):

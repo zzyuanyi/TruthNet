@@ -67,7 +67,7 @@ async def _resolve_company(code: str):
     return await resolve_company(code)
 
 
-@router.post("/comparisons")
+@router.post("/comparisons", response_model=V12Response[ComparisonsResponseData])
 async def create_comparison(body: ComparisonRequest):
     """跨公司对比 — 对 2-5 家公司按指标对比，含风险摘要 + coverage + evidence。"""
     trace_id = _trace()

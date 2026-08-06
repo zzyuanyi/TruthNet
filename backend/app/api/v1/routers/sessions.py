@@ -13,11 +13,17 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
-from app.core.errors import ErrorCode
+from app.api.v1.schemas.sessions import (
+    SessionCreateDataV1,
+    SessionDeleteDataV1,
+    SessionDetailDataV1,
+    SessionListDataV1,
+)
+from app.core.errors import ErrorCode, ProblemDetail
 from app.core.config import settings
 
 router = APIRouter(tags=["sessions"])
@@ -62,7 +68,11 @@ class SessionCreateRequest(BaseModel):
     title: str | None = Field(default=None, description="会话标题")
 
 
-@router.get("/sessions")
+@router.get(
+    "/sessions",
+    response_model=V12Response[SessionListDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 def list_sessions():
     """会话列表 — V12 §11.2 (P0)。"""
     trace_id = _trace()
@@ -134,7 +144,11 @@ def list_sessions():
     )
 
 
-@router.post("/sessions")
+@router.post(
+    "/sessions",
+    response_model=V12Response[SessionCreateDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 def create_session(request: SessionCreateRequest):
     """创建会话 — V12 §11.2 (P0)。"""
     trace_id = _trace()
@@ -199,7 +213,11 @@ def create_session(request: SessionCreateRequest):
     )
 
 
-@router.get("/sessions/{session_id}")
+@router.get(
+    "/sessions/{session_id}",
+    response_model=V12Response[SessionDetailDataV1],
+    responses={404: {"model": ProblemDetail}, 503: {"model": ProblemDetail}},
+)
 def get_session(session_id: str):
     """会话详情 + turns 历史 — V12 §11.2 (P0)。"""
     trace_id = _trace()
@@ -236,7 +254,8 @@ def get_session(session_id: str):
                         conn.execute(
                             text(
                                 "SELECT turn_id, turn_index, question, answer, "
-                                "       company_code, trace_id, module_status, created_at "
+                                "       company_code, trace_id, module_status, "
+                                "       panel_data, created_at "
                                 "FROM conversation_turns "
                                 "WHERE session_id = :sid "
                                 "ORDER BY turn_index ASC"
@@ -246,6 +265,35 @@ def get_session(session_id: str):
                         .mappings()
                         .all()
                     )
+                    # 每轮证据 ID 列表（前端证据链按 evidence_ids 展示，
+                    # 历史会话必须携带，否则一律显示"无直接证据支撑"）。
+                    # 证据来源 = turn 直接关联 ∪ 该轮 claims 的证据链接
+                    # （全局证据 turn_id 多为 NULL，经 claims→links 关联）
+                    ev_map: dict[str, list[str]] = {}
+                    if turn_rows:
+                        tids = tuple(t["turn_id"] for t in turn_rows)
+                        rows = conn.execute(
+                            text(
+                                "SELECT turn_id, evidence_id FROM evidence_refs "
+                                "WHERE turn_id IN :tids"
+                            ).bindparams(bindparam("tids", expanding=True)),
+                            {"tids": tids},
+                        ).all()
+                        for tr in rows:
+                            ev_map.setdefault(str(tr[0]), []).append(str(tr[1]))
+                        rows = conn.execute(
+                            text(
+                                "SELECT c.turn_id, l.evidence_id FROM claims c "
+                                "JOIN claim_evidence_links l "
+                                "  ON l.claim_id = c.claim_id "
+                                "WHERE c.turn_id IN :tids"
+                            ).bindparams(bindparam("tids", expanding=True)),
+                            {"tids": tids},
+                        ).all()
+                        for tr in rows:
+                            lst = ev_map.setdefault(str(tr[0]), [])
+                            if str(tr[1]) not in lst:
+                                lst.append(str(tr[1]))
                     turns = [
                         {
                             "turn_id": str(t["turn_id"]),
@@ -258,6 +306,11 @@ def get_session(session_id: str):
                             "module_status": json.loads(t["module_status"])
                             if t["module_status"]
                             else None,
+                            # 面板摘要（历史会话分析面板恢复，v7；旧数据为 None）
+                            "panel_data": json.loads(t["panel_data"])
+                            if t["panel_data"]
+                            else None,
+                            "evidence_ids": ev_map.get(str(t["turn_id"]), []),
                             "created_at": _iso(t["created_at"]),
                         }
                         for t in turn_rows
@@ -301,7 +354,11 @@ def get_session(session_id: str):
     )
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete(
+    "/sessions/{session_id}",
+    response_model=V12Response[SessionDeleteDataV1],
+    responses={404: {"model": ProblemDetail}, 503: {"model": ProblemDetail}},
+)
 def delete_session(session_id: str):
     """删除会话（级联清理：links → claims → evidence → turns → session）.
 

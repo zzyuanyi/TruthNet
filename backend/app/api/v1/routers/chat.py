@@ -241,7 +241,8 @@ async def websocket_chat_v1(ws: WebSocket):
     import asyncio
 
     await ws.accept()
-    session_id = str(uuid.uuid4())
+    # URL query 兼容（部分客户端在连接时携带）；payload.session_id 仍优先覆盖
+    session_id = ws.query_params.get("session_id") or str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
     trace_id = str(uuid.uuid4())
     sequence = 0
@@ -488,6 +489,26 @@ async def websocket_chat_v1(ws: WebSocket):
                                     warnings.append(w)
                         finance_payload = {
                             "rule_statuses": fin.rule_statuses,
+                            # 规则级 canonical 证据 ID（实时面板筛选，对齐审计 P1-2）
+                            "triggered_rules": [
+                                {
+                                    "rule_id": rid,
+                                    "rule_name": (
+                                        (fin.rule_details or {})
+                                        .get(rid, {})
+                                        .get("rule_name")
+                                        or rid
+                                    ),
+                                    "evidence_ids": (
+                                        (fin.rule_details or {})
+                                        .get(rid, {})
+                                        .get("evidence_ids")
+                                        or []
+                                    ),
+                                }
+                                for rid, status in (fin.rule_statuses or {}).items()
+                                if status == "triggered"
+                            ],
                             "warnings": list(fin.warnings),
                             "evidence_count": len(fin.evidence or []),
                         }

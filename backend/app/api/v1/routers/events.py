@@ -200,7 +200,10 @@ def _build_keyword_summary(titles: list[str]) -> KeywordSummary:
     return KeywordSummary(top_keywords=top, negative_keywords=[])
 
 
-@router.get("/companies/{code}/events")
+@router.get(
+    "/companies/{code}/events",
+    response_model=V12Response[EventsResponseData],
+)
 async def get_company_events(
     code: str = Path(..., description="公司代码，如 600518.SH"),
     months: int = Query(default=36, ge=1, le=120, description="回溯月数"),

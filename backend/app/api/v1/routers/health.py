@@ -11,12 +11,18 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
+from app.api.v1.schemas.health import HealthDataV1, ReadyDataV1
 from app.core.config import settings
+from app.core.errors import ProblemDetail
 
 router = APIRouter(tags=["health"])
 
 
-@router.get("/healthz")
+@router.get(
+    "/healthz",
+    response_model=V12Response[HealthDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 async def healthz():
     """V12 健康检查 — 进程存活探针（不依赖外部服务）."""
     trace_id = str(uuid.uuid4())
@@ -135,7 +141,11 @@ def _check_llm() -> dict:
     return {"status": "unknown", "reason": f"unknown backend: {backend}"}
 
 
-@router.get("/readyz")
+@router.get(
+    "/readyz",
+    response_model=V12Response[ReadyDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 async def readyz():
     """V12 就绪检查 — 依赖服务探针.
 

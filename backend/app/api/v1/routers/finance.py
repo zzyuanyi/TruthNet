@@ -68,7 +68,10 @@ async def _resolve_company(code: str) -> tuple[str, str, str, str] | None:
     return (rec.entity_id, rec.wind_code, rec.sec_name, rec.industry_l1 or "")
 
 
-@router.get("/companies/{code}/finance")
+@router.get(
+    "/companies/{code}/finance",
+    response_model=V12Response[FinanceResponseData],
+)
 async def get_company_finance(
     code: str = Path(..., description="公司代码，如 600518.SH"),
     periods: int = Query(default=8, ge=4, le=20, description="历史期数"),

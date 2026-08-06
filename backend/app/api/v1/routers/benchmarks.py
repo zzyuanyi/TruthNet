@@ -36,7 +36,10 @@ async def _resolve_company(code: str) -> tuple[str, str, str] | None:
     return (rec.wind_code, rec.sec_name, rec.industry_l1 or "")
 
 
-@router.get("/companies/{code}/benchmarks")
+@router.get(
+    "/companies/{code}/benchmarks",
+    response_model=V12Response[BenchmarksResponseData],
+)
 async def get_company_benchmarks(
     code: str = Path(..., description="公司代码，如 600518.SH"),
     period: str = Query(default="2026Q2", description="对标期间"),
