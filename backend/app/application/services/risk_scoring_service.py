@@ -476,6 +476,10 @@ class RiskScoringService:
                         confidence=m.confidence,
                         reasoning=m.reasoning,
                         partial_coverage=m.partial_coverage,
+                        # Phase D #16 三要素
+                        phase=m.phase,
+                        alternative_explanation=m.alternative_explanation,
+                        regulatory_hint=m.regulatory_hint,
                     )
                 )
 

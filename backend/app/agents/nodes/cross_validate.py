@@ -14,11 +14,15 @@ evidence_ids/warning/details），写入 State.cross_validation，warnings 去�
 
 from __future__ import annotations
 
+import logging
+
 from app.agents.state import (
     AgentState,
     CrossValidationCheck,
     CrossValidationResult,
 )
+
+logger = logging.getLogger(__name__)
 
 # 事件模块中与股权变动相关的 fcode 类别
 _EQUITY_EVENT_CATEGORIES = {"权益变动", "增减持", "收购兼并", "资产重组", "股份增减持"}
@@ -263,6 +267,162 @@ def _dedup(items: list[str]) -> list[str]:
     return out
 
 
+# ── Phase D #2: 深度数值冲突检测 ─────────────────────────────
+
+
+def _run_numerical_conflicts(state: AgentState) -> list[dict]:
+    """运行冻结的 CV-NUM-01/02 深度数值冲突检测，返回可序列化结果。
+
+    数据读取失败不阻塞主流程（返回空列表 + warning）。
+    """
+    results: list[dict] = []
+    try:
+        from app.domain.conflicts.numerical import run_numerical_conflicts
+        from app.domain.finance._fetch import fetch_series
+
+        company = state.get("company")
+        if company is None:
+            return []
+
+        code = company.wind_code or company.entity_id
+        plan = state.get("plan")
+        as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else "20260331"
+
+        # CV-NUM-01 数据：母公司利润表净利润 + 现金流量表经营现金流
+        profit = fetch_series(
+            code, "net_profit_after_ded_nr_lp", periods=8, as_of=as_of
+        )
+        cashflow = fetch_series(code, "net_cash_flows_oper_act", periods=8, as_of=as_of)
+
+        # CV-NUM-02 数据：MySQL 股东表 vs Neo4j 边比例
+        shareholder_edges = _fetch_shareholder_edges(state, code)
+        event_context = _fetch_equity_events(state, code)
+
+        conflicts = run_numerical_conflicts(
+            company_code=code,
+            profit_values=profit.values,
+            profit_periods=[str(p) for p in (profit.periods or [])],
+            cashflow_values=cashflow.values,
+            cashflow_periods=[str(p) for p in (cashflow.periods or [])],
+            finance_evidence_ids=_finance_evidence_ids(state),
+            shareholder_edges=shareholder_edges,
+            equity_evidence_ids=_equity_evidence_ids(state),
+            event_context=event_context,
+        )
+        results = [c.to_dict() for c in conflicts]
+    except Exception:  # noqa: BLE001 — 深度冲突检测失败不阻塞主流程
+        logger.warning("cross_validate: 深度数值冲突检测失败，跳过", exc_info=True)
+    return results
+
+
+def _fetch_shareholder_edges(state: AgentState, company_code: str) -> list[dict]:
+    """MySQL top_shareholders + Neo4j 边比例 → 可比边列表。"""
+    edges: list[dict] = []
+    try:
+        from app.domain.finance._fetch import _get_engine
+        from sqlalchemy import text
+
+        engine = _get_engine()
+        # MySQL 最新同期间股东持股比例（按报告期去重取最新）
+        with engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT s_holder_name, s_holder_pct, report_period, source_record_id "
+                        "FROM top_shareholders WHERE wind_code = :c "
+                        "ORDER BY report_period DESC LIMIT 50"
+                    ),
+                    {"c": company_code},
+                )
+                .mappings()
+                .fetchall()
+            )
+
+        # Neo4j 目标公司边（含 ownership_pct 与 relationship_id）
+        neo_edges: list[dict] = []
+        try:
+            from app.core.config import settings
+
+            if settings.GRAPH_BACKEND == "neo4j":
+                from app.infrastructure.graph.neo4j.equity_graph import Neo4jEquityGraph
+
+                adapter = Neo4jEquityGraph()
+                if adapter._check_connection_sync():
+                    graph = adapter._get_graph_sync(company_code, depth=2)
+                    for e in graph.edges:
+                        pct = e.effective_ownership_pct()
+                        if pct is not None:
+                            neo_edges.append(
+                                {
+                                    "entity_id": e.target,
+                                    "owner_name": e.source,
+                                    "neo4j_pct": pct,
+                                    "report_period": e.report_period or "",
+                                    "relationship_id": e.relationship_id or "",
+                                }
+                            )
+        except Exception:  # noqa: BLE001 — 图数据缺失时只比对 MySQL 侧
+            logger.warning("cross_validate: Neo4j 边获取失败（CV-NUM-02 部分降级）")
+
+        # 按 owner_name 匹配（名称标准化后比对数值得出可比边）
+        for r in rows:
+            name = r["s_holder_name"] or ""
+            pct = r["s_holder_pct"]
+            if pct is None:
+                continue
+            matched = next(
+                (
+                    ne
+                    for ne in neo_edges
+                    if ne["owner_name"] == name or name in (ne["owner_name"] or "")
+                ),
+                None,
+            )
+            edges.append(
+                {
+                    "entity_id": r.get("holder_entity_id", ""),
+                    "owner_name": name,
+                    "mysql_pct": float(pct),
+                    "neo4j_pct": matched["neo4j_pct"] if matched else None,
+                    "report_period": str(r["report_period"] or ""),
+                    "relationship_id": matched["relationship_id"] if matched else None,
+                    "source_record_id": r["source_record_id"],
+                }
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "cross_validate: MySQL 股东表读取失败（CV-NUM-02 跳过）", exc_info=True
+        )
+    return edges
+
+
+def _fetch_equity_events(state: AgentState, company_code: str) -> list[dict]:
+    """事件模块产出中的股权变动事件（增减持/权益变动）作为时间差上下文。"""
+    results = state.get("results")
+    if results is None or results.events is None:
+        return []
+    events = results.events.timeline or []
+    return [
+        {"category": t.get("category", ""), "title": t.get("title", "")}
+        for t in events
+        if t.get("category") in _EQUITY_EVENT_CATEGORIES
+    ]
+
+
+def _finance_evidence_ids(state: AgentState) -> list[str]:
+    results = state.get("results")
+    if results is None or results.finance is None:
+        return []
+    return [ev.evidence_id for ev in (results.finance.evidence or []) if ev.evidence_id]
+
+
+def _equity_evidence_ids(state: AgentState) -> list[str]:
+    results = state.get("results")
+    if results is None or results.equity is None:
+        return []
+    return [ev.evidence_id for ev in (results.equity.evidence or []) if ev.evidence_id]
+
+
 def cross_validate_node(state: AgentState) -> dict:
     """执行结构化交叉验证，结果写入 State.cross_validation。"""
     plan = state.get("plan")
@@ -298,8 +458,21 @@ def cross_validate_node(state: AgentState) -> dict:
             if w not in runtime.warnings:
                 runtime.warnings.append(w)
 
+    # Phase D #2: 深度数值冲突检测（不阻塞主流程）
+    numerical_conflicts = _run_numerical_conflicts(state)
+    for c in numerical_conflicts:
+        if c.get("status") == "conflict" and c.get("explanation"):
+            warn = f"数值冲突 {c.get('conflict_type')}: {c.get('explanation')}"
+            if (
+                runtime is not None
+                and hasattr(runtime, "warnings")
+                and warn not in runtime.warnings
+            ):
+                runtime.warnings.append(warn)
+
     return {
         "cross_validation": result,
+        "numerical_conflicts": numerical_conflicts,
         "runtime": runtime or state.get("runtime"),
         "messages": [],
     }

@@ -134,6 +134,9 @@ async def get_company_risk(
                     triggered_rules=m.triggered_rules,
                     confidence=m.confidence,
                     reasoning=m.reasoning,
+                    phase=m.phase,
+                    alternative_explanation=m.alternative_explanation,
+                    regulatory_hint=m.regulatory_hint,
                 )
                 for m in out.pattern_matches
             ],

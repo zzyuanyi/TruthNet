@@ -81,6 +81,10 @@ class RiskPatternMatch(BaseModel):
     confidence: str = "low"
     reasoning: str = ""
     partial_coverage: bool = False
+    # Phase D #16 模式三要素（REST/Agent/WS 一致透出）
+    phase: str = ""
+    alternative_explanation: str = ""
+    regulatory_hint: str = ""
 
 
 class RiskOutput(BaseModel):

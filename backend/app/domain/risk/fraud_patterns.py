@@ -39,6 +39,10 @@ class PatternDefinition:
     evidence_requirements: list[str] = field(default_factory=list)
     limitations: str = ""
     partial_coverage_supported: bool = True
+    # Phase D #16 模式三要素（可审计基础定义，供 REST/WS 一致透出）
+    phase: str = ""  # 风险模式当前表现阶段（受控字符串）
+    alternative_explanation: str = ""  # 非舞弊解释
+    regulatory_hint: str = ""  # 监管核查提示（非法律定罪结论）
 
 
 @dataclass
@@ -52,6 +56,10 @@ class PatternMatch:
     reasoning: str
     partial_coverage: bool = False
     unavailable_rules: list[str] = field(default_factory=list)
+    # Phase D #16 三要素（匹配时透出；未定义时由调用方补充审慎默认值）
+    phase: str = ""
+    alternative_explanation: str = ""
+    regulatory_hint: str = ""
 
 
 def load_patterns() -> dict[str, PatternDefinition]:
@@ -94,6 +102,25 @@ def _unavailable_rules(results: dict[str, dict], all_rules: list[str]) -> list[s
     ]
 
 
+def _triad_fallback(pid: str, p: PatternDefinition) -> tuple[str, str, str]:
+    """Phase D #16：三要素审慎默认值（yaml 未定义时补充，不编造法规条款）。
+
+    返回 (phase, alternative_explanation, regulatory_hint)。
+    不得捏造条款编号；regulatory_hint 是监管核查提示，不是法律定罪结论。
+    """
+    phase = p.phase
+    alt = p.alternative_explanation
+    hint = p.regulatory_hint
+
+    if not phase:
+        phase = "signal_detected"  # 受控字符串：检测到信号
+    if not alt:
+        alt = "该信号可能存在非舞弊的业务解释，需结合业务周期、结算节奏、行业特性进一步核验"
+    if not hint:
+        hint = "建议结合公告、审计意见和监管文件进一步核验该信号，" "不构成法律定罪结论"
+    return phase, alt, hint
+
+
 def match_patterns(
     results: dict[str, dict],
     *,
@@ -112,6 +139,7 @@ def match_patterns(
     all_rules = [f"R{i}" for i in range(1, 8)]
 
     for pid, p in patterns.items():
+        phase, alt, hint = _triad_fallback(pid, p)
         # P5 综合粉饰型：按触发总数
         if pid == "P5":
             count = _count_triggered(results)
@@ -123,6 +151,9 @@ def match_patterns(
                         triggered_rules=list(triggered_set),
                         confidence="high",
                         reasoning=f"{count} 条规则同时触发，系统性粉饰嫌疑",
+                        phase=phase,
+                        alternative_explanation=alt,
+                        regulatory_hint=hint,
                     )
                 )
             elif count >= 3:
@@ -133,6 +164,9 @@ def match_patterns(
                         triggered_rules=list(triggered_set),
                         confidence="medium",
                         reasoning=f"{count} 条规则触发，多维度信号叠加",
+                        phase=phase,
+                        alternative_explanation=alt,
+                        regulatory_hint=hint,
                     )
                 )
             continue
@@ -169,6 +203,9 @@ def match_patterns(
             triggered_rules=matched_required + matched_optional,
             confidence=confidence,
             reasoning=reasoning,
+            phase=phase,
+            alternative_explanation=alt,
+            regulatory_hint=hint,
         )
 
         # partial coverage 标记
