@@ -1,0 +1,37 @@
+{
+  "phase": "Phase D #7 性能 smoke（本地）",
+  "sample_count": 5,
+  "note": "本地工程 smoke，不冒充数据组正式评测",
+  "targets": {
+    "search.p95_ms": 500,
+    "rest.agent_total_ms.p95_ms": 8000,
+    "ws.first_delta_ms.p95_ms": 3000
+  },
+  "results": [
+    {
+      "metric": "search.p95_ms",
+      "count": 5,
+      "p50_ms": 10.053,
+      "p95_ms": 22.466,
+      "target_ms": 500,
+      "reached": true
+    },
+    {
+      "metric": "rest.standard_full.p95_ms",
+      "count": 5,
+      "p50_ms": 877.017,
+      "p95_ms": 936.202,
+      "target_ms": 8000,
+      "reached": true
+    },
+    {
+      "metric": "ws.first_delta.p95_ms",
+      "count": 5,
+      "p50_ms": 716.591,
+      "p95_ms": 786.111,
+      "target_ms": 3000,
+      "reached": true
+    }
+  ],
+  "all_reached": true
+}

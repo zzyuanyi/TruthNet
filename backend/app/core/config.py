@@ -96,6 +96,33 @@ class Settings(BaseSettings):
     RULE_SET_VERSION: str = "finance-rules-1.0.0"
     GRAPH_VERSION: str = "equity-mock-v12"
 
+    # ===== WS 事件缓冲（Phase D #6 断线恢复）=====
+    WS_EVENT_BUFFER_MAX_EVENTS: int = 2000  # 每会话事件缓冲上限（内存受限）
+    WS_EVENT_BUFFER_TTL_SECONDS: int = 3600  # 事件 TTL（秒），过期被 expire 清除
+    WS_SESSION_IDLE_TTL_SECONDS: int = 7200  # 会话空闲回收 TTL（秒）
+    WS_CANCEL_ACK_TIMEOUT_SECONDS: float = 2.0  # turn.cancel 确认时限（验收 ≤2s）
+
+    # ===== 远期记忆提炼（Phase D #15）=====
+    MEMORY_RECENT_TURNS: int = 10  # 近期 N 轮全量加载；更早进入摘要
+    MEMORY_SUMMARY_MAX_CHARS: int = 2000  # 摘要最大字符数
+    MEMORY_SUMMARY_MAX_SOURCE_TURNS: int = 50  # 摘要最多引用来源轮次数
+    MEMORY_SUMMARY_VERSION: str = "memory-v1"  # 摘要结构版本
+    MEMORY_STRATEGY: str = (
+        "summary_plus_recent"  # none | recent_only | summary_plus_recent
+    )
+
+    # ===== PDF 报告（Phase D #8）=====
+    REPORT_ROOT_DIR: str = "data/reports"  # 报告文件根目录（相对项目根解析）
+    REPORT_MAX_CONCURRENCY: int = 2  # 并发报告生成数
+    REPORT_JOB_STALE_SECONDS: int = 1800  # running 超过该时长视为卡死（重启恢复）
+
+    # ===== 深度数值冲突检测（Phase D #2）=====
+    CV_NUM_01_CF_TO_PROFIT_THRESHOLD: float = 0.5  # 现金流/净利润比值阈值
+    CV_NUM_01_MIN_PERIODS: int = 3  # 至少需连续观察的有效期数
+    CV_NUM_02_OWNERSHIP_TOLERANCE: float = (
+        1.0  # MySQL 股东表与 Neo4j 边比例允许误差（pp）
+    )
+
     # ===== 日志 =====
     LOG_LEVEL: str = "INFO"
 

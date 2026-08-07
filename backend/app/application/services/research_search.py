@@ -11,6 +11,7 @@ asyncio.run，REST/WS 双路径安全，与 llm_sync 同模式）。
 import asyncio
 import concurrent.futures
 import logging
+import time
 
 from app.core.config import settings
 
@@ -96,6 +97,10 @@ def _fallback_sql_filter_sync(query: str, top_k: int) -> list[dict]:
     """结构化过滤兜底（V12 §10.10）同步核心：research_reports 关键词 LIKE。
 
     同步实现供 async 入口（to_thread）与同步超时降级共用。
+
+    Phase D #7 优化：原实现逐关键词各执行一次 LIKE 查询（N 次全表扫描），
+    现改为单次查询 OR 拼接全部关键词（一次扫描 + 早停 top_k），
+    显著降低降级路径耗时（本地搜索 P95 目标 ≤500ms）。
     """
     keywords = _split_keywords(query)
     if not keywords:
@@ -108,29 +113,32 @@ def _fallback_sql_filter_sync(query: str, top_k: int) -> list[dict]:
         engine = _get_engine()
         rows = []
         with engine.connect() as conn:
-            for kw in keywords:
-                if len(rows) >= top_k:
-                    break
-                rs = conn.execute(
-                    text(
-                        "SELECT title, abstract, org_name, sec_name, publish_date "
-                        "FROM research_reports "
-                        "WHERE is_latest = 1 AND (title LIKE :kw OR abstract LIKE :kw) "
-                        "ORDER BY publish_date DESC LIMIT :lim"
-                    ),
-                    {"kw": f"%{kw}%", "lim": top_k - len(rows)},
+            # 单次查询：所有关键词 OR 拼接（title/abstract 任一命中）
+            conditions = []
+            params: dict = {}
+            for i, kw in enumerate(keywords):
+                conditions.append("(title LIKE :k%d OR abstract LIKE :k%d)" % (i, i))
+                params[f"k{i}"] = f"%{kw}%"
+            where_clause = " OR ".join(conditions)
+            rs = conn.execute(
+                text(
+                    f"SELECT title, abstract, org_name, sec_name, publish_date "
+                    f"FROM research_reports "
+                    f"WHERE is_latest = 1 AND ({where_clause}) "
+                    f"ORDER BY publish_date DESC LIMIT :lim"
+                ),
+                {**params, "lim": top_k},
+            )
+            for r in rs:
+                rows.append(
+                    {
+                        "content": (r.abstract or "")[:300] or (r.title or "")[:300],
+                        "source_title": r.title or "",
+                        "source_org": r.org_name or "",
+                        "source_date": str(r.publish_date or ""),
+                        "score": 0.0,
+                    }
                 )
-                for r in rs:
-                    rows.append(
-                        {
-                            "content": (r.abstract or "")[:300]
-                            or (r.title or "")[:300],
-                            "source_title": r.title or "",
-                            "source_org": r.org_name or "",
-                            "source_date": str(r.publish_date or ""),
-                            "score": 0.0,
-                        }
-                    )
         return rows
     except Exception:  # noqa: BLE001 — 兜底失败也返回空，绝不报错
         logger.warning("research_search: 结构化过滤兜底失败，返回空", exc_info=True)
@@ -162,10 +170,30 @@ def search_research_insights_sync(query: str, top_k: int = 5) -> list[dict]:
 
     REST（asyncio.to_thread）与 WS（事件循环线程内同步 invoke）双路径安全。
     超时后立即执行 SQL 兜底（不再 20s 后返回空）；排队任务可被 cancel。
+
+    性能埋点（Phase D #7）：Chroma 查询耗时 / SQL fallback 耗时 / 总耗时 /
+    是否 fallback / 是否 timeout / 结果数。
     """
+
+    t0 = time.perf_counter()
     future = _SYNC_EXECUTOR.submit(_run_search_coro, query, top_k)
+    timed_out = False
+    total_ms = 0.0
+    chroma_ms = 0.0
+    fallback_ms = 0.0
     try:
-        return future.result(timeout=_SEARCH_TIMEOUT_SECONDS)
+        result = future.result(timeout=_SEARCH_TIMEOUT_SECONDS)
+        total_ms = (time.perf_counter() - t0) * 1000
+        chroma_ms = total_ms  # 成功路径 = Chroma 查询耗时
+        _record_search_metrics(
+            total_ms=total_ms,
+            chroma_ms=chroma_ms,
+            fallback_ms=0.0,
+            result_count=len(result),
+            degraded=False,
+            timed_out=False,
+        )
+        return result
     except concurrent.futures.TimeoutError:
         # 取消排队/未完成任务（正在运行的模型加载无法强停，由预热脚本解决）；
         # 立即 SQL 兜底——降级等待 ≈3s
@@ -174,14 +202,83 @@ def search_research_insights_sync(query: str, top_k: int = 5) -> list[dict]:
             "research_search: 语义检索超时（>%ss），降级 SQL 兜底",
             _SEARCH_TIMEOUT_SECONDS,
         )
+        timed_out = True
+        tf = time.perf_counter()
         try:
-            return _fallback_sql_filter_sync(query, top_k)
+            result = _fallback_sql_filter_sync(query, top_k)
+            total_ms = (time.perf_counter() - t0) * 1000
+            fallback_ms = (time.perf_counter() - tf) * 1000
+            _record_search_metrics(
+                total_ms=total_ms,
+                chroma_ms=_SEARCH_TIMEOUT_SECONDS * 1000,
+                fallback_ms=fallback_ms,
+                result_count=len(result),
+                degraded=True,
+                timed_out=True,
+            )
+            return result
         except Exception:  # noqa: BLE001 — SQL 兜底异常也返回空
             logger.warning("research_search: SQL 兜底失败，返回空", exc_info=True)
+            _record_search_metrics(
+                total_ms=(time.perf_counter() - t0) * 1000,
+                chroma_ms=_SEARCH_TIMEOUT_SECONDS * 1000,
+                fallback_ms=0.0,
+                result_count=0,
+                degraded=True,
+                timed_out=True,
+            )
             return []
     except Exception:  # noqa: BLE001
         logger.warning("research_search: 检索异常，返回空", exc_info=True)
+        total_ms = (time.perf_counter() - t0) * 1000
+        _record_search_metrics(
+            total_ms=total_ms,
+            chroma_ms=total_ms,
+            fallback_ms=0.0,
+            result_count=0,
+            degraded=True,
+            timed_out=timed_out,
+        )
         return []
+
+
+def _record_search_metrics(
+    *,
+    total_ms: float,
+    chroma_ms: float,
+    fallback_ms: float,
+    result_count: int,
+    degraded: bool,
+    timed_out: bool,
+) -> None:
+    """搜索性能埋点（结构化指标，不含用户问题）。"""
+    try:
+        from app.infrastructure.observability.timing import metrics_collector
+
+        metrics_collector.record(
+            "search.total_ms",
+            total_ms,
+            degraded=degraded,
+            timeout=timed_out,
+            result_count=result_count,
+        )
+        metrics_collector.record(
+            "search.chroma_ms",
+            chroma_ms,
+            degraded=degraded,
+            timeout=timed_out,
+            result_count=result_count,
+        )
+        if fallback_ms:
+            metrics_collector.record(
+                "search.fallback_ms",
+                fallback_ms,
+                degraded=True,
+                timeout=timed_out,
+                result_count=result_count,
+            )
+    except Exception:  # noqa: BLE001 — 埋点失败不影响主流程
+        logger.warning("research_search: 性能埋点失败", exc_info=True)
 
 
 def is_research_query(query: str) -> bool:
