@@ -15,6 +15,7 @@
 
 import hashlib
 import logging
+import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -116,14 +117,13 @@ class Neo4jEquityGraph:
     # 类级共享 driver：进程内所有实例复用同一连接，避免每次实例化
     # 新建 GraphDatabase.driver（GET /evidence 逐证据回查会高频实例化，
     # 每实例一个 driver 且从不 close → 连接泄漏 + 回查耗时放大）。
-    # 并发初始化经锁双重检查，保证只创建一次。
+    # 锁在类定义时创建（单线程安全）——惰性初始化本身有冷启动竞态：
+    # 两线程并发看到 None 各建一把锁，双重检查失效，driver 可能创建两次。
     _shared_driver = None
-    _driver_lock = None  # 惰性初始化（避免 import 时创建线程对象）
+    _driver_lock = threading.Lock()
 
     def __init__(self):
         cls = type(self)
-        if cls._driver_lock is None:
-            cls._driver_lock = __import__("threading").Lock()
         if cls._shared_driver is None:
             with cls._driver_lock:
                 if cls._shared_driver is None:
@@ -152,8 +152,6 @@ class Neo4jEquityGraph:
 
         关闭后再次实例化会重建 driver（测试/重连场景安全）。
         """
-        if cls._driver_lock is None:
-            cls._driver_lock = __import__("threading").Lock()
         with cls._driver_lock:
             driver, cls._shared_driver = cls._shared_driver, None
         if driver is not None:

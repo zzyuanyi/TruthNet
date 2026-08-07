@@ -7,6 +7,7 @@
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import neo4j
 import pytest
@@ -17,24 +18,19 @@ from app.infrastructure.graph.neo4j.equity_graph import Neo4jEquityGraph
 _real_driver_cls = neo4j.GraphDatabase.driver
 
 
-def _reset_shared():
-    """重置类级共享状态（测试隔离）。"""
-    Neo4jEquityGraph._shared_driver = None
-    Neo4jEquityGraph._driver_lock = None
-
-
 @pytest.fixture(autouse=True)
-def _reset(monkeypatch):
-    _reset_shared()
-    yield
-    # 测试结束后不残留真实连接
+def _reset():
+    """每个测试前后显式关闭共享 driver（不直接置 None——丢弃连接不 close
+    会依赖析构触发 warning；close 本身幂等且清空 _shared_driver）。"""
     Neo4jEquityGraph.close_shared_driver()
-    _reset_shared()
+    yield
+    Neo4jEquityGraph.close_shared_driver()
 
 
 def test_concurrent_init_creates_driver_once(monkeypatch):
-    """并发初始化：锁 + 双重检查，driver 只创建一次。"""
+    """并发初始化：Barrier 同步冷启动窗口，锁 + 双重检查保证 driver 只创建一次。"""
     counts = {"n": 0}
+    barrier = threading.Barrier(16)
 
     def _counting_driver(*args, **kwargs):
         counts["n"] += 1
@@ -42,11 +38,12 @@ def test_concurrent_init_creates_driver_once(monkeypatch):
 
     monkeypatch.setattr(neo4j.GraphDatabase, "driver", _counting_driver)
 
-    def _new():
+    def _new(_):
+        barrier.wait()  # 16 线程同时进入 __init__（稳定覆盖冷启动竞态窗口）
         return Neo4jEquityGraph()
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        graphs = list(pool.map(lambda _: _new(), range(16)))
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        graphs = list(pool.map(_new, range(16)))
 
     assert counts["n"] == 1, f"并发初始化应只创建一次 driver，实际 {counts['n']} 次"
     drivers = {id(g._driver) for g in graphs}
