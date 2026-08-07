@@ -25,6 +25,14 @@ from app.api.v1.schemas.chat import (
     ModuleStatusV1,
 )
 from app.api.v1.schemas.common import ApiMeta, V12Response
+from app.api.v1.schemas.ws import (
+    StreamResumeAckPayload,
+    StreamResumePayload,
+    TurnCancelledPayload,
+    TurnCancelPayload,
+)
+from app.application.services.ws_session_manager import session_manager
+from app.application.services.ws_turn_runner import run_turn
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +82,14 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
 
     # 提取 graph
     graph_data: dict = {"nodes": [], "edges": []}
+    equity_chains: list[dict] = []
     if results and getattr(results, "equity", None):
         eq = results.equity
         if hasattr(eq, "graph") and eq.graph:
             graph_data = eq.graph
+        # Phase D #12: 正式链路载荷（与 REST equity_chains 一致）
+        if hasattr(eq, "chain_details") and eq.chain_details:
+            equity_chains = eq.chain_details
 
     # 提取 timeline
     timeline: list = []
@@ -126,6 +138,38 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
     elif risk_output is not None:
         risk_level = getattr(risk_output, "risk_level", None) or "unknown"
 
+    # Phase D #16: 模式三要素（phase/alternative_explanation/regulatory_hint）
+    pattern_matches = result.get("pattern_matches", []) or []
+    pattern_items = [
+        {
+            "pattern_id": m.get("pattern_id", "")
+            if isinstance(m, dict)
+            else getattr(m, "pattern_id", ""),
+            "pattern_name": m.get("pattern_name", "")
+            if isinstance(m, dict)
+            else getattr(m, "pattern_name", ""),
+            "triggered_rules": m.get("triggered_rules", [])
+            if isinstance(m, dict)
+            else getattr(m, "triggered_rules", []),
+            "confidence": m.get("confidence", "")
+            if isinstance(m, dict)
+            else getattr(m, "confidence", ""),
+            "reasoning": m.get("reasoning", "")
+            if isinstance(m, dict)
+            else getattr(m, "reasoning", ""),
+            "phase": m.get("phase", "")
+            if isinstance(m, dict)
+            else getattr(m, "phase", ""),
+            "alternative_explanation": m.get("alternative_explanation", "")
+            if isinstance(m, dict)
+            else getattr(m, "alternative_explanation", ""),
+            "regulatory_hint": m.get("regulatory_hint", "")
+            if isinstance(m, dict)
+            else getattr(m, "regulatory_hint", ""),
+        }
+        for m in pattern_matches
+    ]
+
     return V12Response(
         data=ChatDataV1(
             answer=answer or "分析完成，未生成结构化答案。",
@@ -140,6 +184,8 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             claims=claims_items,
             module_status=module_status_items,
             risk_level=risk_level,
+            pattern_matches=pattern_items,
+            equity_chains=equity_chains,
         ),
         meta=ApiMeta(
             request_id=trace_id,
@@ -156,6 +202,8 @@ async def chat_v1(request: ChatRequestV1):
 
     与 WebSocket 使用同一套 Agent 流程和 State。
     """
+    from app.infrastructure.observability.timing import metrics_collector
+
     trace_id = str(uuid.uuid4())
     session_id = request.session_id or str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
@@ -179,8 +227,24 @@ async def chat_v1(request: ChatRequestV1):
         }
 
         # 在线程池中执行 Agent graph（避免阻塞事件循环）
-        result = await asyncio.to_thread(_get_graph().invoke, state)
-        return _build_chat_response(result, trace_id)
+        with metrics_collector.timed(
+            "rest.agent_total_ms", trace_id=trace_id, degraded=False
+        ):
+            result = await asyncio.to_thread(_get_graph().invoke, state)
+        # 各模块耗时（来自 module_status.duration_ms，Phase D #7）
+        for name, ms in (result.get("module_status") or {}).items():
+            dur = getattr(ms, "duration_ms", None)
+            if dur is not None:
+                metrics_collector.record(
+                    f"rest.module_{name}_ms",
+                    float(dur),
+                    trace_id=trace_id,
+                )
+        with metrics_collector.timed(
+            "rest.persist_ms", trace_id=trace_id, degraded=False
+        ):
+            resp = _build_chat_response(result, trace_id)
+        return resp
 
     except Exception:
         logger.exception(
@@ -216,80 +280,121 @@ async def chat_v1(request: ChatRequestV1):
         )
 
 
+# 活跃连接注册表：connection_id → asyncio.Queue[dict]（事件投递队列）
+# 由 WS 连接的生命周期管理；关闭时清理。
+_active_connections: dict[str, asyncio.Queue] = {}
+
+
+def _new_event_id() -> str:
+    return f"evt_{uuid.uuid4().hex[:8]}"
+
+
+class _ConnectionScope:
+    """单个 WS 连接的作用域：绑定连接队列 + 当前逻辑会话.
+
+    新连接替代旧连接策略（WsSessionManager.attach_connection）：
+    session 的事件只路由到 primary_connection，确保多连接语义确定。
+    """
+
+    def __init__(self, ws: WebSocket, connection_id: str) -> None:
+        self.ws = ws
+        self.connection_id = connection_id
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.session_id: str = ""
+
+
 @router.websocket("/chat/ws")
 async def websocket_chat_v1(ws: WebSocket):
-    """WebSocket 对话端点 — V12 event envelope + Agent graph。
+    """WebSocket 对话端点 — Phase D #5/#6/#10 重构.
 
-    V12 客户端事件：
-      - chat.query: 新问题
-      - chat.follow_up: 追问
-      - company.confirm: 确认公司选择
-      - turn.cancel: 取消当前轮次
-      - stream.resume: 断线恢复
-      - ping: 心跳
+    接收与执行分离：
+      - receiver task: 持续读取控制事件（ping / turn.cancel / stream.resume /
+        chat.query），不被长 Agent 执行阻塞；
+      - sender task: 从连接队列取事件发送（事件先写会话缓冲再投递）；
+      - 每个 query 启动独立 turn task（run_turn），支持协作式取消与真流式。
 
     V12 服务端事件：
-      - turn.accepted, turn.completed, turn.failed
-      - module.started, module.completed
-      - answer.delta, artifact.upsert
-      - heartbeat
+      - turn.accepted / turn.completed / turn.failed / turn.cancelled
+      - module.started / module.completed
+      - answer.delta / artifact.upsert / heartbeat / stream.resume_ack
 
-    兼容旧格式：
-      - {question: "..."} → 按 chat.query 处理
-      - {data: {question: "..."}} → 按 chat.query 处理
+    兼容旧格式：{question: "..."} / {data: {question: "..."}} → chat.query。
     """
-    import asyncio
-
     await ws.accept()
+    conn_id = session_manager.new_connection_id()
+    scope = _ConnectionScope(ws, conn_id)
     # URL query 兼容（部分客户端在连接时携带）；payload.session_id 仍优先覆盖
     session_id = ws.query_params.get("session_id") or str(uuid.uuid4())
-    turn_id = str(uuid.uuid4())
-    trace_id = str(uuid.uuid4())
-    sequence = 0
-    cancelled = False
+    session = session_manager.attach_connection(session_id, conn_id)
+    scope.session_id = session_id
+    _active_connections[conn_id] = scope.queue
 
-    def _envelope(event_type: str, payload: dict) -> dict:
-        nonlocal sequence
-        sequence += 1
-        return {
+    turn_tasks: set[asyncio.Task] = set()
+    sender_task = asyncio.create_task(_ws_sender(scope, session_id))
+
+    def _envelope(
+        event_type: str, payload: dict, *, sid: str, trace_id: str = ""
+    ) -> dict:
+        """分配会话内单调递增序号并返回完整九字段信封.
+
+        不直接发送——调用方通过 scope.queue 投递（sender task 发送）。
+        """
+        seq = session_manager.next_sequence(session)
+        env = {
             "schema_version": "1.0",
-            "event_id": f"evt_{uuid.uuid4().hex[:8]}",
+            "event_id": _new_event_id(),
             "event_type": event_type,
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "sequence": sequence,
+            "session_id": sid,
+            "turn_id": "",
+            "sequence": seq,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "trace_id": trace_id,
+            "trace_id": trace_id or str(uuid.uuid4()),
             "payload": payload,
         }
+        return env
+
+    async def _emit(sid: str, event: dict) -> None:
+        """事件 → 会话缓冲 + 当前主连接队列（新连接替代旧连接）."""
+        session_obj = session_manager.get_session(sid)
+        if session_obj is not None:
+            session_obj.journal.append(event)
+        primary = session_manager.primary_connection(sid)
+        q = _active_connections.get(primary)
+        if q is not None:
+            await q.put(event)
 
     try:
         while True:
             raw = await ws.receive_text()
 
-            # 解析 JSON
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await ws.send_json(
+                await _emit(
+                    session_id,
                     _envelope(
                         "turn.failed",
                         {"error_code": "INVALID_JSON", "message": "无效的 JSON 格式"},
-                    )
+                        sid=session_id,
+                    ),
                 )
                 continue
 
-            # ── 旧格式兼容 ──
             event_type = msg.get("event_type", "")
             payload = msg.get("payload", {})
 
             # 客户端传入 session_id → 覆盖自动生成的 UUID（多轮记忆前置条件）
             client_sid = payload.get("session_id", "")
-            if client_sid:
+            if client_sid and client_sid != session_id:
+                # 切换逻辑会话：attach 到新会话（该连接成为新会话主连接）
+                session_manager.detach_connection(session_id, conn_id)
                 session_id = client_sid
+                scope.session_id = session_id
+                session = session_manager.attach_connection(session_id, conn_id)
+            sid = session_id
 
             if not event_type:
-                # 尝试旧格式: {question: "..."} 或 {data: {question: "..."}}
+                # 旧格式: {question: "..."} 或 {data: {question: "..."}}
                 question = msg.get("question", "") or msg.get("data", {}).get(
                     "question", ""
                 )
@@ -297,272 +402,375 @@ async def websocket_chat_v1(ws: WebSocket):
                     event_type = "chat.query"
                     payload = {"text": question}
 
-            # ── 事件分发 ──
-
-            # ping → heartbeat
+            # ping → heartbeat（不落缓冲，纯存活响应）
             if event_type == "ping":
-                await ws.send_json(
+                await _emit(
+                    sid,
                     _envelope(
                         "heartbeat",
                         {"server_time": datetime.now(timezone.utc).isoformat()},
-                    )
+                        sid=sid,
+                    ),
                 )
                 continue
 
-            # turn.cancel
+            # turn.cancel — 协作式取消（≤2s 确认；幂等；不影响他会话）
             if event_type == "turn.cancel":
-                cancelled = True
-                await ws.send_json(
-                    _envelope("turn.cancelled", {"message": "当前轮次已取消"})
-                )
+                try:
+                    cancel_payload = TurnCancelPayload.model_validate(payload)
+                except Exception:  # noqa: BLE001
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "INVALID_CANCEL",
+                                "message": "取消请求参数无效",
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
+                await _handle_cancel(sid, cancel_payload, _envelope, _emit)
                 continue
 
-            # stream.resume
+            # stream.resume — 断线补发（原 event_id/sequence/turn_id 原样回放）
             if event_type == "stream.resume":
-                # Phase C 实现事件缓冲；当前返回降级错误
-                await ws.send_json(
-                    _envelope(
-                        "turn.failed",
-                        {
-                            "error_code": "STREAM_RESUME_UNAVAILABLE",
-                            "message": "断线恢复暂不可用（Phase C 实现），请重新发起 query",
-                            "recoverable": True,
-                        },
+                try:
+                    resume_payload = StreamResumePayload.model_validate(payload)
+                except Exception:  # noqa: BLE001
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "INVALID_RESUME",
+                                "message": "恢复请求参数无效",
+                            },
+                            sid=sid,
+                        ),
                     )
-                )
+                    continue
+                await _handle_resume(sid, resume_payload, _envelope, _emit)
                 continue
 
             # 有效 query 事件
             if event_type not in ("chat.query", "chat.follow_up", "company.confirm"):
-                await ws.send_json(
+                await _emit(
+                    sid,
                     _envelope(
                         "turn.failed",
                         {
                             "error_code": "UNKNOWN_EVENT",
                             "message": f"未知事件类型: {event_type}",
                         },
-                    )
+                        sid=sid,
+                    ),
                 )
                 continue
 
-            # company.confirm
+            # company.confirm — 兼容保留（Agent 当前不依赖显式确认）
             if event_type == "company.confirm":
-                await ws.send_json(
-                    _envelope("turn.accepted", {"message": "已确认公司"})
-                )
-                await ws.send_json(
-                    _envelope("turn.completed", {"message": "公司确认完成 (mock)"})
+                await _emit(
+                    sid, _envelope("turn.accepted", {"message": "已确认公司"}, sid=sid)
                 )
                 continue
 
             question = payload.get("text", "")
             if not question:
-                await ws.send_json(
+                await _emit(
+                    sid,
                     _envelope(
                         "turn.failed",
                         {
                             "error_code": "MISSING_QUESTION",
                             "message": "payload.text 为必填项",
                         },
-                    )
+                        sid=sid,
+                    ),
                 )
                 continue
 
-            # 每一轮新 turn_id
+            # 每一轮新 turn_id + trace_id
             turn_id = str(uuid.uuid4())
             trace_id = str(uuid.uuid4())
-            cancelled = False
 
-            # turn.accepted
-            await ws.send_json(
+            # 注册 turn 并分配取消令牌
+            session_manager.start_turn(session, turn_id, question)
+
+            await _emit(
+                sid,
                 _envelope(
-                    "turn.accepted", {"message": f"已收到问题: {question[:50]}..."}
-                )
+                    "turn.accepted",
+                    {"message": f"已收到问题: {question[:50]}...", "turn_id": turn_id},
+                    sid=sid,
+                    trace_id=trace_id,
+                ),
             )
 
-            try:
-                from app.agents.state import ModuleResults, RuntimeState
-
-                state = {
-                    "messages": [],
-                    "user_query": question,
-                    "company": None,
-                    "plan": None,
-                    "module_status": {},
-                    "results": ModuleResults(),
-                    "evidence": [],
-                    "claims": [],
-                    "final_response": None,
-                    # turn_id 与 WS 事件信封对齐（PersistTurn 复用，保证 DB 可追溯）
-                    "runtime": RuntimeState(
-                        trace_id=trace_id, session_id=session_id, turn_id=turn_id
-                    ),
-                }
-
-                # 使用 asyncio.to_thread 避免阻塞事件循环
-                # Phase C 替换为 graph.astream() 实现真流式
-                result = await asyncio.to_thread(_get_graph().invoke, state)
-
-                if cancelled:
-                    continue
-
-                module_status = result.get("module_status", {})
-                final_response = result.get("final_response")
-
-                if not final_response:
-                    await ws.send_json(
-                        _envelope(
-                            "turn.failed",
-                            {
-                                "error_code": "NO_RESPONSE",
-                                "message": "Agent 未返回结果",
-                            },
-                        )
-                    )
-                    continue
-
-                # module.started + module.completed（仅已执行模块，跳过 no-op）
-                active_modules = {
-                    name: ms
-                    for name, ms in module_status.items()
-                    if getattr(ms, "state", "pending") != "skipped"
-                }
-
-                for name, ms in active_modules.items():
-                    if not cancelled:
-                        await ws.send_json(
-                            _envelope(
-                                "module.started", {"module": name, "status": "running"}
-                            )
-                        )
-
-                for name, ms in active_modules.items():
-                    if not cancelled:
-                        await ws.send_json(
-                            _envelope(
-                                "module.completed",
-                                {
-                                    "module": name,
-                                    "status": getattr(ms, "state", "success"),
-                                    "duration_ms": getattr(ms, "duration_ms", 0),
-                                },
-                            )
-                        )
-
-                # answer.delta
-                if not cancelled:
-                    chunks = final_response.answer.split("。")
-                    for chunk in chunks:
-                        if chunk.strip():
-                            await ws.send_json(
-                                _envelope(
-                                    "answer.delta", {"text": chunk.strip() + "。"}
-                                )
-                            )
-
-                # artifact.upsert
-                if not cancelled:
-                    await ws.send_json(
-                        _envelope(
-                            "artifact.upsert",
-                            {
-                                "artifact_type": "risk_assessment",
-                                "artifact_id": f"risk_{session_id}",
-                                "revision": 1,
-                                "operation": "replace",
-                                "data": {"risk_level": final_response.risk_level},
-                            },
-                        )
-                    )
-
-                # turn.completed
-                if not cancelled:
-                    # Finance 口径说明 / coverage / 缺失 warning 需对前端可见
-                    results = result.get("results")
-                    finance_payload = None
-                    warnings: list[str] = []
-                    if results and getattr(results, "finance", None):
-                        fin = results.finance
-                        if fin.warnings:
-                            for w in fin.warnings:
-                                if w and w not in warnings:
-                                    warnings.append(w)
-                        finance_payload = {
-                            "rule_statuses": fin.rule_statuses,
-                            # 规则级 canonical 证据 ID（实时面板筛选，对齐审计 P1-2）
-                            "triggered_rules": [
-                                {
-                                    "rule_id": rid,
-                                    "rule_name": (
-                                        (fin.rule_details or {})
-                                        .get(rid, {})
-                                        .get("rule_name")
-                                        or rid
-                                    ),
-                                    "evidence_ids": (
-                                        (fin.rule_details or {})
-                                        .get(rid, {})
-                                        .get("evidence_ids")
-                                        or []
-                                    ),
-                                }
-                                for rid, status in (fin.rule_statuses or {}).items()
-                                if status == "triggered"
-                            ],
-                            "warnings": list(fin.warnings),
-                            "evidence_count": len(fin.evidence or []),
-                        }
-                    runtime = result.get("runtime")
-                    if runtime and hasattr(runtime, "warnings"):
-                        for w in runtime.warnings:
-                            if w and w not in warnings:
-                                warnings.append(w)
-                    await ws.send_json(
-                        _envelope(
-                            "turn.completed",
-                            {
-                                "answer": final_response.answer,
-                                "risk_level": final_response.risk_level,
-                                "claims_count": len(result.get("claims", [])),
-                                "follow_ups": getattr(final_response, "follow_ups", []),
-                                "evidence_count": len(result.get("evidence", [])),
-                                # evidence_ids：前端证据链区域按 ID 关联展示（
-                                # 只发 count 时 139 条证据仍显示"无直接证据支撑"）
-                                "evidence_ids": [
-                                    getattr(ev, "evidence_id", None)
-                                    for ev in result.get("evidence", [])
-                                    if getattr(ev, "evidence_id", None)
-                                ],
-                                "warnings": warnings,
-                                "finance": finance_payload,
-                            },
-                        )
-                    )
-
-            except Exception:
-                logger.exception(
-                    "Agent 执行异常: trace_id=%s session_id=%s question=%.50s",
-                    trace_id,
-                    session_id,
-                    question,
+            # 启动独立 turn task（接收与执行分离，不阻塞控制事件）
+            task = asyncio.create_task(
+                _run_ws_turn(
+                    session_id=sid,
+                    turn_id=turn_id,
+                    question=question,
+                    trace_id=trace_id,
+                    _envelope=_envelope,
+                    _emit=_emit,
                 )
-                try:
-                    await ws.send_json(
-                        _envelope(
-                            "turn.failed",
-                            {
-                                "error_code": "AGENT_ERROR",
-                                "message": "处理请求时发生内部错误，请稍后重试",
-                                "recoverable": True,
-                            },
-                        )
-                    )
-                except Exception:  # noqa: BLE001 — 错误事件发送失败仅记录，不吞异常
-                    logger.warning(
-                        "WS 错误事件发送失败: session_id=%s", session_id, exc_info=True
-                    )
+            )
+            turn_tasks.add(task)
+            task.add_done_callback(turn_tasks.discard)
 
     except WebSocketDisconnect:
-        logger.info("WebSocket 客户端断开: session_id=%s", session_id)
+        logger.info(
+            "WebSocket 客户端断开: connection=%s session_id=%s", conn_id, session_id
+        )
     except Exception:
-        logger.exception("WebSocket 未预期异常: session_id=%s", session_id)
+        logger.exception(
+            "WebSocket 未预期异常: connection=%s session_id=%s", conn_id, session_id
+        )
+    finally:
+        # 连接销毁：取消事件发送、清理注册、取消本会话活跃 turn（不取消他会话）
+        sender_task.cancel()
+        _active_connections.pop(conn_id, None)
+        session_manager.detach_connection(session_id, conn_id)
+        # 若连接不再属于任何会话 → 会话无活跃连接时按 TTL 回收（不强制关闭）
+        for task in list(turn_tasks):
+            if not task.done():
+                task.cancel()
+        try:
+            await sender_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+
+async def _ws_sender(scope: _ConnectionScope, _session_id: str) -> None:
+    """sender task：从连接队列取事件并发送（队列空则等待）。"""
+    while True:
+        event = await scope.queue.get()
+        try:
+            await scope.ws.send_json(event)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "WS sender 发送失败: connection=%s", scope.connection_id, exc_info=True
+            )
+            break
+
+
+async def _handle_cancel(
+    sid: str, payload: TurnCancelPayload, _envelope, _emit
+) -> None:
+    """协作式取消：立即置位 token；当前节点结束后不再启动下一节点。
+
+    终态保证：turn.cancelled 恰好一次，不发送 turn.completed。
+    幂等：重复 cancel 返回相同确认，不重复置位。
+    不取消同 session 其他 turn / 其他 session 的 turn。
+    """
+    session_obj = session_manager.get_session(sid)
+    if session_obj is None:
+        await _emit(
+            sid,
+            _envelope(
+                "turn.failed",
+                {
+                    "error_code": "SESSION_NOT_FOUND",
+                    "message": "会话不存在",
+                    "recoverable": True,
+                },
+                sid=sid,
+            ),
+        )
+        return
+
+    turn = session_manager.get_turn(session_obj, payload.turn_id)
+    if turn is None:
+        await _emit(
+            sid,
+            _envelope(
+                "turn.failed",
+                {
+                    "error_code": "TURN_NOT_FOUND",
+                    "message": "轮次不存在或已结束",
+                    "recoverable": True,
+                },
+                sid=sid,
+            ),
+        )
+        return
+
+    status = session_manager.cancel_turn(session_obj, payload.turn_id)
+    if status == "already_terminal":
+        # 已完成 turn 的 cancel：明确终态，不改变历史记录
+        await _emit(
+            sid,
+            _envelope(
+                "turn.cancelled",
+                TurnCancelledPayload(
+                    turn_id=payload.turn_id,
+                    message="该轮次已完成，取消请求不改变历史记录",
+                ).model_dump(),
+                sid=sid,
+            ),
+        )
+        return
+
+    # 正常取消确认（幂等：重复 cancel 也走这里，返回相同事件）
+    await _emit(
+        sid,
+        _envelope(
+            "turn.cancelled",
+            TurnCancelledPayload(turn_id=payload.turn_id).model_dump(),
+            sid=sid,
+        ),
+    )
+
+
+async def _handle_resume(
+    sid: str, payload: StreamResumePayload, _envelope, _emit
+) -> None:
+    """断线补发：按 session_id + last_sequence 回放缓冲事件.
+
+    - 事件顺序严格递增、不重复、使用原 event_id；
+    - 跨新 socket 保持 session sequence；
+    - 无事件时返回明确 resume 完成状态；
+    - 请求序号早于缓存起点 → 可恢复 gap 错误；
+    - session 不存在/已过期 → 明确错误；
+    - 不允许读取其他 session 的事件。
+    """
+    session_obj = session_manager.get_session(sid)
+    if session_obj is None or not session_manager.session_has_activity(sid):
+        await _emit(
+            sid,
+            _envelope(
+                "turn.failed",
+                {
+                    "error_code": "SESSION_NOT_FOUND",
+                    "message": "会话不存在或已过期",
+                    "recoverable": True,
+                },
+                sid=sid,
+            ),
+        )
+        return
+
+    journal = session_obj.journal
+    last_sequence = payload.last_sequence
+    latest = journal.latest_sequence() or 0
+    gap = journal.is_gap(last_sequence)
+
+    if gap:
+        earliest = journal.earliest_sequence()
+        await _emit(
+            sid,
+            _envelope(
+                "turn.failed",
+                {
+                    "error_code": "STREAM_GAP",
+                    "message": (
+                        f"请求序号 {last_sequence} 早于缓冲起点 "
+                        f"{earliest}，存在不可恢复断档，请重新发起 query"
+                    ),
+                    "recoverable": True,
+                    "last_sequence": last_sequence,
+                    "earliest_sequence": earliest,
+                },
+                sid=sid,
+            ),
+        )
+        return
+
+    events = journal.events_after(last_sequence)
+    for event in events:
+        await _emit(sid, event)  # 原 event_id / sequence / turn_id 原样回放
+
+    await _emit(
+        sid,
+        _envelope(
+            "stream.resume_ack",
+            StreamResumeAckPayload(
+                session_id=sid,
+                last_sequence=latest,
+                replay_from=last_sequence + 1,
+                replay_count=len(events),
+                gap=False,
+                message=f"已补发 {len(events)} 条事件",
+            ).model_dump(),
+            sid=sid,
+        ),
+    )
+
+
+async def _run_ws_turn(
+    *,
+    session_id: str,
+    turn_id: str,
+    question: str,
+    trace_id: str,
+    _envelope,
+    _emit,
+) -> None:
+    """turn task：以 run_turn 执行 Agent graph（真流式 + 协作式取消）。"""
+    from app.agents.state import ModuleResults, RuntimeState
+
+    def _build_state() -> dict:
+        return {
+            "messages": [],
+            "user_query": question,
+            "company": None,
+            "plan": None,
+            "module_status": {},
+            "results": ModuleResults(),
+            "evidence": [],
+            "claims": [],
+            "final_response": None,
+            "runtime": RuntimeState(
+                trace_id=trace_id, session_id=session_id, turn_id=turn_id
+            ),
+        }
+
+    session_obj = session_manager.get_session(session_id)
+    if session_obj is None:
+        return
+    turn = session_manager.get_turn(session_obj, turn_id)
+    if turn is None:
+        return
+
+    async def _emit_event(event_type: str, payload: dict) -> None:
+        env = _envelope(event_type, payload, sid=session_id, trace_id=trace_id)
+        env["turn_id"] = turn_id
+        await _emit(session_id, env)
+
+    try:
+        result = await run_turn(
+            session=session_obj,
+            turn=turn,
+            graph=_get_graph(),
+            question=question,
+            emit=_emit_event,
+            build_state=_build_state,
+        )
+        # 终态已由 run_turn 发送；记录 turn 终态（cancel 幂等 / 单终态）
+        if result.outcome in ("completed", "failed", "no_response"):
+            session_manager.mark_turn_terminal(session_obj, turn_id)
+    except asyncio.CancelledError:
+        # 连接销毁/会话关闭 → turn task 取消（当前节点可结束，后续不再启动）
+        logger.info("turn task 已取消: turn=%s session=%s", turn_id, session_id)
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "WS turn 执行未预期异常: turn=%s session=%s", turn_id, session_id
+        )
+        try:
+            await _emit_event(
+                "turn.failed",
+                {
+                    "error_code": "AGENT_ERROR",
+                    "message": "处理请求时发生内部错误",
+                    "recoverable": True,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        session_manager.remove_turn(session_obj, turn_id)
