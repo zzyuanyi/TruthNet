@@ -16,10 +16,13 @@
   - /api/v1/sessions                     → V12 会话管理
 """
 
+import logging
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,19 +43,42 @@ from app.api.v1.routers import events as events_v1
 from app.api.v1.routers import finance as finance_v1
 from app.api.v1.routers import health as health_v1
 from app.api.v1.routers import provenance as provenance_v1
+from app.api.v1.routers import reports as reports_v1
 from app.api.v1.routers import risk as risk_v1
 from app.api.v1.routers import sessions as sessions_v1
 from app.core.config import settings
 from app.schemas.common import HealthResponse, UnifiedResponse
 
+logger = logging.getLogger(__name__)
+
 # 加载 .env
 env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(env_path)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """应用生命周期.
+
+    启动：恢复遗留 running 报告任务（Phase D #8，重启后不永久卡死）。
+    关闭：无阻塞清理。
+    """
+    try:
+        from app.application.services.report_service import recover_stale_running_jobs
+
+        n = recover_stale_running_jobs()
+        if n:
+            logger.info("启动时恢复 %d 个遗留 running 报告任务", n)
+    except Exception:  # noqa: BLE001 — 恢复失败不阻塞启动
+        logger.warning("启动时报告任务恢复失败", exc_info=True)
+    yield
+
 
 app = FastAPI(
     title="TruthNet API",
     description="织网鉴真 — 财报反欺诈智能问答系统 (V12 baseline)",
     version="0.2.0",
+    lifespan=_lifespan,
 )
 
 # CORS（开发阶段允许所有来源）
@@ -101,6 +127,7 @@ app.include_router(benchmarks_v1.router, prefix="/api/v1")
 app.include_router(provenance_v1.router, prefix="/api/v1")
 app.include_router(comparisons_v1.router, prefix="/api/v1")
 app.include_router(chat_v1.router, prefix="/api/v1")
+app.include_router(reports_v1.router, prefix="/api/v1")
 app.include_router(sessions_v1.router, prefix="/api/v1")
 
 

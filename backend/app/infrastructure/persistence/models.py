@@ -1200,3 +1200,76 @@ class AnalysisRun(Base):
 
     def __repr__(self) -> str:
         return f"<AnalysisRun {self.run_id} {self.endpoint}>"
+
+
+# ============================================================================
+# 派生表 16: report_jobs — PDF 报告任务（Phase D #8）
+# ============================================================================
+
+
+class ReportJob(Base):
+    """PDF 报告长任务（Phase D #8，V12 §10.8：analysis_runs 不可复用）.
+
+    状态机：queued → running → succeeded | failed | cancelled。
+    幂等：idempotency_key 唯一约束，同一请求重试不重复建任务。
+    """
+
+    __tablename__ = "report_jobs"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+
+    report_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: f"report_{uuid.uuid4().hex[:12]}"
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="关联会话 ID"
+    )
+    company_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True, comment="公司代码"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="queued",
+        index=True,
+        comment="queued/running/succeeded/failed/cancelled",
+    )
+    progress: Mapped[int] = mapped_column(Integer, default=0, comment="进度 0-100")
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True, comment="幂等键（唯一约束）"
+    )
+    request_payload: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="创建请求载荷"
+    )
+    file_path: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="报告文件相对路径"
+    )
+    file_sha256: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="文件 SHA-256"
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, comment="重试次数")
+    error_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="错误码"
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="错误信息"
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="追踪 ID"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="开始时间"
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="完成时间"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        onupdate=_utcnow,
+        comment="更新时间",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReportJob {self.report_id} status={self.status}>"
