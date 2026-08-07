@@ -124,9 +124,9 @@ def test_repeat_cancel_idempotent(ws_session_tracker):
         events2 = events + after_repeat
     ws_session_tracker(events2)
     cancelled = [e for e in events2 if e["event_type"] == "turn.cancelled"]
-    assert len(cancelled) == 1, (
-        f"turn.cancelled 应恰好一次（重复取消不得再发），实际 {len(cancelled)}"
-    )
+    assert (
+        len(cancelled) == 1
+    ), f"turn.cancelled 应恰好一次（重复取消不得再发），实际 {len(cancelled)}"
     # 不得出现 500 / 未处理异常
     failed = [e for e in events2 if e["event_type"] == "turn.failed"]
     error_codes = {e["payload"].get("error_code") for e in failed}

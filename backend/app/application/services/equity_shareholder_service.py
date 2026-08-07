@@ -218,7 +218,8 @@ def materialize_equity_evidence(
             )
     except Exception:  # noqa: BLE001 — 落库失败不阻断画像链路
         logger.warning(
-            "materialize_equity_evidence: 落库失败 company=%s", company_code,
+            "materialize_equity_evidence: 落库失败 company=%s",
+            company_code,
             exc_info=True,
         )
         return 0, []

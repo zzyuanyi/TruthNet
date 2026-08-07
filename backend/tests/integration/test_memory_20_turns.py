@@ -161,9 +161,9 @@ def test_25_turn_summary_progression():
 
         # 第 11-15 轮 source_turn_ids 全部进入摘要（此前永久丢失的中间轮次）
         expected = {f"turn_{sid}_{i}" for i in range(11, 16)}
-        assert expected.issubset(set(s.source_turn_ids)), (
-            f"11-15 轮来源必须全部进入摘要，缺失 {expected - set(s.source_turn_ids)}"
-        )
+        assert expected.issubset(
+            set(s.source_turn_ids)
+        ), f"11-15 轮来源必须全部进入摘要，缺失 {expected - set(s.source_turn_ids)}"
         # 关键事实可召回（第 11 轮五粮液 → "涉及知名公司"归纳）
         assert any("知名公司" in f for f in s.key_facts), "应能召回第 11 轮关键公司"
 

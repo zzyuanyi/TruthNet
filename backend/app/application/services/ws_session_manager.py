@@ -209,9 +209,7 @@ class WsSessionManager:
             session.last_activity = self._clock()
             return turn
 
-    def attach_task(
-        self, session: WsSession, turn_id: str, task: asyncio.Task
-    ) -> None:
+    def attach_task(self, session: WsSession, turn_id: str, task: asyncio.Task) -> None:
         """将执行 task 绑定到 ActiveTurn（线程安全）。
 
         expire_idle 依赖 turn.task 判断会话是否有活跃 turn——

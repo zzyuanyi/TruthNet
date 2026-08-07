@@ -7,8 +7,6 @@
 """
 
 import os
-import uuid
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -52,9 +50,9 @@ def test_rest_equity_evidence_ids_all_replayable():
     # 未先跑 WS 问答：REST 幂等落库后全部可回查
     for eid in evidence_ids:
         ev = client.get(f"/api/v1/evidence/{eid}")
-        assert ev.status_code == 200, (
-            f"证据 {eid} 应可回查，实际 {ev.status_code}: {ev.text[:120]}"
-        )
+        assert (
+            ev.status_code == 200
+        ), f"证据 {eid} 应可回查，实际 {ev.status_code}: {ev.text[:120]}"
         body = ev.json()["data"]
         assert body["evidence"]["evidence_id"] == eid
 
@@ -70,8 +68,8 @@ def test_rest_equity_evidence_materialize_idempotent():
     assert r1.status_code == 200, r1.text
     r2 = client.get(f"/api/v1/companies/{code}/equity")
     assert r2.status_code == 200, r2.text
-    chains1 = (r1.json()["data"].get("equity_chains") or [])
-    chains2 = (r2.json()["data"].get("equity_chains") or [])
+    chains1 = r1.json()["data"].get("equity_chains") or []
+    chains2 = r2.json()["data"].get("equity_chains") or []
     if not chains1:
         pytest.skip("当前图数据无控制链，跳过幂等断言")
     eids1 = [eid for c in chains1 for eid in (c.get("evidence_ids") or [])]

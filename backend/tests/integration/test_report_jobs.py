@@ -99,9 +99,9 @@ def test_create_report_concurrent_same_key():
     rids = {r[0] for r in results}
     assert len(rids) == 1, f"同 key 应返回同一 report_id，实际 {rids}"
     created_flags = [r[1] for r in results]
-    assert created_flags.count(True) == 1, (
-        f"应恰好一个 created=True，实际 {created_flags}"
-    )
+    assert (
+        created_flags.count(True) == 1
+    ), f"应恰好一个 created=True，实际 {created_flags}"
 
     url = (
         f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
