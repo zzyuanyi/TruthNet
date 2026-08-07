@@ -22,8 +22,8 @@
 |---|---|---|
 | 路由/OpenAPI | `app.openapi()` | `PATH_COUNT 17`；实际 HTTP 路径为 `/health` 加 16 个 `/api/v1` 路径；仅 `/health`、`/api/v1/chat`、`/api/v1/companies/{code}/equity` 声明了非空 200 response schema，其余业务路径的 schema 为 `{}`。 |
 | REST 只读冒烟 | truthnet Python `TestClient` GET `/health`、`healthz`、`readyz`、companies、finance、equity、events、risk、benchmarks、sessions | 全部返回 200；实际 `data` 顶层键见第 3 节。未执行会话写入接口。 |
-| 前端类型检查 | `D:/anaconda/envs/truthnet/node.exe node_modules/typescript/bin/tsc -p tsconfig.app.json --noEmit`（`frontend/`） | 退出码 0。该结果只证明手写类型内部可编译，不证明与后端 schema 一致。 |
-| 后端测试收集 | `D:/anaconda/envs/truthnet/python.exe -m pytest backend/tests --collect-only -q` | `614 tests collected`。本次未运行全量测试，因为 WS/集成测试会向本地 MySQL 写入测试会话；“592 passed”是已有基线，不是本次重跑结果。 |
+| 前端类型检查 | `node node_modules/typescript/bin/tsc -p tsconfig.app.json --noEmit`（`frontend/`，使用 `pnpm` 环境） | 退出码 0。该结果只证明手写类型内部可编译，不证明与后端 schema 一致。 |
+| 后端测试收集 | `python -m pytest backend/tests --collect-only -q`（truthnet 环境） | `614 tests collected`。本次未运行全量测试，因为 WS/集成测试会向本地 MySQL 写入测试会话；“592 passed”是已有基线，不是本次重跑结果。 |
 
 ## 2. 契约来源和实际路由
 
