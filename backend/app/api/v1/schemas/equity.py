@@ -70,6 +70,42 @@ class TargetCompanyDTO(BaseModel):
     name: str = Field(default="", description="公司名称")
 
 
+class EquityChainDTO(BaseModel):
+    """正式股权链路载荷 — Phase D #12.
+
+    每条链含 chain_id/path_names/depth/final_control_pct/evidence_ids/
+    risk_label/risk_level/risk_reasons/merge_explanation/source_system/as_of。
+    原 V12 `paths` 保留兼容，新增 `equity_chains` 字段供前端链路卡消费。
+    """
+
+    chain_id: str = Field(default="", description="链路 ID")
+    node_ids: list[str] = Field(default_factory=list, description="节点 ID 序列")
+    path_names: list[str] = Field(default_factory=list, description="节点名称序列")
+    edge_ids: list[str] = Field(
+        default_factory=list, description="边 relationship_id 序列"
+    )
+    depth: int = Field(default=0, description="链路深度")
+    final_control_pct: float | None = Field(
+        default=None, description="最终控制比例 (%)"
+    )
+    evidence_ids: list[str] = Field(
+        default_factory=list, description="真实证据 ID（可回查）"
+    )
+    risk_label: str = Field(default="normal", description="风险标签（规范映射键）")
+    risk_level: str = Field(
+        default="green", description="风险等级 red/orange/yellow/green"
+    )
+    risk_reasons: list[str] = Field(default_factory=list, description="可解释风险原因")
+    merge_explanation: str = Field(default="", description="一致行动人合并说明")
+    merged_entity_ids: list[str] = Field(
+        default_factory=list, description="合并实体 ID"
+    )
+    merge_key: str = Field(default="", description="合并依据键")
+    merge_basis: str = Field(default="", description="合并依据说明")
+    source_system: str = Field(default="unknown", description="数据来源")
+    as_of: str = Field(default="", description="数据截止日期")
+
+
 class EquityResponseData(BaseModel):
     """股权穿透响应数据."""
 
@@ -77,6 +113,8 @@ class EquityResponseData(BaseModel):
     nodes: list[EquityNodeDTO] = Field(default_factory=list)
     edges: list[EquityEdgeDTO] = Field(default_factory=list)
     paths: list[EquityPathDTO] = Field(default_factory=list)
+    # Phase D #12: 正式链路载荷（含风险标签/证据/合并说明）
+    equity_chains: list[EquityChainDTO] = Field(default_factory=list)
     as_of: str | None = Field(default=None, description="数据截止日期")
     graph_version: str = Field(default="", description="图数据版本")
     source_system: str = Field(
