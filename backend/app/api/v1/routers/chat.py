@@ -750,7 +750,8 @@ async def _run_ws_turn(
         await _emit(session_id, env)
 
     try:
-        result = await run_turn(
+        # 终态事件统一由 run_turn 内部 _emit_terminal_once 原子抢占发送
+        await run_turn(
             session=session_obj,
             turn=turn,
             graph=_get_graph(),
@@ -758,9 +759,6 @@ async def _run_ws_turn(
             emit=_emit_event,
             build_state=_build_state,
         )
-        # 终态已由 run_turn 发送；记录 turn 终态（cancel 幂等 / 单终态）
-        if result.outcome in ("completed", "failed", "no_response"):
-            session_manager.mark_turn_terminal(session_obj, turn_id)
     except asyncio.CancelledError:
         # 连接销毁/会话关闭 → turn task 取消（当前节点可结束，后续不再启动）
         logger.info("turn task 已取消: turn=%s session=%s", turn_id, session_id)
@@ -770,14 +768,17 @@ async def _run_ws_turn(
             "WS turn 执行未预期异常: turn=%s session=%s", turn_id, session_id
         )
         try:
-            await _emit_event(
-                "turn.failed",
-                {
-                    "error_code": "AGENT_ERROR",
-                    "message": "处理请求时发生内部错误",
-                    "recoverable": True,
-                },
-            )
+            # 原子抢占终态：若 run_turn 已发出终态（claim 成功），此处跳过，
+            # 保证同一 turn 恰好一个终态事件
+            if session_manager.claim_terminal_event(session_obj, turn_id):
+                await _emit_event(
+                    "turn.failed",
+                    {
+                        "error_code": "AGENT_ERROR",
+                        "message": "处理请求时发生内部错误",
+                        "recoverable": True,
+                    },
+                )
         except Exception:  # noqa: BLE001
             pass
     finally:
