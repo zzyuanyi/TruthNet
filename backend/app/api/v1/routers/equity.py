@@ -1,4 +1,4 @@
-"""股权穿透路由 — V12 §11 + Phase C 真实图谱.
+"""股权穿透路由 — V12 §11 + Phase C 真实图谱 + Phase D #12 链路载荷.
 
 GET /api/v1/companies/{code}/equity
 
@@ -8,6 +8,7 @@ Full profile 流程：
 Lite profile 使用 NetworkX（明确降级适配器）。
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.api.v1.schemas.equity import (
+    EquityChainDTO,
     EquityEdgeDTO,
     EquityNodeDTO,
     EquityPathDTO,
@@ -22,8 +24,16 @@ from app.api.v1.schemas.equity import (
     TargetCompanyDTO,
 )
 from app.application.services.company_resolver import CompanyResolver
+from app.application.services.equity_chain_service import build_equity_chains
+from app.application.services.equity_shareholder_service import (
+    build_edge_evidence_map,
+    fetch_shareholder_records,
+    materialize_equity_evidence,
+)
 from app.core.config import settings
 from app.domain.equity.models import EquityGraph
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["equity"])
 
@@ -163,6 +173,45 @@ async def get_company_equity(
         partial = True
         nodes, edges, paths = [], [], []
 
+    # Phase D #12: 正式链路载荷（证据/风险标签/合并说明）
+    # canonical evidence_id 映射 + 幂等落库：REST 画像返回的 evidence_ids
+    # 可立即经 GET /evidence/{id} 回查（与 Agent 落库同一算法）
+    equity_chains: list[EquityChainDTO] = []
+    chain_warnings: list[str] = []
+    try:
+        graph_version = getattr(graph, "graph_version", "") or settings.GRAPH_VERSION
+        try:
+            _materialized, _conflicts = materialize_equity_evidence(
+                edges=graph.edges,
+                company_code=company.wind_code,
+                graph_version=graph_version,
+                trace_id=trace_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — 证据落库失败不阻断链路
+            logger.warning("equity: 证据落库失败: %s", exc, exc_info=True)
+        node_name_map = {n.id: n.label for n in graph.nodes}
+        edge_evidence_map = build_edge_evidence_map(
+            edges=graph.edges,
+            company_code=company.wind_code,
+            graph_version=graph_version,
+        )
+        chain_models, chain_warnings = build_equity_chains(
+            company_code=company.wind_code,
+            chains=graph.control_chains,
+            node_name_map=node_name_map,
+            graph_edges=graph.edges,
+            top_shareholder_records=fetch_shareholder_records(company.wind_code),
+            edge_evidence_map=edge_evidence_map,
+            as_of=as_of or "",
+            source_system=getattr(graph, "source_system", "") or "unknown",
+            merge_groups=[],
+        )
+        equity_chains = [EquityChainDTO(**c.to_dict()) for c in chain_models]
+        data_warnings.extend(chain_warnings)
+    except Exception as exc:  # noqa: BLE001 — 链路载荷失败不影响基础图
+        logger.warning("equity_chains 构建失败: %s", exc, exc_info=True)
+        data_warnings.append(f"股权链路载荷构建失败: {exc}")
+
     return V12Response(
         data=EquityResponseData(
             target=TargetCompanyDTO(
@@ -173,6 +222,7 @@ async def get_company_equity(
             nodes=nodes,
             edges=edges,
             paths=paths,
+            equity_chains=equity_chains,
             as_of=as_of,
             graph_version=getattr(graph, "graph_version", "") or settings.GRAPH_VERSION,
             source_system=getattr(graph, "source_system", "") or "unknown",

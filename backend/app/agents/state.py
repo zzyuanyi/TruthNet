@@ -109,6 +109,8 @@ class EquityResult(BaseModel):
     graph: dict = Field(default_factory=dict)
     chains: list[dict] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
+    # Phase D #12: 正式链路载荷（含风险标签/证据/合并说明）
+    chain_details: list[dict] = Field(default_factory=list)
 
 
 class EventsResult(BaseModel):
@@ -177,3 +179,5 @@ class AgentState(TypedDict, total=False):
     provenance_report: Any | None
     cross_validation: CrossValidationResult | None = None
     risk_output: Any | None = None
+    # Phase D #2: 深度数值冲突检测结果（list[dict]，CV-NUM-01/02）
+    numerical_conflicts: list[dict] | None = None

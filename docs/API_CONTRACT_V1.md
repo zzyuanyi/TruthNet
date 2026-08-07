@@ -117,9 +117,9 @@
 | 非流式问答 | POST | `/api/v1/chat` | P0 | ✅ 已实现（⚠️ 当前页面主链路走 WS） |
 | 流式问答 | WS | `/api/v1/chat/ws` | P0 | ✅ 已实现（⚠️ answer.delta 为伪流式，真流式 Phase D #1） |
 | 创建比较 | POST | `/api/v1/comparisons` | P1 | ✅ 已实现（⚠️ 需 /compare?codes= 或选股器入口） |
-| 创建报告 | POST | `/api/v1/reports` | P1 | 🔸 待实现（排期 Phase D/E 报告任务，含 ReportPage 与前端路由） |
-| 报告状态 | GET | `/api/v1/reports/{report_id}` | P1 | 🔸 待实现（同上） |
-| 报告下载 | GET | `/api/v1/reports/{report_id}/file` | P1 | 🔸 待实现（同上） |
+| 创建报告 | POST | `/api/v1/reports` | P1 | ✅ 已实现（Phase D #8：202 + 幂等键 + report_jobs） |
+| 报告状态 | GET | `/api/v1/reports/{report_id}` | P1 | ✅ 已实现（Phase D #8：状态/进度/错误/可下载标志） |
+| 报告下载 | GET | `/api/v1/reports/{report_id}/file` | P1 | ✅ 已实现（Phase D #8：仅 succeeded，PDF） |
 
 ---
 
@@ -155,7 +155,45 @@ GET /api/v1/companies?query=康美&limit=10
 
 ### WS /api/v1/chat/ws — 流式问答 ✅
 
-V12 event envelope 格式，支持 turn.accepted / module.started / answer.delta / artifact.upsert / turn.completed / turn.failed / heartbeat。
+V12 event envelope 格式，支持 turn.accepted / module.started / answer.delta / artifact.upsert / turn.completed / turn.failed / turn.cancelled / stream.resume_ack / heartbeat。
+
+Phase D 增强（#5/#6/#10）：
+- `turn.cancel` → `turn.cancelled`（协作式取消：当前节点结束、下一节点不启动、≤2s 确认、幂等）
+- `stream.resume` → `stream.resume_ack`（断线补发：原 event_id/sequence/turn_id 原样回放；gap → STREAM_GAP）
+- `answer.delta` 为真流式（generate_answer 实时分段，拼接 == 最终答案）
+- `turn.completed` 增补 `pattern_matches`（模式三要素）与 `equity_chains`（股权链路）
+
+### GET /api/v1/reports — 创建报告 ✅ (Phase D #8)
+
+```http
+POST /api/v1/reports
+{
+  "company_code": "600518.SH",
+  "session_id": "ses_xxx",           // 可选
+  "idempotency_key": "report-001",   // 可选：同一键重试不重复建任务
+  "as_of": "2026-03-31"              // 可选
+}
+```
+
+响应 202：`{data: {report_id, status:"queued", progress:0, ...}, meta, warnings}`。
+
+### GET /api/v1/reports/{report_id} — 报告状态 ✅
+
+返回 `{report_id, status, progress, created_at, started_at, completed_at, error_code, error_message, download_available, file_sha256, company_code, session_id}`。
+
+### GET /api/v1/reports/{report_id}/file — 报告下载 ✅
+
+仅 `succeeded` 可下载；返回 `application/pdf`；路径穿越防护；文件不存在返回明确错误。
+
+### 股权链路载荷（Phase D #12）
+
+`GET /api/v1/companies/{code}/equity` 与 `POST /api/v1/chat` 的 `equity_chains` 字段：
+每条链含 `chain_id/path_names/depth/final_control_pct/evidence_ids/risk_label/risk_level/risk_reasons/merge_explanation/source_system/as_of`。
+
+### 模式三要素（Phase D #16）
+
+`/risk` 的 `pattern_matches`、`/chat` 的 `pattern_matches`、WS `turn.completed`：
+每条含 `phase / alternative_explanation / regulatory_hint`（监管提示固定存在）。
 
 ---
 

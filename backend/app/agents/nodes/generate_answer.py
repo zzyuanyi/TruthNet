@@ -14,11 +14,18 @@ Phase D #13（问答润色）：
   - LLM 失败 / 关键信息被改 → 原样回退模板输出
   - LLM 调用走独立线程 asyncio.run（REST asyncio.to_thread 与 WS
     事件循环线程两条路径均安全），超时 ~3s
+
+Phase D #10（真流式）：
+  - 构造四层回答时，每完成一个真实分段立即 push 到按 turn_id 注册的
+    DeltaSink（app.agents.delta_sink），由 WsTurnRunner 转成 answer.delta。
+  - 分段在生成过程中实时产生，绝不在最终答案完成后拆句冒充流式。
+  - 无 sink（REST）时行为不变。
 """
 
 import logging
 import re
 
+from app.agents.delta_sink import get_sink
 from app.agents.llm_sync import run_llm_chat
 from app.agents.state import AgentState, FinalResponse
 from app.domain.finance.parent_scope import (
@@ -312,6 +319,26 @@ def _finance_all_blocked(finance) -> bool:
     )
 
 
+def _stream_turn_id(state: AgentState) -> str | None:
+    """取当前 turn_id（用于 DeltaSink 查找）；无 runtime 返回 None."""
+    runtime = state.get("runtime")
+    if runtime is None:
+        return None
+    return getattr(runtime, "turn_id", "") or None
+
+
+def _emit_segment(state: AgentState, text: str) -> None:
+    """构造四层回答时实时 push 真实分段到 DeltaSink（仅流式模式生效）."""
+    if not text:
+        return
+    turn_id = _stream_turn_id(state)
+    if not turn_id:
+        return
+    sink = get_sink(turn_id)
+    if sink is not None:
+        sink.push(text)
+
+
 def generate_answer_node(state: AgentState) -> dict:
     company = state.get("company")
     claims = state.get("claims", [])
@@ -321,6 +348,10 @@ def generate_answer_node(state: AgentState) -> dict:
     finance_unknown_type = finance_blocked and any(
         "公司类型缺失" in (w or "") for w in (finance.warnings or [])
     )
+    # 流式模式：存在 DeltaSink（由 WsTurnRunner 注册）。
+    # 流式下跳过整段 LLM 润色——润色会整体重写回答，导致
+    # "delta 拼接 == 最终答案" 无法成立；润色仅作为 REST 增强保留。
+    streaming = get_sink(_stream_turn_id(state) or "") is not None
 
     if company is None:
         # Phase D #10: 行业级研报问题（无公司也能检索，如"白酒行业近期研报观点"）
@@ -346,6 +377,7 @@ def generate_answer_node(state: AgentState) -> dict:
                         + "；".join(parts)
                         + "。如需针对某家公司分析，请提供公司名称或股票代码。"
                     )
+                    _emit_segment(state, answer)
                     return {
                         "final_response": FinalResponse(
                             answer=answer,
@@ -359,9 +391,11 @@ def generate_answer_node(state: AgentState) -> dict:
                 "generate_answer: 行业研报检索失败，回退提示语", exc_info=True
             )
 
+        fallback = "未能在数据覆盖范围内找到匹配的公司，请提供完整公司名称或股票代码。"
+        _emit_segment(state, fallback)
         return {
             "final_response": FinalResponse(
-                answer="未能在数据覆盖范围内找到匹配的公司，请提供完整公司名称或股票代码。",
+                answer=fallback,
                 risk_level="unknown",
                 claims=[],
                 evidence=[],
@@ -402,16 +436,28 @@ def generate_answer_node(state: AgentState) -> dict:
     # ③ 财务触发规则明细（V12 §4.3 规则触发清单）
     rule_details = _build_rule_details(state)
 
-    answer = conclusion + (summary + "。" if summary else "")
+    # 分段组装（真流式：每构造完一个真实分层立即 push，再拼接完整 answer）
+    segments: list[str] = []
+    segments.append(conclusion)
+    _emit_segment(state, conclusion)
+    if summary:
+        seg = summary + "。"
+        segments.append(seg)
+        _emit_segment(state, seg)
     if rule_details:
-        answer += rule_details
+        segments.append(rule_details)
+        _emit_segment(state, rule_details)
     # Phase D #12: LLM 财务解读段（finance 节点产出；失败时为空则跳过）
+    interpretation = ""
     if results and getattr(results, "finance", None) and results.finance.interpretation:
-        answer += results.finance.interpretation
+        interpretation = results.finance.interpretation
+        segments.append(interpretation)
+        _emit_segment(state, interpretation)
     # Phase D #11: 疑似造假模式段（pattern_match 节点产出；命中时回答含模式名）
     pattern_matches = state.get("pattern_matches", [])
+    pattern_seg = ""
     if pattern_matches:
-        answer += (
+        pattern_seg = (
             "疑似模式："
             + "；".join(
                 f"{m.get('pattern_name', m.get('pattern_id', ''))}"
@@ -420,9 +466,12 @@ def generate_answer_node(state: AgentState) -> dict:
             )
             + "。"
         )
+        segments.append(pattern_seg)
+        _emit_segment(state, pattern_seg)
 
     # Phase D #10: 研报/公告语义检索（问题涉及研报/行业/评级时可选调用）
     user_query = state.get("user_query", "")
+    research_seg = ""
     try:
         from app.application.services.research_search import (
             is_research_query,
@@ -439,12 +488,18 @@ def generate_answer_node(state: AgentState) -> dict:
                     org = it.get("source_org", "")
                     label = f"{org}·{src}" if org else src
                     parts.append(f"{it.get('content', '')[:80]}（来源：{label}）")
-                answer += "近期研报观点：" + "；".join(parts) + "。"
+                research_seg = "近期研报观点：" + "；".join(parts) + "。"
+                segments.append(research_seg)
+                _emit_segment(state, research_seg)
     except Exception:  # noqa: BLE001 — 检索失败不影响主回答
         logger.warning("generate_answer: 研报检索段失败，跳过", exc_info=True)
 
-    # Phase D #13: LLM 润色（失败/改变关键信息 → 自动回退模板）
-    answer = _polish_answer(answer)
+    answer = "".join(segments)
+
+    # Phase D #13: LLM 润色（流式模式跳过——润色整体重写导致 delta≠最终答案；
+    # 非流式仍保留润色增强，失败/改变关键信息 → 自动回退模板）
+    if not streaming:
+        answer = _polish_answer(answer)
 
     # 风险等级：优先使用 risk 节点输出（否则回退 claim 最高严重度）
     risk_level = (

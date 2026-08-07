@@ -35,6 +35,14 @@ class PatternMatch(BaseModel):
     triggered_rules: list[str] = Field(default_factory=list)
     confidence: str = Field(default="medium", description="high / medium / low")
     reasoning: str = Field(default="", description="匹配理由")
+    # Phase D #16 模式三要素（监管提示固定存在，不可被折叠/润色删除）
+    phase: str = Field(default="", description="风险模式当前表现阶段（受控字符串）")
+    alternative_explanation: str = Field(
+        default="", description="该信号可能存在的非舞弊解释"
+    )
+    regulatory_hint: str = Field(
+        default="", description="监管核查提示（非法律定罪结论）"
+    )
 
 
 class MitigatingFactor(BaseModel):

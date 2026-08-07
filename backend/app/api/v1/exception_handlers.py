@@ -1,8 +1,11 @@
-"""API v1 异常处理器 — V12 baseline.
+"""API v1 异常处理器 — V12 baseline + Phase D #1 故障识别.
 
 将异常转换为 RFC 9457 Problem Details 格式。
+Phase D #1：识别基础设施故障（MySQL/Neo4j/Chroma/LLM），
+返回可恢复的结构化错误码，而非笼统 INTERNAL_ERROR。
 """
 
+import logging
 import uuid
 
 from fastapi import Request
@@ -13,10 +16,69 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import ErrorCode, ProblemDetail
 
+logger = logging.getLogger(__name__)
+
+# 已知基础设施故障 → 错误码/可恢复性/状态码
+# 复用 ErrorCode 既有规范码：DATASTORE_UNAVAILABLE（MySQL/Chroma）、
+# GRAPH_UNAVAILABLE（Neo4j）、LLM_TIMEOUT（LLM）。
+_KNOWN_FAULTS = [
+    # MySQL / SQLAlchemy
+    (("pymysql", "OperationalError"), "DATASTORE_UNAVAILABLE", 503, True),
+    (("sqlalchemy", "OperationalError"), "DATASTORE_UNAVAILABLE", 503, True),
+    (("sqlalchemy", "DBAPIError"), "DATASTORE_UNAVAILABLE", 503, True),
+    # Neo4j
+    (("neo4j", "ServiceUnavailable"), "GRAPH_UNAVAILABLE", 503, True),
+    (("neo4j", "AuthError"), "GRAPH_UNAVAILABLE", 503, False),
+    (("neo4j.exceptions", "ServiceUnavailable"), "GRAPH_UNAVAILABLE", 503, True),
+    # Chroma
+    (("chromadb", ""), "DATASTORE_UNAVAILABLE", 503, True),
+    # LLM / OpenAI
+    (("openai", "APITimeoutError"), "LLM_TIMEOUT", 503, True),
+    (("openai", "APIStatusError"), "LLM_TIMEOUT", 503, True),
+    (("openai", "APIConnectionError"), "LLM_TIMEOUT", 503, True),
+]
+
+
+def _classify_fault(exc: Exception) -> tuple[str, int, bool] | None:
+    """识别异常类型 → (error_code, status, recoverable)；未知返回 None。"""
+    exc_type = type(exc)
+    module_name = exc_type.__module__ or ""
+    class_name = exc_type.__name__
+    for (mod, cls), code, status, rec in _KNOWN_FAULTS:
+        if cls and class_name == cls and (not mod or mod in module_name):
+            return code, status, rec
+        if not cls and mod in module_name:
+            return code, status, rec
+    return None
+
 
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """通用异常处理器."""
+    """通用异常处理器 — Phase D #1 识别基础设施故障。"""
     trace_id = str(uuid.uuid4())
+    fault = _classify_fault(exc)
+    if fault is not None:
+        error_code, status, recoverable = fault
+        logger.warning(
+            "基础设施故障: error_code=%s trace_id=%s exc=%s",
+            error_code,
+            trace_id,
+            type(exc).__name__,
+        )
+        detail = ProblemDetail(
+            type=f"https://truthnet/errors/{error_code.lower()}",
+            title=error_code,
+            status=status,
+            detail=f"基础设施服务不可用（{type(exc).__name__}），请稍后重试或检查服务状态",
+            instance=str(request.url),
+            error_code=error_code,
+            trace_id=trace_id,
+            recoverable=recoverable,
+        )
+        return JSONResponse(
+            status_code=status,
+            content=detail.model_dump(),
+            media_type="application/problem+json",
+        )
     detail = ProblemDetail(
         type="https://truthnet/errors/internal-error",
         title="Internal Server Error",

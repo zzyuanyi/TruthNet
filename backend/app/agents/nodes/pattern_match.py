@@ -69,6 +69,10 @@ def pattern_match_node(state: AgentState) -> dict:
                 if m.pattern_id in patterns
                 else [],
                 "partial_coverage": m.partial_coverage,
+                # Phase D #16 模式三要素（受控透出，REST/WS/Agent 一致）
+                "phase": m.phase,
+                "alternative_explanation": m.alternative_explanation,
+                "regulatory_hint": m.regulatory_hint,
             }
         )
     return {"pattern_matches": out}

@@ -68,16 +68,47 @@ def _session_id(state: AgentState) -> str | None:
 
 
 def load_context_node(state: AgentState) -> dict:
-    """恢复最近 N 轮历史消息。
+    """恢复最近 N 轮历史消息 + 远期记忆摘要（Phase D #15）。
 
     返回 messages 追加到已有列表（LangGraph add_messages reducer），
     下游 memory 节点可从中提取公司/指标做指代消解。
+
+    记忆策略（settings.MEMORY_STRATEGY）：
+      - none / recent_only：仅近期轮次；
+      - summary_plus_recent：近期 N 轮全量 + 更早轮次的限长摘要
+        （摘要注入为 system 消息，与近期轮次/当前问题清晰区分）。
     """
     runtime = state.get("runtime")
 
     session_id = _session_id(state)
     if not session_id:
         return {"messages": [], "runtime": runtime}
+
+    strategy = settings.MEMORY_STRATEGY
+    history: list[dict] = []
+
+    # 远期记忆摘要（优先注入，标注来源轮次，不覆盖近期事实）
+    summary = None
+    if strategy == "summary_plus_recent":
+        try:
+            from app.application.services.memory_distillation import (
+                load_or_build_summary,
+            )
+
+            summary = load_or_build_summary(session_id)
+        except Exception:  # noqa: BLE001 — 摘要失败回退近期轮次
+            logger.warning("LoadContext: 远期摘要加载失败，回退近期轮次", exc_info=True)
+        if summary is not None and summary.text:
+            history.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"【远期记忆摘要】（覆盖至第 {summary.covered_until_turn_index} 轮，"
+                        f"来源 {len(summary.source_turn_ids)} 轮；仅供参考，不覆盖近期事实）："
+                        f"{summary.text}"
+                    ),
+                }
+            )
 
     try:
         with _get_engine().connect() as conn:
@@ -95,10 +126,9 @@ def load_context_node(state: AgentState) -> dict:
             )
     except Exception:
         logger.exception("LoadContext 读取失败: session=%s", session_id)
-        return {"messages": [], "runtime": runtime}
+        return {"messages": history, "runtime": runtime}
 
     # 倒序结果反转 → 按时间升序注入
-    history: list[dict] = []
     for row in reversed(rows):
         q = str(row["question"] or "")
         a = str(row["answer"] or "")
@@ -109,7 +139,10 @@ def load_context_node(state: AgentState) -> dict:
 
     if history:
         logger.info(
-            "LoadContext: session=%s 恢复 %d 条历史消息", session_id, len(history)
+            "LoadContext: session=%s 恢复 %d 条历史消息（strategy=%s）",
+            session_id,
+            len(history),
+            strategy,
         )
 
     return {"messages": history, "runtime": runtime}

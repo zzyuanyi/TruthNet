@@ -16,10 +16,13 @@
   - /api/v1/sessions                     → V12 会话管理
 """
 
+import logging
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,19 +43,86 @@ from app.api.v1.routers import events as events_v1
 from app.api.v1.routers import finance as finance_v1
 from app.api.v1.routers import health as health_v1
 from app.api.v1.routers import provenance as provenance_v1
+from app.api.v1.routers import reports as reports_v1
 from app.api.v1.routers import risk as risk_v1
 from app.api.v1.routers import sessions as sessions_v1
 from app.core.config import settings
 from app.schemas.common import HealthResponse, UnifiedResponse
 
+logger = logging.getLogger(__name__)
+
 # 加载 .env
 env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(env_path)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """应用生命周期.
+
+    启动：恢复遗留 running 报告任务（Phase D #8，重启后不永久卡死）；
+          注册 WS janitor 周期清理（缓冲 TTL + 空闲会话回收）。
+    关闭：停止 janitor task（不阻塞）。
+    """
+    import asyncio
+
+    try:
+        from app.application.services.report_service import recover_stale_running_jobs
+
+        n = recover_stale_running_jobs()
+        if n:
+            logger.info("启动时恢复 %d 个遗留 running 报告任务", n)
+    except Exception:  # noqa: BLE001 — 恢复失败不阻塞启动
+        logger.warning("启动时报告任务恢复失败", exc_info=True)
+
+    # WS janitor：周期清理过期缓冲事件 + 空闲超时会话（防止内存无界增长）
+    from app.application.services.ws_session_manager import session_manager
+
+    janitor_stop = asyncio.Event()
+
+    async def _ws_janitor_loop() -> None:
+        while not janitor_stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    janitor_stop.wait(),
+                    timeout=settings.WS_JANITOR_INTERVAL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass
+            if janitor_stop.is_set():
+                break
+            try:
+                stats = session_manager.janitor()
+                if stats["expired_sessions"] or stats["expired_events"]:
+                    logger.info("WS janitor: %s", stats)
+            except Exception:  # noqa: BLE001 — 单轮清理失败不终止循环
+                logger.warning("WS janitor 执行失败", exc_info=True)
+
+    janitor_task = asyncio.create_task(_ws_janitor_loop())
+    try:
+        yield
+    finally:
+        janitor_stop.set()
+        try:
+            await janitor_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        # 显式关闭 Neo4j 共享 driver（避免依赖析构关闭，解释器退出 warning）
+        try:
+            from app.infrastructure.graph.neo4j.equity_graph import (
+                Neo4jEquityGraph,
+            )
+
+            Neo4jEquityGraph.close_shared_driver()
+        except Exception:  # noqa: BLE001 — 关闭失败不阻塞退出
+            logger.warning("Neo4j 共享 driver 关闭失败", exc_info=True)
+
 
 app = FastAPI(
     title="TruthNet API",
     description="织网鉴真 — 财报反欺诈智能问答系统 (V12 baseline)",
     version="0.2.0",
+    lifespan=_lifespan,
 )
 
 # CORS（开发阶段允许所有来源）
@@ -101,6 +171,7 @@ app.include_router(benchmarks_v1.router, prefix="/api/v1")
 app.include_router(provenance_v1.router, prefix="/api/v1")
 app.include_router(comparisons_v1.router, prefix="/api/v1")
 app.include_router(chat_v1.router, prefix="/api/v1")
+app.include_router(reports_v1.router, prefix="/api/v1")
 app.include_router(sessions_v1.router, prefix="/api/v1")
 
 

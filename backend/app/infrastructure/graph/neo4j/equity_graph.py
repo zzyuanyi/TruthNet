@@ -15,6 +15,7 @@
 
 import hashlib
 import logging
+import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -113,10 +114,23 @@ class Neo4jEquityGraph:
       - Wind Code 统一通过 normalizer.normalize_wind_code() 处理。
     """
 
+    # 类级共享 driver：进程内所有实例复用同一连接，避免每次实例化
+    # 新建 GraphDatabase.driver（GET /evidence 逐证据回查会高频实例化，
+    # 每实例一个 driver 且从不 close → 连接泄漏 + 回查耗时放大）。
+    # 锁在类定义时创建（单线程安全）——惰性初始化本身有冷启动竞态：
+    # 两线程并发看到 None 各建一把锁，双重检查失效，driver 可能创建两次。
+    _shared_driver = None
+    _driver_lock = threading.Lock()
+
     def __init__(self):
-        self._driver = None
-        self._available = False
-        self._init_driver()
+        cls = type(self)
+        if cls._shared_driver is None:
+            with cls._driver_lock:
+                if cls._shared_driver is None:
+                    self._init_driver()
+                    cls._shared_driver = self._driver
+        self._driver = cls._shared_driver
+        self._available = self._driver is not None
 
     def _init_driver(self) -> None:
         try:
@@ -131,6 +145,21 @@ class Neo4jEquityGraph:
         except Exception as e:
             logger.warning("Neo4j driver 创建失败: %s", e)
             self._driver = None
+
+    @classmethod
+    def close_shared_driver(cls) -> None:
+        """显式关闭共享 driver 并清空引用（lifespan 退出时调用；幂等）。
+
+        关闭后再次实例化会重建 driver（测试/重连场景安全）。
+        """
+        with cls._driver_lock:
+            driver, cls._shared_driver = cls._shared_driver, None
+        if driver is not None:
+            try:
+                driver.close()
+                logger.info("Neo4j 共享 driver 已关闭")
+            except Exception as e:  # noqa: BLE001 — 关闭失败不阻断退出
+                logger.warning("Neo4j driver 关闭失败: %s", e)
 
     # ── 连接管理 ──
 

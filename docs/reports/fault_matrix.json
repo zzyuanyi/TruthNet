@@ -1,0 +1,41 @@
+{
+  "phase": "Phase D #1 故障注入矩阵",
+  "company_code": "600518.SH",
+  "scenarios": [
+    {
+      "name": "MySQL 不可用",
+      "status_code": 503,
+      "error_code": "DATASTORE_UNAVAILABLE",
+      "recoverable": true,
+      "ok": true
+    },
+    {
+      "name": "Neo4j 不可用",
+      "status_code": 200,
+      "partial": true,
+      "source_system": "neo4j",
+      "has_warning": true,
+      "ok": true
+    },
+    {
+      "name": "Chroma 不可用",
+      "result_is_list": true,
+      "result_count": 0,
+      "ok": true
+    },
+    {
+      "name": "LLM 主备均失败",
+      "status_code": 200,
+      "answer_nonempty": true,
+      "ok": true
+    },
+    {
+      "name": "公司无公告数据",
+      "status_code": 200,
+      "has_timeline": true,
+      "has_warning": true,
+      "ok": true
+    }
+  ],
+  "all_passed": true
+}
