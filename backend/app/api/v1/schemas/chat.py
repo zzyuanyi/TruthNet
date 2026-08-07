@@ -162,3 +162,17 @@ class ChatDataV1(BaseModel):
         default="unknown",
         description="风险等级：red/orange/yellow/green/unknown",
     )
+    pattern_matches: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "造假模式匹配结果（含 phase/alternative_explanation/"
+            "regulatory_hint 三要素，Phase D #16）"
+        ),
+    )
+    equity_chains: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "正式股权链路载荷（含 risk_label/risk_level/evidence_ids/"
+            "merge_explanation，Phase D #12）"
+        ),
+    )
