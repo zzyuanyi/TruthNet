@@ -104,39 +104,48 @@ def _chain_evidence_ids(
     node_ids: list[str],
     graph_edges: list,
     top_shareholder_records: list[dict],
-) -> list[str]:
-    """从真实记录收集链路证据 ID（去重）。
+    edge_evidence_map: dict[str, str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """收集链路证据 ID——仅 canonical ev_* 可回查 ID（去重）。
 
-    优先 Neo4j relationship_id → 对应 top_shareholders 来源记录 ID →
-    已持久化 EvidenceRef。
+    优先级：
+      1. edge_evidence_map 将 relationship_id 转 canonical evidence_id
+         （与 Agent 落库一致，可经 GET /evidence/{id} 回查）；
+      2. graph_edges 自带 canonical evidence_id（兼容已带该字段的模型）。
+
+    top_shareholder_records 仅用于比例比对，不再注入 evidence_ids
+    （裸 source_record_id 无法通过 GET /evidence/{id} 回查）。
+
+    Returns:
+        (eids, unmatched_edge_ids)：无法映射为 canonical 的边由调用方转 warning。
     """
     eids: list[str] = []
     seen: set[str] = set()
+    unmatched: list[str] = []
+    edge_evidence_map = edge_evidence_map or {}
 
-    # Neo4j 边 relationship_id（真实稳定 ID）
+    # 1. 边 relationship_id → canonical evidence_id（优先）
     for eid in edge_ids:
-        if eid and eid not in seen:
-            seen.add(eid)
-            eids.append(eid)
+        if not eid:
+            continue
+        canonical = edge_evidence_map.get(eid)
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            eids.append(canonical)
+        else:
+            unmatched.append(eid)
 
-    # top_shareholders 来源记录（source_record_id 可作为证据来源）
-    for rec in top_shareholder_records:
-        srid = rec.get("source_record_id") or rec.get("relationship_id")
-        if srid and srid not in seen:
-            seen.add(srid)
-            eids.append(srid)
-
-    # 图边 evidence（若已由 equity 节点持久化）；兼容 Pydantic 模型与 dict
+    # 2. 图边自带 canonical evidence（兼容 Pydantic 模型与 dict）
     for edge in graph_edges:
         if isinstance(edge, dict):
             ev = edge.get("evidence_id")
         else:
             ev = getattr(edge, "evidence_id", None)
-        if ev and ev not in seen:
+        if ev and ev.startswith("ev_") and ev not in seen:
             seen.add(ev)
             eids.append(ev)
 
-    return eids[:20]  # 限制长度，避免超长载荷
+    return eids[:20], unmatched  # 限制长度，避免超长载荷
 
 
 def _derive_risk_label(
@@ -187,11 +196,17 @@ def build_equity_chains(
     node_name_map: dict[str, str],
     graph_edges: list[Any] | None = None,
     top_shareholder_records: list[dict] | None = None,
+    edge_evidence_map: dict[str, str] | None = None,
     as_of: str = "",
     source_system: str = "unknown",
     merge_groups: list[dict] | None = None,
 ) -> tuple[list[EquityChainDTO], list[str]]:
     """将领域控制链升级为正式链路 DTO。
+
+    Args:
+        edge_evidence_map: {relationship_id: canonical evidence_id}，由调用方按
+            equity_shareholder_service.make_equity_edge_evidence_id 构建（与 Agent
+            落库一致）；缺省时无法映射的边从 evidence_ids 丢弃并输出 warning。
 
     Returns:
         (chains_dto, warnings)：warnings 包含合并/证据相关的审慎提示。
@@ -238,12 +253,18 @@ def build_equity_chains(
             final_pct = chain.effective_control_pct()
             path_names = [node_name_map.get(n, n) for n in node_ids]
 
-        evidence_ids = _chain_evidence_ids(
+        evidence_ids, unmatched = _chain_evidence_ids(
             edge_ids=edge_ids,
             node_ids=node_ids,
             graph_edges=graph_edges,
             top_shareholder_records=top_shareholder_records,
+            edge_evidence_map=edge_evidence_map,
         )
+        if unmatched:
+            warnings.append(
+                f"链路 chain_{company_code}_{i:03d} 有 {len(unmatched)} 条边"
+                "无法映射为可回查证据 ID，已从 evidence_ids 丢弃"
+            )
 
         # 比例一致性：MySQL 股东表 vs Neo4j 边（按链路顶层股东名称匹配后比较）
         ownership_mismatch = False

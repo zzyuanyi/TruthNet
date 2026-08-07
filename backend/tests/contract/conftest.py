@@ -21,5 +21,5 @@ def ws_session_tracker():
     yield track
     for sid in created:
         resp = client.delete(f"/api/v1/sessions/{sid}")
-        if resp.status_code != 200:
-            print(f"⚠️ WS 测试会话清理失败: {sid} → {resp.status_code}")
+        if resp.status_code not in (200, 404):
+            print(f"WS test session cleanup failed: {sid} -> {resp.status_code}")

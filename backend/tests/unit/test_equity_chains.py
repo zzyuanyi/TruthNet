@@ -81,8 +81,11 @@ def test_chain_load_has_all_fields():
     assert d["as_of"] == "2026-03-31"
 
 
-def test_evidence_ids_from_real_records():
-    """evidence_ids 来自真实 Neo4j relationship_id / 来源记录，非 mock。"""
+def test_evidence_ids_canonical_via_map():
+    """edge_evidence_map 将 relationship_id 转 canonical ev_eq_*（可回查）。
+
+    裸 relationship_id / source_record_id 不得出现在 evidence_ids。
+    """
     chains, _ = build_equity_chains(
         company_code="600518.SH",
         chains=[_chain(edge_ids=["rel_abc123", "rel_def456"])],
@@ -94,13 +97,30 @@ def test_evidence_ids_from_real_records():
         top_shareholder_records=[
             {"holder_name": "A", "pct": 25.0, "source_record_id": "src_share_001"}
         ],
+        edge_evidence_map={
+            "rel_abc123": "ev_eq_abc123",
+            "rel_def456": "ev_eq_def456",
+        },
     )
     ev = chains[0].evidence_ids
-    assert "rel_abc123" in ev, "应包含真实 relationship_id"
-    assert "rel_def456" in ev
-    assert "src_share_001" in ev, "应包含 top_shareholders 来源记录 ID"
-    # 不得出现 mock 证据
+    assert ev == ["ev_eq_abc123", "ev_eq_def456"], f"应全部 canonical，实际 {ev}"
+    # 裸 source_record_id 不得作为证据 ID 回传（仅用于比例比对）
+    assert "src_share_001" not in ev
     assert not any("mock" in e or "ev_eq_01" == e for e in ev)
+
+
+def test_evidence_ids_unmapped_dropped_with_warning():
+    """无法映射为 canonical 的边从 evidence_ids 丢弃，并输出 warning。"""
+    chains, warnings = build_equity_chains(
+        company_code="600518.SH",
+        chains=[_chain(edge_ids=["rel_orphan"])],
+        node_name_map={"e1": "A", "e2": "B", "e3": "C"},
+        graph_edges=[],
+        top_shareholder_records=[],
+        edge_evidence_map={},
+    )
+    assert chains[0].evidence_ids == [], "无法映射的边不得进入 evidence_ids"
+    assert any("无法映射" in w for w in warnings), "应有无法映射 warning"
 
 
 def test_risk_label_mapping_single_source():

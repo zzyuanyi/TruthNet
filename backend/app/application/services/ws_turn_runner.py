@@ -28,6 +28,7 @@ from app.agents.delta_sink import DeltaSink, register_sink, unregister_sink
 from app.application.services.ws_session_manager import (
     ActiveTurn,
     WsSession,
+    session_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,19 @@ def _utcnow_iso() -> str:
 
 def _new_event_id() -> str:
     return f"evt_{uuid.uuid4().hex[:8]}"
+
+
+async def _emit_terminal_once(
+    session: WsSession, turn: ActiveTurn, event_type: str, payload: dict, emit
+) -> bool:
+    """原子抢占后发送终态事件（turn.cancelled/completed/failed 统一入口）。
+
+    保证同一 turn 恰好一个终态事件：抢占成功者发送，其余路径跳过。
+    """
+    if not session_manager.claim_terminal_event(session, turn.turn_id):
+        return False
+    await emit(event_type, payload)
+    return True
 
 
 class TurnResult:
@@ -132,15 +146,19 @@ async def _run(
     token = turn.token
     cancelled = token.cancelled
 
-    # 启动前就已被取消（accepted 后立即取消场景）
+    # 启动前就已被取消（accepted 后立即取消场景；确认事件可能已由路由层
+    # 经 claim 发出——此处抢占失败则不重复发送）
     if cancelled:
-        await emit(
+        await _emit_terminal_once(
+            session,
+            turn,
             "turn.cancelled",
             {
                 "turn_id": turn.turn_id,
                 "cancelled_at": _utcnow_iso(),
                 "message": "当前轮次已取消",
             },
+            emit,
         )
         return TurnResult("cancelled", turn.turn_id, 0)
 
@@ -229,16 +247,19 @@ async def _run(
                 # state（含 final_response/claims/evidence）后再终态判定。
                 # 取消时在下一个 on_chain_start 处 break（不启动新节点）。
 
-        # 取消 → 恰好一次 turn.cancelled（不发送 turn.completed）
+        # 取消 → 恰好一次 turn.cancelled（不发送 turn.completed）；
+        # 若路由层取消确认已抢占终态，此处抢占失败即跳过
         if token.cancelled or cancelled:
-            # 取消确认可能已由接收循环直接发送（≤2s 确认）；此处兜底防重复
-            await emit(
+            await _emit_terminal_once(
+                session,
+                turn,
                 "turn.cancelled",
                 {
                     "turn_id": turn.turn_id,
                     "cancelled_at": _utcnow_iso(),
                     "message": "当前轮次已取消",
                 },
+                emit,
             )
             return TurnResult("cancelled", turn.turn_id, session.sequence)
 
@@ -258,13 +279,16 @@ async def _run(
 
     except asyncio.CancelledError:
         # turn task 被外部取消（连接销毁 / 清理）
-        await emit(
+        await _emit_terminal_once(
+            session,
+            turn,
             "turn.cancelled",
             {
                 "turn_id": turn.turn_id,
                 "cancelled_at": _utcnow_iso(),
                 "message": "当前轮次已取消",
             },
+            emit,
         )
         return TurnResult("cancelled", turn.turn_id, session.sequence)
     except Exception:  # noqa: BLE001 — Agent 异常 → turn.failed（不静默吞异常）
@@ -275,13 +299,16 @@ async def _run(
             question,
         )
         try:
-            await emit(
+            await _emit_terminal_once(
+                session,
+                turn,
                 "turn.failed",
                 {
                     "error_code": "AGENT_ERROR",
                     "message": "处理请求时发生内部错误，请稍后重试",
                     "recoverable": True,
                 },
+                emit,
             )
         except Exception:  # noqa: BLE001 — 错误事件发送失败仅记录
             logger.warning("WsTurnRunner: 错误事件发送失败", exc_info=True)
@@ -303,12 +330,15 @@ async def _finalize_turn(
     """图执行完成（persist_turn 结束）后组装 turn.completed / turn.failed。"""
     final_response = state.get("final_response")
     if final_response is None:
-        await emit(
+        await _emit_terminal_once(
+            session,
+            turn,
             "turn.failed",
             {
                 "error_code": "NO_RESPONSE",
                 "message": "Agent 未返回结果",
             },
+            emit,
         )
         return TurnResult("no_response", turn.turn_id, session.sequence)
 
@@ -418,7 +448,9 @@ async def _finalize_turn(
             }
         )
 
-    await emit(
+    await _emit_terminal_once(
+        session,
+        turn,
         "turn.completed",
         {
             "answer": final_response.answer,
@@ -437,6 +469,7 @@ async def _finalize_turn(
             # Phase D #12: 正式链路载荷（与 REST equity_chains 一致）
             "equity_chains": _extract_equity_chains(state),
         },
+        emit,
     )
     return TurnResult("completed", turn.turn_id, session.sequence)
 

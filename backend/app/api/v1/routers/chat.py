@@ -333,11 +333,20 @@ async def websocket_chat_v1(ws: WebSocket):
     sender_task = asyncio.create_task(_ws_sender(scope, session_id))
 
     def _envelope(
-        event_type: str, payload: dict, *, sid: str, trace_id: str = ""
+        event_type: str,
+        payload: dict,
+        *,
+        sid: str,
+        trace_id: str = "",
+        turn_id: str = "",
     ) -> dict:
         """分配会话内单调递增序号并返回完整九字段信封.
 
         不直接发送——调用方通过 scope.queue 投递（sender task 发送）。
+
+        turn_id 必须由 turn 相关事件显式传入（accepted/cancelled/completed/
+        failed/delta 等）；heartbeat、非法 JSON、未知事件等非 turn 事件保持空串。
+        禁止使用连接级全局 turn_id——同一连接可并发多个 turn，会串写。
         """
         seq = session_manager.next_sequence(session)
         env = {
@@ -345,7 +354,7 @@ async def websocket_chat_v1(ws: WebSocket):
             "event_id": _new_event_id(),
             "event_type": event_type,
             "session_id": sid,
-            "turn_id": "",
+            "turn_id": turn_id,
             "sequence": seq,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "trace_id": trace_id or str(uuid.uuid4()),
@@ -505,6 +514,7 @@ async def websocket_chat_v1(ws: WebSocket):
                     {"message": f"已收到问题: {question[:50]}...", "turn_id": turn_id},
                     sid=sid,
                     trace_id=trace_id,
+                    turn_id=turn_id,
                 ),
             )
 
@@ -519,6 +529,9 @@ async def websocket_chat_v1(ws: WebSocket):
                     _emit=_emit,
                 )
             )
+            # 绑定 ActiveTurn.task：expire_idle 依赖它判断活跃 turn，
+            # 不绑定则活跃会话可能被 janitor 误回收
+            session_manager.attach_task(session, turn_id, task)
             turn_tasks.add(task)
             task.add_done_callback(turn_tasks.discard)
 
@@ -599,31 +612,21 @@ async def _handle_cancel(
         )
         return
 
-    status = session_manager.cancel_turn(session_obj, payload.turn_id)
-    if status == "already_terminal":
-        # 已完成 turn 的 cancel：明确终态，不改变历史记录
+    # 置位取消令牌（幂等；已完成 turn 返回 already_terminal）
+    session_manager.cancel_turn(session_obj, payload.turn_id)
+    # 原子抢占终态发送权：抢占成功者唯一发送 turn.cancelled（确认与终态合一）；
+    # 抢占失败（终态已由 runner / 其他路径发出，含 already_terminal 与重复
+    # cancel）→ 不重复发送第二个终态事件。
+    if session_manager.claim_terminal_event(session_obj, payload.turn_id):
         await _emit(
             sid,
             _envelope(
                 "turn.cancelled",
-                TurnCancelledPayload(
-                    turn_id=payload.turn_id,
-                    message="该轮次已完成，取消请求不改变历史记录",
-                ).model_dump(),
+                TurnCancelledPayload(turn_id=payload.turn_id).model_dump(),
                 sid=sid,
+                turn_id=payload.turn_id,
             ),
         )
-        return
-
-    # 正常取消确认（幂等：重复 cancel 也走这里，返回相同事件）
-    await _emit(
-        sid,
-        _envelope(
-            "turn.cancelled",
-            TurnCancelledPayload(turn_id=payload.turn_id).model_dump(),
-            sid=sid,
-        ),
-    )
 
 
 async def _handle_resume(
@@ -737,8 +740,13 @@ async def _run_ws_turn(
         return
 
     async def _emit_event(event_type: str, payload: dict) -> None:
-        env = _envelope(event_type, payload, sid=session_id, trace_id=trace_id)
-        env["turn_id"] = turn_id
+        env = _envelope(
+            event_type,
+            payload,
+            sid=session_id,
+            trace_id=trace_id,
+            turn_id=turn_id,
+        )
         await _emit(session_id, env)
 
     try:

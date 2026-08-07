@@ -256,7 +256,11 @@ def build_summary_for_turns(
 
 
 def load_or_build_summary(session_id: str) -> MemorySummary | None:
-    """读取会话远期记忆摘要；无摘要时构建（幂等，同来源结果稳定）。
+    """读取会话远期记忆摘要；无摘要或覆盖不足时构建（幂等，同来源结果稳定）。
+
+    早期轮次 = 全部轮次中不属于近期窗口的部分（turns[:-recent]）；
+    会话增长 → 新轮次滑出近期窗口 → covered_until 不足 → 增量重建。
+    重建基于确定性抽取（去重），同输入结果稳定，不违反幂等约束。
 
     失败不阻塞：任何异常返回 None，调用方回退近期 N 轮。
     """
@@ -277,15 +281,25 @@ def load_or_build_summary(session_id: str) -> MemorySummary | None:
                 else (meta_row[0] or {})
             )
         existing = MemorySummary.from_dict(meta.get("memory_summary"))
-        if existing is not None and existing.text:
+
+        # 早期轮次 = 不在近期窗口的轮次（按 turn_index 升序切片）
+        recent_n = settings.MEMORY_RECENT_TURNS
+        turns = _read_turns(session_id, recent_n)
+        early = turns[:-recent_n] if recent_n else turns
+        early_cutoff = early[-1]["turn_index"] if early else 0
+
+        if not early:
             return existing
 
-        # 无摘要 → 构建早期轮次摘要并持久化
-        recent = settings.MEMORY_RECENT_TURNS
-        turns = _read_turns(session_id, recent)
-        early = [t for t in turns if t["turn_index"] <= recent]
-        if not early:
-            return None
+        # 已有摘要且覆盖到当前早期窗口末尾 → 直接复用
+        if (
+            existing is not None
+            and existing.text
+            and existing.covered_until_turn_index >= early_cutoff
+        ):
+            return existing
+
+        # 无摘要 / 覆盖不足（新轮次滑出近期窗口）→ 构建/重建并持久化
         summary = build_summary_for_turns(early)
         _persist_summary(session_id, summary)
         return summary

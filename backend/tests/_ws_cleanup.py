@@ -33,6 +33,6 @@ def cleanup_ws_sids(events: list[dict]) -> int:
         resp = client.delete(f"/api/v1/sessions/{sid}")
         if resp.status_code == 200:
             deleted += 1
-        else:
-            print(f"⚠️ WS 测试会话清理失败: {sid} → {resp.status_code}")
+        elif resp.status_code != 404:
+            print(f"WS test session cleanup failed: {sid} -> {resp.status_code}")
     return deleted

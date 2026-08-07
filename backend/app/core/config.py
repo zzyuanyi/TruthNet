@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     WS_EVENT_BUFFER_TTL_SECONDS: int = 3600  # 事件 TTL（秒），过期被 expire 清除
     WS_SESSION_IDLE_TTL_SECONDS: int = 7200  # 会话空闲回收 TTL（秒）
     WS_CANCEL_ACK_TIMEOUT_SECONDS: float = 2.0  # turn.cancel 确认时限（验收 ≤2s）
+    WS_JANITOR_INTERVAL_SECONDS: int = 300  # WS janitor 周期（缓冲 TTL + 空闲会话回收）
 
     # ===== 远期记忆提炼（Phase D #15）=====
     MEMORY_RECENT_TURNS: int = 10  # 近期 N 轮全量加载；更早进入摘要

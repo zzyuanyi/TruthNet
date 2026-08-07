@@ -130,17 +130,41 @@ def test_session_isolated_claims_evidence(ws_session_tracker):
     try:
         with engine.connect() as conn:
             for sid, tc in ((sid_a, tc_a), (sid_b, tc_b)):
-                payload = tc[-1]["payload"]
+                completed = tc[-1]
+                turn_id = completed["turn_id"]
+                payload = completed["payload"]
+
+                # 会话归属由 conversation_turns / claims 表达。EvidenceRef 是
+                # 可跨会话复用的全局确定性资产，其 turn_id 合法地允许为 NULL，
+                # 不能用 evidence_refs.turn_id 判断当前会话归属。
+                owner_sid = conn.execute(
+                    text(
+                        "SELECT session_id FROM conversation_turns "
+                        "WHERE turn_id = :turn_id"
+                    ),
+                    {"turn_id": turn_id},
+                ).scalar()
+                assert owner_sid == sid, f"turn {turn_id} 应归属会话 {sid}"
+
                 for eid in payload.get("evidence_ids") or []:
                     row = conn.execute(
                         text(
-                            "SELECT company_code, turn_id FROM evidence_refs WHERE evidence_id = :e"
+                            "SELECT company_code FROM evidence_refs WHERE evidence_id = :e"
                         ),
                         {"e": eid},
                     ).first()
-                    # 证据应归属本会话的某个 turn（turn_id 非空）
                     assert row is not None, f"证据 {eid} 应存在于 evidence_refs"
-                    assert row[1], f"证据 {eid} 应绑定 turn_id"
+
+                dangling_links = conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM claim_evidence_links cel "
+                        "JOIN claims c ON c.claim_id = cel.claim_id "
+                        "LEFT JOIN evidence_refs e ON e.evidence_id = cel.evidence_id "
+                        "WHERE c.turn_id = :turn_id AND e.evidence_id IS NULL"
+                    ),
+                    {"turn_id": turn_id},
+                ).scalar()
+                assert dangling_links == 0, f"turn {turn_id} 不应存在断链证据"
     finally:
         engine.dispose()
 

@@ -72,6 +72,9 @@ def _build_chain_details(
     company_code: str,
     as_of: str,
     source_system: str,
+    node_name_map: dict[str, str] | None = None,
+    edge_evidence_map: dict[str, str] | None = None,
+    top_shareholder_records: list[dict] | None = None,
 ) -> list[dict]:
     """Phase D #12: 通过 equity_chain_service 构建正式链路载荷。"""
     try:
@@ -81,9 +84,10 @@ def _build_chain_details(
         dto_list, _warnings = build_equity_chains(
             company_code=company_code,
             chains=chains,
-            node_name_map={},
+            node_name_map=node_name_map or {},
             graph_edges=graph_edges,
-            top_shareholder_records=[],
+            top_shareholder_records=top_shareholder_records or [],
+            edge_evidence_map=edge_evidence_map or {},
             as_of=as_of,
             source_system=source_system,
             merge_groups=[],
@@ -205,6 +209,7 @@ def equity_node(state: AgentState) -> dict:
         # 证据：每条真实边一条 EvidenceRef（去重按 relationship_id）
         evidence = []
         seen = set()
+        edge_evidence_map: dict[str, str] = {}
         for e in graph.edges:
             edge_dict = {
                 "relationship_id": e.relationship_id,
@@ -219,23 +224,31 @@ def equity_node(state: AgentState) -> dict:
             if rid in seen:
                 continue
             seen.add(rid)
-            evidence.append(
-                _evidence_for_edge(
-                    edge=edge_dict,
-                    company_code=company_code,
-                    trace_id=trace_id,
-                    turn_id=turn_id,
-                    graph_version=graph_version,
-                )
+            ev_ref = _evidence_for_edge(
+                edge=edge_dict,
+                company_code=company_code,
+                trace_id=trace_id,
+                turn_id=turn_id,
+                graph_version=graph_version,
             )
+            evidence.append(ev_ref)
+            edge_evidence_map[rid] = ev_ref.evidence_id
 
-        # Phase D #12: 正式链路载荷（Agent/WS 与 REST 一致）
+        # Phase D #12: 正式链路载荷（Agent/WS 与 REST 一致；
+        # canonical evidence_id 映射 + 真实股东记录驱动 mismatch 检测）
+        from app.application.services.equity_shareholder_service import (
+            fetch_shareholder_records,
+        )
+
         chain_details = _build_chain_details(
             chains=chains,
             graph_edges=list(graph.edges),
             company_code=company_code,
             as_of="",
             source_system="neo4j",
+            node_name_map=node_name,
+            edge_evidence_map=edge_evidence_map,
+            top_shareholder_records=fetch_shareholder_records(company_code),
         )
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
@@ -297,35 +310,43 @@ def equity_node(state: AgentState) -> dict:
     ]
     evidence = []
     seen = set()
+    edge_evidence_map: dict[str, str] = {}
     for e in graph.edges:
         rid = e.relationship_id
         if rid in seen:
             continue
         seen.add(rid)
-        evidence.append(
-            _evidence_for_edge(
-                edge={
-                    "relationship_id": rid,
-                    "source_name": node_name.get(e.source, e.source),
-                    "target_name": node_name.get(e.target, e.target),
-                    "report_period": None,
-                    "ann_dt": None,
-                    "ownership_pct": e.effective_ownership_pct(),
-                },
-                company_code=company_code,
-                trace_id=trace_id,
-                turn_id=turn_id,
-                graph_version="networkx-lite",
-            )
+        ev_ref = _evidence_for_edge(
+            edge={
+                "relationship_id": rid,
+                "source_name": node_name.get(e.source, e.source),
+                "target_name": node_name.get(e.target, e.target),
+                "report_period": None,
+                "ann_dt": None,
+                "ownership_pct": e.effective_ownership_pct(),
+            },
+            company_code=company_code,
+            trace_id=trace_id,
+            turn_id=turn_id,
+            graph_version="networkx-lite",
         )
+        evidence.append(ev_ref)
+        edge_evidence_map[rid] = ev_ref.evidence_id
 
     # Phase D #12: 正式链路载荷（Lite 同样产出，source=networkx）
+    from app.application.services.equity_shareholder_service import (
+        fetch_shareholder_records,
+    )
+
     chain_details = _build_chain_details(
         chains=chains,
         graph_edges=list(graph.edges),
         company_code=company_code,
         as_of="",
         source_system="networkx",
+        node_name_map=node_name,
+        edge_evidence_map=edge_evidence_map,
+        top_shareholder_records=fetch_shareholder_records(company_code),
     )
 
     return {

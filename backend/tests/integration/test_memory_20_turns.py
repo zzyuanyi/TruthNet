@@ -26,9 +26,11 @@ _NEED_MYSQL = pytest.mark.skipif(
 )
 
 
-def _seed_session(sid: str, n: int) -> None:
+def _seed_session(sid: str, n: int, start: int = 1) -> None:
     """直接向 conversation_turns 播种 n 轮真实结构（question/answer），
-    模拟 20 轮真实会话的持久化结果（不重复跑 20 次 Agent）。
+    模拟真实会话的持久化结果（不重复跑 Agent）。
+
+    start: 起始轮次序号——传 >1 可向既有会话追加轮次（模拟会话增长）。
     """
     from sqlalchemy import create_engine, text
 
@@ -40,12 +42,13 @@ def _seed_session(sid: str, n: int) -> None:
     with engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO conversation_sessions (session_id, title, status, created_at, updated_at) "
+                "INSERT IGNORE INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
                 "VALUES (:sid, :title, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
             {"sid": sid, "title": "memory test"},
         )
-        for i in range(1, n + 1):
+        for i in range(start, start + n):
             q = (
                 "康美药业有造假风险吗"
                 if i == 1
@@ -133,6 +136,48 @@ def test_20_turn_memory_fact_recall():
         s = load_or_build_summary(sid)
         assert s is not None
         assert s.covered_until_turn_index >= 10
+    finally:
+        client.delete(f"/api/v1/sessions/{sid}")
+
+
+@_NEED_MYSQL
+def test_25_turn_summary_progression():
+    """25 轮：首次摘要覆盖 1-15（含 11-15 轮来源）；新增第 26 轮后推进到 16。
+
+    回归验证：早期窗口 = 不在近期 N 轮内的轮次（而非 turn_index ≤ N）；
+    会话增长后 covered_until 推进并重建。
+    """
+    from app.application.services.memory_distillation import load_or_build_summary
+
+    sid = f"ses_mem25_{uuid.uuid4().hex[:8]}"
+    _seed_session(sid, 25)
+    client = TestClient(app)
+    try:
+        s = load_or_build_summary(sid)
+        assert s is not None
+        assert (
+            s.covered_until_turn_index == 15
+        ), f"25 轮时早期窗口应覆盖到 15，实际 {s.covered_until_turn_index}"
+
+        # 第 11-15 轮 source_turn_ids 全部进入摘要（此前永久丢失的中间轮次）
+        expected = {f"turn_{sid}_{i}" for i in range(11, 16)}
+        assert expected.issubset(set(s.source_turn_ids)), (
+            f"11-15 轮来源必须全部进入摘要，缺失 {expected - set(s.source_turn_ids)}"
+        )
+        # 关键事实可召回（第 11 轮五粮液 → "涉及知名公司"归纳）
+        assert any("知名公司" in f for f in s.key_facts), "应能召回第 11 轮关键公司"
+
+        # 重复加载幂等：不重建、文本一致
+        s2 = load_or_build_summary(sid)
+        assert s2 is not None and s2.text == s.text
+
+        # 会话增长：新增第 26 轮 → 早期窗口扩大为 1-16，摘要推进
+        _seed_session(sid, 1, start=26)
+        s3 = load_or_build_summary(sid)
+        assert (
+            s3.covered_until_turn_index == 16
+        ), f"新增轮次后应推进到 16，实际 {s3.covered_until_turn_index}"
+        assert f"turn_{sid}_16" in s3.source_turn_ids, "第 16 轮应进入摘要"
     finally:
         client.delete(f"/api/v1/sessions/{sid}")
 

@@ -76,10 +76,13 @@ def test_cancel_immediately_after_accepted(ws_session_tracker):
     ws_session_tracker(events)
 
     cancelled = [e for e in events if e["event_type"] == "turn.cancelled"]
-    assert cancelled, "应收到 turn.cancelled"
+    assert len(cancelled) == 1, f"turn.cancelled 应恰好一次，实际 {len(cancelled)}"
     assert not [
         e for e in events if e["event_type"] == "turn.completed"
     ], "取消后不得发送 turn.completed"
+    # 信封 turn_id 非空（A3 回归：turn 事件必须携带 turn_id）
+    assert first["turn_id"] == turn_id, "turn.accepted 信封应携带 turn_id"
+    assert cancelled[0]["turn_id"] == turn_id, "turn.cancelled 信封应携带 turn_id"
 
 
 @_NEED_MYSQL
@@ -97,7 +100,7 @@ def test_cancel_not_found(ws_session_tracker):
 
 @_NEED_MYSQL
 def test_repeat_cancel_idempotent(ws_session_tracker):
-    """重复取消幂等：两次 cancel 均返回 turn.cancelled，无异常。"""
+    """重复取消幂等：终态恰好一次，第二次取消不再产生新终态事件。"""
     client = TestClient(app)
     sid = _unique_sid()
     with client.websocket_connect("/api/v1/chat/ws") as ws:
@@ -107,12 +110,23 @@ def test_repeat_cancel_idempotent(ws_session_tracker):
         turn_id = first["payload"]["turn_id"]
         _send(ws, "turn.cancel", {"turn_id": turn_id})
         events = [first] + _receive(ws)
-        # 再次取消（可能 turn 已结束 → 终态确认）
+        # 再次取消后服务端按幂等契约不再发送终态。TestClient 的
+        # receive_json() 没有超时能力，因此用随后必达的 heartbeat 作为
+        # 读取边界，不能等待一个按设计不存在的事件。
         _send(ws, "turn.cancel", {"turn_id": turn_id})
-        events2 = events + _receive(ws, timeout=5.0)
+        _send(ws, "ping", {})
+        after_repeat: list[dict] = []
+        while True:
+            event = ws.receive_json()
+            after_repeat.append(event)
+            if event["event_type"] == "heartbeat":
+                break
+        events2 = events + after_repeat
     ws_session_tracker(events2)
     cancelled = [e for e in events2 if e["event_type"] == "turn.cancelled"]
-    assert cancelled, "第一次取消应确认"
+    assert len(cancelled) == 1, (
+        f"turn.cancelled 应恰好一次（重复取消不得再发），实际 {len(cancelled)}"
+    )
     # 不得出现 500 / 未处理异常
     failed = [e for e in events2 if e["event_type"] == "turn.failed"]
     error_codes = {e["payload"].get("error_code") for e in failed}

@@ -209,6 +209,19 @@ class WsSessionManager:
             session.last_activity = self._clock()
             return turn
 
+    def attach_task(
+        self, session: WsSession, turn_id: str, task: asyncio.Task
+    ) -> None:
+        """将执行 task 绑定到 ActiveTurn（线程安全）。
+
+        expire_idle 依赖 turn.task 判断会话是否有活跃 turn——
+        创建 task 后必须立即绑定，否则活跃会话可能被误回收。
+        """
+        with self._lock:
+            turn = session.turns.get(turn_id)
+            if turn is not None:
+                turn.task = task
+
     def get_turn(self, session: WsSession, turn_id: str) -> ActiveTurn | None:
         with self._lock:
             return session.turns.get(turn_id)
@@ -237,6 +250,23 @@ class WsSessionManager:
             turn = session.turns.get(turn_id)
             if turn is not None:
                 turn.terminal_event_sent = True
+
+    def claim_terminal_event(self, session: WsSession, turn_id: str) -> bool:
+        """原子抢占 turn 终态发送权。
+
+        同一 turn 的全部终态（turn.cancelled / turn.completed / turn.failed）
+        必须经此抢占：成功者唯一发送终态事件，其余调用方跳过。
+
+        Returns:
+            True  = 抢占成功（调用方应发送终态事件）
+            False = 终态已由其他路径发送 / turn 不存在
+        """
+        with self._lock:
+            turn = session.turns.get(turn_id)
+            if turn is None or turn.terminal_event_sent:
+                return False
+            turn.terminal_event_sent = True
+            return True
 
     def remove_turn(self, session: WsSession, turn_id: str) -> None:
         with self._lock:
@@ -283,6 +313,38 @@ class WsSessionManager:
             for turn in s.turns.values():
                 turn.terminal_event_sent = True
             s.journal.close()
+
+    def janitor(self) -> dict:
+        """周期清理：过期缓冲事件 + 空闲超时会话。
+
+        Returns:
+            {"expired_events": int, "expired_sessions": int}
+        """
+        expired_events = 0
+        expired_sessions = 0
+        # 1. 全部存活 session 的缓冲 TTL 清理
+        with self._lock:
+            sessions = list(self._sessions.values())
+        for s in sessions:
+            if s.closed:
+                continue
+            try:
+                expired_events += s.journal.expire()
+            except Exception:  # noqa: BLE001 — 单会话清理失败不影响其他
+                logger.warning(
+                    "WsSessionManager.janitor: 缓冲清理失败 session=%s",
+                    s.session_id,
+                    exc_info=True,
+                )
+        # 2. 空闲超时无连接无活跃 turn 的会话回收
+        try:
+            expired_sessions = self.expire_idle()
+        except Exception:  # noqa: BLE001
+            logger.warning("WsSessionManager.janitor: 空闲会话回收失败", exc_info=True)
+        return {
+            "expired_events": expired_events,
+            "expired_sessions": expired_sessions,
+        }
 
     def active_session_count(self) -> int:
         with self._lock:

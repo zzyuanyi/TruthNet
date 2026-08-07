@@ -25,46 +25,17 @@ from app.api.v1.schemas.equity import (
 )
 from app.application.services.company_resolver import CompanyResolver
 from app.application.services.equity_chain_service import build_equity_chains
+from app.application.services.equity_shareholder_service import (
+    build_edge_evidence_map,
+    fetch_shareholder_records,
+    materialize_equity_evidence,
+)
 from app.core.config import settings
 from app.domain.equity.models import EquityGraph
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["equity"])
-
-
-def _fetch_shareholder_records(wind_code: str) -> list[dict]:
-    """读取 MySQL top_shareholders 最新记录（供链路证据回查与比例比对）。"""
-    try:
-        from app.domain.finance._fetch import _get_engine
-        from sqlalchemy import text
-
-        engine = _get_engine()
-        with engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    text(
-                        "SELECT s_holder_name, s_holder_pct, report_period, "
-                        "source_record_id FROM top_shareholders "
-                        "WHERE wind_code = :c ORDER BY report_period DESC LIMIT 20"
-                    ),
-                    {"c": wind_code},
-                )
-                .mappings()
-                .fetchall()
-            )
-        return [
-            {
-                "holder_name": r["s_holder_name"],
-                "pct": r["s_holder_pct"],
-                "report_period": str(r["report_period"] or ""),
-                "source_record_id": r["source_record_id"],
-            }
-            for r in rows
-        ]
-    except Exception:  # noqa: BLE001 — 股东记录读取失败不影响链路基础数据
-        logger.warning("equity: top_shareholders 读取失败", exc_info=True)
-        return []
 
 
 def _graph_to_dtos(
@@ -203,16 +174,34 @@ async def get_company_equity(
         nodes, edges, paths = [], [], []
 
     # Phase D #12: 正式链路载荷（证据/风险标签/合并说明）
+    # canonical evidence_id 映射 + 幂等落库：REST 画像返回的 evidence_ids
+    # 可立即经 GET /evidence/{id} 回查（与 Agent 落库同一算法）
     equity_chains: list[EquityChainDTO] = []
     chain_warnings: list[str] = []
     try:
+        graph_version = getattr(graph, "graph_version", "") or settings.GRAPH_VERSION
+        try:
+            _materialized, _conflicts = materialize_equity_evidence(
+                edges=graph.edges,
+                company_code=company.wind_code,
+                graph_version=graph_version,
+                trace_id=trace_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — 证据落库失败不阻断链路
+            logger.warning("equity: 证据落库失败: %s", exc, exc_info=True)
         node_name_map = {n.id: n.label for n in graph.nodes}
+        edge_evidence_map = build_edge_evidence_map(
+            edges=graph.edges,
+            company_code=company.wind_code,
+            graph_version=graph_version,
+        )
         chain_models, chain_warnings = build_equity_chains(
             company_code=company.wind_code,
             chains=graph.control_chains,
             node_name_map=node_name_map,
             graph_edges=graph.edges,
-            top_shareholder_records=_fetch_shareholder_records(company.wind_code),
+            top_shareholder_records=fetch_shareholder_records(company.wind_code),
+            edge_evidence_map=edge_evidence_map,
             as_of=as_of or "",
             source_system=getattr(graph, "source_system", "") or "unknown",
             merge_groups=[],

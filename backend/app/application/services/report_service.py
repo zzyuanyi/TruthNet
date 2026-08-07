@@ -24,6 +24,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 
@@ -74,38 +75,59 @@ def create_report_job(
 ) -> tuple[str, bool]:
     """创建 report_jobs（幂等：同 idempotency_key 返回既有任务，不重复建）。
 
+    并发安全：快速 SELECT 命中直接返回；未命中则 INSERT 独立事务，
+    捕获唯一约束冲突（并发同 key 双插）后回滚重查，返回既有任务；
+    重查仍无 → 重新抛出（不吞掉其他完整性错误）。
+
     Returns:
         (report_id, created)：created=False 表示命中既有幂等任务。
     """
-    report_id = f"report_{uuid.uuid4().hex[:12]}"
-    with _get_engine().begin() as conn:
-        # 幂等键命中 → 返回既有任务
-        if idempotency_key:
+    # 1. 快速 SELECT（独立只读，命中即返回）
+    if idempotency_key:
+        with _get_engine().connect() as conn:
             existing = conn.execute(
                 text("SELECT report_id FROM report_jobs WHERE idempotency_key = :k"),
                 {"k": idempotency_key},
             ).first()
+        if existing is not None:
+            return existing[0], False
+
+    # 2. INSERT 独立事务
+    report_id = f"report_{uuid.uuid4().hex[:12]}"
+    try:
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO report_jobs "
+                    "(report_id, session_id, company_code, status, progress, "
+                    " idempotency_key, request_payload, trace_id, created_at, updated_at) "
+                    "VALUES (:rid, :sid, :cc, 'queued', 0, :ik, :payload, :trace, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "rid": report_id,
+                    "sid": session_id,
+                    "cc": company_code,
+                    "ik": idempotency_key,
+                    "payload": json.dumps(request_payload, ensure_ascii=False)
+                    if request_payload
+                    else None,
+                    "trace": trace_id,
+                },
+            )
+    except IntegrityError:
+        # 并发同 idempotency_key 双插 → 唯一约束冲突：回滚后重查既有任务
+        if idempotency_key:
+            with _get_engine().connect() as conn:
+                existing = conn.execute(
+                    text(
+                        "SELECT report_id FROM report_jobs WHERE idempotency_key = :k"
+                    ),
+                    {"k": idempotency_key},
+                ).first()
             if existing is not None:
                 return existing[0], False
-        conn.execute(
-            text(
-                "INSERT INTO report_jobs "
-                "(report_id, session_id, company_code, status, progress, "
-                " idempotency_key, request_payload, trace_id, created_at, updated_at) "
-                "VALUES (:rid, :sid, :cc, 'queued', 0, :ik, :payload, :trace, "
-                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-            ),
-            {
-                "rid": report_id,
-                "sid": session_id,
-                "cc": company_code,
-                "ik": idempotency_key,
-                "payload": json.dumps(request_payload, ensure_ascii=False)
-                if request_payload
-                else None,
-                "trace": trace_id,
-            },
-        )
+        raise
     return report_id, True
 
 
@@ -403,8 +425,6 @@ def _collect_report_data(company_code: str) -> dict:
     """从真实持久化数据收集报告内容（不编造）。"""
     data: dict = {"company_code": company_code}
     try:
-        from app.api.v1.routers.equity import _fetch_shareholder_records
-
         # 风险（同步 score，避免在 to_thread 内嵌 asyncio.run 导致事件循环冲突）
         try:
             from app.application.services.risk_scoring_service import RiskScoringService
@@ -462,17 +482,30 @@ def _collect_report_data(company_code: str) -> dict:
             from app.application.services.equity_chain_service import (
                 build_equity_chains,
             )
+            from app.application.services.equity_shareholder_service import (
+                build_edge_evidence_map,
+                fetch_shareholder_records,
+            )
 
             adapter = Neo4jEquityGraph()
             if adapter._check_connection_sync():
                 graph = adapter._get_graph_sync(company_code, depth=5)
                 node_name = {n.id: n.label for n in graph.nodes}
+                graph_version = (
+                    getattr(graph, "graph_version", "") or settings.GRAPH_VERSION
+                )
+                edge_evidence_map = build_edge_evidence_map(
+                    edges=graph.edges,
+                    company_code=company_code,
+                    graph_version=graph_version,
+                )
                 chain_models, _w = build_equity_chains(
                     company_code=company_code,
                     chains=graph.control_chains,
                     node_name_map=node_name,
                     graph_edges=graph.edges,
-                    top_shareholder_records=_fetch_shareholder_records(company_code),
+                    top_shareholder_records=fetch_shareholder_records(company_code),
+                    edge_evidence_map=edge_evidence_map,
                     source_system="neo4j",
                 )
                 data["equity_chains"] = [c.to_dict() for c in chain_models]

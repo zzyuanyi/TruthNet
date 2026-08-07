@@ -9,6 +9,7 @@
 """
 
 import os
+import threading
 import uuid
 
 import pytest
@@ -64,6 +65,63 @@ def test_create_idempotent_retry():
     )
     assert r1.status_code == 202 and r2.status_code == 202
     assert r1.json()["data"]["report_id"] == r2.json()["data"]["report_id"]
+
+
+@_NEED_MYSQL
+def test_create_report_concurrent_same_key():
+    """并发同 idempotency_key → 无异常、同一 report_id、仅一行。
+
+    回归验证 TOCTOU：两个请求同时通过快速 SELECT 后双插，
+    唯一约束冲突必须被捕获并回滚重查，而不是抛 500。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import create_engine, text
+
+    from app.application.services import report_service
+
+    key = f"con_{uuid.uuid4().hex[:10]}"
+    barrier = threading.Barrier(2)
+
+    def _create(_):
+        barrier.wait()  # 尽量同时进入 SELECT+INSERT 临界
+        return report_service.create_report_job(
+            company_code="600518.SH",
+            session_id=None,
+            idempotency_key=key,
+            request_payload={"q": "x"},
+            trace_id="t",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(_create, range(2)))
+
+    assert len(results) == 2, "两次调用均不应抛异常"
+    rids = {r[0] for r in results}
+    assert len(rids) == 1, f"同 key 应返回同一 report_id，实际 {rids}"
+    created_flags = [r[1] for r in results]
+    assert created_flags.count(True) == 1, (
+        f"应恰好一个 created=True，实际 {created_flags}"
+    )
+
+    url = (
+        f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
+        f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+    )
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            n = conn.execute(
+                text("SELECT COUNT(*) FROM report_jobs WHERE idempotency_key = :k"),
+                {"k": key},
+            ).scalar()
+        assert n == 1, f"同 key 应仅一行，实际 {n}"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM report_jobs WHERE idempotency_key = :k"),
+                {"k": key},
+            )
+        engine.dispose()
 
 
 @_NEED_MYSQL

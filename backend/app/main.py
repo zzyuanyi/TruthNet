@@ -60,9 +60,12 @@ load_dotenv(env_path)
 async def _lifespan(app: FastAPI):
     """应用生命周期.
 
-    启动：恢复遗留 running 报告任务（Phase D #8，重启后不永久卡死）。
-    关闭：无阻塞清理。
+    启动：恢复遗留 running 报告任务（Phase D #8，重启后不永久卡死）；
+          注册 WS janitor 周期清理（缓冲 TTL + 空闲会话回收）。
+    关闭：停止 janitor task（不阻塞）。
     """
+    import asyncio
+
     try:
         from app.application.services.report_service import recover_stale_running_jobs
 
@@ -71,7 +74,39 @@ async def _lifespan(app: FastAPI):
             logger.info("启动时恢复 %d 个遗留 running 报告任务", n)
     except Exception:  # noqa: BLE001 — 恢复失败不阻塞启动
         logger.warning("启动时报告任务恢复失败", exc_info=True)
-    yield
+
+    # WS janitor：周期清理过期缓冲事件 + 空闲超时会话（防止内存无界增长）
+    from app.application.services.ws_session_manager import session_manager
+
+    janitor_stop = asyncio.Event()
+
+    async def _ws_janitor_loop() -> None:
+        while not janitor_stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    janitor_stop.wait(),
+                    timeout=settings.WS_JANITOR_INTERVAL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass
+            if janitor_stop.is_set():
+                break
+            try:
+                stats = session_manager.janitor()
+                if stats["expired_sessions"] or stats["expired_events"]:
+                    logger.info("WS janitor: %s", stats)
+            except Exception:  # noqa: BLE001 — 单轮清理失败不终止循环
+                logger.warning("WS janitor 执行失败", exc_info=True)
+
+    janitor_task = asyncio.create_task(_ws_janitor_loop())
+    try:
+        yield
+    finally:
+        janitor_stop.set()
+        try:
+            await janitor_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
 
 
 app = FastAPI(

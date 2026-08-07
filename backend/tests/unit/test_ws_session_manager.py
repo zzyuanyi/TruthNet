@@ -136,6 +136,44 @@ def test_active_turn_blocks_idle_reclaim():
     assert m.expire_idle() == 1  # 无活跃 turn → 回收
 
 
+def test_claim_terminal_event_atomic():
+    """终态抢占：第一个调用方成功，其余失败（单终态保证）。"""
+    m = _manager()
+    s = m.get_or_create_session("ses_a")
+    m.start_turn(s, "turn_1", "问题")
+    assert m.claim_terminal_event(s, "turn_1") is True, "首次抢占应成功"
+    assert m.claim_terminal_event(s, "turn_1") is False, "重复抢占应失败"
+    # 已终态 turn 的 cancel 不再返回 cancelled_requested
+    assert m.cancel_turn(s, "turn_1") == "already_terminal"
+    # 不存在 turn 抢占失败
+    assert m.claim_terminal_event(s, "turn_nonexistent") is False
+
+
+def test_janitor_reclaims_idle_session():
+    """janitor：空闲超时会话回收（缓冲 TTL 清理不阻塞回收）。"""
+    clock = {"now": 1000.0}
+    m = WsSessionManager(idle_ttl=10.0, clock=lambda: clock["now"])
+    s = m.get_or_create_session("ses_a")
+    s.journal.append({"sequence": 1, "event_type": "heartbeat"})
+    clock["now"] = 1011.0  # 超过 TTL 空闲
+    stats = m.janitor()
+    assert stats["expired_sessions"] == 1
+    assert m.get_session("ses_a") is None
+    # 无会话时安全
+    stats = m.janitor()
+    assert stats["expired_sessions"] == 0
+
+
+def test_attach_task_binds_active_turn():
+    """attach_task 绑定执行 task（expire_idle 判断活跃 turn 的前置）。"""
+    m = _manager()
+    s = m.get_or_create_session("ses_a")
+    turn = m.start_turn(s, "turn_1", "问题")
+    m.attach_task(s, "turn_1", _FakeTask(done=False))
+    assert turn.task is not None
+    assert turn.task.done() is False
+
+
 def test_close_session_clears_journal_and_marks_terminal():
     m = _manager()
     s = m.get_or_create_session("ses_a")
