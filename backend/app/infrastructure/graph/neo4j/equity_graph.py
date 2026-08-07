@@ -113,10 +113,19 @@ class Neo4jEquityGraph:
       - Wind Code 统一通过 normalizer.normalize_wind_code() 处理。
     """
 
+    # 类级共享 driver：进程内所有实例复用同一连接，避免每次实例化
+    # 新建 GraphDatabase.driver（GET /evidence 逐证据回查会高频实例化，
+    # 每实例一个 driver 且从不 close → 连接泄漏 + 回查耗时放大）。
+    _shared_driver = None
+
     def __init__(self):
-        self._driver = None
-        self._available = False
-        self._init_driver()
+        cls = type(self)
+        if cls._shared_driver is None:
+            self._init_driver()
+            cls._shared_driver = self._driver
+        else:
+            self._driver = cls._shared_driver
+        self._available = self._driver is not None
 
     def _init_driver(self) -> None:
         try:
