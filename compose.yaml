@@ -1,0 +1,119 @@
+# TruthNet 一键部署 — Phase D #9
+#
+# 覆盖：backend + MySQL 8.4 + Neo4j 2025.06.1 + Chroma + BGE 缓存卷 +
+#       LLM 环境变量 + 报告输出卷。
+#
+# 与本地服务隔离：
+#   - 独立 project name（compose -p truthnet-compose）；
+#   - 不同宿主机端口（MySQL 3307 / Neo4j 7688·7475 / 后端 8001）；
+#   - 独立卷名；
+#   - 不执行 `docker compose down -v` 作用于其他项目；
+#   - 不停止本地 Windows MySQL/Neo4j；不覆盖本地 .env。
+#
+# 使用：cp .env.compose.example .env.compose 后填写真实密钥
+#   docker compose --env-file .env.compose -p truthnet-compose up -d
+
+name: truthnet-compose
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: truthnet-compose-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env.compose}
+      MYSQL_DATABASE: truthnet
+      MYSQL_USER: truthnet
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env.compose}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"   # 避开本地 3306
+    volumes:
+      - truthnet-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:2025.06.1  # 明确版本；禁用 2025.06.0
+    container_name: truthnet-compose-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set in .env.compose}
+      NEO4J_PLUGINS: '[]'
+    ports:
+      - "${NEO4J_HTTP_PORT:-7475}:7474"   # 避开本地 7474
+      - "${NEO4J_BOLT_PORT:-7688}:7687"   # 避开本地 7687
+    volumes:
+      - truthnet-neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: truthnet-compose-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    environment:
+      TRUTHNET_PROFILE: full
+      SQL_BACKEND: mysql
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: truthnet
+      MYSQL_USER: truthnet
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env.compose}
+      GRAPH_BACKEND: neo4j
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set in .env.compose}
+      VECTOR_BACKEND: chroma
+      CHROMA_PERSIST_DIR: /app/data/chroma_db
+      LLM_BACKEND: ${LLM_BACKEND:-mock}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      LLM_FALLBACK_BACKEND: ${LLM_FALLBACK_BACKEND:-}
+      DATASET_VERSION: ${DATASET_VERSION:-competition-2026}
+      RULE_SET_VERSION: ${RULE_SET_VERSION:-finance-rules-1.0.0}
+      GRAPH_VERSION: ${GRAPH_VERSION:-equity-competition-2026}
+      REPORT_ROOT_DIR: /app/data/reports
+    ports:
+      - "${BACKEND_PORT:-8001}:8000"    # 避开本地 8000
+    volumes:
+      - truthnet-chroma-data:/app/data/chroma_db
+      - truthnet-report-data:/app/data/reports
+      - truthnet-bge-cache:/root/.cache/huggingface   # BGE 模型缓存卷
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  truthnet-mysql-data:
+    name: truthnet-compose-mysql-data
+  truthnet-neo4j-data:
+    name: truthnet-compose-neo4j-data
+  truthnet-chroma-data:
+    name: truthnet-compose-chroma-data
+  truthnet-report-data:
+    name: truthnet-compose-report-data
+  truthnet-bge-cache:
+    name: truthnet-compose-bge-cache
