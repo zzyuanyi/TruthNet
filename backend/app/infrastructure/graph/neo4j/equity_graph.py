@@ -116,15 +116,20 @@ class Neo4jEquityGraph:
     # 类级共享 driver：进程内所有实例复用同一连接，避免每次实例化
     # 新建 GraphDatabase.driver（GET /evidence 逐证据回查会高频实例化，
     # 每实例一个 driver 且从不 close → 连接泄漏 + 回查耗时放大）。
+    # 并发初始化经锁双重检查，保证只创建一次。
     _shared_driver = None
+    _driver_lock = None  # 惰性初始化（避免 import 时创建线程对象）
 
     def __init__(self):
         cls = type(self)
+        if cls._driver_lock is None:
+            cls._driver_lock = __import__("threading").Lock()
         if cls._shared_driver is None:
-            self._init_driver()
-            cls._shared_driver = self._driver
-        else:
-            self._driver = cls._shared_driver
+            with cls._driver_lock:
+                if cls._shared_driver is None:
+                    self._init_driver()
+                    cls._shared_driver = self._driver
+        self._driver = cls._shared_driver
         self._available = self._driver is not None
 
     def _init_driver(self) -> None:
@@ -140,6 +145,23 @@ class Neo4jEquityGraph:
         except Exception as e:
             logger.warning("Neo4j driver 创建失败: %s", e)
             self._driver = None
+
+    @classmethod
+    def close_shared_driver(cls) -> None:
+        """显式关闭共享 driver 并清空引用（lifespan 退出时调用；幂等）。
+
+        关闭后再次实例化会重建 driver（测试/重连场景安全）。
+        """
+        if cls._driver_lock is None:
+            cls._driver_lock = __import__("threading").Lock()
+        with cls._driver_lock:
+            driver, cls._shared_driver = cls._shared_driver, None
+        if driver is not None:
+            try:
+                driver.close()
+                logger.info("Neo4j 共享 driver 已关闭")
+            except Exception as e:  # noqa: BLE001 — 关闭失败不阻断退出
+                logger.warning("Neo4j driver 关闭失败: %s", e)
 
     # ── 连接管理 ──
 

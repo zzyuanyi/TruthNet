@@ -107,6 +107,15 @@ async def _lifespan(app: FastAPI):
             await janitor_task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
+        # 显式关闭 Neo4j 共享 driver（避免依赖析构关闭，解释器退出 warning）
+        try:
+            from app.infrastructure.graph.neo4j.equity_graph import (
+                Neo4jEquityGraph,
+            )
+
+            Neo4jEquityGraph.close_shared_driver()
+        except Exception:  # noqa: BLE001 — 关闭失败不阻塞退出
+            logger.warning("Neo4j 共享 driver 关闭失败", exc_info=True)
 
 
 app = FastAPI(
