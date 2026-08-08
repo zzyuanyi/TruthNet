@@ -2,15 +2,52 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+
+
+class ChatContextV1(BaseModel):
+    """Optional explicit analysis context."""
+
+    company_code: str | None = Field(default=None, min_length=1, max_length=32)
+    fiscal_year: int | None = Field(default=None, ge=1990, le=2100)
 
 
 class ChatRequestV1(BaseModel):
     """POST /api/v1/chat 请求体 — V12."""
 
-    question: str = Field(..., min_length=1, description="用户问题")
-    session_id: str | None = Field(None, description="会话 ID，用于多轮对话")
-    context: dict | None = Field(None, description="附加上下文信息")
+    question: str = Field(..., min_length=1, max_length=2000, description="用户问题")
+    session_id: str | None = Field(
+        None,
+        max_length=64,
+        pattern=_SESSION_ID_PATTERN,
+        description="会话 ID，用于多轮对话",
+    )
+    context: ChatContextV1 | None = Field(None, description="附加上下文信息")
+
+    @field_validator("question")
+    @classmethod
+    def _strip_question(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("question 不能为空")
+        return value
+
+
+class CompanyCandidateV1(BaseModel):
+    """Company option returned when an input matches multiple entities."""
+
+    entity_id: str
+    wind_code: str
+    sec_name: str
+    exchange: str = ""
+    industry_l1: str | None = None
+
+    @classmethod
+    def from_company(cls, company) -> "CompanyCandidateV1":
+        source = company if isinstance(company, dict) else company.model_dump()
+        return cls(**source)
 
 
 class ChatEvidenceV1(BaseModel):
@@ -143,6 +180,10 @@ class ChatDataV1(BaseModel):
     """对话响应核心数据 — V12."""
 
     answer: str = Field(..., description="Markdown 格式的主回答")
+    session_id: str = Field(default="", description="本次实际使用的会话 ID")
+    company_candidates: list[CompanyCandidateV1] = Field(
+        default_factory=list, description="公司名称存在歧义时返回的候选列表"
+    )
     evidence: list[ChatEvidenceV1] = Field(default_factory=list, description="证据列表")
     graph: dict = Field(default_factory=dict, description="图谱数据")
     timeline: list[dict] = Field(default_factory=list, description="事件时间线")
@@ -151,6 +192,10 @@ class ChatDataV1(BaseModel):
     missing_modules: list[str] = Field(default_factory=list, description="暂缺模块列表")
     trace_id: str = Field(..., description="追踪 ID")
     follow_ups: list[str] = Field(default_factory=list, description="追问建议")
+    intent: str = Field(
+        default="",
+        description="回答意图：chitchat/guide/research/unsupported/simple_query/diagnose",
+    )
     claims: list[ClaimV1] = Field(
         default_factory=list, description="结论声明列表（结构化问答）"
     )
@@ -174,5 +219,19 @@ class ChatDataV1(BaseModel):
         description=(
             "正式股权链路载荷（含 risk_label/risk_level/evidence_ids/"
             "merge_explanation，Phase D #12）"
+        ),
+    )
+    supporting_evidence: list[ChatEvidenceV1] = Field(
+        default_factory=list,
+        description=(
+            "#13 可展示证据子集：叶子 Claim（排除综合 risk）引用证据的有序去重"
+            "集合；前端默认展示，另保留 evidence 全量入口"
+        ),
+    )
+    requested_period_text: str = Field(
+        default="",
+        description=(
+            "用户请求中的期次原文（如 2025年报）；与 meta.data_as_of"
+            "（实际数据截止日）分离，避免把请求期次当作实际数据期"
         ),
     )

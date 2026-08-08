@@ -57,6 +57,10 @@ def _state(question: str) -> dict:
     }
 
 
+def _no_company_state(question: str) -> dict:
+    return {"user_query": question, "company": None}
+
+
 def test_finance_equity_only_financial_crosscheck():
     """应收账款+股东 → finance + equity，仅 financial_vs_cashflow，不出现 equity_vs_events。"""
     result = plan_modules_node(_state("应收账款和股东情况"))
@@ -137,3 +141,81 @@ def test_llm_failure_falls_back_all(monkeypatch):
     _install_provider(monkeypatch, provider)
     plan = plan_modules_node(_state("随便聊聊这家公司"))["plan"]
     assert set(plan.requested_modules) == {"finance", "equity", "events"}
+
+
+def test_no_company_short_greeting_skips_llm(monkeypatch):
+    """明确短问候走快速路径，避免一次无意义的远程 LLM 调用。"""
+    provider = _FakeIntentProvider(intent={"intent": "analysis"})
+    _install_provider(monkeypatch, provider)
+
+    plan = plan_modules_node(_no_company_state("你好"))["plan"]
+
+    assert plan.intent == "chitchat"
+    assert provider.calls == 0
+
+
+def test_no_company_llm_research_result_is_preserved(monkeypatch):
+    """LLM 已判定 research 时不得丢成 None 后再次关键词兜底。"""
+    provider = _FakeIntentProvider(intent={"intent": "research"})
+    _install_provider(monkeypatch, provider)
+
+    plan = plan_modules_node(_no_company_state("白酒行业最近有什么看法"))["plan"]
+
+    assert plan.intent == "research"
+    assert provider.calls == 1
+
+
+def test_no_company_llm_analysis_becomes_actionable_guide(monkeypatch):
+    """需要公司分析但实体缺失时，返回输入公司引导而非查询失败。"""
+    provider = _FakeIntentProvider(intent={"intent": "analysis"})
+    _install_provider(monkeypatch, provider)
+
+    plan = plan_modules_node(_no_company_state("帮我查查最近的情况"))["plan"]
+
+    assert plan.intent == "guide"
+    assert provider.calls == 1
+
+
+def test_no_company_llm_failure_uses_semantic_fallback(monkeypatch):
+    """LLM 失败时，行业请求和无上下文追问仍返回可执行意图。"""
+    provider = _FakeIntentProvider(raise_error=True)
+    _install_provider(monkeypatch, provider)
+
+    research = plan_modules_node(_no_company_state("白酒行业怎么样"))["plan"]
+    follow_up = plan_modules_node(_no_company_state("继续看它的现金流"))["plan"]
+
+    assert research.intent == "research"
+    assert follow_up.intent == "guide"
+
+
+def test_explicit_request_period_overrides_question_period():
+    from datetime import date
+
+    from app.agents.state import RequestContext
+
+    state = _state("分析康美药业 2024 年报")
+    state["request_context"] = RequestContext(
+        as_of=date(2025, 12, 31),
+        as_of_kind="report_period",
+        requested_period_text="2025",
+    )
+    plan = plan_modules_node(state)["plan"]
+    assert plan.as_of == date(2025, 12, 31)
+    assert plan.requested_period_text == "2025"
+
+
+def test_candidates_produce_disambiguation_plan():
+    from app.agents.state import CompanyRef
+
+    state = _no_company_state("分析平安")
+    state["company_candidates"] = [
+        CompanyRef(
+            entity_id="company_000001_SZ",
+            wind_code="000001.SZ",
+            sec_name="平安银行",
+            exchange="XSHE",
+        )
+    ]
+    plan = plan_modules_node(state)["plan"]
+    assert plan.intent == "company_disambiguation"
+    assert plan.requested_modules == []

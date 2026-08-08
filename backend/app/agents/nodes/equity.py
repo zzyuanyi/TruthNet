@@ -121,6 +121,11 @@ def equity_node(state: AgentState) -> dict:
     trace_id = getattr(runtime, "trace_id", "") if runtime else ""
     turn_id = getattr(runtime, "turn_id", "") if runtime else ""
 
+    # #5 期次传播：Neo4j 图按截止期过滤（Lite NetworkX 为静态图，不支持 as_of）
+    as_of = ""
+    if plan is not None and plan.as_of:
+        as_of = plan.as_of.strftime("%Y%m%d")
+
     if settings.GRAPH_BACKEND == "neo4j":
         from app.infrastructure.graph.neo4j.equity_graph import Neo4jEquityGraph
 
@@ -141,7 +146,7 @@ def equity_node(state: AgentState) -> dict:
             }
 
         try:
-            graph = adapter._get_graph_sync(company_code, depth=5)
+            graph = adapter._get_graph_sync(company_code, depth=5, as_of=as_of or None)
         except Exception:  # noqa: BLE001
             logger.exception("股权查询失败: %s", company_code)
             return {
@@ -244,11 +249,13 @@ def equity_node(state: AgentState) -> dict:
             chains=chains,
             graph_edges=list(graph.edges),
             company_code=company_code,
-            as_of="",
+            as_of=as_of,
             source_system="neo4j",
             node_name_map=node_name,
             edge_evidence_map=edge_evidence_map,
-            top_shareholder_records=fetch_shareholder_records(company_code),
+            top_shareholder_records=fetch_shareholder_records(
+                company_code, as_of=as_of or None
+            ),
         )
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
@@ -342,11 +349,13 @@ def equity_node(state: AgentState) -> dict:
         chains=chains,
         graph_edges=list(graph.edges),
         company_code=company_code,
-        as_of="",
+        as_of=as_of,
         source_system="networkx",
         node_name_map=node_name,
         edge_evidence_map=edge_evidence_map,
-        top_shareholder_records=fetch_shareholder_records(company_code),
+        top_shareholder_records=fetch_shareholder_records(
+            company_code, as_of=as_of or None
+        ),
     )
 
     return {

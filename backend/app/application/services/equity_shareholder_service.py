@@ -229,8 +229,14 @@ def materialize_equity_evidence(
 # ── 股东记录（比例比对 / 一致行动校验） ─────────────────────
 
 
-def fetch_shareholder_records(wind_code: str) -> list[dict]:
+def fetch_shareholder_records(wind_code: str, as_of: str | None = None) -> list[dict]:
     """读取 MySQL top_shareholders 最新记录（供链路比例比对）。
+
+    #5 期次传播：传入 as_of（YYYYMMDD）时只取截止期内最新披露记录。
+
+    Args:
+        wind_code: 公司代码。
+        as_of: 截止期（YYYYMMDD）；None 取全量最新。
 
     Returns:
         [{holder_name, pct, report_period, source_record_id}, ...]
@@ -238,19 +244,19 @@ def fetch_shareholder_records(wind_code: str) -> list[dict]:
     try:
         from app.domain.finance._fetch import _get_engine as _fin_engine
 
+        sql = (
+            "SELECT s_holder_name, s_holder_pct, report_period, "
+            "source_record_id FROM top_shareholders "
+            "WHERE wind_code = :c "
+        )
+        params: dict = {"c": wind_code}
+        if as_of:
+            sql += "AND report_period <= :asof "
+            params["asof"] = as_of
+        sql += "ORDER BY report_period DESC LIMIT 20"
+
         with _fin_engine().connect() as conn:
-            rows = (
-                conn.execute(
-                    text(
-                        "SELECT s_holder_name, s_holder_pct, report_period, "
-                        "source_record_id FROM top_shareholders "
-                        "WHERE wind_code = :c ORDER BY report_period DESC LIMIT 20"
-                    ),
-                    {"c": wind_code},
-                )
-                .mappings()
-                .fetchall()
-            )
+            rows = conn.execute(text(sql), params).mappings().fetchall()
         return [
             {
                 "holder_name": r["s_holder_name"],

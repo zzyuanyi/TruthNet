@@ -69,10 +69,12 @@ def create_agent_graph() -> StateGraph:
     graph.add_edge("load_context", "memory")
     graph.add_edge("memory", "resolve_entity")
 
+    # P1-3：无公司路径也先经过 plan_modules——行业研报查询因此能获得
+    # 期次解析（as_of/requested_period_text），不再直接跳 generate_answer
     graph.add_conditional_edges(
         "resolve_entity",
         _after_resolve,
-        {"continue": "plan_modules", "no_company": "generate_answer"},
+        {"continue": "plan_modules", "no_company": "plan_modules"},
     )
 
     graph.add_conditional_edges(

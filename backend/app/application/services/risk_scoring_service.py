@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from app.domain.risk.fraud_patterns import match_patterns
 from app.domain.risk.models import (
     RiskDataCoverage,
@@ -22,6 +24,12 @@ from app.domain.risk.models import (
     RiskOutput,
     RiskPatternMatch,
     RiskSubScore,
+)
+from app.domain.risk.severity import (
+    RISK_LEVEL_RANK,
+    event_signal_severity,
+    highest_risk_level,
+    normalize_risk_level,
 )
 
 # ── 权重配置（唯一来源）────────────────────────────────────
@@ -66,150 +74,76 @@ async def assemble_and_score(
     - 财务走真实规则引擎；事件走真实公告
     - 行业基准走 metric_registry（与 Finance/Benchmarks 同口径）
     """
-    from app.agents.state import EquityResult, EventsResult, FinanceResult
+    from datetime import datetime
+
+    from app.agents.nodes.cross_validate import cross_validate_node
+    from app.agents.nodes.equity import equity_node
+    from app.agents.nodes.events import events_node
+    from app.agents.nodes.finance import finance_node
+    from app.agents.nodes.risk import risk_node
+    from app.agents.state import (
+        CompanyRef,
+        ExecutionPlan,
+        ModuleResults,
+        RuntimeState,
+    )
     from app.application.services.company_resolver import resolve_company
     from app.core.config import settings
-    from app.domain.finance.rule_engine import evaluate_all_rules
 
     rec = await resolve_company(code)
     if rec is None:
         # 与 V12 错误码契约一致（COMPANY_NOT_FOUND 已更名为 COMPANY_NOT_COVERED）
         raise ValueError(f"COMPANY_NOT_COVERED: {code}")
     wind_code = rec.wind_code
-    sec_name = rec.sec_name
-    industry_l1 = rec.industry_l1 or ""
     as_of_str = as_of or settings.DEFAULT_AS_OF or "20260331"
-
-    # ── 1. 财务 ──
-    finance_result: FinanceResult | None = None
-    try:
-        results = evaluate_all_rules(wind_code, as_of_str)
-        rules = list(results.values())
-        finance_result = FinanceResult(
-            rule_statuses={r.rule_id: r.status for r in rules},
-            rules=rules,
-            warnings=[],
-            evidence=[],
-        )
-    except Exception:  # noqa: BLE001 — 财务失败 → 模块缺失（不按 0 风险）
-        finance_result = None
-
-    # ── 2. 股权（profile 感知，Router 不 new NetworkX）──
-    equity_result: EquityResult | None = None
-    try:
-        use_neo4j = settings.GRAPH_BACKEND == "neo4j"
-        if use_neo4j:
-            from app.infrastructure.graph.neo4j.equity_graph import Neo4jEquityGraph
-
-            adapter = Neo4jEquityGraph()
-            if await adapter.check_connection():
-                graph = await adapter.get_graph(wind_code, depth=5)
-                equity_result = EquityResult(
-                    graph=graph.model_dump() if hasattr(graph, "model_dump") else {},
-                    chains=getattr(graph, "control_chains", []) or [],
-                    evidence=[],
-                )
-            else:
-                # Neo4j 不可用 → 空图（不冒充 NetworkX）
-                equity_result = EquityResult(graph={}, chains=[], evidence=[])
-        else:
-            from app.infrastructure.graph.networkx.equity_graph import (
-                NetworkXEquityGraph,
-            )
-
-            adapter = NetworkXEquityGraph()
-            graph = await adapter.get_graph(wind_code.split(".")[0], depth=5)
-            equity_result = EquityResult(
-                graph=graph.model_dump() if hasattr(graph, "model_dump") else {},
-                chains=getattr(graph, "control_chains", []) or [],
-                evidence=[],
-            )
-    except Exception:  # noqa: BLE001
-        equity_result = None
-
-    # ── 3. 事件（真实公告）──
-    events_result: EventsResult | None = None
-    try:
-        from app.domain.finance._fetch import _get_engine
-        from app.domain.events.fcode_taxonomy import classify_sentiment
-        from sqlalchemy import text
-
-        engine = _get_engine()
-        with engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    text(
-                        "SELECT ann_dt, n_info_title, n_info_fcode, sentiment "
-                        "FROM announcements WHERE wind_code = :c AND is_latest = 1 "
-                        "ORDER BY ann_dt ASC"
-                    ),
-                    {"c": wind_code},
-                )
-                .mappings()
-                .fetchall()
-            )
-        timeline = []
-        for r in rows:
-            raw_fcode = str(r["n_info_fcode"] or "")
-            sentiment, _method, _conf = classify_sentiment(raw_fcode)
-            stored = str(r["sentiment"] or "")
-            if stored in ("positive", "negative", "neutral"):
-                sentiment = stored
-            timeline.append(
-                {
-                    "date": str(r["ann_dt"] or ""),
-                    "title": str(r["n_info_title"] or ""),
-                    "sentiment": sentiment,
-                }
-            )
-        events_result = EventsResult(timeline=timeline, clusters=[], evidence=[])
-    except Exception:  # noqa: BLE001
-        events_result = None
-
-    # ── 4. 行业基准（公司分位）──
-    benchmarks: dict[str, dict] = {}
-    if industry_l1:
-        try:
-            from app.domain.benchmarks.calculator import (
-                MIN_PEER_SAMPLE,
-                compute_metric_values,
-                percentile_rank,
-            )
-            from app.domain.benchmarks.metric_registry import all_metrics
-            from app.domain.finance._fetch import _get_engine
-
-            engine = _get_engine()
-            for metric in all_metrics():
-                try:
-                    pairs = compute_metric_values(
-                        engine, metric, industry_l1, as_of_str
-                    )
-                    values = [v for _, v in pairs]
-                    company_value = next((v for c, v in pairs if c == wind_code), None)
-                    if len(values) >= MIN_PEER_SAMPLE and company_value is not None:
-                        benchmarks[metric.metric_id] = {
-                            "company_percentile": percentile_rank(
-                                company_value, values
-                            ),
-                            "sample_count": len(values),
-                        }
-                except Exception:  # noqa: BLE001
-                    continue
-        except Exception:  # noqa: BLE001
-            benchmarks = {}
-
-    svc = RiskScoringService()
-    return svc.score(
+    company = CompanyRef(
+        entity_id=rec.entity_id,
         wind_code=wind_code,
-        as_of=as_of_str,
-        sec_name=sec_name,
-        finance_result=finance_result,
-        equity_result=equity_result,
-        events_result=events_result,
-        benchmarks=benchmarks,
-        rule_set_version=rule_set_version or settings.RULE_SET_VERSION,
-        dataset_version=dataset_version or settings.DATASET_VERSION,
+        sec_name=rec.sec_name,
+        exchange=rec.exchange_code or "",
+        industry_l1=rec.industry_l1,
     )
+    state = {
+        "user_query": f"分析{rec.sec_name}综合风险",
+        "company": company,
+        "plan": ExecutionPlan(
+            intent="diagnose",
+            requested_modules=["finance", "equity", "events"],
+            cross_checks=["equity_vs_events", "financial_vs_cashflow"],
+            as_of=datetime.strptime(as_of_str, "%Y%m%d").date(),
+        ),
+        "module_status": {},
+        "results": ModuleResults(),
+        "evidence": [],
+        "claims": [],
+        "runtime": RuntimeState(),
+    }
+
+    def apply_node_output(output: dict) -> None:
+        state["module_status"].update(output.get("module_status") or {})
+        node_results = output.get("results")
+        if node_results is not None:
+            current = state["results"]
+            state["results"] = ModuleResults(
+                finance=node_results.finance or current.finance,
+                equity=node_results.equity or current.equity,
+                events=node_results.events or current.events,
+            )
+        for key in ("cross_validation", "risk_output"):
+            if key in output:
+                state[key] = output[key]
+
+    def run_nodes() -> None:
+        for node in (finance_node, equity_node, events_node, cross_validate_node):
+            apply_node_output(node(state))
+        apply_node_output(risk_node(state))
+
+    await asyncio.to_thread(run_nodes)
+    out = state.get("risk_output")
+    if out is None:
+        raise RuntimeError("RISK_SCORING_ERROR")
+    out.rule_set_version = rule_set_version or settings.RULE_SET_VERSION
+    return out
 
 
 class RiskScoringService:
@@ -247,11 +181,21 @@ class RiskScoringService:
         if equity_result is None:
             return 0.0, "skipped", "股权模块未执行"
         chains = getattr(equity_result, "chains", []) or []
+        chain_details = getattr(equity_result, "chain_details", []) or []
         graph = getattr(equity_result, "graph", {}) or {}
-        n_chains = len(chains)
+        n_chains = len(chain_details or chains)
         nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
         if not nodes and n_chains == 0:
             return 0.0, "skipped", "股权图无数据"
+        highest = highest_risk_level(
+            [d.get("risk_level") for d in chain_details], default="green"
+        )
+        if highest == "red":
+            return 0.8, "success", None
+        if highest == "orange":
+            return 0.5, "success", None
+        if highest in ("yellow", "blue"):
+            return 0.25, "success", None
         if n_chains > _EQUITY_CHAIN_RED:
             return 0.3, "success", None
         if n_chains > _EQUITY_CHAIN_YELLOW:
@@ -262,11 +206,71 @@ class RiskScoringService:
         if events_result is None:
             return 0.0, "skipped", "事件模块未执行"
         timeline = getattr(events_result, "timeline", []) or []
-        if not timeline:
-            return 0.0, "skipped", "无公告数据"
-        negative = sum(1 for t in timeline if t.get("sentiment") == "negative")
-        ratio = negative / len(timeline)
-        return min(1.0, ratio * 3), "success", None
+        ratings = getattr(events_result, "rating_changes", []) or []
+        clusters = getattr(events_result, "clusters", []) or []
+        if not timeline and not ratings and not clusters:
+            return 0.0, "skipped", "无公告、评级或事件簇数据"
+        timeline_score = 0.0
+        if timeline:
+            negative = sum(1 for t in timeline if t.get("sentiment") == "negative")
+            timeline_score = min(1.0, negative / len(timeline) * 3)
+        down_count = sum(1 for item in ratings if item.get("direction") == "down")
+        rating_score = min(0.6, down_count * 0.15)
+        cluster_levels = [event_signal_severity(item) for item in clusters]
+        cluster_score = {
+            "red": 0.8,
+            "orange": 0.5,
+            "yellow": 0.25,
+        }.get(highest_risk_level(cluster_levels, default="green"), 0.0)
+        return max(timeline_score, rating_score, cluster_score), "success", None
+
+    def _signal_floor(
+        self, finance_result, equity_result, events_result, cross_validation
+    ) -> str:
+        """Highest evidence-backed module signal used as a level floor."""
+        levels: list[str] = []
+        if finance_result is not None:
+            statuses = getattr(finance_result, "rule_statuses", {}) or {}
+            details = getattr(finance_result, "rule_details", {}) or {}
+            rules = getattr(finance_result, "rules", []) or []
+            by_rule = {
+                getattr(rule, "rule_id", ""): getattr(rule, "severity", "unknown")
+                for rule in rules
+            }
+            for rule_id, status in statuses.items():
+                if status == "triggered":
+                    levels.append(
+                        (details.get(rule_id) or {}).get("severity")
+                        or by_rule.get(rule_id)
+                        or "unknown"
+                    )
+        if equity_result is not None:
+            levels.extend(
+                item.get("risk_level")
+                for item in (getattr(equity_result, "chain_details", []) or [])
+            )
+        if events_result is not None:
+            levels.extend(
+                event_signal_severity(item)
+                for item in (getattr(events_result, "timeline", []) or [])
+            )
+            levels.extend(
+                event_signal_severity(item)
+                for item in (getattr(events_result, "clusters", []) or [])
+            )
+            down_count = sum(
+                1
+                for item in (getattr(events_result, "rating_changes", []) or [])
+                if item.get("direction") == "down"
+            )
+            if down_count:
+                levels.append("orange" if down_count >= 3 else "yellow")
+        if cross_validation is not None and any(
+            getattr(check, "status", "") == "fail"
+            for check in (getattr(cross_validation, "checks", []) or [])
+        ):
+            levels.append("orange")
+        return highest_risk_level(levels)
 
     def _benchmark_score(self, benchmarks) -> tuple[float, str, str]:
         """行业基准分：基于公司分位（percentile）。"""
@@ -320,8 +324,9 @@ class RiskScoringService:
 
         coverage.finance = finance_result is not None
         coverage.equity = equity_result is not None
-        coverage.events = events_result is not None and bool(
-            getattr(events_result, "timeline", [])
+        coverage.events = events_result is not None and any(
+            bool(getattr(events_result, field, []))
+            for field in ("timeline", "rating_changes", "clusters")
         )
         coverage.benchmarks = bool(benchmarks)
 
@@ -430,6 +435,16 @@ class RiskScoringService:
             risk_level = "yellow"
         else:
             risk_level = "green"
+
+        signal_floor = self._signal_floor(
+            finance_result, equity_result, events_result, cross_validation
+        )
+        if (
+            RISK_LEVEL_RANK[signal_floor]
+            > RISK_LEVEL_RANK[normalize_risk_level(risk_level)]
+        ):
+            risk_level = signal_floor
+            warnings.append(f"综合等级按最高有效叶子信号校准为 {risk_level}")
 
         # ── 置信度 ──
         success_count = sum(1 for s in sub_scores if s.status == "success")

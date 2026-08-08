@@ -53,7 +53,8 @@ async def test_readyz_lite_profile_returns_ready():
     assert response.status_code == 200
     body = response.json()
 
-    assert body["data"]["status"] in ("ready", "degraded", "not_ready")
+    # 2️⃣ 预热门控：TestClient 未跑 lifespan 预热 → 允许 "starting"
+    assert body["data"]["status"] in ("ready", "degraded", "not_ready", "starting")
     assert body["data"]["profile"] in ("lite", "full")
     assert "checks" in body["data"]
 

@@ -54,13 +54,24 @@ def _make_state(results: ModuleResults) -> AgentState:
 
 
 def test_finance_claims_generated():
-    """R1/R2 触发 + 字段证据 → 生成 Claim，evidence_ids 引用真实。"""
+    """R1/R2 触发 + 字段证据 → 生成 Claim，evidence_ids 引用真实。
+
+    #2：severity 与规则引擎同源（fixture 提供引擎 severity）。
+    """
     results = ModuleResults(
         finance=FinanceResult(
             rule_statuses={"R1": "triggered", "R2": "triggered"},
             rule_details={
-                "R1": {"evidence_ids": ["ev_fin_acct_rcv", "ev_fin_oper_rev"]},
-                "R2": {"evidence_ids": ["ev_fin_net_profit", "ev_fin_oper_cf"]},
+                "R1": {
+                    "evidence_ids": ["ev_fin_acct_rcv", "ev_fin_oper_rev"],
+                    "severity": "red",
+                    "explanation": "应收账款增速与营业收入增速存在显著背离",
+                },
+                "R2": {
+                    "evidence_ids": ["ev_fin_net_profit", "ev_fin_oper_cf"],
+                    "severity": "orange",
+                    "explanation": "经营活动现金流与净利润严重背离",
+                },
             },
             evidence=[
                 _ev("ev_fin_acct_rcv", field_path="acct_rcv"),
@@ -77,9 +88,13 @@ def test_finance_claims_generated():
     r1 = next(c for c in financial if c.rule_id == "R1")
     # 背离结论需要应收+营收两个字段证据
     assert set(r1.evidence_ids) == {"ev_fin_acct_rcv", "ev_fin_oper_rev"}
+    # #2：Claim 严重度 = 引擎真实 severity（不再硬编码 red/orange）
     assert r1.severity == "red"
     r2 = next(c for c in financial if c.rule_id == "R2")
     assert set(r2.evidence_ids) == {"ev_fin_net_profit", "ev_fin_oper_cf"}
+    assert r2.severity == "orange"
+    # #1：Claim 文本来自引擎 explanation（不再静态描述表）
+    assert "应收账款增速与营业收入增速存在显著背离" in r1.text
 
 
 def test_finance_rule_without_evidence_skipped():
@@ -147,7 +162,10 @@ def test_multi_rule_regression():
 
 
 def test_equity_evidence_binding():
-    """equity Claim 绑定实际证据（上游产出 ev_eq_01）。"""
+    """equity Claim 绑定实际证据（上游产出 ev_eq_01）。
+
+    #3：chain_details 缺失时回退旧 chains——severity=unknown（不默认 red）。
+    """
     results = ModuleResults(
         equity=EquityResult(
             chains=[{"path": ["马兴田", "康美实业", "康美药业"], "total_stake": 0.301}],
@@ -160,6 +178,7 @@ def test_equity_evidence_binding():
     assert len(equity) == 1
     assert equity[0].evidence_ids == ["ev_eq_01"]
     assert "马兴田" in equity[0].text
+    assert equity[0].severity == "unknown"  # 降级载荷不得默认 red
 
 
 def test_equity_without_evidence_skipped():
@@ -231,6 +250,46 @@ def test_events_without_evidence_skipped():
     )
     result = build_claims_node(_make_state(results))
     assert all(c.claim_type != "event" for c in result["claims"])
+
+
+def test_rating_and_cluster_claims_require_canonical_evidence():
+    """Rating and event-cluster facts are emitted only with resolvable evidence."""
+    results = ModuleResults(
+        events=EventsResult(
+            rating_changes=[
+                {
+                    "direction": "down",
+                    "institution": "测试证券",
+                    "evidence_id": "ev_rating_1",
+                },
+                {"direction": "down", "evidence_id": "missing_rating"},
+            ],
+            clusters=[
+                {
+                    "event_cluster_id": "evtcl_1",
+                    "topic": "监管处罚",
+                    "sentiment": "negative",
+                    "evidence_ids": ["ev_cluster_1", "missing_cluster"],
+                }
+            ],
+            evidence=[
+                _ev("ev_rating_1", source_type="research_report"),
+                _ev("ev_cluster_1", source_type="announcement"),
+            ],
+        )
+    )
+    event_claims = [
+        claim
+        for claim in build_claims_node(_make_state(results))["claims"]
+        if claim.claim_type == "event"
+    ]
+    assert len(event_claims) == 2
+    assert {eid for claim in event_claims for eid in claim.evidence_ids} == {
+        "ev_rating_1",
+        "ev_cluster_1",
+    }
+    assert any("评级下调" in claim.text for claim in event_claims)
+    assert any("监管处罚" in claim.text for claim in event_claims)
 
 
 # ── evidence 汇总 ───────────────────────────────────────────

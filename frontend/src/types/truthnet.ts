@@ -88,6 +88,7 @@ export interface Message {
   content: string;
   created_at: string;
   evidence_ids?: string[];
+  show_evidence_status?: boolean;
   is_streaming?: boolean;
   thinking?: string;
   follow_ups?: string[];
@@ -505,6 +506,11 @@ export interface ChatDataV1 {
   missing_modules: string[];
   trace_id: string;
   follow_ups: string[];
+  intent?: string;
+  // 2026-08-08 追加：可展示证据子集（叶子 Claim 引用、排除综合 risk）
+  supporting_evidence?: ChatEvidenceV1[];
+  // 2026-08-08 追加：用户请求中的期次原文（如"2025年报"）
+  requested_period_text?: string;
 }
 
 // ============ WebSocket ============
@@ -534,4 +540,3 @@ export const FIELD_MAPPINGS = {
   
   // EquityNode
 } as const;
-

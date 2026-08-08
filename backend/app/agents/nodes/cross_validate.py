@@ -224,10 +224,26 @@ def _check_financial_vs_cashflow(
     )
 
 
+def _parse_period(p: str):
+    """期次文本 → datetime（兼容 YYYYMMDD / YYYY-MM-DD）；无法解析返回 None。"""
+    from datetime import datetime
+
+    for fmt in ("%Y%m%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(p, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def _check_period_consistency(
     state: AgentState, check_seq: int
 ) -> CrossValidationCheck:
-    """as_of / period 一致：计划 as_of 与证据 period 一致性检查。"""
+    """as_of / period 一致（#5 口径修正）：任何证据期不得晚于计划 as_of。
+
+    早于截止期的最新已披露数据是合法的（如请求 2025 年报，
+    实际数据到 20251231 已披露）；只有存在晚于 as_of 的证据才算不一致。
+    """
     plan = state.get("plan")
     results = state.get("results")
     as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else None
@@ -241,9 +257,16 @@ def _check_period_consistency(
                     evidence_periods.add(str(ev.period))
     status = "pass"
     warning = None
-    if as_of and evidence_periods and as_of not in evidence_periods:
-        status = "partial"
-        warning = f"计划 as_of={as_of} 与证据 period={sorted(evidence_periods)} 不一致"
+    as_of_dt = _parse_period(as_of) if as_of else None
+    if as_of_dt is not None and evidence_periods:
+        late = sorted(
+            p
+            for p in evidence_periods
+            if (pd := _parse_period(p)) is not None and pd > as_of_dt
+        )
+        if late:
+            status = "partial"
+            warning = f"存在晚于计划 as_of={as_of} 的证据 period={late}"
     return CrossValidationCheck(
         check_id=f"cv_period_{check_seq}",
         check_type="period",
@@ -294,8 +317,8 @@ def _run_numerical_conflicts(state: AgentState) -> list[dict]:
         )
         cashflow = fetch_series(code, "net_cash_flows_oper_act", periods=8, as_of=as_of)
 
-        # CV-NUM-02 数据：MySQL 股东表 vs Neo4j 边比例
-        shareholder_edges = _fetch_shareholder_edges(state, code)
+        # CV-NUM-02 数据：MySQL 股东表 vs Neo4j 边比例（均按截止期过滤）
+        shareholder_edges = _fetch_shareholder_edges(state, code, as_of=as_of)
         event_context = _fetch_equity_events(state, code)
 
         conflicts = run_numerical_conflicts(
@@ -315,28 +338,31 @@ def _run_numerical_conflicts(state: AgentState) -> list[dict]:
     return results
 
 
-def _fetch_shareholder_edges(state: AgentState, company_code: str) -> list[dict]:
-    """MySQL top_shareholders + Neo4j 边比例 → 可比边列表。"""
+def _fetch_shareholder_edges(
+    state: AgentState, company_code: str, as_of: str = ""
+) -> list[dict]:
+    """MySQL top_shareholders + Neo4j 边比例 → 可比边列表。
+
+    #5 期次传播：as_of（YYYYMMDD）存在时双方都只取截止期内数据。
+    """
     edges: list[dict] = []
     try:
         from app.domain.finance._fetch import _get_engine
         from sqlalchemy import text
 
         engine = _get_engine()
-        # MySQL 最新同期间股东持股比例（按报告期去重取最新）
+        # MySQL 截止期内股东持股比例（按报告期去重取最新）
+        sql = (
+            "SELECT s_holder_name, s_holder_pct, report_period, source_record_id "
+            "FROM top_shareholders WHERE wind_code = :c "
+        )
+        params: dict = {"c": company_code}
+        if as_of:
+            sql += "AND report_period <= :asof "
+            params["asof"] = as_of
+        sql += "ORDER BY report_period DESC LIMIT 50"
         with engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    text(
-                        "SELECT s_holder_name, s_holder_pct, report_period, source_record_id "
-                        "FROM top_shareholders WHERE wind_code = :c "
-                        "ORDER BY report_period DESC LIMIT 50"
-                    ),
-                    {"c": company_code},
-                )
-                .mappings()
-                .fetchall()
-            )
+            rows = conn.execute(text(sql), params).mappings().fetchall()
 
         # Neo4j 目标公司边（含 ownership_pct 与 relationship_id）
         neo_edges: list[dict] = []
@@ -348,7 +374,9 @@ def _fetch_shareholder_edges(state: AgentState, company_code: str) -> list[dict]
 
                 adapter = Neo4jEquityGraph()
                 if adapter._check_connection_sync():
-                    graph = adapter._get_graph_sync(company_code, depth=2)
+                    graph = adapter._get_graph_sync(
+                        company_code, depth=2, as_of=as_of or None
+                    )
                     for e in graph.edges:
                         pct = e.effective_ownership_pct()
                         if pct is not None:

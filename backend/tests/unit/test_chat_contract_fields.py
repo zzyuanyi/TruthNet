@@ -1,4 +1,4 @@
-"""REST /chat 契约字段回归 — claims / module_status 透出（缺陷修复验证）.
+"""REST /chat public contract regression tests.
 
 历史缺陷: ChatDataV1 无 claims/module_status，前端 Phase D #1（partial 场景 UI）
 与评测对外接口均被阻塞。修复: schema 追加两字段 + _build_chat_response 组装透出。
@@ -11,9 +11,29 @@
 5. REST 失败路径默认（claims=[] / module_status={}）
 """
 
-from app.agents.state import Claim, ModuleStatus
+import asyncio
+import threading
+import time
+
+import pytest
+from pydantic import ValidationError
+
+from app.agents.state import (
+    Claim,
+    CompanyRef,
+    ExecutionPlan,
+    FinalResponse,
+    ModuleResults,
+    ModuleStatus,
+)
 from app.api.v1.routers.chat import _build_chat_response
-from app.api.v1.schemas.chat import ChatDataV1, ClaimV1, ModuleStatusV1
+from app.api.v1.schemas.chat import (
+    ChatContextV1,
+    ChatDataV1,
+    ChatRequestV1,
+    ClaimV1,
+    ModuleStatusV1,
+)
 
 
 # ── 1. ClaimV1.from_claim 两种输入 ──────────────────────────
@@ -58,6 +78,15 @@ def test_chatdata_defaults():
     assert d.module_status == {}
 
 
+def test_chat_request_strips_and_validates_boundaries():
+    request = ChatRequestV1(question="  分析康美药业  ", session_id="ses_01")
+    assert request.question == "分析康美药业"
+    with pytest.raises(ValidationError):
+        ChatRequestV1(question="   ")
+    with pytest.raises(ValidationError):
+        ChatRequestV1(question="q", session_id="bad session")
+
+
 # ── 3. _build_chat_response 组装回归（缺陷真正发生点）───────
 
 
@@ -98,6 +127,106 @@ def test_build_chat_response_assembles_claims_and_module_status():
     result_empty = _stub_result()
     result_empty["claims"] = []
     assert _build_chat_response(result_empty, "tr2").data.claims == []
+
+
+def test_build_chat_response_exposes_intent():
+    """前端必须能区分闲聊与分析，避免显示伪风险面板和证据缺失标签。"""
+    result = _stub_result()
+    result["plan"] = ExecutionPlan(intent="chitchat", requested_modules=[])
+
+    assert _build_chat_response(result, "tr_intent").data.intent == "chitchat"
+
+
+def test_build_chat_response_exposes_session_and_candidates():
+    result = _stub_result()
+    result["plan"] = ExecutionPlan(intent="company_disambiguation")
+    result["company_candidates"] = [
+        CompanyRef(
+            entity_id="company_000001_SZ",
+            wind_code="000001.SZ",
+            sec_name="平安银行",
+            exchange="XSHE",
+        )
+    ]
+    data = _build_chat_response(result, "tr", "ses_generated").data
+    assert data.session_id == "ses_generated"
+    assert data.company_candidates[0].wind_code == "000001.SZ"
+
+
+def test_rest_context_and_generated_session_propagate(monkeypatch):
+    from app.api.v1.routers import chat as chat_router
+
+    captured: list[dict] = []
+
+    class FakeGraph:
+        def invoke(self, state):
+            captured.append(state)
+            return {
+                **state,
+                "final_response": FinalResponse(answer="ok", risk_level="green"),
+                "results": ModuleResults(),
+            }
+
+    monkeypatch.setattr(chat_router, "_get_graph", lambda: FakeGraph())
+    first = asyncio.run(
+        chat_router.chat_v1(
+            ChatRequestV1(
+                question="分析一下",
+                context=ChatContextV1(company_code="600518.SH", fiscal_year=2025),
+            )
+        )
+    )
+    generated = first.data.session_id
+    assert generated
+    assert captured[0]["request_context"].company_code == "600518.SH"
+    assert captured[0]["request_context"].as_of.strftime("%Y%m%d") == "20251231"
+
+    second = asyncio.run(
+        chat_router.chat_v1(ChatRequestV1(question="继续", session_id=generated))
+    )
+    assert second.data.session_id == generated
+    assert captured[1]["runtime"].session_id == generated
+
+
+def test_rest_same_session_turns_are_serialized(monkeypatch):
+    """同一 REST 会话不得并行持久化并抢占相同 turn_index。"""
+    from app.api.v1.routers import chat as chat_router
+
+    active = 0
+    max_active = 0
+    state_lock = threading.Lock()
+
+    class FakeGraph:
+        def invoke(self, state):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.03)
+            with state_lock:
+                active -= 1
+            return {
+                **state,
+                "final_response": FinalResponse(answer="ok", risk_level="green"),
+                "results": ModuleResults(),
+            }
+
+    monkeypatch.setattr(chat_router, "_get_graph", lambda: FakeGraph())
+
+    async def run_both():
+        return await asyncio.gather(
+            chat_router.chat_v1(
+                ChatRequestV1(question="问题一", session_id="ses_same")
+            ),
+            chat_router.chat_v1(
+                ChatRequestV1(question="问题二", session_id="ses_same")
+            ),
+        )
+
+    responses = asyncio.run(run_both())
+    assert [item.data.answer for item in responses] == ["ok", "ok"]
+    assert max_active == 1
+    assert "ses_same" not in chat_router._rest_session_gates
 
 
 # ── 4. ModuleStatusV1.from_status 三种输入形态（typed 化后）──

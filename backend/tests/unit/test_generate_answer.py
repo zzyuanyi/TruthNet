@@ -180,12 +180,16 @@ def test_risk_finance_executed_parent_scope_wording():
 
 
 def test_pure_equity_no_parent_scope_forced():
-    """纯股权查询（finance 未执行）→ 不强行插入母公司口径说明。"""
+    """纯股权查询（finance 未执行）→ 不强行插入母公司口径说明。
+
+    #11：equity 模式开场（"股权穿透分析完成"），非"综合分析完成"。
+    """
     claims = [_claim("c1", "equity", "red", None)]
     state = _make_state(company=_company(), claims=claims)
     fr = generate_answer_node(state)["final_response"]
     assert "母公司报表" not in fr.answer
-    assert "共检测到 1 项风险信号" in fr.answer
+    assert "股权穿透分析完成" in fr.answer
+    assert "发现 1 项股权风险信号" in fr.answer
 
 
 def test_unknown_company_type_no_false_no_risk():
@@ -301,6 +305,23 @@ def test_follow_up_fallback():
     """无任何触发 → 兜底追问。"""
     fr = generate_answer_node(_make_state(company=_company()))["final_response"]
     assert fr.follow_ups == ["查看企业画像详情"]
+
+
+def test_follow_up_adds_available_industry_percentile():
+    claims = [_claim("c1", "financial", "orange", "R1")]
+    results = ModuleResults(
+        finance=FinanceResult(
+            rule_statuses={"R1": "triggered"},
+            industry_benchmark={
+                "industry_l1": "医药生物",
+                "percentiles": {"r1_gap": 87.5},
+            },
+        )
+    )
+    follow_ups = generate_answer_node(
+        _make_state(company=_company(), claims=claims, results=results)
+    )["final_response"].follow_ups
+    assert "查看应收-营收背离幅度的行业分位对比" in follow_ups
 
 
 # ── 规则明细（rule_details 展开） ──────────────────────────
@@ -436,15 +457,20 @@ class _FakeLLM:
 
 
 def _polish_state(monkeypatch, provider):
-    """构造带触发规则明细 + 解读段（含【】标记）的 state，注入指定 LLM provider。"""
+    """构造带触发规则明细 + 解读段（含【】标记）的 state，注入指定 LLM provider。
+
+    #7：润色默认关闭——专项测试显式开启 ANSWER_POLISH_ENABLED。
+    """
     monkeypatch.setattr(
         "app.infrastructure.llm.factory.create_llm_provider",
         lambda backend=None: provider,
     )
+    monkeypatch.setattr("app.core.config.settings.ANSWER_POLISH_ENABLED", True)
     rule_details = {
         "R1": {
             "rule_name": "应收-营收背离",
             "severity": "red",
+            "explanation": "应收账款增速与营业收入增速存在显著背离",
             "current": {
                 "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
                 "growth_gap": {"value": 166.2, "unit": "percentage_point"},
@@ -454,7 +480,7 @@ def _polish_state(monkeypatch, provider):
     fin = FinanceResult(
         rule_statuses={"R1": "triggered"},
         rule_details=rule_details,
-        interpretation="【预警点】应收异常。【可能模式】收入虚增。",
+        interpretation="",
     )
     return _make_state(
         company=_company(),
@@ -466,11 +492,15 @@ def _polish_state(monkeypatch, provider):
 def test_polish_applies_when_key_facts_kept(monkeypatch):
     """LLM 返回流畅润色文本（关键信息一致、标记保留）→ 采用润色文本。"""
     polished = (
-        "金牌家居（603180.SH）的综合分析已经完成。"
+        "金牌家居（600518.SH）的综合分析已经完成。"
         "我们检测到 1 项风险信号。"
         "触发规则明细：R1 应收-营收背离（高风险）：应收账款增速 149.6%、"
         "增速差距 166.2pp。"
-        "【预警点】应收异常。【可能模式】收入虚增。"  # 标记必须保留
+        "【预警点】应收异常。【数据对比】应收账款增速 149.6%。"
+        "【可能模式】当前规则组合未匹配预定义模式，需进一步验证。"
+        "【限制说明】分析基于母公司报表及当前数据覆盖范围，结果仅供参考。"
+        "【重要说明】规则信号不等同于造假事实认定，需结合审计和监管文件核验，"
+        "不构成投资建议。"  # 模板全部标记必须保留
     )
     state = _polish_state(monkeypatch, _FakeLLM(result=polished))
     answer = generate_answer_node(state)["final_response"].answer
@@ -501,7 +531,11 @@ def test_polish_fallback_when_llm_fails(monkeypatch):
 
 
 def test_polish_rejects_deleted_markers(monkeypatch):
-    """P1 回归：润色删除【】段落标记 → 回退模板。"""
+    """P1 回归：润色删除【】段落标记 → 回退模板。
+
+    #7 后模板标记为【预警点】【数据对比】（pattern_matches 为空无
+    【可能模式】）——回退后确定性标记必须齐全，且无标记的 LLM 文本不生效。
+    """
     stripped = (
         "金牌家居综合分析完成，检测到1项风险信号。"
         "预警点：应收异常。可能模式：收入虚增。"  # 【】全删
@@ -509,7 +543,8 @@ def test_polish_rejects_deleted_markers(monkeypatch):
     state = _polish_state(monkeypatch, _FakeLLM(result=stripped))
     answer = generate_answer_node(state)["final_response"].answer
     assert "【预警点】" in answer, "标记被删应回退模板"
-    assert "【可能模式】" in answer
+    assert "【数据对比】" in answer
+    assert "预警点：应收异常" not in answer  # LLM 无标记文本未生效
 
 
 def test_polish_skipped_for_company_none(monkeypatch):

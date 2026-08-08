@@ -18,7 +18,13 @@ from app.application.services.ws_session_manager import (
     ActiveTurn,
 )
 from app.application.services.ws_turn_runner import run_turn
-from app.agents.state import FinalResponse, ModuleResults, RuntimeState
+from app.agents.state import (
+    CompanyRef,
+    ExecutionPlan,
+    FinalResponse,
+    ModuleResults,
+    RuntimeState,
+)
 
 
 class _FakeGraph:
@@ -142,6 +148,11 @@ def test_turn_completed_emits_module_and_delta():
         s = m.get_or_create_session("ses")
         turn = m.start_turn(s, "turn_1", "问题")
         state = _state()
+        company = object()
+        state["company"] = company
+        state["plan"] = ExecutionPlan(
+            intent="simple_query", requested_modules=["finance"]
+        )
         graph = _FakeGraph(
             [
                 "load_context",
@@ -151,6 +162,7 @@ def test_turn_completed_emits_module_and_delta():
                 "persist_turn",
             ],
             state,
+            company=company,
             requested_modules=["finance"],
         )
         events, emit = _build_emit()
@@ -159,10 +171,39 @@ def test_turn_completed_emits_module_and_delta():
         ets = [e[0] for e in events]
         assert "module.started" in ets and "module.completed" in ets
         assert "answer.delta" in ets
+        assert "artifact.upsert" in ets
         assert "turn.completed" in ets
         # delta 来自真实分段（非拆句）：拼接即最终答案
         deltas = [e[1]["text"] for e in events if e[0] == "answer.delta"]
         assert "".join(deltas) == state["final_response"].answer
+
+    asyncio.run(scenario())
+
+
+def test_turn_completed_exposes_intent():
+    """WS 终态透出意图，供前端选择分析或会话展示模式。"""
+
+    async def scenario():
+        manager = WsSessionManager()
+        session = manager.get_or_create_session("ses")
+        turn = manager.start_turn(session, "turn_1", "你好")
+        state = _state(question="你好")
+        state["plan"] = ExecutionPlan(intent="chitchat", requested_modules=[])
+        graph = _FakeGraph(
+            ["load_context", "plan_modules", "generate_answer", "persist_turn"],
+            state,
+            requested_modules=[],
+        )
+        events, emit = _build_emit()
+
+        result = await _run(graph, state, turn, session, emit, _build_state(state))
+
+        assert result.outcome == "completed"
+        completed = next(
+            payload for name, payload in events if name == "turn.completed"
+        )
+        assert completed["intent"] == "chitchat"
+        assert all(name != "artifact.upsert" for name, _ in events)
 
     asyncio.run(scenario())
 
@@ -325,5 +366,43 @@ def test_no_final_response_fails():
         ets = [e[0] for e in events]
         assert "turn.failed" in ets
         assert "turn.completed" not in ets
+
+    asyncio.run(scenario())
+
+
+def test_company_candidates_event_and_pending_confirmation():
+    async def scenario():
+        from app.application.services.ws_session_manager import session_manager
+
+        local_manager = WsSessionManager()
+        session = local_manager.get_or_create_session("ses")
+        turn = local_manager.start_turn(session, "turn_1", "分析平安")
+        state = _state(question="分析平安")
+        state["plan"] = ExecutionPlan(
+            intent="company_disambiguation", requested_modules=[]
+        )
+        state["company_candidates"] = [
+            CompanyRef(
+                entity_id="company_000001_SZ",
+                wind_code="000001.SZ",
+                sec_name="平安银行",
+                exchange="XSHE",
+            )
+        ]
+        graph = _FakeGraph(
+            ["plan_modules", "generate_answer", "persist_turn"],
+            state,
+            requested_modules=[],
+        )
+        events, emit = _build_emit()
+        result = await _run(graph, state, turn, session, emit, _build_state(state))
+        assert result.outcome == "completed"
+        candidate_events = [
+            payload for name, payload in events if name == "company.candidates"
+        ]
+        assert candidate_events[0]["candidates"][0]["wind_code"] == "000001.SZ"
+        pending = session_manager.get_pending_disambiguation(session)
+        assert pending["question"] == "分析平安"
+        assert pending["candidates"][0]["wind_code"] == "000001.SZ"
 
     asyncio.run(scenario())

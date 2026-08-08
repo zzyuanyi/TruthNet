@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 _loop: asyncio.AbstractEventLoop | None = None
 _loop_lock = threading.Lock()
+_llm_semaphore: asyncio.BoundedSemaphore | None = None
+_llm_semaphore_limit = 0
 
 
 def _ensure_loop() -> asyncio.AbstractEventLoop:
@@ -117,6 +119,56 @@ async def _call_with_fallback(primary, fallback, coro_factory):
                     pass
 
 
+def _get_llm_semaphore() -> asyncio.BoundedSemaphore:
+    """Return the semaphore owned by the persistent LLM event loop."""
+    from app.core.config import settings
+
+    global _llm_semaphore, _llm_semaphore_limit
+    limit = max(1, int(settings.LLM_MAX_CONCURRENCY))
+    if _llm_semaphore is None or _llm_semaphore_limit != limit:
+        _llm_semaphore = asyncio.BoundedSemaphore(limit)
+        _llm_semaphore_limit = limit
+    return _llm_semaphore
+
+
+async def _close_providers(primary, fallback) -> None:
+    for provider in (primary, fallback):
+        if provider is None:
+            continue
+        client = getattr(provider, "_client", None)
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+async def _call_with_bulkhead(primary, fallback, coro_factory):
+    """Limit in-flight LLM requests and fail fast when the queue is saturated."""
+    from app.core.config import settings
+
+    semaphore = _get_llm_semaphore()
+    acquired = False
+    try:
+        await asyncio.wait_for(
+            semaphore.acquire(),
+            timeout=max(0.01, float(settings.LLM_QUEUE_TIMEOUT_SECONDS)),
+        )
+        acquired = True
+    except TimeoutError:
+        logger.warning(
+            "LLM_QUEUE_TIMEOUT: 等待 LLM 并发槽位超过 %ss，使用确定性回退",
+            settings.LLM_QUEUE_TIMEOUT_SECONDS,
+        )
+        await _close_providers(primary, fallback)
+        return None
+    try:
+        return await _call_with_fallback(primary, fallback, coro_factory)
+    finally:
+        if acquired:
+            semaphore.release()
+
+
 def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
     """同步调用 async LLM chat，返回文本；超时/异常 → ""。
 
@@ -136,7 +188,7 @@ def run_llm_chat(messages: list[dict], timeout: float | None = None) -> str:
 
     return (
         _run_coro(
-            lambda: _call_with_fallback(primary, fallback, lambda p: p.chat(messages)),
+            lambda: _call_with_bulkhead(primary, fallback, lambda p: p.chat(messages)),
             timeout,
             "",
         )
@@ -162,7 +214,7 @@ def run_llm_structured(
         return None
 
     return _run_coro(
-        lambda: _call_with_fallback(
+        lambda: _call_with_bulkhead(
             primary,
             fallback,
             lambda p: p.structured_chat(messages, output_schema),

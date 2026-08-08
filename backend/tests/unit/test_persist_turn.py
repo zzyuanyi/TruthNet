@@ -8,7 +8,13 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from app.agents.nodes import persist_turn as pt
-from app.agents.state import AgentState, FinalResponse, ModuleStatus, RuntimeState
+from app.agents.state import (
+    AgentState,
+    ExecutionPlan,
+    FinalResponse,
+    ModuleStatus,
+    RuntimeState,
+)
 from app.infrastructure.persistence.models import ConversationSession, ConversationTurn
 
 
@@ -173,6 +179,85 @@ def test_panel_data_has_rule_evidence_ids(monkeypatch, sqlite_engine):
         "ev_fin_hash_r1_a",
         "ev_fin_hash_r1_b",
     ], "R1 应携带 rule_details 的 canonical 证据 ID（ev_fin_*）"
+
+
+def test_chitchat_does_not_persist_analysis_panel(monkeypatch, sqlite_engine):
+    """闲聊轮次 panel_data 必须为 NULL，历史恢复不得显示未知风险卡。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    state = _make_state(query="你好", answer="你好！我是织网鉴真。")
+    state["plan"] = ExecutionPlan(intent="chitchat", requested_modules=[])
+
+    pt.persist_turn_node(state)
+
+    with sqlite_engine.connect() as conn:
+        panel_data = conn.execute(
+            text("SELECT panel_data FROM conversation_turns")
+        ).scalar_one()
+    assert panel_data is None
+
+
+def test_existing_new_session_gets_first_question_title(monkeypatch, sqlite_engine):
+    """前端预创建“新对话”后，首轮持久化应写入可识别标题。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    with sqlite_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_test', '新对话', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    pt.persist_turn_node(_make_state(query="分析康美药业的现金流"))
+
+    with sqlite_engine.connect() as conn:
+        title = conn.execute(
+            text("SELECT title FROM conversation_sessions WHERE session_id='ses_test'")
+        ).scalar_one()
+    assert title == "分析康美药业的现金流"
+
+
+def test_existing_default_new_session_gets_first_question_title(
+    monkeypatch, sqlite_engine
+):
+    """API default placeholder '新会话' is replaced just like legacy '新对话'."""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    with sqlite_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES ('ses_test', '新会话', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+    pt.persist_turn_node(_make_state(query="分析康美药业 2025 年报"))
+    with sqlite_engine.connect() as conn:
+        title = conn.execute(
+            text("SELECT title FROM conversation_sessions WHERE session_id='ses_test'")
+        ).scalar_one()
+    assert title == "分析康美药业 2025 年报"
+
+
+def test_response_meta_persisted(monkeypatch, sqlite_engine):
+    """Historical turns retain terminal metadata without changing panel semantics."""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    state = _make_state()
+    state["plan"] = ExecutionPlan(intent="diagnose", requested_period_text="2025 年报")
+    state["final_response"] = FinalResponse(
+        answer="回答", risk_level="orange", follow_ups=["继续核查"]
+    )
+    pt.persist_turn_node(state)
+    with sqlite_engine.connect() as conn:
+        raw = conn.execute(
+            text("SELECT response_meta FROM conversation_turns")
+        ).scalar_one()
+    import json
+
+    meta = json.loads(raw) if isinstance(raw, str) else raw
+    assert meta["intent"] == "diagnose"
+    assert meta["follow_ups"] == ["继续核查"]
+    assert meta["requested_period_text"] == "2025 年报"
+    assert meta["supporting_evidence_ids"] == []
 
 
 def test_persist_with_company_code(monkeypatch, sqlite_engine):

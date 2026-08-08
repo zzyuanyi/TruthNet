@@ -80,6 +80,7 @@ export function AnalysisPanel({
             />
           )}
           {state === 'done' && !data && <EmptyState />}
+          {state === 'error' && <ErrorState />}
         </div>
       </ScrollArea>
 
@@ -114,10 +115,20 @@ function LoadingState() {
   return (
     <div className="text-center py-12">
       <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin mb-4" />
-      <h3 className="text-sm font-medium mb-1">正在加载...</h3>
+      <h3 className="text-sm font-medium mb-1">正在理解问题...</h3>
       <p className="text-xs text-muted-foreground">
-        获取公司数据中
+        判断意图与可用数据范围
       </p>
+    </div>
+  );
+}
+
+function ErrorState() {
+  return (
+    <div className="text-center py-12">
+      <AlertTriangle className="h-12 w-12 mx-auto text-destructive/70 mb-4" />
+      <h3 className="text-sm font-medium mb-1">本次请求未完成</h3>
+      <p className="text-xs text-muted-foreground">请检查连接后重新发送问题</p>
     </div>
   );
 }
@@ -163,7 +174,7 @@ function StreamingState({ data }: { data: PanelData | null }) {
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-primary">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm font-medium">正在生成分析...</span>
+        <span className="text-sm font-medium">{data ? '正在生成分析...' : '正在生成回答...'}</span>
       </div>
       {data && (
         <div className="space-y-3">

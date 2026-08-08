@@ -24,6 +24,8 @@ class SessionListDataV1(BaseModel):
 
     sessions: list[SessionV1] = []
     total: int = 0
+    limit: int = 50
+    offset: int = 0
 
 
 class SessionCreateDataV1(BaseModel):
@@ -48,6 +50,10 @@ class SessionTurnV1(BaseModel):
     module_status: dict | None = None
     panel_data: dict | None = None  # 面板摘要（v7；旧数据为 None）
     evidence_ids: list[str] = []
+    intent: str = ""
+    follow_ups: list[str] = []
+    supporting_evidence_ids: list[str] = []
+    requested_period_text: str = ""
     created_at: str | None = None
 
 
