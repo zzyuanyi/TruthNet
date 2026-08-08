@@ -51,13 +51,13 @@
 | `event_type` | 说明 | 状态 |
 |------|------|:---:|
 | `turn.accepted` | 请求已接收，分配 turn_id | ✅ |
-| `company.candidates` | 候选公司列表 | 🔸 |
+| `company.candidates` | `{turn_id, candidates}` 候选公司列表；确认后以新 turn 继续原问题 | ✅ |
 | `module.started` | 模块开始执行（真流式：节点实际执行前发送） | ✅ |
 | `module.completed` | 模块终态和耗时 | ✅ |
 | `answer.delta` | 文本增量（真流式：generate_answer 实时分段） | ✅ |
 | `artifact.upsert` | 结构化产物更新 (规则/图/时间线/证据/股权链路) | ✅ |
 | `warning.raised` | 数据不足/超时/降级 | 🔸 |
-| `turn.completed` | 最终结果 + 追问建议 + pattern_matches + equity_chains | ✅ |
+| `turn.completed` | 最终结果 + intent + 追问建议 + pattern_matches + equity_chains + supporting_evidence_ids（intent 用于区分普通对话/分析；supporting_evidence_ids 为可展示叶子证据子集） | ✅ |
 | `turn.failed` | 本轮无法继续 | ✅ |
 | `turn.cancelled` | `turn.cancel` 确认（≤2s，幂等，单终态） | ✅ |
 | `stream.resume_ack` | 断线补发结果（replay_count/gap） | ✅ |
@@ -92,6 +92,8 @@
 - 请求序号早于缓存起点 → `STREAM_GAP` 可恢复错误；
 - session 不存在 → `SESSION_NOT_FOUND`；
 - 事件缓冲上限/TTL 来自配置（WS_EVENT_BUFFER_MAX_EVENTS / TTL_SECONDS）。
+- 事件缓冲为进程内临时数据；服务进程重启等同缓冲过期，恢复请求明确返回
+  `SESSION_NOT_FOUND`，不会静默返回空补发结果。
 
 ---
 

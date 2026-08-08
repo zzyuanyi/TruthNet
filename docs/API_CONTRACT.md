@@ -86,7 +86,9 @@
 {
   "code": 0,
   "data": {
+    "session_id": "sess_abc123",
     "answer": "贵州茅台2023年营收为1505.60亿元，销售商品提供劳务收到的现金为1652.35亿元，收现比约109.74%...",
+    "company_candidates": [],
     "evidence": [
       {"source": "2023年报 利润表", "field": "营业收入", "value": "1505.60亿",
        "evidence_id": "ev_fin_2023_bs_01", "source_type": "financial_statement",
@@ -126,7 +128,10 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
+| `session_id` | string | 本次实际使用的会话 ID；请求未传时由服务端生成并返回 |
 | `answer` | string | Markdown 格式的主回答 |
+| `intent` | string | 回答意图：chitchat / guide / research / unsupported / simple_query / diagnose；前端据此区分普通对话与分析面板 |
+| `company_candidates` | list | 公司名称存在歧义时的候选项；此时 intent=`company_disambiguation`，不执行分析模块 |
 | `evidence` | list | 证据列表，每项标注来源 |
 | `claims` | list | 结论声明列表（ClaimV1：claim_id/text/claim_type/severity/confidence/rule_id/rule_version/evidence_ids/verification_status/limitations）※ 2026-08-04 追加（主契约见 API_CONTRACT_V1.md）|
 | `module_status` | object | 各模块状态（ModuleStatusV1：state/error_code/recoverable/duration_ms，typed 非字符串）※ 2026-08-04 追加，8/4 类型化 |
@@ -140,6 +145,8 @@
 | `warnings` | list | 财务预警点列表 |
 | `missing_modules` | list | 暂缺的模块（不影响主流程） |
 | `trace_id` | string | 本次请求追踪 ID |
+| `supporting_evidence` | list | 可展示证据子集（叶子 Claim 引用、排除综合 risk；前端默认展示，另保留 evidence 全量入口）※ 2026-08-08 追加 |
+| `requested_period_text` | string | 用户请求中的期次原文（如"2025年报"）；与 meta.data_as_of（实际数据截止日）分离 ※ 2026-08-08 追加 |
 
 ---
 
@@ -147,7 +154,7 @@
 
 **`WS /api/v1/chat/ws`**
 
-状态：🔶 MVP（已实现最小 mock 端点，Prompt3）
+状态：✅ V1（Agent 主链路、取消、补发与公司消歧已实现）
 
 #### 连接
 
