@@ -33,12 +33,16 @@ async def test_readyz_has_required_fields():
 
 @pytest.mark.asyncio
 async def test_readyz_lite_profile_ready():
-    """/readyz lite profile 返回 ready."""
+    """/readyz lite profile 返回 ready.
+
+    2️⃣ 预热门控：TestClient 未跑 lifespan 预热 → 允许 "starting"
+    （预热完成才 ready；真实部署经 lifespan 预热后为 ready）。
+    """
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/v1/readyz")
     body = response.json()
-    assert body["data"]["status"] in ("ready", "degraded")
+    assert body["data"]["status"] in ("ready", "degraded", "starting")
 
 
 @pytest.mark.asyncio

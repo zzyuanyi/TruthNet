@@ -1,9 +1,21 @@
 """API 契约 smoke 验证 — 确认 FastAPI 端点返回与文档一致的响应格式。"""
 
+import uuid
+
 import pytest
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+
+
+@pytest.fixture
+def chat_session_id():
+    """Own and clean the real-DB session created by the REST smoke test."""
+    session_id = f"ses_smoke_{uuid.uuid4().hex[:10]}"
+    yield session_id
+    response = TestClient(app).delete(f"/api/v1/sessions/{session_id}")
+    assert response.status_code in (200, 404)
 
 
 @pytest.mark.asyncio
@@ -32,12 +44,16 @@ async def test_health_check_contract():
 
 
 @pytest.mark.asyncio
-async def test_chat_mock_contract():
+async def test_chat_mock_contract(chat_session_id):
     """POST /api/v1/chat 返回 V12 response envelope 结构（进入 Agent graph）。"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            "/api/v1/chat", json={"question": "康美药业有造假风险吗"}
+            "/api/v1/chat",
+            json={
+                "question": "康美药业有造假风险吗",
+                "session_id": chat_session_id,
+            },
         )
 
     assert response.status_code == 200

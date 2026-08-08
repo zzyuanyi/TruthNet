@@ -211,6 +211,29 @@ def test_get_session_returns_panel_data(mysql_client):
     assert turns2[1]["panel_data"] is None
 
 
+def test_get_session_returns_response_metadata(mysql_client):
+    engine = sessions_router._get_engine()
+    _seed_session(engine, sid="ses_meta", turns=0)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, response_meta, created_at) "
+                "VALUES ('turn_meta', 'ses_meta', 1, '问题', :meta, CURRENT_TIMESTAMP)"
+            ),
+            {
+                "meta": '{"intent":"diagnose","follow_ups":["继续"],'
+                '"supporting_evidence_ids":["ev_1"],'
+                '"requested_period_text":"2025年报"}'
+            },
+        )
+    turn = mysql_client.get("/api/v1/sessions/ses_meta").json()["data"]["turns"][0]
+    assert turn["intent"] == "diagnose"
+    assert turn["follow_ups"] == ["继续"]
+    assert turn["supporting_evidence_ids"] == ["ev_1"]
+    assert turn["requested_period_text"] == "2025年报"
+
+
 def test_get_session_empty_turns(mysql_client):
     """会话存在但无轮次 → 200 空 turns。"""
     engine = sessions_router._get_engine()
@@ -243,6 +266,17 @@ def test_list_with_turn_count(mysql_client):
     by_id = {s["session_id"]: s for s in sessions}
     assert by_id["ses_old"]["turn_count"] == 2
     assert by_id["ses_new"]["turn_count"] == 0
+
+
+def test_list_sessions_paginates_with_total(mysql_client):
+    engine = sessions_router._get_engine()
+    for index in range(3):
+        _seed_session(engine, sid=f"ses_page_{index}", turns=0)
+    data = mysql_client.get("/api/v1/sessions?limit=2&offset=1").json()["data"]
+    assert len(data["sessions"]) == 2
+    assert data["total"] == 3
+    assert data["limit"] == 2
+    assert data["offset"] == 1
 
 
 # ── 删除（级联 + 全局证据保护回归）─────────────────────────

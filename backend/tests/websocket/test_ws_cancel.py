@@ -134,7 +134,7 @@ def test_repeat_cancel_idempotent(ws_session_tracker):
 
 
 @_NEED_MYSQL
-def test_cancel_isolation_across_sessions():
+def test_cancel_isolation_across_sessions(ws_session_tracker):
     """A 会话取消不影响 B 会话（B 可正常完成）。"""
     client = TestClient(app)
     sid_a = _unique_sid()
@@ -154,6 +154,7 @@ def test_cancel_isolation_across_sessions():
             {"text": "康美药业应收账款情况如何", "session_id": sid_b},
         )
         events_b = _receive(ws_b)
+    ws_session_tracker(events_a + events_b)
     assert any(e["event_type"] == "turn.cancelled" for e in events_a), "A 应取消"
     assert any(e["event_type"] == "turn.completed" for e in events_b), "B 应正常完成"
     assert not any(e["event_type"] == "turn.completed" for e in events_a), "A 不得完成"

@@ -9,6 +9,8 @@
 - 股权维度不实例化图（服务无图依赖）
 """
 
+import asyncio
+
 import pytest
 
 from app.application.services.risk_scoring_service import RiskScoringService
@@ -17,6 +19,7 @@ from app.agents.state import (
     EventsResult,
     EvidenceRef,
     FinanceResult,
+    ModuleResults,
 )
 from app.domain.risk.models import RiskOutput
 
@@ -164,6 +167,109 @@ def test_evidence_ids_collected():
         benchmarks=None,
     )
     assert "ev_fin_abc" in out.evidence_ids
+
+
+def test_equity_chain_signal_sets_risk_level_floor():
+    """An orange canonical equity chain must not produce an overall green level."""
+    svc = RiskScoringService()
+    equity = EquityResult(
+        graph={"nodes": [{"id": "company_x"}]},
+        chains=[{"path": ["a", "b"]}],
+        chain_details=[{"risk_level": "orange"}],
+    )
+    out = svc.score(
+        wind_code="600518.SH",
+        as_of="20251231",
+        finance_result=_fin_result(statuses={}),
+        equity_result=equity,
+        events_result=_ev_result(
+            timeline=[{"sentiment": "neutral", "title": "常规公告"}]
+        ),
+        benchmarks={"r1_gap": {"company_percentile": 20.0}},
+    )
+    assert out.risk_level == "orange"
+    assert any("最高有效叶子信号" in warning for warning in out.warnings)
+
+
+def test_rating_and_cluster_data_participate_without_announcements():
+    """Ratings/clusters keep event coverage and risk when the timeline is empty."""
+    svc = RiskScoringService()
+    events = EventsResult(
+        timeline=[],
+        rating_changes=[{"direction": "down"}],
+        clusters=[{"sentiment": "negative", "topic": "诉讼"}],
+    )
+    out = svc.score(
+        wind_code="600518.SH",
+        as_of="20251231",
+        finance_result=_fin_result(statuses={}),
+        equity_result=_eq_result(chains=[]),
+        events_result=events,
+        benchmarks={"r1_gap": {"company_percentile": 20.0}},
+    )
+    assert out.data_coverage.events is True
+    assert out.risk_level in {"orange", "red"}
+
+
+def test_router_assembly_reuses_agent_module_nodes(monkeypatch):
+    """The /risk service must not maintain a second, partial module assembly."""
+    from app.agents.nodes import cross_validate, equity, events, finance, risk
+    from app.application.services.company_resolver import CompanyRecord
+    from app.application.services.risk_scoring_service import assemble_and_score
+
+    calls: list[str] = []
+
+    async def resolve(_code):
+        return CompanyRecord(
+            entity_id="company_600518_SH",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange_code="XSHG",
+        )
+
+    def finance_stub(state):
+        calls.append("finance")
+        return {"results": ModuleResults(finance=FinanceResult())}
+
+    def equity_stub(state):
+        calls.append("equity")
+        assert state["results"].finance is not None
+        return {"results": ModuleResults(equity=EquityResult())}
+
+    def events_stub(state):
+        calls.append("events")
+        return {"results": ModuleResults(events=EventsResult())}
+
+    def cross_stub(state):
+        calls.append("cross_validate")
+        return {"cross_validation": None}
+
+    expected = RiskOutput(
+        wind_code="600518.SH",
+        sec_name="康美药业",
+        as_of="20251231",
+        risk_level="yellow",
+    )
+
+    def risk_stub(state):
+        calls.append("risk")
+        assert state["results"].finance is not None
+        assert state["results"].equity is not None
+        assert state["results"].events is not None
+        assert state["plan"].as_of.strftime("%Y%m%d") == "20251231"
+        return {"risk_output": expected}
+
+    monkeypatch.setattr(
+        "app.application.services.company_resolver.resolve_company", resolve
+    )
+    monkeypatch.setattr(finance, "finance_node", finance_stub)
+    monkeypatch.setattr(equity, "equity_node", equity_stub)
+    monkeypatch.setattr(events, "events_node", events_stub)
+    monkeypatch.setattr(cross_validate, "cross_validate_node", cross_stub)
+    monkeypatch.setattr(risk, "risk_node", risk_stub)
+    out = asyncio.run(assemble_and_score("600518.SH", "20251231"))
+    assert out is expected
+    assert calls == ["finance", "equity", "events", "cross_validate", "risk"]
 
 
 def test_risk_failure_path_in_compiled_graph():

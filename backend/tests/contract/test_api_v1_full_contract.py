@@ -27,7 +27,8 @@ async def test_readyz_contract():
         response = await client.get("/api/v1/readyz")
     assert response.status_code == 200
     body = response.json()
-    assert body["data"]["status"] in ("ready", "degraded", "not_ready")
+    # 2️⃣ 预热门控：TestClient 未跑 lifespan 预热 → 允许 "starting"
+    assert body["data"]["status"] in ("ready", "degraded", "not_ready", "starting")
     assert body["data"]["profile"] in ("lite", "full")
     assert isinstance(body["data"]["checks"], dict)
     assert "meta" in body

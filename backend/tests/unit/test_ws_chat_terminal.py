@@ -116,6 +116,132 @@ def test_router_emits_single_failed_without_claim(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_same_session_rejects_second_active_turn():
+    from app.application.services.ws_session_manager import WsSessionManager
+
+    manager = WsSessionManager()
+    session = manager.get_or_create_session("ses_same")
+    first = manager.start_turn_if_idle(session, "turn_1", "问题一")
+    second = manager.start_turn_if_idle(session, "turn_2", "问题二")
+    assert first is not None
+    assert second is None
+    manager.remove_turn(session, "turn_1")
+    assert manager.start_turn_if_idle(session, "turn_2", "问题二") is not None
+
+
+def test_company_confirm_replays_original_question_with_selected_company(monkeypatch):
+    """候选确认必须以新 turn 携带选中公司继续原问题，而不是只回确认文案。"""
+    import app.api.v1.routers.chat as chat_mod
+    from app.application.services.ws_session_manager import session_manager
+
+    sid = _test_session_id()
+    resumed: list[tuple[str, str]] = []
+
+    async def fake_run_ws_turn(
+        *,
+        session_id,
+        turn_id,
+        question,
+        trace_id,
+        request_context,
+        accepted_at,
+        _envelope,
+        _emit,
+    ):
+        assert accepted_at > 0
+        session = session_manager.get_session(session_id)
+        assert session is not None
+        try:
+            if request_context is None:
+                candidates = [
+                    {"wind_code": "000001.SZ", "sec_name": "平安银行"},
+                    {"wind_code": "601318.SH", "sec_name": "中国平安"},
+                ]
+                session_manager.set_pending_disambiguation(
+                    session,
+                    {
+                        "turn_id": turn_id,
+                        "question": question,
+                        "as_of": "20251231",
+                        "candidates": candidates,
+                    },
+                )
+                await _emit(
+                    session_id,
+                    _envelope(
+                        "company.candidates",
+                        {"turn_id": turn_id, "candidates": candidates},
+                        sid=session_id,
+                        trace_id=trace_id,
+                        turn_id=turn_id,
+                    ),
+                )
+            else:
+                resumed.append((question, request_context.company_code))
+            if session_manager.claim_terminal_event(session, turn_id):
+                await _emit(
+                    session_id,
+                    _envelope(
+                        "turn.completed",
+                        {"answer": "ok"},
+                        sid=session_id,
+                        trace_id=trace_id,
+                        turn_id=turn_id,
+                    ),
+                )
+        finally:
+            session_manager.remove_turn(session, turn_id)
+
+    monkeypatch.setattr(chat_mod, "_run_ws_turn", fake_run_ws_turn)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/v1/chat/ws?session_id={sid}") as ws:
+            ws.send_json(
+                {
+                    "event_type": "chat.query",
+                    "payload": {"text": "分析平安", "session_id": sid},
+                }
+            )
+            first_events = []
+            while (
+                not first_events or first_events[-1]["event_type"] != "turn.completed"
+            ):
+                first_events.append(ws.receive_json())
+
+            first_turn_id = next(
+                event["turn_id"]
+                for event in first_events
+                if event["event_type"] == "turn.accepted"
+            )
+            assert any(
+                event["event_type"] == "company.candidates" for event in first_events
+            )
+
+            ws.send_json(
+                {
+                    "event_type": "company.confirm",
+                    "payload": {
+                        "company_ref": "000001.SZ",
+                        "session_id": sid,
+                        "turn_id": first_turn_id,
+                    },
+                }
+            )
+            second_events = []
+            while (
+                not second_events or second_events[-1]["event_type"] != "turn.completed"
+            ):
+                second_events.append(ws.receive_json())
+
+    assert resumed == [("分析平安", "000001.SZ")]
+    second_turn_id = next(
+        event["turn_id"]
+        for event in second_events
+        if event["event_type"] == "turn.accepted"
+    )
+    assert second_turn_id != first_turn_id
+
+
 def test_lifespan_janitor_runs_and_stops(monkeypatch):
     """lifespan janitor：周期调用；shutdown 后停止、不挂起。"""
     from app.application.services.ws_session_manager import session_manager
