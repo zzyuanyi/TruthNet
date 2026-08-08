@@ -248,6 +248,25 @@ export const wsClient = {
   create: (sessionId: string, onMessage: (msg: WSMessage) => void) => {
     const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/chat/ws?session_id=${sessionId}`;
     const ws = new WebSocket(wsUrl);
+    const pendingQuestions: string[] = [];
+    let closeRequested = false;
+    let connectionErrorReported = false;
+
+    const sendQuestion = (question: string) => {
+      ws.send(JSON.stringify({
+        event_type: 'chat.query',
+        // V12 契约: payload.session_id 是会话归属的唯一来源（审计 P0-1）
+        payload: { text: question, session_id: sessionId },
+        type: 'chat.query',
+        question,
+      }));
+    };
+
+    ws.onopen = () => {
+      while (pendingQuestions.length > 0) {
+        sendQuestion(pendingQuestions.shift()!);
+      }
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -260,27 +279,33 @@ export const wsClient = {
     };
 
     ws.onerror = (error) => {
+      if (closeRequested) return;
       console.error('WebSocket error:', error);
+      connectionErrorReported = true;
       onMessage({ event_type: 'error', payload: { message: '连接错误' } });
     };
 
     ws.onclose = () => {
-      onMessage({ event_type: 'done' });
+      if (!closeRequested && !connectionErrorReported) {
+        onMessage({ event_type: 'error', payload: { message: '连接已断开，请重试' } });
+      }
     };
 
     return {
       send: (question: string) => {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            event_type: 'chat.query',
-            // V12 契约: payload.session_id 是会话归属的唯一来源（审计 P0-1）
-            payload: { text: question, session_id: sessionId },
-            type: 'chat.query',
-            question,
-          }));
+          sendQuestion(question);
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          pendingQuestions.push(question);
+        } else {
+          onMessage({ event_type: 'error', payload: { message: '连接不可用，请稍后重试' } });
         }
       },
-      close: () => ws.close(),
+      close: () => {
+        closeRequested = true;
+        pendingQuestions.length = 0;
+        ws.close();
+      },
     };
   },
 };

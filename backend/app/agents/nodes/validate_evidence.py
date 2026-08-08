@@ -21,6 +21,7 @@ _VALID_SOURCE_TYPES = {
     "announcement",
     "neo4j_relationship",
     "event_cluster",
+    "research_report",
 }
 
 
@@ -68,6 +69,24 @@ def validate_evidence_node(state: AgentState) -> dict:
             issues.append(f"{eid}: source_record_id 为空")
         if ev.source_type not in _VALID_SOURCE_TYPES:
             issues.append(f"{eid}: source_type 非法 {ev.source_type!r}")
+
+    # ── 全局期次校验（P1-3）：任何证据期不得晚于计划 as_of ──
+    # generate 阶段新增证据（如研报 Evidence）也纳入——研报日期晚于请求
+    # 期次属于期次污染（如"2025 年研报"返回 2026 年报告）
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else None
+    if as_of:
+        late_evidence = []
+        for ev in evidence:
+            p = (ev.period or "").replace("-", "").replace("/", "").strip()
+            if p and p > as_of:
+                late_evidence.append(f"{ev.evidence_id}({p})")
+        if late_evidence:
+            issues.append(
+                "存在晚于计划 as_of={} 的证据: {}".format(
+                    as_of, ", ".join(sorted(set(late_evidence))[:5])
+                )
+            )
 
     # ── claim 唯一性 / 引用完整性 ─────────────────────────
     seen_claim_ids: set[str] = set()

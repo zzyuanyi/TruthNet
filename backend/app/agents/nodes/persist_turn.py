@@ -28,6 +28,8 @@ from sqlalchemy.engine import Engine
 
 from app.agents.state import AgentState, Claim, EvidenceRef, ModuleStatus
 from app.core.config import settings
+from app.domain.conversation.models import SESSION_TITLE_PLACEHOLDERS
+from app.domain.evidence.models import supporting_evidence_ids
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +273,21 @@ def _build_panel_data(state: AgentState) -> dict | None:
     final_response = state.get("final_response")
     if final_response is None:
         return None
+    plan = state.get("plan")
+    intent = getattr(plan, "intent", "") if plan is not None else ""
+    # 闲聊、使用引导、范围外问题和无公司研报不属于风险分析面板。
+    if intent in {"chitchat", "guide", "unsupported", "research"}:
+        return None
+    results = state.get("results")
+    has_analysis_result = bool(
+        results
+        and any(
+            getattr(results, module_name, None) is not None
+            for module_name in ("finance", "equity", "events")
+        )
+    )
+    if state.get("company") is None and not has_analysis_result:
+        return None
     panel: dict = {
         "risk_level": getattr(final_response, "risk_level", None),
         "triggered_rules": [],
@@ -298,6 +315,24 @@ def _build_panel_data(state: AgentState) -> dict | None:
     return panel
 
 
+def _build_response_meta(state: AgentState) -> dict:
+    """Persist terminal metadata needed to restore a historical turn."""
+    final_response = state.get("final_response")
+    plan = state.get("plan")
+    return {
+        "intent": getattr(plan, "intent", "") if plan is not None else "",
+        "follow_ups": (
+            getattr(final_response, "follow_ups", None) or []
+            if final_response is not None
+            else []
+        ),
+        "supporting_evidence_ids": supporting_evidence_ids(state.get("claims", [])),
+        "requested_period_text": (
+            getattr(plan, "requested_period_text", "") if plan is not None else ""
+        ),
+    }
+
+
 def persist_turn_node(state: AgentState) -> dict:
     """持久化当前轮次 + Claim/Evidence/关联关系（单事务）。"""
     session_id = _session_id(state)
@@ -323,6 +358,7 @@ def persist_turn_node(state: AgentState) -> dict:
 
     module_status_json = _to_json(state.get("module_status", {}))
     panel_data_json = _to_json(_build_panel_data(state))
+    response_meta_json = _to_json(_build_response_meta(state))
     title = question[:30]
     provenance_ok = True
     provenance_error = ""
@@ -340,10 +376,19 @@ def persist_turn_node(state: AgentState) -> dict:
                 conn.execute(
                     text(
                         "UPDATE conversation_sessions "
-                        "SET status = 'active', updated_at = CURRENT_TIMESTAMP "
+                        "SET status = 'active', "
+                        "title = CASE WHEN title IS NULL OR title = '' "
+                        "OR title IN (:placeholder_a, :placeholder_b) "
+                        "THEN :title ELSE title END, "
+                        "updated_at = CURRENT_TIMESTAMP "
                         "WHERE session_id = :sid"
                     ),
-                    {"sid": session_id},
+                    {
+                        "sid": session_id,
+                        "title": title,
+                        "placeholder_a": sorted(SESSION_TITLE_PLACEHOLDERS)[0],
+                        "placeholder_b": sorted(SESSION_TITLE_PLACEHOLDERS)[1],
+                    },
                 )
             else:
                 conn.execute(
@@ -369,7 +414,7 @@ def persist_turn_node(state: AgentState) -> dict:
                         "UPDATE conversation_turns "
                         "SET answer = :a, company_code = :cc, "
                         "trace_id = :trace, module_status = :ms, "
-                        "panel_data = :pd "
+                        "panel_data = :pd, response_meta = :rm "
                         "WHERE turn_id = :tid"
                     ),
                     {
@@ -378,6 +423,7 @@ def persist_turn_node(state: AgentState) -> dict:
                         "trace": trace_id,
                         "ms": module_status_json,
                         "pd": panel_data_json,
+                        "rm": response_meta_json,
                         "tid": db_turn_id,
                     },
                 )
@@ -394,8 +440,9 @@ def persist_turn_node(state: AgentState) -> dict:
                     text(
                         "INSERT INTO conversation_turns "
                         "(turn_id, session_id, turn_index, question, answer, "
-                        " company_code, trace_id, module_status, panel_data, created_at) "
-                        "VALUES (:turn_id, :sid, :index, :q, :a, :cc, :trace, :ms, :pd, "
+                        " company_code, trace_id, module_status, panel_data, response_meta, "
+                        " created_at) "
+                        "VALUES (:turn_id, :sid, :index, :q, :a, :cc, :trace, :ms, :pd, :rm, "
                         "CURRENT_TIMESTAMP)"
                     ),
                     {
@@ -408,6 +455,7 @@ def persist_turn_node(state: AgentState) -> dict:
                         "trace": trace_id,
                         "ms": module_status_json,
                         "pd": panel_data_json,
+                        "rm": response_meta_json,
                     },
                 )
 

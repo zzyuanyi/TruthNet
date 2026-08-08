@@ -294,14 +294,16 @@ def finance_node(state: AgentState) -> dict:
             continue
         rule_statuses[rid] = r.status
         rules_list.append(r)
-        # 规则明细（含触发解释/严重度/指标数值/本规则证据 ID，
-        # 供回答展开规则清单 + build_claims 按规则归属绑定证据）
+        # 规则明细（含触发解释/严重度/指标数值/本规则证据 ID/quality，
+        # 供回答展开规则清单 + build_claims 按规则归属绑定证据；
+        # quality 透传简化模式/字段可用性，#1/#2 Claim 文案与严重度同源）
         rule_details[rid] = {
             "rule_name": r.rule_name or "",
             "explanation": str(r.explanation or ""),
             "severity": r.severity or "",
             "current": dict(getattr(r, "current", None) or {}),
             "evidence_ids": [],
+            "quality": dict(r.quality or {}),
         }
         if r.status == "insufficient_data" and W_COMPANY_TYPE_UNKNOWN in r.warnings:
             unknown_type = True
@@ -383,8 +385,10 @@ def finance_node(state: AgentState) -> dict:
     periods_available = _query_periods_available(code, as_of)
     industry_benchmark = _query_industry_benchmark(code, as_of)
 
-    # Phase D #12: LLM 财务解读（四段；失败回退 explanation）
-    interpretation = _build_llm_interpretation(rule_details, rule_statuses)
+    # #7：财务解读不再由 LLM 自由生成——四段解读在 generate_answer 基于
+    # 最终状态确定性构造（预警点/数据对比/可能模式/限制说明/重要说明）。
+    # interpretation 字段保留兼容（外部消费方不受影响），值恒为空。
+    interpretation = ""
 
     return {
         "module_status": {

@@ -163,8 +163,12 @@ def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
             LEFT JOIN rating_changes r ON r.evidence_id = e.evidence_id
             LEFT JOIN event_cluster_sources s ON s.evidence_id = e.evidence_id
             WHERE t.turn_id IS NULL
-              AND NOT EXISTS (SELECT 1 FROM claim_evidence_links l
-                              WHERE l.evidence_id = e.evidence_id)
+              AND NOT EXISTS (
+                    SELECT 1 FROM claim_evidence_links l
+                    JOIN claims c ON c.claim_id = l.claim_id
+                    JOIN conversation_turns valid_t ON valid_t.turn_id = c.turn_id
+                    WHERE l.evidence_id = e.evidence_id
+              )
               AND r.evidence_id IS NULL AND s.evidence_id IS NULL
             """
         )
@@ -204,6 +208,11 @@ def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
     return len(orphan_claim_ids), int(orphan_links or 0), int(orphan_ev or 0)
 
 
+def _confirm_requires_keep(args) -> bool:
+    """Session deletion needs an explicit keep list; orphan-only cleanup does not."""
+    return bool(args.confirm and not args.orphans and not args.keep)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="清理非白名单会话（级联顺序）")
     parser.add_argument("--dry-run", action="store_true", help="预检，不写库")
@@ -218,7 +227,7 @@ def main() -> int:
 
     # 安全闸（对齐审计 P2-7）：--confirm 必须显式 --keep，
     # 防止默认白名单（仅仓库固定演示会话）未覆盖真实演示会话时误删
-    if args.confirm and not args.keep:
+    if _confirm_requires_keep(args):
         print(
             "⚠️ 拒绝执行：--confirm 必须显式指定 --keep <session_id>（至少一个），"
             "默认白名单不保护随机 UUID 演示会话。\n"

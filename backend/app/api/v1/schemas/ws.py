@@ -13,7 +13,47 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+
+
+class CompanyCandidatePayload(BaseModel):
+    entity_id: str = ""
+    wind_code: str = Field(..., min_length=1, max_length=32)
+    sec_name: str = ""
+    exchange: str = ""
+    industry_l1: str | None = None
+
+
+class ChatQueryPayload(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+    session_id: str | None = Field(
+        default=None, max_length=64, pattern=_SESSION_ID_PATTERN
+    )
+    as_of: str | None = Field(default=None, max_length=16)
+
+    @field_validator("text")
+    @classmethod
+    def _strip_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text 不能为空")
+        return value
+
+
+class CompanyConfirmPayload(BaseModel):
+    company_ref: CompanyCandidatePayload | str
+    session_id: str | None = Field(
+        default=None, max_length=64, pattern=_SESSION_ID_PATTERN
+    )
+    turn_id: str | None = Field(default=None, max_length=64)
+
+    @property
+    def company_code(self) -> str:
+        if isinstance(self.company_ref, str):
+            return self.company_ref.strip()
+        return self.company_ref.wind_code
 
 
 def _utcnow_iso() -> str:
@@ -38,7 +78,12 @@ class StreamResumePayload(BaseModel):
     早于缓存起点的序号返回可恢复 gap 错误。
     """
 
-    session_id: str = Field(..., description="目标会话 ID")
+    session_id: str = Field(
+        ...,
+        max_length=64,
+        pattern=_SESSION_ID_PATTERN,
+        description="目标会话 ID",
+    )
     last_sequence: int = Field(0, ge=0, description="客户端已收到的最后序号")
     turn_id: str | None = Field(None, description="可选：仅补发该轮次事件")
 

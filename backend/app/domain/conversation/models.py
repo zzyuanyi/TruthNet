@@ -2,6 +2,9 @@
 
 from pydantic import BaseModel, Field
 
+DEFAULT_SESSION_TITLE = "新会话"
+SESSION_TITLE_PLACEHOLDERS = frozenset({DEFAULT_SESSION_TITLE, "新对话"})
+
 
 class ChatContext(BaseModel):
     """对话附加上下文."""

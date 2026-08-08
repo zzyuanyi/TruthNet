@@ -56,3 +56,22 @@ class Claim(BaseModel):
     company_code: str = ""
     module: str = ""
     generated_at: str = ""
+
+
+def supporting_evidence_ids(claims: list) -> list[str]:
+    """#13：可展示叶子 Claim 引用证据的有序去重集合。
+
+    排除综合风险汇总 Claim（claim_type == "risk"）——它只用于总等级
+    说明，其引用的证据已由底层叶子 Claim 覆盖；含 research 叶子 Claim。
+    前端默认展示该集合，并保留"查看全部证据"入口。
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in claims:
+        if getattr(c, "claim_type", "") == "risk":
+            continue
+        for eid in getattr(c, "evidence_ids", None) or []:
+            if eid and eid not in seen:
+                seen.add(eid)
+                out.append(eid)
+    return out

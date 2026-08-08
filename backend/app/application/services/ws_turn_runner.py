@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from app.agents.delta_sink import DeltaSink, register_sink, unregister_sink
+from app.domain.evidence.models import supporting_evidence_ids
 from app.application.services.ws_session_manager import (
     ActiveTurn,
     WsSession,
@@ -38,8 +39,15 @@ logger = logging.getLogger(__name__)
 # 对外可见模块（发送 module.started/completed）：仅用户请求的模块
 # finance/equity/events/risk（与 V12 契约一致，内部节点不对外暴露）。
 _VISIBLE_MODULES = frozenset({"finance", "equity", "events", "risk"})
-# 需要消费 answer.delta 分段的节点
-_DELTA_NODES = frozenset({"generate_answer"})
+
+# module.started 可选 message：前端显示在独立思考状态区，
+# 不写入 assistant 正文（不参与 answer.delta 拼接契约）
+_MODULE_STARTED_MESSAGES: dict[str, str] = {
+    "finance": "正在核查财务数据（母公司报表口径）",
+    "equity": "正在穿透股权结构与实际控制人链路",
+    "events": "正在核对公告、评级与事件时间线",
+    "risk": "正在综合评估风险等级",
+}
 # 参与事件过滤的 graph 节点全集（避免内部条件路由名干扰）
 _MODULE_NODES = frozenset(
     {
@@ -102,6 +110,7 @@ async def run_turn(
     emit: Callable[[str, dict], Awaitable[None]],
     build_state: Callable[[], dict],
     start_sequence: int = 0,
+    accepted_at: float = 0.0,
 ) -> TurnResult:
     """执行一个 turn，分发事件；返回终态摘要。
 
@@ -113,6 +122,8 @@ async def run_turn(
         emit: 异步事件发送回调 (event_type, payload) → 负责 envelope 组装。
         build_state: 构造初始 AgentState（含 runtime session/turn/trace）。
         start_sequence: 本 turn 起始序号（仅测试/统计用）。
+        accepted_at: turn.accepted 实际发送时刻（perf_counter 基准；
+            性能指标从此计时，漏掉任务调度时间——复核约束）。
     """
     # 注册 DeltaSink（generate_answer 实时分段 → answer.delta）
     sink = DeltaSink(turn.turn_id)
@@ -127,6 +138,7 @@ async def run_turn(
             emit=emit,
             build_state=build_state,
             sink=sink,
+            accepted_at=accepted_at,
         )
     finally:
         sink.close()
@@ -142,6 +154,7 @@ async def _run(
     emit: Callable[[str, dict], Awaitable[None]],
     build_state: Callable[[], dict],
     sink: DeltaSink,
+    accepted_at: float = 0.0,
 ) -> TurnResult:
     token = turn.token
     cancelled = token.cancelled
@@ -168,11 +181,45 @@ async def _run(
     # risk 节点在公司存在时总是执行（不受 plan 门控）。
     executable_modules: set[str] = set()
     has_company = state.get("company") is not None
-    # WS 性能埋点（Phase D #7）
+    # WS 性能埋点（Phase D #7）：以 turn.accepted 实际发送时刻为基准
+    # （accepted_at 由路由层传入；测试未传时回退 run_turn 内部起点）
     from app.infrastructure.observability.timing import metrics_collector
 
-    ws_t0 = time.perf_counter()
+    ws_t0 = accepted_at or time.perf_counter()
     first_delta_sent = False
+    first_feedback_sent = False
+    _aborted = False  # 异常/取消标记（finally 排空时丢弃残留）
+    # 模块耗时记录（复核约束）：module.completed 带 duration_ms，
+    # 支撑"模块并行后关键路径 max(finance,equity,events)→risk"瓶颈定位
+    _module_started_at: dict[str, float] = {}
+
+    # 3️⃣ DeltaSink 实时消费：graph 节点（generate_answer）在 LangGraph 线程
+    # 执行期间事件循环空闲——独立任务轮询 sink，push 即发 answer.delta，
+    # 不再等 generate_answer on_chain_end（首块 = 第一段构造时刻）。
+    # 契约不变：所有 content delta 拼接 == turn.completed.answer。
+    sink_stop = asyncio.Event()
+
+    async def _sink_consumer() -> None:
+        nonlocal first_delta_sent
+        while not sink_stop.is_set():
+            seg = sink.get_nowait()
+            if seg is not None:
+                if not first_delta_sent:
+                    first_delta_sent = True
+                    metrics_collector.record(
+                        "ws.first_delta_ms",
+                        (time.perf_counter() - ws_t0) * 1000,
+                        trace_id=turn.turn_id,
+                    )
+                await emit("answer.delta", {"text": seg})
+                continue
+            # 空缓冲 → 短暂让出事件循环，等待下一段
+            try:
+                await asyncio.wait_for(sink_stop.wait(), timeout=0.05)
+            except asyncio.TimeoutError:
+                pass
+
+    consumer_task = asyncio.create_task(_sink_consumer())
     try:
         # 异步流式执行：on_chain_start → 节点开始，on_chain_end → 节点完成
         async for event in graph.astream_events(state, version="v2"):
@@ -210,75 +257,58 @@ async def _run(
                     # 当前节点已完成，不启动下一个节点
                     break
                 if name in _VISIBLE_MODULES and name in executable_modules:
+                    mod = _event_module(name)
+                    _module_started_at[name] = time.perf_counter()
+                    if not first_feedback_sent:
+                        # 首个可见模块启动 = 首反馈（前端思考状态区展示用）
+                        first_feedback_sent = True
+                        metrics_collector.record(
+                            "ws.first_feedback_ms",
+                            (time.perf_counter() - ws_t0) * 1000,
+                            trace_id=turn.turn_id,
+                        )
                     await emit(
                         "module.started",
-                        {"module": _event_module(name), "status": "running"},
+                        {
+                            "module": mod,
+                            "status": "running",
+                            # 可选 message：前端显示在独立思考状态区，
+                            # 不写入 assistant 正文（不参与 delta 拼接）
+                            "message": _MODULE_STARTED_MESSAGES.get(mod, ""),
+                        },
                     )
                     turn.last_sequence_sent = session.sequence
 
             elif event_type == "on_chain_end":
-                if name in _DELTA_NODES:
-                    # 消费 generate_answer 实时构造的 answer.delta 分段
-                    while True:
-                        seg = sink.get_nowait()
-                        if seg is None:
-                            break
-                        if not first_delta_sent:
-                            first_delta_sent = True
-                            metrics_collector.record(
-                                "ws.first_delta_ms",
-                                (time.perf_counter() - ws_t0) * 1000,
-                                trace_id=turn.turn_id,
-                            )
-                        await emit("answer.delta", {"text": seg})
-                    if token.cancelled:
-                        break
+                if token.cancelled:
+                    break
                 # 节点完成（对外可见且实际执行的模块）
+                # （delta 分段由 _sink_consumer 实时消费，不再在此批量取）
                 if (
                     name in _VISIBLE_MODULES
                     and name in executable_modules
                     and not token.cancelled
                 ):
+                    started_at = _module_started_at.pop(name, None)
                     await emit(
                         "module.completed",
-                        {"module": _event_module(name), "status": "success"},
+                        {
+                            "module": _event_module(name),
+                            "status": "success",
+                            "duration_ms": (
+                                int((time.perf_counter() - started_at) * 1000)
+                                if started_at is not None
+                                else None
+                            ),
+                        },
                     )
                 # 不在此 break：需等 LangGraph 根链 on_chain_end 捕获完整最终
                 # state（含 final_response/claims/evidence）后再终态判定。
                 # 取消时在下一个 on_chain_start 处 break（不启动新节点）。
 
-        # 取消 → 恰好一次 turn.cancelled（不发送 turn.completed）；
-        # 若路由层取消确认已抢占终态，此处抢占失败即跳过
-        if token.cancelled or cancelled:
-            await _emit_terminal_once(
-                session,
-                turn,
-                "turn.cancelled",
-                {
-                    "turn_id": turn.turn_id,
-                    "cancelled_at": _utcnow_iso(),
-                    "message": "当前轮次已取消",
-                },
-                emit,
-            )
-            return TurnResult("cancelled", turn.turn_id, session.sequence)
-
-        result = await _finalize_turn(
-            session=session,
-            turn=turn,
-            emit=emit,
-            state=final_state,
-        )
-        if result.outcome == "completed":
-            metrics_collector.record(
-                "ws.accepted_to_complete_ms",
-                (time.perf_counter() - ws_t0) * 1000,
-                trace_id=turn.turn_id,
-            )
-        return result
-
     except asyncio.CancelledError:
         # turn task 被外部取消（连接销毁 / 清理）
+        _aborted = True
         await _emit_terminal_once(
             session,
             turn,
@@ -292,6 +322,7 @@ async def _run(
         )
         return TurnResult("cancelled", turn.turn_id, session.sequence)
     except Exception:  # noqa: BLE001 — Agent 异常 → turn.failed（不静默吞异常）
+        _aborted = True
         logger.exception(
             "WsTurnRunner 执行异常: turn=%s session=%s question=%.40s",
             turn.turn_id,
@@ -313,6 +344,58 @@ async def _run(
         except Exception:  # noqa: BLE001 — 错误事件发送失败仅记录
             logger.warning("WsTurnRunner: 错误事件发送失败", exc_info=True)
         return TurnResult("failed", turn.turn_id, session.sequence)
+    finally:
+        # 停止实时消费任务并排空残留段——保证所有 delta 先于终态事件发出；
+        # 异常/取消（_aborted）时丢弃残留（终态为 turn.cancelled/failed）
+        sink_stop.set()
+        try:
+            await consumer_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        while True:
+            seg = sink.get_nowait()
+            if seg is None:
+                break
+            if _aborted or token.cancelled:
+                break
+            if not first_delta_sent:
+                first_delta_sent = True
+                metrics_collector.record(
+                    "ws.first_delta_ms",
+                    (time.perf_counter() - ws_t0) * 1000,
+                    trace_id=turn.turn_id,
+                )
+            await emit("answer.delta", {"text": seg})
+
+    # 取消 → 恰好一次 turn.cancelled（不发送 turn.completed）；
+    # 若路由层取消确认已抢占终态，此处抢占失败即跳过
+    if token.cancelled or cancelled:
+        await _emit_terminal_once(
+            session,
+            turn,
+            "turn.cancelled",
+            {
+                "turn_id": turn.turn_id,
+                "cancelled_at": _utcnow_iso(),
+                "message": "当前轮次已取消",
+            },
+            emit,
+        )
+        return TurnResult("cancelled", turn.turn_id, session.sequence)
+
+    result = await _finalize_turn(
+        session=session,
+        turn=turn,
+        emit=emit,
+        state=final_state,
+    )
+    if result.outcome == "completed":
+        metrics_collector.record(
+            "ws.accepted_to_complete_ms",
+            (time.perf_counter() - ws_t0) * 1000,
+            trace_id=turn.turn_id,
+        )
+    return result
 
 
 def _event_module(node_name: str) -> str:
@@ -342,20 +425,50 @@ async def _finalize_turn(
         )
         return TurnResult("no_response", turn.turn_id, session.sequence)
 
-    # artifact.upsert — 风险等级结构化产物（前端面板消费，V12 契约）
-    try:
-        await emit(
-            "artifact.upsert",
+    plan = state.get("plan")
+    intent = getattr(plan, "intent", "") if plan is not None else ""
+    candidates = state.get("company_candidates", []) or []
+    if candidates:
+        candidate_items = [
+            item.model_dump() if hasattr(item, "model_dump") else dict(item)
+            for item in candidates
+        ]
+        context_as_of = getattr(plan, "as_of", None) if plan is not None else None
+        session_manager.set_pending_disambiguation(
+            session,
             {
-                "artifact_type": "risk_assessment",
-                "artifact_id": f"risk_{session.session_id}",
-                "revision": 1,
-                "operation": "replace",
-                "data": {"risk_level": final_response.risk_level},
+                "turn_id": turn.turn_id,
+                "question": turn.question,
+                "as_of": context_as_of.strftime("%Y%m%d") if context_as_of else "",
+                "candidates": candidate_items,
             },
         )
-    except Exception:  # noqa: BLE001 — artifact 发送失败不阻塞终态
-        logger.warning("WsTurnRunner: artifact.upsert 发送失败", exc_info=True)
+        await emit(
+            "company.candidates",
+            {"turn_id": turn.turn_id, "candidates": candidate_items},
+        )
+    has_company_analysis = state.get("company") is not None and intent not in {
+        "chitchat",
+        "guide",
+        "unsupported",
+        "research",
+    }
+
+    # artifact.upsert — 风险等级结构化产物（前端面板消费，V12 契约）
+    if has_company_analysis:
+        try:
+            await emit(
+                "artifact.upsert",
+                {
+                    "artifact_type": "risk_assessment",
+                    "artifact_id": f"risk_{session.session_id}",
+                    "revision": 1,
+                    "operation": "replace",
+                    "data": {"risk_level": final_response.risk_level},
+                },
+            )
+        except Exception:  # noqa: BLE001 — artifact 发送失败不阻塞终态
+            logger.warning("WsTurnRunner: artifact.upsert 发送失败", exc_info=True)
 
     # artifact.upsert — 股权链路载荷（Phase D #12，与 REST equity_chains 一致）
     try:
@@ -415,7 +528,6 @@ async def _finalize_turn(
         for w in runtime.warnings:
             if w and w not in warnings:
                 warnings.append(w)
-
     # Phase D #16: 模式三要素透出（与 REST 一致）
     pattern_items: list[dict] = []
     for m in state.get("pattern_matches", []) or []:
@@ -454,6 +566,10 @@ async def _finalize_turn(
         "turn.completed",
         {
             "answer": final_response.answer,
+            "intent": intent,
+            "requested_period_text": (
+                getattr(plan, "requested_period_text", "") if plan is not None else ""
+            ),
             "risk_level": final_response.risk_level,
             "claims_count": len(state.get("claims", [])),
             "follow_ups": getattr(final_response, "follow_ups", []),
@@ -463,11 +579,17 @@ async def _finalize_turn(
                 for ev in state.get("evidence", [])
                 if getattr(ev, "evidence_id", None)
             ],
+            # #13：可展示叶子证据子集（前端默认展示，保留全量入口）
+            "supporting_evidence_ids": supporting_evidence_ids(state.get("claims", [])),
             "warnings": warnings,
             "finance": finance_payload,
             "pattern_matches": pattern_items,
             # Phase D #12: 正式链路载荷（与 REST equity_chains 一致）
             "equity_chains": _extract_equity_chains(state),
+            "company_candidates": [
+                item.model_dump() if hasattr(item, "model_dump") else dict(item)
+                for item in candidates
+            ],
         },
         emit,
     )

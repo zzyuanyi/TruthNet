@@ -615,6 +615,11 @@ class ConversationTurn(Base):
         nullable=True,
         comment="面板摘要 {risk_level, triggered_rules, key_metrics, follow_ups}（v7）",
     )
+    response_meta: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="回答元数据 {intent, follow_ups, supporting_evidence_ids, requested_period_text}",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="创建时间"
     )

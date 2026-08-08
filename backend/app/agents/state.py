@@ -33,6 +33,10 @@ class ExecutionPlan(BaseModel):
     requested_modules: list[str] = Field(default_factory=list)
     cross_checks: list[str] = Field(default_factory=list)
     as_of: date | None = None
+    # 期次语义（#5 期次解析）：report_period=财报期 / as_of=信息截止日 / ""=未指定
+    as_of_kind: str = ""
+    # 用户原话中的期次文本（如 "2025年报"），用于回答/API meta 展示
+    requested_period_text: str = ""
     deadline_ms: int = 8000
 
 
@@ -57,6 +61,15 @@ class RuntimeState(BaseModel):
     turn_id: str = ""
     sequence: int = 0
     warnings: list[str] = Field(default_factory=list)
+
+
+class RequestContext(BaseModel):
+    """Explicit client context; takes precedence over text parsing."""
+
+    company_code: str = ""
+    as_of: date | None = None
+    as_of_kind: str = ""
+    requested_period_text: str = ""
 
 
 class FinalResponse(BaseModel):
@@ -157,8 +170,10 @@ class ModuleResults(BaseModel):
 
 class AgentState(TypedDict, total=False):
     user_query: str
+    request_context: RequestContext | None
     messages: Annotated[list[Any], add_messages]
     company: CompanyRef | None
+    company_candidates: list[CompanyRef]
     plan: ExecutionPlan | None
     module_status: Annotated[dict[str, ModuleStatus], lambda a, b: {**a, **b}]
     results: Annotated[

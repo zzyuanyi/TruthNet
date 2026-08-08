@@ -12,8 +12,12 @@ WS /api/v1/chat/ws — V12 event envelope + Agent graph (WebSocket)。
 import asyncio
 import json
 import logging
+import re
+import time
 import uuid
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -22,10 +26,14 @@ from app.api.v1.schemas.chat import (
     ChatEvidenceV1,
     ChatRequestV1,
     ClaimV1,
+    CompanyCandidateV1,
     ModuleStatusV1,
 )
+from app.domain.evidence.models import supporting_evidence_ids
 from app.api.v1.schemas.common import ApiMeta, V12Response
 from app.api.v1.schemas.ws import (
+    ChatQueryPayload,
+    CompanyConfirmPayload,
     StreamResumeAckPayload,
     StreamResumePayload,
     TurnCancelledPayload,
@@ -40,6 +48,34 @@ router = APIRouter(tags=["chat"])
 
 # Graph 实例延迟创建（不在 import 时编译）
 _compiled_graph = None
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+
+
+@dataclass
+class _RestSessionGate:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
+_rest_session_gates: dict[str, _RestSessionGate] = {}
+
+
+@asynccontextmanager
+async def _serialize_rest_session(session_id: str):
+    """Serialize REST turns per session while retaining cross-session concurrency."""
+    gate = _rest_session_gates.setdefault(session_id, _RestSessionGate())
+    gate.users += 1
+    acquired = False
+    try:
+        await gate.lock.acquire()
+        acquired = True
+        yield
+    finally:
+        if acquired:
+            gate.lock.release()
+        gate.users -= 1
+        if gate.users == 0 and _rest_session_gates.get(session_id) is gate:
+            _rest_session_gates.pop(session_id, None)
 
 
 def _get_graph():
@@ -53,7 +89,76 @@ def _get_graph():
     return _compiled_graph
 
 
-def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]:
+def _resolve_data_as_of(result: dict) -> str:
+    """实际数据截止日（P2-4）：所有证据 period 解析为 date 取最大值。
+
+    只返回标准化实际日期（YYYY-MM-DD）；用户请求期次原文由
+    ChatDataV1.requested_period_text 单独承载，二者不再混用。
+    包含 research 等 generate 阶段新增证据（state["evidence"]）。
+    """
+    from datetime import datetime
+
+    results = result.get("results")
+    evidence_items: list = []
+    if results is not None:
+        for mod in (results.finance, results.equity, results.events):
+            if mod is None:
+                continue
+            evidence_items.extend(getattr(mod, "evidence", []) or [])
+    evidence_items.extend(result.get("evidence", []) or [])
+
+    latest = None
+    for ev in evidence_items:
+        p = str(getattr(ev, "period", "") or "").strip()
+        if not p:
+            continue
+        for fmt in ("%Y%m%d", "%Y-%m-%d"):
+            try:
+                d = datetime.strptime(p, fmt)
+            except ValueError:
+                continue
+            if latest is None or d > latest:
+                latest = d
+            break
+    return latest.strftime("%Y-%m-%d") if latest else ""
+
+
+def _build_request_context(
+    *, company_code: str = "", as_of: str = "", fiscal_year: int | None = None
+):
+    """Normalize explicit REST/WS context into the shared Agent model."""
+    from app.agents.state import RequestContext
+    from app.domain.finance.period import normalize_period
+
+    if fiscal_year is not None:
+        return RequestContext(
+            company_code=company_code,
+            as_of=date(fiscal_year, 12, 31),
+            as_of_kind="report_period",
+            requested_period_text=f"{fiscal_year}年",
+        )
+    if as_of:
+        normalized = normalize_period(as_of)
+        if normalized is None:
+            raise ValueError("as_of 必须为 YYYYMMDD、YYYY-MM-DD 或 YYYYQn")
+        try:
+            parsed = datetime.strptime(normalized, "%Y%m%d").date()
+        except ValueError as exc:
+            raise ValueError("as_of 不是有效日期") from exc
+        return RequestContext(
+            company_code=company_code,
+            as_of=parsed,
+            as_of_kind="as_of",
+            requested_period_text=as_of.strip(),
+        )
+    if company_code:
+        return RequestContext(company_code=company_code)
+    return None
+
+
+def _build_chat_response(
+    result: dict, trace_id: str, session_id: str = ""
+) -> V12Response[ChatDataV1]:
     """从 Agent graph 结果构建 V12 REST 响应。
 
     从 Agent State 中提取结构化数据并转换为 API DTO。
@@ -170,9 +275,28 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
         for m in pattern_matches
     ]
 
+    # #13：可展示证据子集（叶子 Claim 引用，排除综合 risk Claim）
+    supporting_ids = set(supporting_evidence_ids(result.get("claims", [])))
+    supporting_evidence_items = [
+        ev for ev in evidence_items if ev.evidence_id in supporting_ids
+    ]
+
+    # P2-4：请求期次原文（与 data_as_of 实际数据截止日分离）
+    plan = result.get("plan")
+    requested_period_text = (
+        getattr(plan, "requested_period_text", "") if plan is not None else ""
+    )
+    intent = getattr(plan, "intent", "") if plan is not None else ""
+    company_candidates = [
+        CompanyCandidateV1.from_company(item)
+        for item in (result.get("company_candidates") or [])
+    ]
+
     return V12Response(
         data=ChatDataV1(
             answer=answer or "分析完成，未生成结构化答案。",
+            session_id=session_id,
+            company_candidates=company_candidates,
             evidence=evidence_items,
             graph=graph_data,
             timeline=timeline,
@@ -186,11 +310,15 @@ def _build_chat_response(result: dict, trace_id: str) -> V12Response[ChatDataV1]
             risk_level=risk_level,
             pattern_matches=pattern_items,
             equity_chains=equity_chains,
+            supporting_evidence=supporting_evidence_items,
+            requested_period_text=requested_period_text,
+            intent=intent,
         ),
         meta=ApiMeta(
             request_id=trace_id,
             trace_id=trace_id,
             generated_at=datetime.now(timezone.utc).isoformat(),
+            data_as_of=_resolve_data_as_of(result),
         ),
         warnings=[],
     )
@@ -211,10 +339,18 @@ async def chat_v1(request: ChatRequestV1):
     try:
         from app.agents.state import ModuleResults, RuntimeState
 
+        context = request.context
+        request_context = _build_request_context(
+            company_code=(context.company_code or "") if context else "",
+            fiscal_year=context.fiscal_year if context else None,
+        )
+
         state = {
             "messages": [],
             "user_query": request.question,
+            "request_context": request_context,
             "company": None,
+            "company_candidates": [],
             "plan": None,
             "module_status": {},
             "results": ModuleResults(),
@@ -230,7 +366,8 @@ async def chat_v1(request: ChatRequestV1):
         with metrics_collector.timed(
             "rest.agent_total_ms", trace_id=trace_id, degraded=False
         ):
-            result = await asyncio.to_thread(_get_graph().invoke, state)
+            async with _serialize_rest_session(session_id):
+                result = await asyncio.to_thread(_get_graph().invoke, state)
         # 各模块耗时（来自 module_status.duration_ms，Phase D #7）
         for name, ms in (result.get("module_status") or {}).items():
             dur = getattr(ms, "duration_ms", None)
@@ -243,7 +380,7 @@ async def chat_v1(request: ChatRequestV1):
         with metrics_collector.timed(
             "rest.persist_ms", trace_id=trace_id, degraded=False
         ):
-            resp = _build_chat_response(result, trace_id)
+            resp = _build_chat_response(result, trace_id, session_id)
         return resp
 
     except Exception:
@@ -255,6 +392,7 @@ async def chat_v1(request: ChatRequestV1):
         return V12Response(
             data=ChatDataV1(
                 answer="处理请求时发生内部错误，请稍后重试。",
+                session_id=session_id,
                 evidence=[],
                 graph={},
                 timeline=[],
@@ -394,6 +532,23 @@ async def websocket_chat_v1(ws: WebSocket):
 
             # 客户端传入 session_id → 覆盖自动生成的 UUID（多轮记忆前置条件）
             client_sid = payload.get("session_id", "")
+            if client_sid and (
+                not isinstance(client_sid, str)
+                or _SESSION_ID_RE.fullmatch(client_sid) is None
+            ):
+                await _emit(
+                    session_id,
+                    _envelope(
+                        "turn.failed",
+                        {
+                            "error_code": "INVALID_SESSION_ID",
+                            "message": "session_id 格式无效",
+                            "recoverable": True,
+                        },
+                        sid=session_id,
+                    ),
+                )
+                continue
             if client_sid and client_sid != session_id:
                 # 切换逻辑会话：attach 到新会话（该连接成为新会话主连接）
                 session_manager.detach_connection(session_id, conn_id)
@@ -478,34 +633,127 @@ async def websocket_chat_v1(ws: WebSocket):
                 )
                 continue
 
-            # company.confirm — 兼容保留（Agent 当前不依赖显式确认）
+            request_context = None
             if event_type == "company.confirm":
-                await _emit(
-                    sid, _envelope("turn.accepted", {"message": "已确认公司"}, sid=sid)
-                )
-                continue
-
-            question = payload.get("text", "")
-            if not question:
-                await _emit(
-                    sid,
-                    _envelope(
-                        "turn.failed",
-                        {
-                            "error_code": "MISSING_QUESTION",
-                            "message": "payload.text 为必填项",
-                        },
-                        sid=sid,
-                    ),
-                )
-                continue
+                try:
+                    confirm = CompanyConfirmPayload.model_validate(payload)
+                except Exception:  # noqa: BLE001
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "INVALID_COMPANY_CONFIRM",
+                                "message": "公司确认参数无效",
+                                "recoverable": True,
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
+                pending = session_manager.get_pending_disambiguation(session)
+                if pending is None or (
+                    confirm.turn_id and confirm.turn_id != pending.get("turn_id")
+                ):
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "NO_PENDING_DISAMBIGUATION",
+                                "message": "当前没有待确认的公司候选",
+                                "recoverable": True,
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
+                company_code = confirm.company_code
+                allowed_codes = {
+                    str(item.get("wind_code") or "")
+                    for item in pending.get("candidates", [])
+                }
+                if company_code not in allowed_codes:
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "INVALID_COMPANY_CONFIRM",
+                                "message": "确认的公司不在候选列表中",
+                                "recoverable": True,
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
+                question = str(pending.get("question") or "")
+                try:
+                    request_context = _build_request_context(
+                        company_code=company_code,
+                        as_of=str(pending.get("as_of") or ""),
+                    )
+                except ValueError:
+                    request_context = _build_request_context(company_code=company_code)
+                session_manager.set_pending_disambiguation(session, None)
+            else:
+                raw_text = payload.get("text")
+                if not isinstance(raw_text, str) or not raw_text.strip():
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "MISSING_QUESTION",
+                                "message": "payload.text 为必填项",
+                                "recoverable": True,
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
+                try:
+                    query_payload = ChatQueryPayload.model_validate(payload)
+                    request_context = _build_request_context(
+                        as_of=query_payload.as_of or ""
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "turn.failed",
+                            {
+                                "error_code": "INVALID_QUERY",
+                                "message": f"查询参数无效: {exc}",
+                                "recoverable": True,
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
+                question = query_payload.text
+                session_manager.set_pending_disambiguation(session, None)
 
             # 每一轮新 turn_id + trace_id
             turn_id = str(uuid.uuid4())
             trace_id = str(uuid.uuid4())
 
-            # 注册 turn 并分配取消令牌
-            session_manager.start_turn(session, turn_id, question)
+            # 同一会话只允许一个活跃 turn，避免 turn_index/checkpoint 竞争。
+            turn = session_manager.start_turn_if_idle(session, turn_id, question)
+            if turn is None:
+                await _emit(
+                    sid,
+                    _envelope(
+                        "turn.failed",
+                        {
+                            "error_code": "TURN_IN_PROGRESS",
+                            "message": "当前会话已有问题正在处理，请等待完成或先取消",
+                            "recoverable": True,
+                        },
+                        sid=sid,
+                    ),
+                )
+                continue
 
             await _emit(
                 sid,
@@ -517,6 +765,10 @@ async def websocket_chat_v1(ws: WebSocket):
                     turn_id=turn_id,
                 ),
             )
+            # 性能基准（复核约束）：first_feedback_ms/first_delta_ms 从
+            # turn.accepted 实际发送时刻计时，而非 run_turn() 内部——
+            # 避免漏掉任务调度/排队时间（perf_counter 同源单调时钟）
+            accepted_at = time.perf_counter()
 
             # 启动独立 turn task（接收与执行分离，不阻塞控制事件）
             task = asyncio.create_task(
@@ -525,6 +777,8 @@ async def websocket_chat_v1(ws: WebSocket):
                     turn_id=turn_id,
                     question=question,
                     trace_id=trace_id,
+                    request_context=request_context,
+                    accepted_at=accepted_at,
                     _envelope=_envelope,
                     _emit=_emit,
                 )
@@ -712,6 +966,8 @@ async def _run_ws_turn(
     trace_id: str,
     _envelope,
     _emit,
+    request_context=None,
+    accepted_at: float = 0.0,
 ) -> None:
     """turn task：以 run_turn 执行 Agent graph（真流式 + 协作式取消）。"""
     from app.agents.state import ModuleResults, RuntimeState
@@ -720,7 +976,9 @@ async def _run_ws_turn(
         return {
             "messages": [],
             "user_query": question,
+            "request_context": request_context,
             "company": None,
+            "company_candidates": [],
             "plan": None,
             "module_status": {},
             "results": ModuleResults(),
@@ -758,6 +1016,7 @@ async def _run_ws_turn(
             question=question,
             emit=_emit_event,
             build_state=_build_state,
+            accepted_at=accepted_at,
         )
     except asyncio.CancelledError:
         # 连接销毁/会话关闭 → turn task 取消（当前节点可结束，后续不再启动）

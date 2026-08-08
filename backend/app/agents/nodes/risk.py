@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from app.agents.state import AgentState, Claim, ModuleStatus
 from app.domain.provenance.id_factory import make_claim_id
+from app.domain.risk.severity import risk_level_label
 
 
-def _fetch_rating_inflections(company_code: str) -> list:
+def _fetch_rating_inflections(company_code: str, as_of: str = "") -> list:
     """从 rating_changes 表读取该公司评级变更并检测拐点。"""
     try:
         from app.domain.events.rating_inflection import (
@@ -23,17 +24,18 @@ def _fetch_rating_inflections(company_code: str) -> list:
 
         engine = _get_engine()
         with engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    text(
-                        "SELECT wind_code, quarter, institution, direction "
-                        "FROM rating_changes WHERE wind_code = :c"
-                    ),
-                    {"c": company_code},
-                )
-                .mappings()
-                .fetchall()
+            sql = (
+                "SELECT wind_code, quarter, institution, direction "
+                "FROM rating_changes WHERE wind_code = :c "
             )
+            params = {"c": company_code}
+            if as_of:
+                sql += (
+                    "AND (published_at IS NULL "
+                    "OR REPLACE(published_at, '-', '') <= :asof) "
+                )
+                params["asof"] = as_of
+            rows = conn.execute(text(sql), params).mappings().fetchall()
         records = [
             RatingChangeRecord(
                 wind_code=r["wind_code"],
@@ -100,7 +102,7 @@ def risk_node(state: AgentState) -> dict:
         as_of = plan.as_of.strftime("%Y%m%d")
 
     # 评级拐点 + 行业基准
-    rating_inflections = _fetch_rating_inflections(company.wind_code)
+    rating_inflections = _fetch_rating_inflections(company.wind_code, as_of=as_of)
     benchmarks = _fetch_benchmarks(
         company.wind_code, as_of or "20260331", company.industry_l1 or ""
     )
@@ -142,7 +144,7 @@ def risk_node(state: AgentState) -> dict:
         turn_id = getattr(runtime_obj, "turn_id", "") if runtime_obj else ""
         trace_id = getattr(runtime_obj, "trace_id", "") if runtime_obj else ""
         text = (
-            f"{company.sec_name}综合风险等级为 {out.risk_level}"
+            f"{company.sec_name}综合风险等级为{risk_level_label(out.risk_level)}"
             f"（综合分 {out.overall_score:.2f}）"
             f"{'；' + '；'.join(out.key_contributors[:3]) if out.key_contributors else ''}"
         )

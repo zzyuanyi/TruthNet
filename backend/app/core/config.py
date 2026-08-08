@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     LLM_REQUEST_TIMEOUT: int = (
         60  # 秒 — read 超时（长文本生成 20-60s）；connect 超时固定 10s 快速失败
     )
+    LLM_MAX_CONCURRENCY: int = 4
+    LLM_QUEUE_TIMEOUT_SECONDS: float = 5.0
 
     # ===== 嵌入模型（兼容旧字段）=====
     LLM_API_KEY: str = ""
@@ -102,6 +104,11 @@ class Settings(BaseSettings):
     WS_SESSION_IDLE_TTL_SECONDS: int = 7200  # 会话空闲回收 TTL（秒）
     WS_CANCEL_ACK_TIMEOUT_SECONDS: float = 2.0  # turn.cancel 确认时限（验收 ≤2s）
     WS_JANITOR_INTERVAL_SECONDS: int = 300  # WS janitor 周期（缓冲 TTL + 空闲会话回收）
+
+    # ===== 回答生成（#7 确定性输出优先）=====
+    ANSWER_POLISH_ENABLED: bool = (
+        False  # REST LLM 润色开关（默认关闭；开启时仍有事实校验回退）
+    )
 
     # ===== 远期记忆提炼（Phase D #15）=====
     MEMORY_RECENT_TURNS: int = 10  # 近期 N 轮全量加载；更早进入摘要

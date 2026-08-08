@@ -156,6 +156,12 @@ async def readyz():
     trace_id = str(uuid.uuid4())
     profile = settings.TRUTHNET_PROFILE
 
+    # 2️⃣ 启动预热门控：预热未完成（启动中）不算 ready——
+    # 避免首请求承担冷启动 4s+（真流式首块优化）
+    from app.core.startup import is_prewarmed
+
+    prewarmed = is_prewarmed()
+
     if profile == "full":
         checks = {
             "mysql": _check_mysql(),
@@ -169,7 +175,7 @@ async def readyz():
             s == "ok" or s == "reachable" or s == "configured" or s == "mock"
             for s in statuses
         ):
-            overall = "ready"
+            overall = "ready" if prewarmed else "starting"
         elif any(s == "error" or s == "unreachable" for s in statuses):
             overall = "degraded"
         else:

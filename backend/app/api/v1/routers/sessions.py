@@ -11,7 +11,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Engine
@@ -25,6 +25,7 @@ from app.api.v1.schemas.sessions import (
 )
 from app.core.errors import ErrorCode, ProblemDetail
 from app.core.config import settings
+from app.domain.conversation.models import DEFAULT_SESSION_TITLE
 
 router = APIRouter(tags=["sessions"])
 
@@ -61,6 +62,17 @@ def _iso(v) -> str | None:
     return v.isoformat() if isinstance(v, datetime) else str(v)
 
 
+def _json_value(value, default):
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class SessionCreateRequest(BaseModel):
     """创建会话请求 — V12 §11.2."""
 
@@ -73,7 +85,10 @@ class SessionCreateRequest(BaseModel):
     response_model=V12Response[SessionListDataV1],
     responses={503: {"model": ProblemDetail}},
 )
-def list_sessions():
+def list_sessions(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
     """会话列表 — V12 §11.2 (P0)。"""
     trace_id = _trace()
 
@@ -81,6 +96,11 @@ def list_sessions():
     if settings.SQL_BACKEND == "mysql":
         try:
             with _get_engine().connect() as conn:
+                total = int(
+                    conn.execute(
+                        text("SELECT COUNT(*) FROM conversation_sessions")
+                    ).scalar_one()
+                )
                 rows = (
                     conn.execute(
                         text(
@@ -92,8 +112,10 @@ def list_sessions():
                             "  ON s.session_id = t.session_id "
                             "GROUP BY s.session_id, s.user_id, s.title, s.status, "
                             "         s.created_at, s.updated_at "
-                            "ORDER BY s.updated_at DESC"
-                        )
+                            "ORDER BY s.updated_at DESC, s.session_id ASC "
+                            "LIMIT :limit OFFSET :offset"
+                        ),
+                        {"limit": limit, "offset": offset},
                     )
                     .mappings()
                     .all()
@@ -101,6 +123,7 @@ def list_sessions():
             sessions = [
                 {
                     "session_id": str(r["session_id"]),
+                    "user_id": r["user_id"],
                     "title": r["title"],
                     "status": r["status"],
                     "created_at": _iso(r["created_at"]),
@@ -123,8 +146,16 @@ def list_sessions():
                 },
             )
 
+    else:
+        total = 0
+
     return V12Response(
-        data={"sessions": sessions, "total": len(sessions)},
+        data={
+            "sessions": sessions,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        },
         meta=ApiMeta(
             request_id=trace_id,
             trace_id=trace_id,
@@ -154,7 +185,7 @@ def create_session(request: SessionCreateRequest):
     trace_id = _trace()
     session_id = _new_session_id()
     now = datetime.now(timezone.utc).isoformat()
-    title = request.title or "新会话"
+    title = request.title or DEFAULT_SESSION_TITLE
 
     if settings.SQL_BACKEND == "mysql":
         try:
@@ -243,6 +274,7 @@ def get_session(session_id: str):
                 if row:
                     session = {
                         "session_id": str(row["session_id"]),
+                        "user_id": row["user_id"],
                         "title": row["title"],
                         "status": row["status"],
                         "created_at": _iso(row["created_at"]),
@@ -255,7 +287,7 @@ def get_session(session_id: str):
                             text(
                                 "SELECT turn_id, turn_index, question, answer, "
                                 "       company_code, trace_id, module_status, "
-                                "       panel_data, created_at "
+                                "       panel_data, response_meta, created_at "
                                 "FROM conversation_turns "
                                 "WHERE session_id = :sid "
                                 "ORDER BY turn_index ASC"
@@ -303,14 +335,22 @@ def get_session(session_id: str):
                             "company_code": t["company_code"],
                             "trace_id": t["trace_id"],
                             # MySQL text() 对 JSON 列不做类型解析，需手动反序列化
-                            "module_status": json.loads(t["module_status"])
-                            if t["module_status"]
-                            else None,
+                            "module_status": _json_value(t["module_status"], None),
                             # 面板摘要（历史会话分析面板恢复，v7；旧数据为 None）
-                            "panel_data": json.loads(t["panel_data"])
-                            if t["panel_data"]
-                            else None,
+                            "panel_data": _json_value(t["panel_data"], None),
                             "evidence_ids": ev_map.get(str(t["turn_id"]), []),
+                            "intent": _json_value(t["response_meta"], {}).get(
+                                "intent", ""
+                            ),
+                            "follow_ups": _json_value(t["response_meta"], {}).get(
+                                "follow_ups", []
+                            ),
+                            "supporting_evidence_ids": _json_value(
+                                t["response_meta"], {}
+                            ).get("supporting_evidence_ids", []),
+                            "requested_period_text": _json_value(
+                                t["response_meta"], {}
+                            ).get("requested_period_text", ""),
                             "created_at": _iso(t["created_at"]),
                         }
                         for t in turn_rows

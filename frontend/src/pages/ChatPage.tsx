@@ -28,27 +28,24 @@ export default function ChatPage() {
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
   const [filteredEvidenceIds, setFilteredEvidenceIds] = useState<string[] | null>(null);
 
-  // 当前会话
-  const currentSession = sessions.find(s => s.session_id === currentSessionId);
+  const loadSessions = useCallback(async (selectFirst = false) => {
+    try {
+      const response = await apiClient.getSessions();
+      const data = response.data as { sessions?: Session[] } | Session[] | null;
+      const sessionsData = Array.isArray(data) ? data : (data?.sessions || []);
+      setSessions(sessionsData);
+      if (selectFirst && sessionsData.length > 0) {
+        setCurrentSessionId(current => current || sessionsData[0].session_id);
+      }
+    } catch (error) {
+      console.error('Failed to load sessions:', error);
+    }
+  }, []);
 
   // 加载会话列表
   useEffect(() => {
-    const loadSessions = async () => {
-      try {
-        const response = await apiClient.getSessions();
-        // 后端 V12 envelope: data.sessions（对象内数组）；兼容旧结构 data 直接为数组
-        const data = response.data as { sessions?: Session[] } | Session[] | null;
-        const sessionsData = Array.isArray(data) ? data : (data?.sessions || []);
-        setSessions(sessionsData);
-        if (sessionsData.length > 0 && !currentSessionId) {
-          setCurrentSessionId(sessionsData[0].session_id);
-        }
-      } catch (error) {
-        console.error('Failed to load sessions:', error);
-      }
-    };
-    loadSessions();
-  }, []);
+    void loadSessions(true);
+  }, [loadSessions]);
 
   // 加载会话消息：切换会话时从后端拉取历史 turns（GET /sessions/{id}）
   useEffect(() => {
@@ -56,7 +53,7 @@ export default function ChatPage() {
     let cancelled = false;
     setMessages([]);
     setPanelData(null);
-    setPanelState('thinking');
+    setPanelState('loading');
     apiClient
       .getSession(currentSessionId)
       .then(res => {
@@ -80,15 +77,16 @@ export default function ChatPage() {
             created_at: t.created_at || '',
             // 历史会话证据链：后端 get_session 已带每轮 evidence_ids
             evidence_ids: t.evidence_ids || [],
+            show_evidence_status: Boolean(
+              t.company_code || (t.evidence_ids || []).length > 0,
+            ),
           },
         ]);
         setMessages(msgs);
-        // 历史面板恢复：取最后一个带 panel_data 的 turn（对齐审计 P1-3）
-        const latestPanel = [...turns]
-          .reverse()
-          .find(turn => turn.panel_data)?.panel_data;
+        // 面板必须服从最后一轮语义：最后一轮是闲聊时，不复活更早的分析面板。
+        const latestPanel = turns.at(-1)?.panel_data || null;
         setPanelData(latestPanel || null);
-        setPanelState(latestPanel ? 'done' : msgs.length > 0 ? 'done' : 'empty');
+        setPanelState(latestPanel ? 'done' : 'empty');
       })
       .catch(err => {
         if (cancelled) return;
@@ -216,6 +214,9 @@ export default function ChatPage() {
         break;
       // 旧格式兼容
       case 'turn.accepted':
+        setPanelState('loading');
+        break;
+      case 'module.started':
         setPanelState('thinking');
         break;
       case 'answer.delta': {
@@ -252,6 +253,9 @@ export default function ChatPage() {
           answer?: string;
           follow_ups?: string[];
           evidence_ids?: string[];
+          evidence_count?: number;
+          claims_count?: number;
+          intent?: string;
           trace_id?: string;
           risk_level?: string;
           finance?: {
@@ -261,8 +265,18 @@ export default function ChatPage() {
               rule_name?: string;
               evidence_ids?: string[];
             }>;
-          };
+          } | null;
         };
+        const conversational = ['chitchat', 'guide', 'unsupported'].includes(result.intent || '');
+        const analysisIntent = !conversational && result.intent !== 'research';
+        const hasAnalysisPayload = analysisIntent && Boolean(
+          result.finance ||
+          (result.risk_level && result.risk_level !== 'unknown') ||
+          (result.claims_count || 0) > 0,
+        );
+        const showEvidenceStatus = !conversational && Boolean(
+          hasAnalysisPayload || result.intent === 'research' || (result.evidence_count || 0) > 0,
+        );
         // P0-2: 结构化载荷 → 分析面板（审计：V12 事件未驱动 AnalysisPanel）
         // 优先用后端透出的完整 triggered_rules（canonical evidence_ids）；
         // 旧载荷回退 rule_statuses 拼装（无证据 ID，仅占位）
@@ -283,15 +297,19 @@ export default function ChatPage() {
                   }))
               : undefined;
         // 合并更新：不覆盖 artifact.upsert 已写入的字段
-        setPanelData(prev => ({
-          ...(prev || {}),
-          risk_level: (result.risk_level as RiskLevel | undefined) ?? prev?.risk_level,
-          triggered_rules:
-            triggeredRules && triggeredRules.length > 0
-              ? triggeredRules
-              : prev?.triggered_rules,
-          follow_ups: result.follow_ups ?? prev?.follow_ups,
-        }));
+        if (hasAnalysisPayload) {
+          setPanelData(prev => ({
+            ...(prev || {}),
+            risk_level: (result.risk_level as RiskLevel | undefined) ?? prev?.risk_level,
+            triggered_rules:
+              triggeredRules && triggeredRules.length > 0
+                ? triggeredRules
+                : prev?.triggered_rules,
+            follow_ups: result.follow_ups ?? prev?.follow_ups,
+          }));
+        } else {
+          setPanelData(null);
+        }
         setMessages(prev => {
           const updated = [...prev];
           // 只更新"最后一个 user 消息之后"的 assistant（避免误更新上一轮回答）
@@ -316,6 +334,7 @@ export default function ChatPage() {
               content: result?.answer || updated[targetIdx].content,
               evidence_ids: result?.evidence_ids || [],
               follow_ups: result?.follow_ups || [],
+              show_evidence_status: showEvidenceStatus,
               is_streaming: false,
             };
           } else if (result?.answer) {
@@ -326,13 +345,15 @@ export default function ChatPage() {
               content: result.answer,
               evidence_ids: result?.evidence_ids || [],
               follow_ups: result?.follow_ups || [],
+              show_evidence_status: showEvidenceStatus,
               created_at: new Date().toISOString(),
             });
           }
           return updated;
         });
-        setPanelState('done');
+        setPanelState(hasAnalysisPayload ? 'done' : 'empty');
         setIsLoading(false);
+        void loadSessions(false);
         // WS completed 载荷不含 company_code，完成后从会话详情同步画像入口。
         void apiClient.getSession(currentSessionId).then(res => {
           const latestCompanyCode = [...(res.data?.turns || [])]
@@ -351,7 +372,7 @@ export default function ChatPage() {
       case 'heartbeat':
         break;
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, loadSessions]);
 
   // 连接 WebSocket
   useEffect(() => {
@@ -377,7 +398,10 @@ export default function ChatPage() {
     };
     setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
-    setPanelState('thinking');
+    setPanelData(null);
+    setPanelState('loading');
+    setActiveRuleId(null);
+    setFilteredEvidenceIds(null);
 
     try {
       wsRef.current?.send(content);

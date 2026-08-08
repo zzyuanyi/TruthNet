@@ -97,6 +97,7 @@ class WsSession:
     last_activity: float = field(default_factory=time.time)
     created_at: float = field(default_factory=time.time)
     closed: bool = False
+    pending_disambiguation: dict | None = None
 
 
 class WsSessionManager:
@@ -208,6 +209,34 @@ class WsSessionManager:
             session.turns[turn_id] = turn
             session.last_activity = self._clock()
             return turn
+
+    def start_turn_if_idle(
+        self, session: WsSession, turn_id: str, question: str
+    ) -> ActiveTurn | None:
+        """Atomically start one turn, rejecting parallel turns in the same session."""
+        with self._lock:
+            if session.turns:
+                return None
+            turn = ActiveTurn(
+                turn_id=turn_id,
+                session_id=session.session_id,
+                question=question,
+            )
+            session.turns[turn_id] = turn
+            session.last_activity = self._clock()
+            return turn
+
+    def set_pending_disambiguation(
+        self, session: WsSession, pending: dict | None
+    ) -> None:
+        with self._lock:
+            session.pending_disambiguation = pending
+            session.last_activity = self._clock()
+
+    def get_pending_disambiguation(self, session: WsSession) -> dict | None:
+        with self._lock:
+            pending = session.pending_disambiguation
+            return dict(pending) if pending else None
 
     def attach_task(self, session: WsSession, turn_id: str, task: asyncio.Task) -> None:
         """将执行 task 绑定到 ActiveTurn（线程安全）。

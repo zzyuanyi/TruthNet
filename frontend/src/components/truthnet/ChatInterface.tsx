@@ -91,9 +91,9 @@ export function ChatInterface({
               <div className="grid grid-cols-2 gap-2 max-w-lg mx-auto">
                 {[
                   { icon: TrendingUp, label: '财务勾稽', text: '分析康美药业是否存在收入虚增' },
-                  { icon: Zap, label: '股权穿透', text: '查看乐视网的关联交易链路' },
-                  { icon: FileText, label: '舆情对齐', text: '瑞幸咖啡负面公告与财务数据是否一致' },
-                  { icon: Shield, label: '综合风险', text: '对比宁德时代与比亚迪的财务健康度' },
+                  { icon: Zap, label: '股权穿透', text: '查看金牌家居的实际控制人链路' },
+                  { icon: FileText, label: '舆情对齐', text: '核对康美药业近期公告与财务数据' },
+                  { icon: Shield, label: '综合风险', text: '综合评估贵州茅台的财务、股权与舆情风险' },
                 ].map((card, i) => (
                   <button
                     key={i}
@@ -120,6 +120,7 @@ export function ChatInterface({
                 key={message.id}
                 message={message}
                 evidenceHighlighted={isEvidenceMatch}
+                onFollowUp={onSendMessage}
               />
             );
           })}
@@ -128,7 +129,7 @@ export function ChatInterface({
           {isLoading && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">正在分析...</span>
+              <span className="text-sm">正在处理...</span>
             </div>
           )}
         </div>
@@ -170,9 +171,11 @@ export function ChatInterface({
 function MessageBubble({
   message,
   evidenceHighlighted = false,
+  onFollowUp,
 }: {
   message: Message;
   evidenceHighlighted?: boolean;
+  onFollowUp?: (suggestion: string) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -221,13 +224,15 @@ function MessageBubble({
         {message.follow_ups && message.follow_ups.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border/50">
             {message.follow_ups.map((suggestion, i) => (
-              <Badge
+              <Button
                 key={i}
                 variant="outline"
-                className="cursor-pointer hover:bg-accent transition-colors"
+                size="sm"
+                className="h-auto py-1.5 text-xs"
+                onClick={() => onFollowUp?.(suggestion)}
               >
                 {suggestion}
-              </Badge>
+              </Button>
             ))}
           </div>
         )}
@@ -247,7 +252,7 @@ function MessageBubble({
         )}
 
         {/* 证据分级标注 */}
-        {!isUser && (
+        {!isUser && message.show_evidence_status && (
           <div className="mt-2 pt-2 border-t border-border/30">
             {message.evidence_ids && message.evidence_ids.length > 0 ? (
               <div className="flex items-center gap-1 flex-wrap">

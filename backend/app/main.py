@@ -75,6 +75,16 @@ async def _lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 — 恢复失败不阻塞启动
         logger.warning("启动时报告任务恢复失败", exc_info=True)
 
+    # 启动预热（真流式首块优化）：预编译 graph + 预热存储连接，
+    # readyz 在预热完成后才返回 ready（避免首请求承担冷启动 4s+）
+    try:
+        from app.core.startup import prewarm_runtime
+
+        await asyncio.to_thread(prewarm_runtime)
+        logger.info("启动预热完成（graph/MySQL/Neo4j/Chroma）")
+    except Exception:  # noqa: BLE001 — 预热失败不阻塞启动（首请求承担冷启动）
+        logger.warning("启动预热失败（不阻塞启动）", exc_info=True)
+
     # WS janitor：周期清理过期缓冲事件 + 空闲超时会话（防止内存无界增长）
     from app.application.services.ws_session_manager import session_manager
 
