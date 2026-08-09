@@ -432,6 +432,9 @@ def _select_answer_mode(
     纯函数判定（关键词/claim 类型/模块状态），同一请求可稳定重放。
     """
     user_query = state.get("user_query", "")
+    plan = state.get("plan")
+    if plan is not None and plan.requested_modules == ["equity"]:
+        return "equity"
     if any(kw in user_query for kw in _FRAUD_KEYWORDS):
         return "fraud_diagnosis"
     if finance_blocked:
@@ -444,6 +447,45 @@ def _select_answer_mode(
     if finance_ran and "financial" in ctypes:
         return "finance"
     return "simple"
+
+
+def _build_equity_overview(state: AgentState) -> str:
+    """从 EquityResult 生成股东/控制链确定性摘要（Phase D #3C）。"""
+    results = state.get("results")
+    equity = results.equity if results else None
+    if equity is None:
+        return "股权数据覆盖不足，未取得可展示的股东或控制链记录。"
+
+    parts: list[str] = []
+    shareholders = equity.shareholders or []
+    if shareholders:
+        period = str(shareholders[0].get("report_period") or "")
+        period_text = (
+            f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(period) == 8 else "最新期"
+        )
+        items = []
+        for item in shareholders[:5]:
+            name = item.get("holder_name") or "未命名股东"
+            pct = item.get("ownership_pct")
+            items.append(f"{name} {pct:.2f}%" if pct is not None else str(name))
+        parts.append(f"主要股东（{period_text}）：" + "、".join(items))
+
+    chains = equity.chain_details or []
+    if chains:
+        chain = max(
+            chains,
+            key=lambda item: float(item.get("final_control_pct") or 0.0),
+        )
+        names = [str(name) for name in (chain.get("path_names") or []) if name]
+        if names:
+            chain_text = " → ".join(names)
+            pct = chain.get("final_control_pct")
+            if pct is not None:
+                chain_text += f"（最终控制 {float(pct):.2f}%）"
+            parts.append(f"控制链：{chain_text}")
+    if not parts:
+        return "股权数据覆盖不足，未取得可展示的股东或控制链记录。"
+    return "；".join(parts) + "。"
 
 
 def _build_rule_details(state: AgentState) -> str:
@@ -1260,6 +1302,10 @@ def generate_answer_node(state: AgentState) -> dict:
         seg = summary + "。"
         segments.append(seg)
         _emit_segment(state, seg)
+    if mode == "equity":
+        equity_overview = _build_equity_overview(state)
+        segments.append(equity_overview)
+        _emit_segment(state, equity_overview)
     if rule_details:
         segments.append(rule_details)
         _emit_segment(state, rule_details)
