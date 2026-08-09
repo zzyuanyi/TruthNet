@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -17,6 +21,10 @@ from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
     """R1: 应收增速 vs 营收增速."""
+    config = get_rule_config("R1")
+    if not config.enabled:
+        return disabled_rule_result("R1", "应收–营收背离")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R1",
         rule_version="1.0.0",
@@ -96,19 +104,33 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
     or_pct = or_yoy * 100
 
     # red
-    if gap > 50 and ar_yoy > 0 and prev_gap is not None and prev_gap > 30:
+    if (
+        gap > thresholds.red_consecutive_gap_pp
+        and ar_yoy > 0
+        and prev_gap is not None
+        and prev_gap > thresholds.red_previous_gap_pp
+    ):
         severity = "red"
-    elif gap > 30 and ar_pct > 50 and or_yoy < 0:
+    elif (
+        gap > thresholds.red_declining_revenue_gap_pp
+        and ar_pct > thresholds.red_receivable_growth_pct
+        and or_yoy < 0
+    ):
         severity = "red"
 
     # orange
-    if severity == "green" and gap > 30 and ar_yoy > 0:
+    if severity == "green" and gap > thresholds.orange_gap_pp and ar_yoy > 0:
         severity = "orange"
-    elif severity == "green" and gap > 20 and prev_gap is not None and prev_gap > 20:
+    elif (
+        severity == "green"
+        and gap > thresholds.orange_consecutive_gap_pp
+        and prev_gap is not None
+        and prev_gap > thresholds.orange_previous_gap_pp
+    ):
         severity = "orange"
 
     # yellow
-    if severity == "green" and gap > 20:
+    if severity == "green" and gap > thresholds.yellow_gap_pp:
         severity = "yellow"
 
     # ── 5. 结果 ──

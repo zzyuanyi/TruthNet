@@ -561,14 +561,21 @@ def main() -> int:
                 if args.replace_graph_version:
                     if adapter._driver:
                         depth3 = await adapter.count_multi_hop_paths(
-                            args.graph_version, min_depth=3, import_run_id=run_id
+                            args.graph_version,
+                            min_depth=3,
+                            max_depth=10,
+                            import_run_id=run_id,
                         )
                         logger.info(
-                            "多跳链路中间验收: 本次关系 depth≥3 路径 %d 条", depth3
+                            "多跳链路中间验收: 本次关系 3..10 跳路径 %d 条"
+                            "（truncated=%s）",
+                            depth3["count"],
+                            depth3["truncated"],
                         )
-                        if depth3 <= 0:
+                        if depth3["count"] <= 0:
                             raise RuntimeError(
-                                "中间验收失败: 本次导入关系 depth≥3 路径为 0，取消替换旧图"
+                                "中间验收失败: 本次导入关系 3 跳以上路径为 0，"
+                                "取消替换旧图"
                             )
                     await adapter.delete_stale_relationships(args.graph_version, run_id)
                     await adapter.cleanup_orphan_corporate_nodes()
@@ -593,11 +600,15 @@ def main() -> int:
         )
         if not args.dry_run and args.replace_graph_version and adapter._driver:
             final_depth3 = await adapter.count_multi_hop_paths(
-                args.graph_version, min_depth=3
+                args.graph_version, min_depth=3, max_depth=10
             )
-            logger.info("最终验收: 删旧后全图 depth≥3 路径 %d 条", final_depth3)
-            if final_depth3 <= 0:
-                logger.error("最终验收失败: 删除旧图后 depth≥3 路径为 0，数据异常")
+            logger.info(
+                "最终验收: 删旧后全图 3..10 跳路径 %d 条（truncated=%s）",
+                final_depth3["count"],
+                final_depth3["truncated"],
+            )
+            if final_depth3["count"] <= 0:
+                logger.error("最终验收失败: 删除旧图后 3 跳以上路径为 0，数据异常")
                 return 1
 
         return 0

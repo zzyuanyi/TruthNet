@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -37,6 +41,10 @@ def _next_quarter(period: str) -> str | None:
 
 
 def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
+    config = get_rule_config("R2")
+    if not config.enabled:
+        return disabled_rule_result("R2", "现金流–利润背离")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R2",
         rule_version="1.0.0",
@@ -174,31 +182,49 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     has_pos_profit_this = recent_np[-1] is not None and recent_np[-1] > 0
 
     severity = "green"
-    if has_pos_profit_this and has_neg_cf_this and max_consec_neg >= 3:
+    if (
+        has_pos_profit_this
+        and has_neg_cf_this
+        and max_consec_neg >= thresholds.red_consecutive_negative_cashflow_periods
+    ):
         severity = "red"
-    elif has_pos_profit_this and avg_ratio < 0 and max_consec_neg >= 2:
+    elif (
+        has_pos_profit_this
+        and avg_ratio < 0
+        and max_consec_neg >= thresholds.red_growth_consecutive_periods
+    ):
         # 利润增长但现金越来越差（同比：精确去年同期，缺失则不比——
         # 第二轮审查修订：不得用下标 -5 推断）
         np_yoy = None
         t4 = prev_year_period(recent_periods[-1], ordered)
         if t4 is not None:
             np_yoy = yoy_growth(recent_np[-1], aligned[t4].get("np"))
-        if np_yoy is not None and np_yoy > 0.2:
+        if np_yoy is not None and np_yoy * 100 > thresholds.red_profit_yoy_pct:
             severity = "red"
 
     if (
         severity == "green"
         and has_pos_profit_this
         and has_neg_cf_this
-        and max_consec_neg >= 2
+        and max_consec_neg >= thresholds.orange_consecutive_negative_cashflow_periods
     ):
         severity = "orange"
-    elif severity == "green" and has_pos_profit_this and 0 <= avg_ratio < 0.3:
+    elif (
+        severity == "green"
+        and has_pos_profit_this
+        and 0 <= avg_ratio < thresholds.orange_cashflow_profit_ratio
+    ):
         severity = "orange"
 
     if severity == "green" and has_pos_profit_this and has_neg_cf_this:
         severity = "yellow"
-    elif severity == "green" and has_pos_profit_this and 0.3 <= avg_ratio < 0.5:
+    elif (
+        severity == "green"
+        and has_pos_profit_this
+        and thresholds.orange_cashflow_profit_ratio
+        <= avg_ratio
+        < thresholds.yellow_cashflow_profit_ratio
+    ):
         severity = "yellow"
 
     result.status = "triggered" if severity != "green" else "not_triggered"

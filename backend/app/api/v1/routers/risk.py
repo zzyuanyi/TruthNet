@@ -21,6 +21,7 @@ from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.core.errors import ErrorCode
 from app.api.v1.schemas.risk import (
     DataCoverage,
+    DerivationChain,
     MitigatingFactor,
     PatternMatch,
     RiskEvidence,
@@ -139,6 +140,10 @@ async def get_company_risk(
                     regulatory_hint=m.regulatory_hint,
                 )
                 for m in out.pattern_matches
+            ],
+            derivation_chains=[
+                DerivationChain.model_validate(chain.model_dump())
+                for chain in out.derivation_chains
             ],
             confidence=out.confidence,
             data_coverage=coverage,

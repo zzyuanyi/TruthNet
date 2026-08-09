@@ -3,7 +3,8 @@
 Phase C 约定：
   - ownership_pct 对外统一为 0–100（百分数）。
   - 每条边绑定 Neo4j 稳定 relationship_id，作为证据定位的 source_record_id。
-  - 控制链路径携带 edge_ids，路径中的每条边可经 relationship_id 定位。
+  - 股权路径（持股或控制关系，随 path_type 区分）携带 edge_ids，
+    路径中的每条边可经 relationship_id 定位。
 """
 
 from pydantic import BaseModel, Field
@@ -63,7 +64,7 @@ class EquityEdge(BaseModel):
 
 
 class OwnershipChain(BaseModel):
-    """控制链."""
+    """股权路径（持股或控制关系，随 path_type 区分）."""
 
     path: list[str] = Field(..., description="路径节点 ID 序列")
     total_stake: float = Field(
@@ -76,7 +77,11 @@ class OwnershipChain(BaseModel):
     final_control_pct: float | None = Field(
         default=None, description="最终控制比例 (%) 0-100"
     )
-    path_type: str = Field(default="control", description="路径类型")
+    # 8.09 四轮审查：默认 ownership（持股关系）——十大股东链路是持股路径，
+    # 只有存在明确控制证据才标记 control，不得默认断言控制
+    path_type: str = Field(
+        default="ownership", description="路径类型: ownership/control"
+    )
     source_system: str = Field(
         default="unknown", description="数据来源: neo4j/networkx"
     )
@@ -99,4 +104,18 @@ class EquityGraph(BaseModel):
     dataset_version: str | None = Field(default=None, description="数据集版本")
     source_system: str = Field(
         default="unknown", description="数据来源: neo4j/networkx"
+    )
+    # ── 多跳诚实覆盖说明（8.09 审查新增）──
+    requested_depth: int = Field(
+        default=0, description="请求穿透深度（hop_count 口径）"
+    )
+    max_observed_hops: int = Field(
+        default=0, description="实际观测到的最大跳数（len(edge_ids) 口径）"
+    )
+    truncated: bool = Field(
+        default=False, description="路径结果超过限制被截断（非精确全集）"
+    )
+    coverage_note: str = Field(
+        default="",
+        description="覆盖说明：严格 4 跳+ 为 0 时如实说明，不推断现实不存在",
     )

@@ -16,6 +16,7 @@
 import hashlib
 import logging
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -33,6 +34,26 @@ _QUERY_TIMEOUT = 30
 # ── 默认版本标记 ──
 _DEFAULT_GRAPH_VERSION = "equity-mock-v12"
 _DEFAULT_DATASET_VERSION = "mock-v12"
+
+# ── 多跳统计封顶 ──
+_HOP_COUNT_CAP = 10000
+
+# ── 快照缓存（8.09 审查：历史时点聚合 ~4s，进程内缓存避免每次查询重算；
+#    8.10 修订：失效语义完整说明——
+#      · 新 graph_version 使用新缓存键（自然失效）；
+#      · 同一 graph_version 下重建（如重复导入 equity-2026Q2）时，
+#        缓存最多残留 _SNAPSHOT_CACHE_TTL_SECONDS（默认 300s）；
+#      · 运维要求（见 docs/API_CONTRACT_V1.md）：导入期间不对外查询，
+#        或导入完成后重启后端，或接受最多 300 秒最终一致性；
+#    map 缓存上限防膨胀）──
+_SNAPSHOT_CACHE_TTL_SECONDS = 300.0
+_LATEST_SNAPSHOT_CACHE: dict[
+    str, tuple[float, str]
+] = {}  # graph_version → (ts, 全图 is_latest 最大期)
+_SNAPSHOT_MAP_CACHE: dict[
+    tuple[str, str], tuple[float, dict[str, str]]
+] = {}  # (gv, as_of) → (ts, {tgt: latest})
+_SNAPSHOT_CACHE_MAX = 16
 
 
 # ═══════════════════════════════════════════════════════════
@@ -268,11 +289,40 @@ class Neo4jEquityGraph:
         depth = max(1, min(10, depth))
         active_graph_version = graph_version or settings.GRAPH_VERSION
 
-        # 时点过滤条件（使用 rel 而非 r，因为 r 是路径中的关系列表）
-        if as_of:
-            time_filter = "AND rel.report_period <= $as_of"
+        # 8.09 审查：适配器边界统一规范化 as_of（YYYY-MM-DD / YYYYQn → YYYYMMDD），
+        # 无法解析直接抛错（REST 层转 422），绝不静默返回空图。
+        from app.domain.finance.period import normalize_period
+
+        norm_as_of = normalize_period(as_of) if as_of else None
+        if as_of and norm_as_of is None:
+            raise ValueError(f"INVALID_AS_OF: {as_of!r}")
+
+        # ── 快照过滤（8.09 审查：与导入侧 is_latest 快照级标记同语义）──
+        #  - 无 as_of：每条边 is_latest=true（目标公司"最新完整股东快照"）。
+        #  - as_of >= 全图最新快照期：is_latest 即截至 as_of 的快照，
+        #    结果与不传 as_of 完全一致（验收口径）。
+        #  - as_of < 全图最新快照期（历史时点）：按目标公司（endNode）取
+        #    report_period <= as_of 的最大报告期整体快照——同一目标公司的
+        #    全部股东边一起切换，退出前十大的旧股东不在该期 → 被排除。
+        #    不得按 (source, target) 对分别取最新期（会保留已退出股东）。
+        latest_snapshot = None
+        latest_periods: dict[str, str] = {}
+        if norm_as_of:
+            latest_snapshot = self._latest_snapshot_period(active_graph_version)
+            if norm_as_of < (latest_snapshot or ""):
+                latest_periods = self._snapshot_periods(
+                    active_graph_version, norm_as_of
+                )
+
+        if norm_as_of and norm_as_of < (latest_snapshot or ""):
+            time_filter = (
+                "AND rel.report_period = $latest_periods[endNode(rel).entity_id]"
+            )
+            extra_params = {"latest_periods": latest_periods}
         else:
+            # 最新快照（无 as_of 或 as_of 晚于/等于全图最新快照期）
             time_filter = "AND rel.is_latest = true"
+            extra_params = {}
 
         # 方向
         if direction == "upstream":
@@ -280,14 +330,25 @@ class Neo4jEquityGraph:
         else:
             rel_pattern = f"-[r:OWNS*1..{depth}]->"
 
+        # 8.09 审查：快照过滤在查询阶段完成（无 Python 后处理断边），
+        # ORDER BY length(path) DESC 保证深链优先返回，LIMIT 201 用于
+        # 检测截断（返回前 200，存在第 201 条 → truncated=true）。
+        # 8.09 三轮审查：节点序列去重必须在 Cypher 中先于 ORDER BY/LIMIT——
+        # 若先 LIMIT 201 再 Python 去重，前 201 条含大量重复关系路径时会
+        # 出现 truncated 假阳性、真实唯一链被遗漏。
         cypher = (
             "MATCH (target:Entity {wind_code: $code}) "
             f"MATCH path = (target){rel_pattern}(other:Entity) "
             "WHERE all(rel IN relationships(path) WHERE rel.mock = false "
             "  AND rel.graph_version = $graph_version "
             f"  {time_filter}) "
+            "WITH target, [n IN nodes(path) | n.entity_id] AS seq, path "
+            "WITH target, seq, collect(path) AS paths_by_seq "
+            "WITH target, seq, paths_by_seq[0] AS path "
+            "WITH target, path "
             "RETURN target, path "
-            "LIMIT 200"
+            "ORDER BY length(path) DESC "
+            "LIMIT 201"
         )
 
         try:
@@ -295,8 +356,8 @@ class Neo4jEquityGraph:
                 cypher,
                 {
                     "code": resolved_code,
-                    "as_of": as_of,
                     "graph_version": active_graph_version,
+                    **extra_params,
                 },
             )
         except Exception as e:
@@ -306,13 +367,29 @@ class Neo4jEquityGraph:
         nodes_map: dict[str, EquityNode] = {}
         edges_map: dict[str, EquityEdge] = {}
         paths_list: list[OwnershipChain] = []
+        # 8.09 审查：同一节点序列只计一次（防御性去重，快照模式理论上已唯一）；
+        # 去重后再限制前 200 条，存在截断时如实标记 truncated。
+        seen_paths: set[tuple[str, ...]] = set()
+        truncated = len(records) > 200
 
         for record in records:
-            target_data = record["target"]
             path = record["path"]
 
+            # 8.09 三轮审查：直接使用 path.nodes 组装节点序列（不再按关系
+            # 遍历顺序追加 start_node——曾导致多跳节点序列与边错位）：
+            #   upstream: (target)<-[:OWNS]-(other)，path.nodes=[target,股东1,...]
+            #     真实持股方向（最上游→最下游）需反转；
+            #   downstream: (target)-[:OWNS]->(other)，保持原顺序。
+            # 关系序列同步反转，保证 edge[i] 满足 source==node[i]、target==node[i+1]。
+            if direction == "upstream":
+                ordered_nodes = list(reversed(path.nodes))
+                ordered_rels = list(reversed(path.relationships))
+            else:
+                ordered_nodes = list(path.nodes)
+                ordered_rels = list(path.relationships)
+
             # 收集节点（entity_id 与 MySQL 对齐）
-            for node in path.nodes:
+            for node in ordered_nodes:
                 nid = node.get("entity_id", "") or node.element_id
                 if nid and nid not in nodes_map:
                     nodes_map[nid] = EquityNode(
@@ -328,17 +405,40 @@ class Neo4jEquityGraph:
                         mock=bool(node.get("mock", False)),
                     )
 
+            # 节点序列直接来自 path.nodes（真实方向）
+            path_node_ids = [
+                n.get("entity_id", "") or n.element_id for n in ordered_nodes
+            ]
+            if not path_node_ids or any(not nid for nid in path_node_ids):
+                continue
+
             # 收集边和路径
-            path_node_ids: list[str] = []
             path_edge_ids: list[str] = []
             total_fraction = Decimal("1.0")
+            path_consistent = True
 
-            for rel in path.relationships:
+            for i, rel in enumerate(ordered_rels):
                 src_id = rel.start_node.get("entity_id", "")
                 tgt_id = rel.end_node.get("entity_id", "")
                 rel_id = rel.get("relationship_id") or ""
                 pct = _pct_from_neo4j(rel.get("ownership_pct"))
                 pct_100 = float(pct)
+                rel_period = _clean_period(rel.get("report_period"))
+
+                # 8.09 三轮审查：防御校验——edge[i] 必须连接 node[i]→node[i+1]，
+                # 不一致说明图数据异常，该路径不得进入结果（防止回答中
+                # path_names/Evidence 顺序不可信）。
+                if (
+                    i >= len(path_node_ids) - 1
+                    or src_id != path_node_ids[i]
+                    or tgt_id != path_node_ids[i + 1]
+                ):
+                    logger.warning(
+                        "equity: 路径边与节点序列不一致，丢弃路径 %s",
+                        path_node_ids,
+                    )
+                    path_consistent = False
+                    break
 
                 if src_id and tgt_id:
                     if rel_id and rel_id not in edges_map:
@@ -350,7 +450,7 @@ class Neo4jEquityGraph:
                             ownership_pct=pct_100,
                             relationship_id=rel_id,
                             source_record_id=(rel.get("source_record_id") or rel_id),
-                            report_period=_clean_period(rel.get("report_period")),
+                            report_period=rel_period,
                             ann_dt=_clean_period(rel.get("ann_dt")),
                             is_latest=bool(rel.get("is_latest", True)),
                             source_system="neo4j",
@@ -358,28 +458,45 @@ class Neo4jEquityGraph:
                         )
                     if rel_id:
                         path_edge_ids.append(rel_id)
-
-                if src_id:
-                    path_node_ids.append(src_id)
                 if pct > 0:
                     total_fraction *= pct / Decimal("100")
 
-            tgt_nid = target_data.get("entity_id", "")
-            if tgt_nid and path_node_ids:
-                path_node_ids.append(tgt_nid)
-
-            if path_node_ids:
-                paths_list.append(
-                    OwnershipChain(
-                        path=path_node_ids,
-                        total_stake=float(total_fraction),
-                        depth=len(path_node_ids) - 1,
-                        edge_ids=path_edge_ids,
-                        final_control_pct=round(float(total_fraction) * 100, 4),
-                        path_type="control",
-                        source_system="neo4j",
-                    )
+            if not path_consistent:
+                continue
+            # 8.09 审查：同一节点序列只计一次（Cypher 已先于 LIMIT 去重，
+            # 此处为防御性保险）
+            seq = tuple(path_node_ids)
+            if seq in seen_paths:
+                continue
+            seen_paths.add(seq)
+            if len(paths_list) >= 200:
+                truncated = True
+                continue
+            paths_list.append(
+                OwnershipChain(
+                    path=path_node_ids,
+                    total_stake=float(total_fraction),
+                    # 8.09 审查：深度统一为 hop_count = len(edge_ids)，
+                    # 不再混用实体数量口径
+                    depth=len(path_edge_ids),
+                    edge_ids=path_edge_ids,
+                    final_control_pct=round(float(total_fraction) * 100, 4),
+                    # 8.09 三轮审查：默认"持股链"而非"控制链"——十大股东
+                    # 中的基金/少数持股不等于实际控制，不得过度断言
+                    path_type="ownership",
+                    source_system="neo4j",
                 )
+            )
+
+        max_observed_hops = max((c.depth for c in paths_list), default=0)
+        # 8.09 审查：诚实覆盖说明——严格 4 跳+ 为 0 时如实说明，不推断
+        # "不存在更深控制关系"（数据源仅覆盖十大股东披露）。
+        coverage_note = ""
+        if direction == "upstream" and max_observed_hops < 4 and depth >= 4:
+            coverage_note = (
+                "在当前图版本及已覆盖的十大股东数据中，未发现可验证的4跳及以上"
+                "股权链路；该结果不代表现实中不存在未被当前数据源覆盖的上层关系。"
+            )
 
         return EquityGraph(
             company_id=company_code,
@@ -389,6 +506,10 @@ class Neo4jEquityGraph:
             graph_version=active_graph_version,
             dataset_version=settings.DATASET_VERSION,
             source_system="neo4j",
+            requested_depth=depth,
+            max_observed_hops=max_observed_hops,
+            truncated=truncated,
+            coverage_note=coverage_note,
         )
 
     async def get_control_chains(
@@ -704,6 +825,61 @@ class Neo4jEquityGraph:
         logger.info("删除旧关系 %d 条 (graph_version=%s)", total, graph_version)
         return {"deleted": total}
 
+    # ── 快照辅助（8.09 审查：整体快照语义，进程内缓存）──
+
+    def _latest_snapshot_period(self, graph_version: str) -> str | None:
+        """全图 is_latest 边最大报告期（TTL 缓存）。
+
+        失效语义（8.10 修订）：新 graph_version 使用新缓存键；同一版本
+        重建后最多残留 300 秒——导入完成后应重启后端，或接受该最终
+        一致性窗口（见 docs/API_CONTRACT_V1.md 运维约束）。
+        """
+        cached = _LATEST_SNAPSHOT_CACHE.get(graph_version)
+        if (
+            cached is not None
+            and time.monotonic() - cached[0] < _SNAPSHOT_CACHE_TTL_SECONDS
+        ):
+            return cached[1] or None
+        if not self._driver:
+            return None
+        records, _, _ = self._driver.execute_query(
+            "MATCH ()-[r:OWNS {is_latest: true}]->() "
+            "WHERE r.graph_version = $gv RETURN max(r.report_period) AS latest",
+            {"gv": graph_version},
+        )
+        latest = records[0]["latest"] if records else None
+        _LATEST_SNAPSHOT_CACHE[graph_version] = (time.monotonic(), latest or "")
+        return latest or None
+
+    def _snapshot_periods(self, graph_version: str, as_of: str) -> dict[str, str]:
+        """截至 as_of 每个目标公司（endNode）的最新报告期（整体快照 map）。
+
+        与导入侧 is_latest 快照级标记同语义：同一目标公司的全部股东边
+        一起按最新报告期切换，退出前十大的旧股东不在该期 → 被排除。
+        全图聚合 ~4s，结果按 (graph_version, as_of) 进程内缓存（TTL 失效）。
+        """
+        key = (graph_version, as_of)
+        cached = _SNAPSHOT_MAP_CACHE.get(key)
+        if (
+            cached is not None
+            and time.monotonic() - cached[0] < _SNAPSHOT_CACHE_TTL_SECONDS
+        ):
+            return cached[1]
+        if not self._driver:
+            return {}
+        records, _, _ = self._driver.execute_query(
+            "MATCH ()-[r:OWNS]->(tgt:Entity) "
+            "WHERE r.graph_version = $gv AND r.mock = false "
+            "  AND r.report_period <= $as_of "
+            "RETURN tgt.entity_id AS tgt, max(r.report_period) AS latest",
+            {"gv": graph_version, "as_of": as_of},
+        )
+        result = {r["tgt"]: r["latest"] for r in records}
+        if len(_SNAPSHOT_MAP_CACHE) >= _SNAPSHOT_CACHE_MAX:
+            _SNAPSHOT_MAP_CACHE.clear()
+        _SNAPSHOT_MAP_CACHE[key] = (time.monotonic(), result)
+        return result
+
     # ── 管理查询 ──
 
     async def count_entities(self, graph_version: str | None = None) -> int:
@@ -755,42 +931,95 @@ class Neo4jEquityGraph:
         self,
         graph_version: str | None = None,
         min_depth: int = 3,
+        max_depth: int = 10,
+        as_of: str | None = None,
         import_run_id: str | None = None,
         all_versions: bool = False,
-    ) -> int:
-        """统计上市公司间 min_depth 跳以上路径数（P0-2 验收辅助）。
+    ) -> dict[str, int | bool]:
+        """统计 min_depth..max_depth 跳持股路径数（P0-2 验收辅助）。
 
-        受限范围：全部节点限定上市公司（wind_code 非空、非自环），
-        避免全图（含 64 万 person/产品边）变长路径指数爆炸。
-        返回计数封顶 10000（仅验收判定用，非精确计数）。
-        import_run_id 非空时限定 r.seen_run_id=本次（核验修订：中间验收
-        不得混合旧图关系）。
+        深度定义（8.09 审查统一）：hop_count = len(edge_ids)；
+          - 严格 >3 层（赛题验收）→ (min_depth=4, max_depth=10)
+          - 精确 4 跳 → (min_depth=4, max_depth=4)
+        约束：1 <= min_depth <= max_depth <= 10。
+
+        受限范围（8.09 三轮审查修订）：目标端限定上市公司
+        （b.wind_code <> ''），上游允许任意真实 Entity——"自然人→壳公司
+        →上市公司"链路的最上游是自然人/基金/非上市企业，限制两端上市
+        公司会漏掉全部深层链（真库实测：两端限制 4..10 跳为 0，起点不限
+        为 10 条）；防自环按实体 ID 比较（上游可能无 wind_code）。
+        查询范围设计（目标端限定 + max_depth 上限）用于避免全图（含
+        64 万 person/产品边）变长路径指数爆炸；8.10 修订说明：10000
+        封顶只限制返回值，不减少查询计算量——Cypher 仍先执行完整
+        count(DISTINCT ...)，本函数仅作验收/管理查询使用。
+        按唯一节点序列计数（同一节点链的多期历史边只计一次）。
+        计数封顶 10000：截断时返回 truncated=true（截断值不是精确值，
+        不得静默当作精确计数）。
+        import_run_id 非空时限定 r.seen_run_id=本次（中间验收不得混合旧图）。
+        all_versions=True 仅审计使用；产品查询必须指定 graph_version。
         """
+        if not (1 <= min_depth <= max_depth <= 10):
+            raise ValueError(
+                "INVALID_DEPTH_RANGE: "
+                f"min={min_depth} max={max_depth}（要求 1<=min<=max<=10）"
+            )
         if not self._driver:
-            return 0
+            return {"count": 0, "truncated": False}
         gv = graph_version or settings.GRAPH_VERSION
-        # 起点/终点必须是公司；中间节点不限制（真实穿透链路常经股东身份）。
-        # P0-1：仅统计 is_latest=true 的关系 + 路径节点互异（防循环路径）。
+
+        # 快照过滤（与 _get_graph_sync 同语义）：as_of 历史时点按目标公司
+        # 整体快照期过滤；all_versions 审计模式不做快照过滤。
+        from app.domain.finance.period import normalize_period
+
+        norm_as_of = normalize_period(as_of) if as_of else None
+        if as_of and norm_as_of is None:
+            raise ValueError(f"INVALID_AS_OF: {as_of!r}")
+        if norm_as_of:
+            latest_snapshot = self._latest_snapshot_period(gv)
+            if norm_as_of < (latest_snapshot or ""):
+                snap = self._snapshot_periods(gv, norm_as_of)
+                time_filter = "r.report_period = $latest_periods[endNode(r).entity_id]"
+                snap_params = {"latest_periods": snap}
+            else:
+                time_filter = "r.is_latest = true"
+                snap_params = {}
+        elif not all_versions:
+            time_filter = "r.is_latest = true"
+            snap_params = {}
+        else:
+            time_filter = "true"  # all_versions：审计模式不过滤快照
+            snap_params = {}
+
+        # 8.09 三轮审查：目标端必须是上市公司（b.wind_code <> ''），
+        # 上游 a 允许任意真实 Entity——"自然人→壳公司→上市公司"链路的最
+        # 上游是自然人/基金/非上市企业，限制两端上市公司会漏掉全部深层链
+        # （真库实测：两端限制 4..10 跳为 0，起点不限为 10 条）。
+        # 防自环用实体 ID 比较（上游可能无 wind_code）。
+        # 路径节点互异（防循环路径）；count(DISTINCT 节点序列)——
+        # 同一节点链的多期历史关系只计一次。
         records, _, _ = self._driver.execute_query(
             f"""
-            MATCH p = (a:Entity)-[:OWNS*{int(min_depth)}..4]->(b:Entity)
-            WHERE a.wind_code <> '' AND b.wind_code <> ''
-              AND a.wind_code <> b.wind_code
+            MATCH p = (a:Entity)-[:OWNS*{int(min_depth)}..{int(max_depth)}]->(b:Entity)
+            WHERE b.wind_code <> ''
+              AND a.entity_id <> b.entity_id
               AND all(r IN relationships(p)
                       WHERE ($all_versions OR r.graph_version = $gv)
-                        AND r.is_latest = true
+                        AND {time_filter}
                         AND ($run_id IS NULL OR r.seen_run_id = $run_id))
               AND all(n IN nodes(p)
                       WHERE size([m IN nodes(p) WHERE m = n]) = 1)
-            RETURN count(p) AS cnt
+            RETURN count(DISTINCT [n IN nodes(p) | n.entity_id]) AS cnt
             """,
             {
                 "gv": gv,
                 "run_id": import_run_id,
                 "all_versions": all_versions,
+                **snap_params,
             },
         )
-        return min(records[0]["cnt"], 10000) if records else 0
+        raw = records[0]["cnt"] if records else 0
+        truncated = raw > _HOP_COUNT_CAP
+        return {"count": min(raw, _HOP_COUNT_CAP), "truncated": truncated}
 
     async def clear_run_markers(self, import_run_id: str) -> int:
         """幂等增量导入后清除本次打上的 seen_run_id 标记（不删任何关系）。"""

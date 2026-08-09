@@ -25,7 +25,7 @@ class EquityGraphPort(Protocol):
     async def get_control_chains(
         self, company_code: str, max_depth: int = 5
     ) -> list[OwnershipChain]:
-        """获取控制链."""
+        """获取股权路径（持股或控制关系，随 path_type 区分）."""
         ...
 
     async def check_connection(self) -> bool:

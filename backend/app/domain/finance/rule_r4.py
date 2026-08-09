@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -16,6 +20,10 @@ from app.domain.finance.rule_utils import count_valid, single_quarter, yoy_growt
 
 
 def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
+    config = get_rule_config("R4")
+    if not config.enabled:
+        return disabled_rule_result("R4", "存货–营收背离")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R4",
         rule_version="1.0.0",
@@ -128,28 +136,36 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
 
     severity = "green"
     # red
-    if growth_gap > 50 and inv_yoy * 100 > 50 and or_yoy < 0.10:
+    if (
+        growth_gap > thresholds.red_growth_gap_pp
+        and inv_yoy * 100 > thresholds.red_inventory_growth_pct
+        and or_yoy * 100 < thresholds.red_revenue_growth_max_pct
+    ):
         severity = "red"
     elif (
         turnover_change is not None
-        and turnover_change > 100
+        and turnover_change > thresholds.red_turnover_change_pct
         and inv_turnover_days is not None
-        and inv_turnover_days > 365
+        and inv_turnover_days > thresholds.red_turnover_days
     ):
         severity = "red"
 
     # orange
     if (
         severity == "green"
-        and growth_gap > 30
+        and growth_gap > thresholds.orange_growth_gap_pp
         and turnover_change is not None
-        and turnover_change > 50
+        and turnover_change > thresholds.orange_turnover_change_pct
     ):
         severity = "orange"
 
     # yellow
     if severity == "green" and (
-        growth_gap > 30 or (turnover_change is not None and turnover_change > 50)
+        growth_gap > thresholds.yellow_growth_gap_pp
+        or (
+            turnover_change is not None
+            and turnover_change > thresholds.yellow_turnover_change_pct
+        )
     ):
         severity = "yellow"
 

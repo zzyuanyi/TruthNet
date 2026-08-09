@@ -190,6 +190,24 @@ POST /api/v1/reports
 `GET /api/v1/companies/{code}/equity` 与 `POST /api/v1/chat` 的 `equity_chains` 字段：
 每条链含 `chain_id/path_names/depth/final_control_pct/evidence_ids/risk_label/risk_level/risk_reasons/merge_explanation/source_system/as_of`。
 
+### 股权穿透多跳口径（8.09 审查）
+
+`GET /api/v1/companies/{code}/equity`（Phase C 真实图谱契约）：
+
+- **深度定义**：`hop_count = len(edge_ids) = len(node_ids) - 1`；`depth` 字段一律为 hop_count（边数），不混用实体数量。严格 >3 层 = hop_count ≥ 4（3 跳链 = 4 个实体，4 跳链 = 5 个实体）。
+- **as_of 参数**：支持 `YYYYMMDD` / `YYYY-MM-DD` / `YYYYQn`（如 2026Q2 → 20260630），适配器边界统一规范化为八位期次；无法解析返回 **422**（不静默返回空图）。
+- **时点快照语义**：与导入侧 `is_latest` 快照级标记一致——按目标公司（endNode）取 `report_period <= as_of` 的最新报告期**整体快照**（同一目标公司的全部股东边一起切换，已退出前十大的旧股东被排除）；`as_of` 晚于全图最新快照期时结果与不传 `as_of` 完全一致。
+- **响应新增字段**：
+  | 字段 | 类型 | 说明 |
+  |------|------|------|
+  | `requested_depth` | int | 请求穿透深度（hop_count 口径） |
+  | `max_observed_hops` | int | 实际观测最大跳数（len(edge_ids) 口径） |
+  | `truncated` | bool | 路径超过 200 条被截断（深链优先取前 200；截断时 `partial=true` + `PATH_LIMIT_REACHED` warning） |
+  | `coverage_note` | str | 诚实覆盖说明（按公司维度）：**该公司**未发现 4 跳及以上持股链路时输出"在当前图版本及已覆盖的十大股东数据中，未发现可验证的4跳及以上股权链路…"，不推断现实中不存在更深关系。注意：全局统计存在 10 条四跳持股路径（如中央汇金→南京高科→南京银行→江苏国信→江苏新能），与单公司查询为 0 不矛盾 |
+- **路径排序**：`ORDER BY length(path) DESC` 深链优先，查询 201 条取前 200 条。
+- **链路类型**：`equity_chains[*].path_type` 为 `ownership`（默认，持股关系）或 `control`（存在明确控制证据）。回答/Claim/PDF 按此措辞——ownership 链路称"股权链穿透/最终持股/持股比例集中"，不得一律称"控制链/最终控制"。
+- **快照缓存运维约束**：历史时点快照聚合结果在进程内缓存 300 秒（TTL）。同一 `graph_version` 下重建图后，最多返回 300 秒旧快照。运维要求三选一：① 图导入期间不对外提供股权查询；② 导入完成后重启后端；③ 接受最多 300 秒最终一致性。不建议增加更复杂缓存机制。
+
 ### 模式三要素（Phase D #16）
 
 `/risk` 的 `pattern_matches`、`/chat` 的 `pattern_matches`、WS `turn.completed`：

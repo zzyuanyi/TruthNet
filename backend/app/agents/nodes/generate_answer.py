@@ -226,9 +226,11 @@ def _build_signal_summary(claims: list, results=None, risk_output=None) -> str:
         # 避免回答出现两条几乎相同的控制链。
         _by_path: dict[str, tuple] = {}
         for c in equity:
-            m = re.search(r"控制链穿透：(.+?)[，,]", c.text)
+            # 8.09 四轮审查：兼容新旧 Claim 文案——ownership 链路 Claim 为
+            # "股权链穿透/最终持股"，control 链路仍为"控制链穿透/最终控制"
+            m = re.search(r"(?:控制链|股权链)穿透：(.+?)[，,]", c.text)
             key = m.group(1) if m else c.text
-            pm = re.search(r"最终控制 ([\d.]+)%", c.text)
+            pm = re.search(r"(?:最终控制|最终持股) ([\d.]+)%", c.text)
             pct = float(pm.group(1)) if pm else 0.0
             prev = _by_path.get(key)
             if prev is None or pct > prev[1]:
@@ -481,10 +483,21 @@ def _build_equity_overview(state: AgentState) -> str:
             chain_text = " → ".join(names)
             pct = chain.get("final_control_pct")
             if pct is not None:
-                chain_text += f"（最终控制 {float(pct):.2f}%）"
-            parts.append(f"控制链：{chain_text}")
+                chain_text += f"（最终持股 {float(pct):.2f}%）"
+            # 8.09 三轮审查：十大股东链路是"持股路径"而非"控制链"——
+            # 基金/少数持股不等于实际控制，不得过度断言
+            parts.append(f"股权链：{chain_text}")
     if not parts:
         return "股权数据覆盖不足，未取得可展示的股东或控制链记录。"
+    # 8.09 审查：诚实覆盖说明——严格 4 跳+ 为 0 时如实说明数据源覆盖边界，
+    # 不推断"不存在更深控制关系"。
+    note = (
+        (equity.graph or {}).get("coverage_note")
+        if isinstance(equity.graph, dict)
+        else ""
+    )
+    if note and note not in parts:
+        parts.append(note)
     return "；".join(parts) + "。"
 
 
@@ -964,11 +977,41 @@ def _answer_risk_level(state: AgentState) -> dict:
     as_of = getattr(risk_output, "as_of", "") if risk_output else ""
     if not as_of and plan and plan.as_of:
         as_of = plan.as_of.strftime("%Y%m%d")
-    as_of_text = (
-        f"{as_of[:4]}-{as_of[4:6]}-{as_of[6:]}"
-        if len(as_of) == 8 and as_of.isdigit()
-        else "未知"
+
+    def _fmt(period: str) -> str:
+        return (
+            f"{period[:4]}-{period[4:6]}-{period[6:]}"
+            if len(period) == 8 and period.isdigit()
+            else "未知"
+        )
+
+    # WARN-1-3（核验修订 + 8.09 二轮审查）：区分请求截止日与数据实际截止日。
+    #   - 证据期次经 normalize_period 解析（跳过无法解析的），按解析值比较；
+    #   - data_as_of < requested → 双期提示"请求截至 X，最新可用数据截至 Y"；
+    #   - data_as_of > requested → 异常（证据期晚于请求期）明确标记，
+    #     不得当作正常展示；
+    #   - 无任何证据期 → "实际数据截止日未知"，不得把请求期冒充为数据截止日。
+    from app.domain.finance.period import normalize_period
+
+    data_as_of = ""
+    ev_periods = sorted(
+        {p for p in (normalize_period(getattr(e, "period", "")) for e in evidence) if p}
     )
+    if ev_periods:
+        data_as_of = ev_periods[-1]
+    if not as_of:
+        as_of_text = _fmt(data_as_of) if data_as_of else "未知"
+    elif data_as_of and data_as_of < as_of:
+        as_of_text = f"请求截至 {_fmt(as_of)}，最新可用数据截至 {_fmt(data_as_of)}"
+    elif data_as_of and data_as_of > as_of:
+        as_of_text = (
+            f"请求截至 {_fmt(as_of)}（异常：存在晚于请求期的证据，"
+            f"最新 {_fmt(data_as_of)}）"
+        )
+    elif data_as_of:
+        as_of_text = _fmt(data_as_of)
+    else:
+        as_of_text = f"请求截至 {_fmt(as_of)}（实际数据截止日未知）"
 
     coverage = getattr(risk_output, "data_coverage", None) if risk_output else None
     ratio = getattr(coverage, "coverage_ratio", None) if coverage else None

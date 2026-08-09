@@ -87,6 +87,42 @@ class RiskPatternMatch(BaseModel):
     regulatory_hint: str = ""
 
 
+class RiskDataReference(BaseModel):
+    """推导链中的原始数据引用。"""
+
+    evidence_id: str = ""
+    source_type: str = ""
+    field_path: str = ""
+    period: str = ""
+    value: str | None = None
+    unit: str | None = None
+
+
+class RiskDerivationSignal(BaseModel):
+    """支撑结论的一条确定性信号。"""
+
+    signal_id: str
+    signal_type: str
+    label: str
+    severity: str = "unknown"
+    explanation: str = ""
+    current: dict = Field(default_factory=dict)
+    industry_percentile: float | None = None
+    data_refs: list[RiskDataReference] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class RiskDerivationChain(BaseModel):
+    """结论 → 信号 → 数据引用 → Evidence 的推导链。"""
+
+    conclusion_id: str
+    conclusion_type: str
+    conclusion: str
+    risk_level: str = "unknown"
+    signals: list[RiskDerivationSignal] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class RiskOutput(BaseModel):
     """统一风险评分输出（服务层 → Router/Agent 共用）."""
 
@@ -105,6 +141,7 @@ class RiskOutput(BaseModel):
     key_contributors: list[str] = Field(default_factory=list)
     mitigating_factors: list[str] = Field(default_factory=list)
     pattern_matches: list[RiskPatternMatch] = Field(default_factory=list)
+    derivation_chains: list[RiskDerivationChain] = Field(default_factory=list)
     claim_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

@@ -237,6 +237,18 @@ def _perf() -> float:
     return time.perf_counter()
 
 
+# 8.09 五轮审查：PDF 不直接展示内部英文 risk_label，渲染为中文可读标签
+_RISK_LABEL_CN: dict[str, str] = {
+    "concentrated_control": "持股比例集中",
+    "deep_chain": "链路层级过深",
+    "multi_layer_entity": "多层中间实体",
+    "insufficient_source": "来源覆盖不足",
+    "ownership_mismatch": "持股比例不一致",
+    "concerted_action": "一致行动关系",
+    "normal": "正常",
+}
+
+
 def _report_root() -> Path:
     path = Path(settings.REPORT_ROOT_DIR)
     if not path.is_absolute():
@@ -258,7 +270,9 @@ def _sha256_of(path: Path) -> str:
 def _generate_report_pdf(report_id: str, job: dict) -> Path:
     """从真实持久化数据生成 PDF 报告（同步，线程内执行）。"""
     company_code = job.get("company_code") or ""
-    data = _collect_report_data(company_code)
+    # 8.09 审查：报告使用任务实际期次（创建时 as_of 参数），不再固定最新图
+    as_of = ((job.get("request_payload") or {}).get("as_of")) or "20260331"
+    data = _collect_report_data(company_code, as_of=as_of)
 
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfbase import pdfmetrics
@@ -360,21 +374,26 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     else:
         story.append(Paragraph("无规则触发或数据不足。", body))
 
-    # 股权链路
-    story.append(Paragraph("三、股权控制链", h2))
+    # 股权链路（8.09 四轮/五轮审查：措辞随 path_type——ownership 是持股关系，
+    # 不得一律称"控制链/最终控制"；内部英文 risk_label 渲染为中文，不直接展示）
+    story.append(Paragraph("三、股权持股链", h2))
     chains = data.get("equity_chains") or []
     if chains:
         for c in chains[:10]:
+            is_control = c.get("path_type") == "control"
+            chain_term = "控制链" if is_control else "持股链"
+            pct_term = "最终控制比例" if is_control else "最终持股比例"
+            label_cn = _RISK_LABEL_CN.get(c.get("risk_label"), c.get("risk_label"))
             story.append(
                 Paragraph(
-                    f"• 链路 {c.get('chain_id')}：深度 {c.get('depth')}，"
-                    f"最终控制比例 {c.get('final_control_pct')}%，"
-                    f"风险等级 {c.get('risk_level')}（{c.get('risk_label')}）",
+                    f"• {chain_term} {c.get('chain_id')}：深度 {c.get('depth')}，"
+                    f"{pct_term} {c.get('final_control_pct')}%，"
+                    f"风险提示：{label_cn}（等级 {c.get('risk_level')}）",
                     body,
                 )
             )
     else:
-        story.append(Paragraph("无可用控制链数据。", body))
+        story.append(Paragraph("无可用持股链数据。", body))
 
     # 模式三要素
     story.append(Paragraph("四、风险模式", h2))
@@ -421,9 +440,19 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     return pdf_path
 
 
-def _collect_report_data(company_code: str) -> dict:
-    """从真实持久化数据收集报告内容（不编造）。"""
+def _collect_report_data(company_code: str, as_of: str = "20260331") -> dict:
+    """从真实持久化数据收集报告内容（不编造）。
+
+    as_of：报告任务实际期次（YYYYMMDD 或可解析格式），统一传给风险、
+    股权图与股东记录，保证报告内各模块同期次口径。
+    """
     data: dict = {"company_code": company_code}
+    try:
+        from app.domain.finance.period import normalize_period
+
+        norm_as_of = normalize_period(as_of) or "20260331"
+    except Exception:  # noqa: BLE001
+        norm_as_of = "20260331"
     try:
         # 风险（同步 score，避免在 to_thread 内嵌 asyncio.run 导致事件循环冲突）
         try:
@@ -432,7 +461,7 @@ def _collect_report_data(company_code: str) -> dict:
             svc = RiskScoringService()
             out = svc.score(
                 wind_code=company_code,
-                as_of="20260331",
+                as_of=norm_as_of,
                 sec_name=company_code,
                 finance_result=None,
                 equity_result=None,
@@ -492,6 +521,7 @@ def _collect_report_data(company_code: str) -> dict:
                 graph = adapter._get_graph_sync(
                     company_code,
                     depth=5,
+                    as_of=norm_as_of,
                     graph_version=settings.GRAPH_VERSION,
                 )
                 node_name = {n.id: n.label for n in graph.nodes}
@@ -508,8 +538,11 @@ def _collect_report_data(company_code: str) -> dict:
                     chains=graph.control_chains,
                     node_name_map=node_name,
                     graph_edges=graph.edges,
-                    top_shareholder_records=fetch_shareholder_records(company_code),
+                    top_shareholder_records=fetch_shareholder_records(
+                        company_code, as_of=norm_as_of
+                    ),
                     edge_evidence_map=edge_evidence_map,
+                    as_of=norm_as_of,
                     source_system="neo4j",
                 )
                 data["equity_chains"] = [c.to_dict() for c in chain_models]

@@ -47,7 +47,9 @@ def default_risk_reasons(risk_label: str) -> list[str]:
     """风险标签 → 可解释风险原因（默认映射；调用方可追加具体依据）。"""
     _REASONS: dict[str, list[str]] = {
         "deep_chain": ["链路层级过深，实际控制关系难以穿透核实"],
-        "concentrated_control": ["最终控制比例集中，控制权高度集中于少数主体"],
+        # 8.09 四轮审查：措辞中性化——ownership 路径是持股关系，比例集中
+        # 只能说"持股集中"，不得断言"控制权集中"
+        "concentrated_control": ["最终控制/持股比例集中，高度集中于少数主体"],
         "multi_layer_entity": ["存在多层中间实体，关联方识别成本高"],
         "insufficient_source": ["股权数据来源覆盖不足，链路完整性待核验"],
         "ownership_mismatch": ["不同来源持股比例存在偏差，需复核"],
@@ -67,6 +69,10 @@ class EquityChainDTO:
     edge_ids: list[str] = field(default_factory=list)
     depth: int = 0
     final_control_pct: float | None = None
+    # 8.09 四轮审查：透传底层 path_type（ownership/control）——十大股东
+    # 链路默认 ownership（持股关系），只有明确控制证据才标记 control；
+    # 下游（Claim/回答/PDF）按 path_type 选择措辞，不得一律称"控制"。
+    path_type: str = "ownership"
     evidence_ids: list[str] = field(default_factory=list)
     risk_label: str = "normal"
     risk_level: str = "green"
@@ -86,6 +92,7 @@ class EquityChainDTO:
             "edge_ids": self.edge_ids,
             "depth": self.depth,
             "final_control_pct": self.final_control_pct,
+            "path_type": self.path_type,
             "evidence_ids": self.evidence_ids,
             "risk_label": self.risk_label,
             "risk_level": self.risk_level,
@@ -156,14 +163,24 @@ def _derive_risk_label(
     evidence_ids: list[str],
     source_system: str,
     ownership_mismatch: bool = False,
+    path_type: str = "ownership",
 ) -> tuple[str, list[str]]:
-    """依据可解释因素推导风险标签与原因。"""
+    """依据可解释因素推导风险标签与原因。
+
+    8.09 四轮审查：措辞随 path_type 区分——ownership 路径是持股关系，
+    比例集中只能说"持股比例集中"，不得断言"控制权集中"（除非存在明确
+    控制证据标记为 control）。
+    """
     reasons: list[str] = []
+    control_term = "最终控制" if path_type == "control" else "最终持股"
+    # 8.09 五轮审查：深链原因措辞随 path_type——ownership 是持股关系，
+    # 只能说"持股关系难以穿透核实"
+    rel_term = "控制关系" if path_type == "control" else "持股关系"
 
     if depth >= 6:
-        reasons.append("链路层级过深（depth≥6），实际控制关系难以穿透核实")
+        reasons.append(f"链路层级过深（depth≥6），实际{rel_term}难以穿透核实")
     if final_control_pct is not None and final_control_pct >= 50:
-        reasons.append(f"最终控制比例 {final_control_pct:.1f}% 集中（≥50%）")
+        reasons.append(f"{control_term}比例 {final_control_pct:.1f}% 集中（≥50%）")
     if len(node_ids) >= 8:
         reasons.append(f"链路包含 {len(node_ids)} 个节点，多层中间实体结构")
     if source_system != "neo4j":
@@ -246,12 +263,16 @@ def build_equity_chains(
             path_names = chain.get("path_names") or [
                 node_name_map.get(n, n) for n in node_ids
             ]
+            # 8.09 四轮审查：透传底层 path_type（默认 ownership——持股关系，
+            # 不得默认为 control）
+            chain_path_type = str(chain.get("path_type") or "ownership")
         else:
             node_ids = list(chain.path)
             edge_ids = list(chain.edge_ids)
             depth = int(chain.depth)
             final_pct = chain.effective_control_pct()
             path_names = [node_name_map.get(n, n) for n in node_ids]
+            chain_path_type = str(getattr(chain, "path_type", None) or "ownership")
 
         evidence_ids, unmatched = _chain_evidence_ids(
             edge_ids=edge_ids,
@@ -298,6 +319,7 @@ def build_equity_chains(
             evidence_ids=evidence_ids,
             source_system=source_system,
             ownership_mismatch=ownership_mismatch,
+            path_type=chain_path_type,
         )
 
         out.append(
@@ -308,6 +330,7 @@ def build_equity_chains(
                 edge_ids=edge_ids,
                 depth=depth,
                 final_control_pct=float(final_pct) if final_pct is not None else None,
+                path_type=chain_path_type,
                 evidence_ids=evidence_ids,
                 risk_label=risk_label,
                 risk_level=map_risk_level(risk_label),

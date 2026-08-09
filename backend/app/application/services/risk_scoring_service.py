@@ -143,6 +143,11 @@ async def assemble_and_score(
     if out is None:
         raise RuntimeError("RISK_SCORING_ERROR")
     out.rule_set_version = rule_set_version or settings.RULE_SET_VERSION
+    from app.application.services.risk_derivation_service import (
+        build_risk_derivation_chains,
+    )
+
+    out.derivation_chains = build_risk_derivation_chains(out, state["results"].finance)
     return out
 
 
@@ -158,7 +163,18 @@ class RiskScoringService:
         if finance_result is None:
             return 0.0, "skipped", "财务模块未执行"
         statuses = getattr(finance_result, "rule_statuses", {}) or {}
+        if not statuses:
+            return 0.0, "skipped", "财务模块未返回任何规则状态"
         triggered = [rid for rid, s in statuses.items() if s == "triggered"]
+        # WARN-1-1（核验修订）：至少存在一条可判定状态（triggered/not_triggered）
+        # 才视为有效财务维度；全部 insufficient_data/not_applicable 时财务是
+        # "无法判断"而非"无风险"，返回 partial 由聚合层降级（不按 0 风险）。
+        # 混合场景（部分可判定 + 部分数据不足）继续视为有效，不丢弃整个维度。
+        decidable = [
+            rid for rid, s in statuses.items() if s in ("triggered", "not_triggered")
+        ]
+        if not decidable:
+            return 0.0, "partial", "财务规则全部因数据不足/不适用无法判断"
         if not triggered:
             return 0.0, "success", "无触发规则"
         red = sum(
@@ -322,13 +338,13 @@ class RiskScoringService:
         ev_score, ev_status, ev_warn = self._events_score(events_result)
         bm_score, bm_status, bm_warn = self._benchmark_score(benchmarks)
 
-        coverage.finance = finance_result is not None
-        coverage.equity = equity_result is not None
-        coverage.events = events_result is not None and any(
-            bool(getattr(events_result, field, []))
-            for field in ("timeline", "rating_changes", "clusters")
-        )
-        coverage.benchmarks = bool(benchmarks)
+        # 8.09 二轮审查：覆盖布尔全部统一为 status == "success"（与
+        # missing_modules/used_weights 同源，杜绝互相矛盾——对象存在但
+        # 状态 skipped/failed/partial 时不得宣称该维度"有数据"）。
+        coverage.finance = fin_status == "success"
+        coverage.equity = eq_status == "success"
+        coverage.events = ev_status == "success"
+        coverage.benchmarks = bm_status == "success"
 
         # ── 证据与 Claim 收集 ──
         for label, mod_result, mod_name in [
@@ -352,7 +368,10 @@ class RiskScoringService:
                 if cid not in claim_ids:
                     claim_ids.append(cid)
 
-        # ── 权重归一化（缺失模块移除 + 归一化）──
+        # ── 权重归一化（不可判定/缺失模块移除 + 归一化）──
+        # WARN-1-1（核验修订）：只有 status=="success" 的维度参与综合分——
+        # partial（执行了但数据不足无法判断）与 skipped/failed 同样剔除，
+        # 不允许"无法判断"被当作"有数据、无风险"计入覆盖。
         used_weights: dict[str, float] = {}
         for dim in ("finance", "equity", "events", "benchmarks"):
             status = {
@@ -361,11 +380,32 @@ class RiskScoringService:
                 "events": ev_status,
                 "benchmarks": bm_status,
             }[dim]
-            if status in ("skipped", "failed"):
+            if status != "success":
                 continue
             used_weights[dim] = self._weights[dim]
+        # 8.09 二轮审查：coverage_ratio/missing_modules 在零权重提前返回
+        # 之前统一计算——全维度不可用时覆盖信息不得丢失
+        # （曾实测 risk_level=unknown / coverage_ratio=0 / missing_modules=[]）。
+        total_possible_weight = sum(DEFAULT_WEIGHTS.values()) or 1.0
+        coverage.coverage_ratio = round(
+            sum(used_weights.values()) / total_possible_weight, 3
+        )
+        coverage.missing_modules = [
+            d
+            for d in ("finance", "equity", "events", "benchmarks")
+            if d not in used_weights
+        ]
         total_weight = sum(used_weights.values()) or 0.0
         if total_weight <= 0:
+            dim_status = {
+                "finance": fin_status,
+                "equity": eq_status,
+                "events": ev_status,
+                "benchmarks": bm_status,
+            }
+            unavailable = "、".join(
+                f"{d}={s}" for d, s in dim_status.items() if s != "success"
+            )
             return RiskOutput(
                 wind_code=wind_code,
                 sec_name=sec_name,
@@ -374,6 +414,9 @@ class RiskScoringService:
                 risk_level="unknown",
                 data_coverage=coverage,
                 confidence=0.0,
+                mitigating_factors=[
+                    f"全部维度均不可用（{unavailable}），无法评分，不按 0 风险处理"
+                ],
                 warnings=["无任何可用模块数据，无法评分"],
             )
 
@@ -411,15 +454,8 @@ class RiskScoringService:
             )
 
         overall_score = round(sum(s.contribution for s in sub_scores), 3)
-        total_possible_weight = sum(DEFAULT_WEIGHTS.values()) or 1.0
-        coverage.coverage_ratio = round(
-            sum(used_weights.values()) / total_possible_weight, 3
-        )
-        coverage.missing_modules = [
-            d
-            for d in ("finance", "equity", "events", "benchmarks")
-            if d not in used_weights
-        ]
+        # coverage_ratio/missing_modules 已在权重归一化后统一计算
+        # （零权重提前返回前），此处不再重复。
 
         # ── 等级（无数据不绿色）──
         if coverage.coverage_ratio < MIN_COVERAGE_FOR_LEVEL:
@@ -446,6 +482,23 @@ class RiskScoringService:
             risk_level = signal_floor
             warnings.append(f"综合等级按最高有效叶子信号校准为 {risk_level}")
 
+        # WARN-1-1（核验修订 + 8.09 二轮审查）：关键维度保护——财务不可判定
+        # （status != "success"，含 partial/skipped/未返回任何规则状态）时
+        # 不得输出 green"正常"：若股权/舆情已有明确黄色以上叶子信号则保留该
+        # 等级（仅提示财务覆盖不足），否则综合等级必须标记 unknown。
+        if fin_status != "success":
+            if RISK_LEVEL_RANK[signal_floor] >= RISK_LEVEL_RANK["yellow"]:
+                warnings.append(
+                    "财务规则未参与评分（数据不足/未执行），综合等级按股权/舆情"
+                    "明确信号保留"
+                )
+            else:
+                risk_level = "unknown"
+                warnings.append(
+                    "财务规则无法判断（数据不足/未执行）且无其他明确风险信号，"
+                    "综合等级标记 unknown（不输出正常）"
+                )
+
         # ── 置信度 ──
         success_count = sum(1 for s in sub_scores if s.status == "success")
         confidence = min(0.95, 0.3 + success_count * 0.2)
@@ -467,6 +520,14 @@ class RiskScoringService:
             )
         if "equity" not in used_weights:
             mitigating_factors.append("股权模块缺失 → 股权维度不参与综合分")
+        if fin_status != "success":
+            # 8.09 三轮审查：skipped/partial 统一生成财务缺失说明——
+            # 曾只有 partial 分支，skipped（未返回任何规则状态）时
+            # mitigating_factors 为空
+            mitigating_factors.append(
+                "财务规则未参与评分（数据不足/未执行）→ 财务维度不参与综合分"
+                "（不按 0 风险）"
+            )
 
         # ── 模式匹配（唯一来源 fraud_patterns.yaml）──
         rule_dict: dict[str, dict] = {}

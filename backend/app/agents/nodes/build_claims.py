@@ -115,14 +115,27 @@ _SEVERITY_RANK = {
 
 
 def _chain_claim_text(chain: dict, company_name: str) -> str:
-    """股权链路 Claim 文本（final_control_pct 为 0-100 百分比）。"""
-    path_names = "→".join(chain.get("path_names") or [])
+    """股权链路 Claim 文本（final_control_pct 为 0-100 百分比）。
+
+    8.09 四轮审查：措辞随 path_type 区分——ownership 是持股关系，只能说
+    "股权链穿透/最终持股"；只有 path_type=="control"（存在明确控制证据）
+    才使用"控制链穿透/最终控制"。
+    8.09 五轮审查：final_control_pct 缺失时回退 total_stake（0-1）兜底，
+    降级/历史载荷同样经此函数统一措辞（不再各写一套"控制链"文本）。
+    """
+    path_names = "→".join(chain.get("path_names") or chain.get("path") or [])
     pct = chain.get("final_control_pct")
+    if pct is None:
+        stake = chain.get("total_stake")
+        pct = float(stake) * 100 if stake else None
+    is_control = chain.get("path_type") == "control"
     if pct is None:
         pct_txt = ""
     else:
-        pct_txt = f"，最终控制 {float(pct):.1f}%"
-    return f"{company_name}控制链穿透：{path_names}{pct_txt}"
+        term = "最终控制" if is_control else "最终持股"
+        pct_txt = f"，{term} {float(pct):.1f}%"
+    chain_term = "控制链" if is_control else "股权链"
+    return f"{company_name}{chain_term}穿透：{path_names}{pct_txt}"
 
 
 def _append_equity_claims(
@@ -214,8 +227,14 @@ def _append_equity_claims(
             severity = str(chain.get("risk_level") or "unknown")
             if severity not in _VALID_SEVERITIES:
                 severity = "unknown"
+            # 8.09 四轮审查：ownership 链路是持股关系事实展示，不得称"控制关系"
+            is_control = chain.get("path_type") == "control"
             limitations = [
-                "股权链路为事实性控制关系展示，不构成风险认定"
+                (
+                    "股权链路为事实性控制关系展示，不构成风险认定"
+                    if is_control
+                    else "股权链路为持股关系事实展示，不构成控制关系或风险认定"
+                )
                 if severity == "green"
                 else "股权风险信号不等同于造假事实认定"
             ]
@@ -249,17 +268,9 @@ def _append_equity_claims(
             eq_ev_ids = [ev.evidence_id for ev in all_eq_ev]
         eq_ev_ids = _valid_ev_ids(eq_ev_ids)
         if eq_ev_ids:
-            path_names = "→".join(
-                top_chain.get("path_names") or top_chain.get("path", [])
-            )
-            pct = top_chain.get("final_control_pct")
-            if pct is None:
-                # 旧链可能只有 total_stake（0-1）
-                stake = top_chain.get("total_stake", 0)
-                pct_txt = f"，最终控制 {float(stake) * 100:.1f}%" if stake else ""
-            else:
-                pct_txt = f"，最终控制 {float(pct):.1f}%"
-            text = f"{company_name}控制链穿透：{path_names}{pct_txt}"
+            # 8.09 五轮审查：降级/历史载荷统一走 _chain_claim_text()——
+            # 曾硬编码"控制链穿透/最终控制"，与 ownership 语义冲突
+            text = _chain_claim_text(top_chain, company_name)
             claims.append(
                 _mk_claim(
                     state,

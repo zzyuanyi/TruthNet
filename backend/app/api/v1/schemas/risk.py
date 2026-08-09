@@ -73,6 +73,36 @@ class RiskEvidence(BaseModel):
     summary: str = Field(default="", description="证据摘要")
 
 
+class DerivationDataRef(BaseModel):
+    evidence_id: str = Field(default="")
+    source_type: str = Field(default="")
+    field_path: str = Field(default="")
+    period: str = Field(default="")
+    value: str | None = Field(default=None)
+    unit: str | None = Field(default=None)
+
+
+class DerivationSignal(BaseModel):
+    signal_id: str
+    signal_type: str
+    label: str
+    severity: str = Field(default="unknown")
+    explanation: str = Field(default="")
+    current: dict = Field(default_factory=dict)
+    industry_percentile: float | None = Field(default=None)
+    data_refs: list[DerivationDataRef] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class DerivationChain(BaseModel):
+    conclusion_id: str
+    conclusion_type: str
+    conclusion: str
+    risk_level: str = Field(default="unknown")
+    signals: list[DerivationSignal] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class RiskResponseData(BaseModel):
     """综合风险响应数据 — V12 §11.12."""
 
@@ -90,6 +120,7 @@ class RiskResponseData(BaseModel):
     # 风险标签与模式
     risk_tags: list[RiskTag] = Field(default_factory=list)
     pattern_matches: list[PatternMatch] = Field(default_factory=list)
+    derivation_chains: list[DerivationChain] = Field(default_factory=list)
 
     # 置信度与覆盖
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="综合置信度")

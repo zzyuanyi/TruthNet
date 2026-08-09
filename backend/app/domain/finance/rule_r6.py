@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -16,6 +20,10 @@ from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 
 def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
+    config = get_rule_config("R6")
+    if not config.enabled:
+        return disabled_rule_result("R6", "其他应收款与关联占用风险")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R6",
         rule_version="1.0.0",
@@ -114,43 +122,55 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     # 判定时显式保护，输出时省略该指标。
     oth_yoy_pct = oth_yoy * 100 if oth_yoy is not None else None
 
-    oth_large = oth_val > 50_000_000  # 5000 万
+    oth_large = oth_val > thresholds.large_amount
 
     severity = "green"
     # red
     if (
-        oth_to_assets > 10
+        oth_to_assets > thresholds.red_assets_ratio_pct
         and oth_yoy_pct is not None
-        and oth_yoy_pct > 200
+        and oth_yoy_pct > thresholds.red_yoy_pct
         and oth_large
     ):
         severity = "red"
-    elif oth_to_assets > 10 and oth_to_acct is not None and oth_to_acct > 1.0:
+    elif (
+        oth_to_assets > thresholds.red_assets_ratio_pct
+        and oth_to_acct is not None
+        and oth_to_acct > thresholds.red_receivable_ratio
+    ):
         severity = "red"
 
     # orange
     if (
         severity == "green"
-        and oth_to_assets > 10
+        and oth_to_assets > thresholds.orange_assets_ratio_pct
         and oth_yoy_pct is not None
-        and oth_yoy_pct > 100
+        and oth_yoy_pct > thresholds.orange_yoy_pct
         and oth_large
     ):
         severity = "orange"
     elif (
         severity == "green"
-        and oth_to_assets > 10
+        and oth_to_assets > thresholds.orange_assets_ratio_pct
         and oth_to_acct is not None
-        and oth_to_acct > 0.5
+        and oth_to_acct > thresholds.orange_receivable_ratio
     ):
         severity = "orange"
 
     # yellow
     if severity == "green":
         if (
-            (oth_to_assets > 10 and oth_large)
-            or (oth_yoy_pct is not None and oth_yoy_pct > 200 and oth_large)
-            or (oth_to_assets > 5 and oth_yoy_pct is not None and oth_yoy_pct > 200)
+            (oth_to_assets > thresholds.yellow_assets_ratio_pct and oth_large)
+            or (
+                oth_yoy_pct is not None
+                and oth_yoy_pct > thresholds.yellow_yoy_pct
+                and oth_large
+            )
+            or (
+                oth_to_assets > thresholds.yellow_secondary_assets_ratio_pct
+                and oth_yoy_pct is not None
+                and oth_yoy_pct > thresholds.yellow_yoy_pct
+            )
         ):
             severity = "yellow"
 

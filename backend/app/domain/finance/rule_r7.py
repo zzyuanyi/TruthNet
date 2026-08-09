@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -16,6 +20,10 @@ from app.domain.finance.rule_utils import count_valid, yoy_growth
 
 
 def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
+    config = get_rule_config("R7")
+    if not config.enabled:
+        return disabled_rule_result("R7", "盈利质量与非经常性依赖")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R7",
         rule_version="1.0.0",
@@ -156,53 +164,59 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         # 完整版
         if (
             core_ratio is not None
-            and core_ratio < 0.3
+            and core_ratio < thresholds.red_core_profit_ratio
             and (
                 quality_div is not None
-                and quality_div > 30
+                and quality_div > thresholds.quality_divergence_pp
                 or revenue_div is not None
-                and revenue_div > 20
+                and revenue_div > thresholds.revenue_divergence_pp
             )
         ):
             severity = "red"
         elif (
             core_ratio is not None
-            and core_ratio < 0.5
+            and core_ratio < thresholds.weak_core_profit_ratio
             and quality_div is not None
-            and quality_div > 30
+            and quality_div > thresholds.quality_divergence_pp
         ):
             severity = "orange"
         elif (
             core_ratio is not None
-            and core_ratio < 0.5
+            and core_ratio < thresholds.weak_core_profit_ratio
             and revenue_div is not None
-            and revenue_div > 20
+            and revenue_div > thresholds.revenue_divergence_pp
         ):
             severity = "orange"
-        elif core_ratio is not None and core_ratio < 0.3:
+        elif core_ratio is not None and core_ratio < thresholds.red_core_profit_ratio:
             severity = "orange"
-        elif non_oper_ratio is not None and non_oper_ratio > 50:
+        elif (
+            non_oper_ratio is not None
+            and non_oper_ratio > thresholds.orange_non_operating_ratio_pct
+        ):
             severity = "orange"
-        elif core_ratio is not None and core_ratio < 0.5:
+        elif core_ratio is not None and core_ratio < thresholds.weak_core_profit_ratio:
             severity = "yellow"
-        elif quality_div is not None and quality_div > 30:
+        elif quality_div is not None and quality_div > thresholds.quality_divergence_pp:
             severity = "yellow"
-        elif revenue_div is not None and revenue_div > 20:
+        elif revenue_div is not None and revenue_div > thresholds.revenue_divergence_pp:
             severity = "yellow"
-        elif non_oper_ratio is not None and non_oper_ratio > 30:
+        elif (
+            non_oper_ratio is not None
+            and non_oper_ratio > thresholds.yellow_non_operating_ratio_pct
+        ):
             severity = "yellow"
     else:
         # 简化版：仅用 revenue + cash 判断，上限 orange
         if (
             revenue_div is not None
-            and revenue_div > 20
+            and revenue_div > thresholds.revenue_divergence_pp
             and cash_div is not None
-            and cash_div > 30
+            and cash_div > thresholds.cash_divergence_pp
         ):
             severity = "orange"
-        elif revenue_div is not None and revenue_div > 20:
+        elif revenue_div is not None and revenue_div > thresholds.revenue_divergence_pp:
             severity = "yellow"
-        elif cash_div is not None and cash_div > 30:
+        elif cash_div is not None and cash_div > thresholds.cash_divergence_pp:
             severity = "yellow"
 
     result.status = "triggered" if severity != "green" else "not_triggered"
@@ -291,7 +305,7 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
                 "净利润增速与现金流/营收增速存在背离，盈利质量有待改善。"
             )
     elif severity == "yellow":
-        if core_ratio is not None and core_ratio < 0.5:
+        if core_ratio is not None and core_ratio < thresholds.weak_core_profit_ratio:
             result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性。"
         else:
             result.explanation = "净利润增速与现金流/营收增速存在背离，建议关注。"

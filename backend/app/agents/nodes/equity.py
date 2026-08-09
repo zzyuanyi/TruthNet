@@ -222,6 +222,10 @@ def equity_node(state: AgentState) -> dict:
         graph_data = {
             "source": "neo4j",
             "graph_version": graph_version,
+            # 8.09 审查：多跳诚实覆盖说明透传（严格 4 跳+ 为 0 时如实说明）
+            "coverage_note": graph.coverage_note,
+            "truncated": graph.truncated,
+            "max_observed_hops": graph.max_observed_hops,
             "nodes": [
                 {
                     "id": n.id,
@@ -259,6 +263,9 @@ def equity_node(state: AgentState) -> dict:
                     "depth": chain.depth,
                     "edge_ids": chain.edge_ids,
                     "final_control_pct": chain.effective_control_pct(),
+                    # 8.09 四轮审查：透传 path_type（ownership 默认——持股链
+                    # 路不得在下游被称"控制链"）
+                    "path_type": chain.path_type or "ownership",
                     "source": "neo4j",
                 }
             )
@@ -358,6 +365,9 @@ def equity_node(state: AgentState) -> dict:
             "depth": chain.depth,
             "edge_ids": chain.edge_ids,
             "final_control_pct": chain.effective_control_pct(),
+            # 8.09 五轮审查：Lite chains 显式透传 path_type（与 Full 分支一致，
+            # 曾缺字段导致 Chat 默认 ownership 而 REST paths 输出 control）
+            "path_type": chain.path_type or "ownership",
             "source": "networkx",
         }
         for chain in graph.control_chains

@@ -101,7 +101,9 @@ def test_full_modules_calculate_overall():
         wind_code="600519.SH",
         as_of="20260331",
         sec_name="贵州茅台",
-        finance_result=_fin_result(statuses={}),
+        # WARN-1-1 修订后 statuses={} 视为"未返回任何规则状态"(skipped)；
+        # 用可判定状态保留"全模块评分"原意图
+        finance_result=_fin_result(statuses={"R1": "not_triggered"}),
         equity_result=_eq_result(chains=[]),
         events_result=_ev_result(
             timeline=[
@@ -324,3 +326,143 @@ def test_risk_failure_path_in_compiled_graph():
         result["module_status"]["finance"].state == "success"
     ), "失败路径不得破坏既有模块状态"
     assert result["risk_output"] is None
+
+
+# ── WARN-1-1（核验修订）：财务完全不可判断 → 聚合层不得输出"正常" ──
+
+
+def test_all_finance_insufficient_returns_unknown_not_green():
+    """7 条规则全部 insufficient/not_applicable → 财务 partial → 无其他明确
+    黄色以上叶子信号时综合等级必须 unknown，绝不输出 green"正常"。"""
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(
+            statuses={f"R{i}": "insufficient_data" for i in range(1, 6)}
+        ),
+        equity_result=_eq_result(chains=[]),
+        events_result=_ev_result(
+            timeline=[{"sentiment": "neutral", "title": "常规公告"}]
+        ),
+        benchmarks={"r1_gap": {"company_percentile": 30.0}},
+    )
+    assert out.risk_level == "unknown"
+    assert "finance" in out.data_coverage.missing_modules
+    assert any("综合等级标记 unknown" in w for w in out.warnings)
+    assert any("财务" in f for f in out.mitigating_factors)
+    # 财务维度不得按"有数据无风险"参与权重
+    assert not any(s.dimension == "finance" for s in out.sub_scores)
+
+
+def test_mixed_finance_statuses_keeps_finance_dimension():
+    """部分规则可判定 + 部分 insufficient → 财务维度仍有效，不因个别规则
+    数据不足丢弃整个财务维度（康美 as_of=20260331 实测场景）。"""
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(
+            statuses={
+                "R1": "not_triggered",
+                "R2": "insufficient_data",
+                "R3": "not_triggered",
+                "R4": "not_applicable",
+            }
+        ),
+        equity_result=_eq_result(chains=[]),
+        events_result=None,
+        benchmarks=None,
+    )
+    fin_subs = [s for s in out.sub_scores if s.dimension == "finance"]
+    assert fin_subs and fin_subs[0].status == "success"
+    assert "finance" not in out.data_coverage.missing_modules
+    assert out.risk_level != "unknown"  # 财务维度有效 → 正常评分
+
+
+def test_finance_partial_keeps_equity_red_signal():
+    """财务完全不可判断但股权已有 red 信号 → 保留 red 并提示财务覆盖不足，
+    不得统一覆盖成 unknown（不得漏报明确风险）。"""
+    equity = EquityResult(
+        graph={"nodes": [{"id": "company_x"}]},
+        chains=[{"path": ["a", "b"]}],
+        chain_details=[{"risk_level": "red"}],
+    )
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(
+            statuses={f"R{i}": "insufficient_data" for i in range(1, 6)}
+        ),
+        equity_result=equity,
+        events_result=None,
+        benchmarks=None,
+    )
+    assert out.risk_level == "red"
+    assert any("财务规则未参与评分" in w for w in out.warnings)
+    assert not any("综合等级标记 unknown" in w for w in out.warnings)
+
+
+# ── 8.09 二轮审查：补充反例（skipped / 零权重覆盖 / 布尔一致）──
+
+
+def test_finance_skipped_empty_statuses_returns_unknown():
+    """二轮审查反例：finance.rule_statuses={}（skipped，未返回任何规则状态）
+    时不得输出 green"正常"——关键维度保护必须覆盖 partial 之外的状态。"""
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(statuses={}),
+        equity_result=_eq_result(chains=[]),
+        events_result=_ev_result(
+            timeline=[{"sentiment": "neutral", "title": "常规公告"}]
+        ),
+        benchmarks={"r1_gap": {"company_percentile": 30.0}},
+    )
+    assert out.data_coverage.coverage_ratio == pytest.approx(0.6, abs=0.01)
+    assert (
+        out.risk_level == "unknown"
+    ), f"财务 skipped 且无明确风险信号时必须 unknown，实际 {out.risk_level}"
+    assert "finance" in out.data_coverage.missing_modules
+
+
+def test_all_dimensions_unavailable_keeps_coverage_info():
+    """二轮审查反例：全维度不可用时覆盖信息不得丢失
+    （曾实测 coverage_ratio=0 / missing_modules=[] / mitigating_factors=[]）。"""
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(statuses={}),
+        equity_result=None,
+        events_result=None,
+        benchmarks=None,
+    )
+    assert out.risk_level == "unknown"
+    assert out.data_coverage.coverage_ratio == 0.0
+    assert "finance" in out.data_coverage.missing_modules
+    assert "equity" in out.data_coverage.missing_modules
+    assert any("全部维度均不可用" in f for f in out.mitigating_factors)
+    assert any("无法评分" in w for w in out.warnings)
+
+
+def test_coverage_bools_match_missing_modules():
+    """二轮审查：覆盖布尔与 missing_modules 同源（全部按 status==success），
+    不得出现 coverage.equity=true 但 missing_modules 含 equity 的矛盾。"""
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(statuses={}),
+        equity_result=_eq_result(chains=[]),
+        events_result=None,
+        benchmarks=None,
+    )
+    assert out.data_coverage.equity is True
+    assert out.data_coverage.events is False
+    assert out.data_coverage.benchmarks is False
+    assert "events" in out.data_coverage.missing_modules
+    assert "benchmarks" in out.data_coverage.missing_modules
+    assert "equity" not in out.data_coverage.missing_modules
