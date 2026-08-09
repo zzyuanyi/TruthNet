@@ -191,7 +191,12 @@ def equity_node(state: AgentState) -> dict:
             }
 
         try:
-            graph = adapter._get_graph_sync(company_code, depth=5, as_of=as_of or None)
+            graph = adapter._get_graph_sync(
+                company_code,
+                depth=5,
+                as_of=as_of or None,
+                graph_version=settings.GRAPH_VERSION,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("股权查询失败: %s", company_code)
             return {

@@ -231,7 +231,11 @@ class Neo4jEquityGraph:
     ) -> EquityGraph:
         """获取股权穿透图谱（真实 Neo4j 查询）— 异步入口."""
         return self._get_graph_sync(
-            company_code, depth=depth, direction=direction, as_of=as_of
+            company_code,
+            depth=depth,
+            direction=direction,
+            as_of=as_of,
+            graph_version=graph_version,
         )
 
     def _get_graph_sync(
@@ -262,6 +266,7 @@ class Neo4jEquityGraph:
             return EquityGraph(company_id=company_code, source_system="neo4j")
 
         depth = max(1, min(10, depth))
+        active_graph_version = graph_version or settings.GRAPH_VERSION
 
         # 时点过滤条件（使用 rel 而非 r，因为 r 是路径中的关系列表）
         if as_of:
@@ -279,6 +284,7 @@ class Neo4jEquityGraph:
             "MATCH (target:Entity {wind_code: $code}) "
             f"MATCH path = (target){rel_pattern}(other:Entity) "
             "WHERE all(rel IN relationships(path) WHERE rel.mock = false "
+            "  AND rel.graph_version = $graph_version "
             f"  {time_filter}) "
             "RETURN target, path "
             "LIMIT 200"
@@ -290,6 +296,7 @@ class Neo4jEquityGraph:
                 {
                     "code": resolved_code,
                     "as_of": as_of,
+                    "graph_version": active_graph_version,
                 },
             )
         except Exception as e:
@@ -379,7 +386,7 @@ class Neo4jEquityGraph:
             nodes=list(nodes_map.values()),
             edges=list(edges_map.values()),
             control_chains=paths_list,
-            graph_version=settings.GRAPH_VERSION,
+            graph_version=active_graph_version,
             dataset_version=settings.DATASET_VERSION,
             source_system="neo4j",
         )
@@ -389,8 +396,14 @@ class Neo4jEquityGraph:
         company_code: str,
         max_depth: int = 5,
         as_of: str | None = None,
+        graph_version: str | None = None,
     ) -> list[OwnershipChain]:
-        graph = await self.get_graph(company_code, depth=max_depth, as_of=as_of)
+        graph = await self.get_graph(
+            company_code,
+            depth=max_depth,
+            as_of=as_of,
+            graph_version=graph_version,
+        )
         return graph.control_chains
 
     async def get_relationship_by_id(self, relationship_id: str) -> dict | None:
@@ -743,6 +756,7 @@ class Neo4jEquityGraph:
         graph_version: str | None = None,
         min_depth: int = 3,
         import_run_id: str | None = None,
+        all_versions: bool = False,
     ) -> int:
         """统计上市公司间 min_depth 跳以上路径数（P0-2 验收辅助）。
 
@@ -754,7 +768,7 @@ class Neo4jEquityGraph:
         """
         if not self._driver:
             return 0
-        gv = graph_version or _DEFAULT_GRAPH_VERSION
+        gv = graph_version or settings.GRAPH_VERSION
         # 起点/终点必须是公司；中间节点不限制（真实穿透链路常经股东身份）。
         # P0-1：仅统计 is_latest=true 的关系 + 路径节点互异（防循环路径）。
         records, _, _ = self._driver.execute_query(
@@ -763,13 +777,18 @@ class Neo4jEquityGraph:
             WHERE a.wind_code <> '' AND b.wind_code <> ''
               AND a.wind_code <> b.wind_code
               AND all(r IN relationships(p)
-                      WHERE r.graph_version = $gv AND r.is_latest = true
+                      WHERE ($all_versions OR r.graph_version = $gv)
+                        AND r.is_latest = true
                         AND ($run_id IS NULL OR r.seen_run_id = $run_id))
               AND all(n IN nodes(p)
                       WHERE size([m IN nodes(p) WHERE m = n]) = 1)
             RETURN count(p) AS cnt
             """,
-            {"gv": gv, "run_id": import_run_id},
+            {
+                "gv": gv,
+                "run_id": import_run_id,
+                "all_versions": all_versions,
+            },
         )
         return min(records[0]["cnt"], 10000) if records else 0
 
