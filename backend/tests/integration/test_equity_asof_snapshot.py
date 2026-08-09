@@ -2,13 +2,15 @@
 
 需要 TRUTHNET_RUN_EXTERNAL_TESTS=1 + MySQL/Neo4j 数据齐备。
 
-验收口径（8.09 审查）：
+验收口径（8.09 审查 + 8.10 修订）：
   1. as_of 快照按目标公司整体切换（退出前十大的旧股东被排除），
      不得按 (source, target) 对取最新期；
   2. as_of >= 全图最新快照期时，与不传 as_of 的节点/边/路径集合完全一致；
   3. YYYY-MM-DD 与 YYYYMMDD 返回完全相同；非法 as_of → 422；
-  4. 严格 >3 层 = hop_count >= 4：min_depth=4 计数为 0、min_depth=3 计数 ≥1
-     （真库如实记录：3 跳链存在，4 跳及以上为 0）；
+  4. 严格 >3 层 = hop_count >= 4，真库如实记录（起点不限、目标端上市公司）：
+     min_depth=3, max_depth=10 → 568 条；min_depth=4, max_depth=10 → 10 条
+     （存在 10 条可验证的四跳持股路径，最大深度为四跳）；
+     min_depth=5, max_depth=10 → 0 条；均 truncated=False；
   5. REST /risk 与 Chat 同期次风险等级、股权边数一致；
   6. 响应如实暴露 requested_depth/max_observed_hops/truncated/coverage_note。
 """

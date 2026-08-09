@@ -39,8 +39,12 @@ _DEFAULT_DATASET_VERSION = "mock-v12"
 _HOP_COUNT_CAP = 10000
 
 # ── 快照缓存（8.09 审查：历史时点聚合 ~4s，进程内缓存避免每次查询重算；
-#    三轮审查：图可能在同一 graph_version 下重建（如重复导入 equity-2026Q2），
-#    缓存必须有 TTL 失效——默认 5 分钟，同版本重建后最多滞后一个 TTL；
+#    8.10 修订：失效语义完整说明——
+#      · 新 graph_version 使用新缓存键（自然失效）；
+#      · 同一 graph_version 下重建（如重复导入 equity-2026Q2）时，
+#        缓存最多残留 _SNAPSHOT_CACHE_TTL_SECONDS（默认 300s）；
+#      · 运维要求（见 docs/API_CONTRACT_V1.md）：导入期间不对外查询，
+#        或导入完成后重启后端，或接受最多 300 秒最终一致性；
 #    map 缓存上限防膨胀）──
 _SNAPSHOT_CACHE_TTL_SECONDS = 300.0
 _LATEST_SNAPSHOT_CACHE: dict[
@@ -824,7 +828,12 @@ class Neo4jEquityGraph:
     # ── 快照辅助（8.09 审查：整体快照语义，进程内缓存）──
 
     def _latest_snapshot_period(self, graph_version: str) -> str | None:
-        """全图 is_latest 边最大报告期（TTL 缓存，同版本重建后最多滞后一个 TTL）。"""
+        """全图 is_latest 边最大报告期（TTL 缓存）。
+
+        失效语义（8.10 修订）：新 graph_version 使用新缓存键；同一版本
+        重建后最多残留 300 秒——导入完成后应重启后端，或接受该最终
+        一致性窗口（见 docs/API_CONTRACT_V1.md 运维约束）。
+        """
         cached = _LATEST_SNAPSHOT_CACHE.get(graph_version)
         if (
             cached is not None
@@ -939,7 +948,10 @@ class Neo4jEquityGraph:
         →上市公司"链路的最上游是自然人/基金/非上市企业，限制两端上市
         公司会漏掉全部深层链（真库实测：两端限制 4..10 跳为 0，起点不限
         为 10 条）；防自环按实体 ID 比较（上游可能无 wind_code）。
-        避免全图（含 64 万 person/产品边）变长路径指数爆炸。
+        查询范围设计（目标端限定 + max_depth 上限）用于避免全图（含
+        64 万 person/产品边）变长路径指数爆炸；8.10 修订说明：10000
+        封顶只限制返回值，不减少查询计算量——Cypher 仍先执行完整
+        count(DISTINCT ...)，本函数仅作验收/管理查询使用。
         按唯一节点序列计数（同一节点链的多期历史边只计一次）。
         计数封顶 10000：截断时返回 truncated=true（截断值不是精确值，
         不得静默当作精确计数）。
