@@ -220,8 +220,20 @@ def test_explicit_company_in_query_beats_memory_code():
     assert company.sec_name == "贵州茅台"
 
 
-def test_request_context_code_highest_priority():
-    """request_context.company_code 最高优先（跨轮上下文覆盖记忆）。"""
+def test_request_context_code_highest_priority(monkeypatch):
+    """request_context.company_code 最高优先（跨轮上下文覆盖记忆）。
+
+    CI 环境无 MySQL（lite profile 无 603180.SH mock），monkeypatch 隔离
+    数据库依赖，仅验证优先级语义。
+    """
+    from app.agents.nodes import resolve_entity as node
+
+    def fake_find(query):
+        if query == "603180.SH":
+            return _ref("金牌家居", "603180.SH")
+        return None
+
+    monkeypatch.setattr(node, "_find_company", fake_find)
     mc = MemoryContext(
         resolved_entity_name="贵州茅台",
         is_anaphora=False,

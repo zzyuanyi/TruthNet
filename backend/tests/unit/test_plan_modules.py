@@ -62,8 +62,12 @@ def _no_company_state(question: str) -> dict:
 
 
 def test_finance_equity_only_financial_crosscheck():
-    """应收账款+股东 → finance + equity，仅 financial_vs_cashflow，不出现 equity_vs_events。"""
-    result = plan_modules_node(_state("应收账款和股东情况"))
+    """财务+股东 → finance + equity，仅 financial_vs_cashflow，不出现 equity_vs_events。
+
+    93c4731 引入指标短答后"应收账款"命中 indicator 分支（intent=indicator），
+    改用"财务和股东情况"验证 finance+equity 路由。
+    """
+    result = plan_modules_node(_state("财务和股东情况"))
     plan = result["plan"]
     assert set(plan.requested_modules) == {"finance", "equity"}
     assert "financial_vs_cashflow" in plan.cross_checks
@@ -89,8 +93,12 @@ def test_diagnosis_all_modules_both_crosschecks():
 
 
 def test_finance_only_no_crosscheck():
-    """营业收入如何 → 仅 finance，无交叉校验。"""
-    result = plan_modules_node(_state("营业收入如何"))
+    """利润如何 → 仅 finance，无交叉校验。
+
+    93c4731 引入指标短答后"营业收入"命中 indicator 分支（intent=indicator），
+    改用"利润如何"验证 finance-only 路由（同样不触发 indicator 模式）。
+    """
+    result = plan_modules_node(_state("利润如何"))
     plan = result["plan"]
     assert plan.requested_modules == ["finance"]
     assert plan.cross_checks == []
