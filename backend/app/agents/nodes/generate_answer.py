@@ -35,6 +35,7 @@ from app.domain.finance.parent_scope import (
 )
 from app.domain.provenance.id_factory import (
     NS_COMPANY_REGISTRY,
+    NS_FINANCE,
     NS_REPORT,
     make_claim_id,
     make_evidence_id,
@@ -783,6 +784,123 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
     }
 
 
+def _format_indicator_value(value: float, unit: str) -> str:
+    if unit == "percent":
+        return f"{value:.2f}%"
+    absolute = abs(value)
+    if absolute >= 100_000_000:
+        return f"{value / 100_000_000:.2f}亿元"
+    if absolute >= 10_000:
+        return f"{value / 10_000:.2f}万元"
+    return f"{value:,.2f}元"
+
+
+def _answer_indicator(state: AgentState, indicator: str) -> dict:
+    """Phase D #3A：基础财务指标确定性短答与可回查证据。"""
+    company = state.get("company")
+    if company is None:
+        return {}
+    if indicator == "unsupported":
+        answer = "该指标暂未覆盖。当前可查询基础报表指标与资产负债率。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    require_exact = bool(plan and plan.as_of_kind == "report_period")
+    from app.application.services.indicator_query_service import query_indicator
+
+    result = query_indicator(
+        company.wind_code,
+        indicator,
+        as_of=as_of,
+        require_exact_period=require_exact,
+    )
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+    if result.status != "ok" or result.value is None:
+        answer = f"{name_code}的{result.label}：数据不足，无法按母公司口径计算。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    value_text = _format_indicator_value(result.value, result.unit)
+    period_text = f"{result.period[:4]}-{result.period[4:6]}-{result.period[6:]}"
+    answer = (
+        f"{name_code}的{result.label}为 {value_text}" f"（{period_text}，母公司口径）。"
+    )
+    evidence: list[EvidenceRef] = []
+    source_record_id = f"{company.wind_code}|{result.period}|408006000"
+    for observation in result.observations:
+        evidence_id = make_evidence_id(
+            source_namespace=NS_FINANCE,
+            source_type="financial_statement",
+            source_record_id=source_record_id,
+            field_path=observation.field_path,
+            period=result.period,
+            dataset_version=settings.DATASET_VERSION,
+            company_code=company.wind_code,
+        )
+        evidence.append(
+            EvidenceRef(
+                evidence_id=evidence_id,
+                source_type="financial_statement",
+                source_record_id=source_record_id,
+                source_table=observation.source_table,
+                field_path=observation.field_path,
+                period=result.period,
+                value=str(observation.value),
+                unit="CNY",
+                source_title=f"{company.sec_name} · 母公司报表",
+                statement_scope="parent_company",
+                module="finance",
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=company.wind_code,
+                dataset_version=settings.DATASET_VERSION,
+            )
+        )
+    evidence_ids = [item.evidence_id for item in evidence]
+    claim = Claim(
+        claim_id=make_claim_id(
+            turn_id=turn_id,
+            company_code=company.wind_code,
+            claim_type="indicator",
+            claim_text=f"{result.label}：{value_text}",
+        ),
+        text=f"{result.label}为 {value_text}",
+        claim_type="indicator",
+        severity="unknown",
+        evidence_ids=evidence_ids,
+        verification_status="verified",
+        limitations=["母公司报表口径"],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=company.wind_code,
+        module="finance",
+    )
+    _emit_segment(state, answer)
+    return {
+        "claims": [claim],
+        "evidence": evidence,
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=[claim],
+            evidence=evidence,
+        ),
+    }
+
+
 def generate_answer_node(state: AgentState) -> dict:
     company = state.get("company")
     claims = state.get("claims", [])
@@ -1013,6 +1131,8 @@ def generate_answer_node(state: AgentState) -> dict:
     # R9：公司事实轻量回答（company_fact plan：requested_modules=[]，
     # 未执行 finance/equity/events/risk；诚实回答 + registry Evidence）
     plan = state.get("plan")
+    if getattr(plan, "intent", "") == "indicator":
+        return _answer_indicator(state, getattr(plan, "indicator", "") or "")
     if getattr(plan, "intent", "") == "company_fact":
         return _answer_company_fact(state, getattr(plan, "fact_key", "") or "")
 

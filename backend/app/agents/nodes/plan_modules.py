@@ -256,6 +256,33 @@ _COMPANY_FACT_TEMPLATES = (
     "股本总额",
 )
 
+_UNSUPPORTED_INDICATOR_PATTERNS = (
+    "应收账款周转率",
+    "存货周转率",
+    "总资产周转率",
+)
+_INDICATOR_PATTERNS: list[tuple[str, str]] = [
+    ("资产负债率", "debt_to_assets"),
+    ("应收账款余额", "accounts_receivable"),
+    ("应收账款", "accounts_receivable"),
+    ("经营活动现金流", "operating_cash_flow"),
+    ("经营现金流", "operating_cash_flow"),
+    ("营业收入", "operating_revenue"),
+    ("总资产", "total_assets"),
+    ("总负债", "total_liabilities"),
+    ("净利润", "net_profit"),
+    ("存货", "inventories"),
+]
+_INDICATOR_DIAGNOSIS_CUES = (
+    "分析",
+    "风险",
+    "造假",
+    "舞弊",
+    "异常",
+    "诊断",
+    "有问题",
+)
+
 _ANALYSIS_CUES = (
     "分析",
     "财务",
@@ -330,6 +357,19 @@ def detect_company_fact(user_query: str) -> str | None:
     for pattern, key in _COMPANY_FACT_PATTERNS:
         if pattern.search(ql):
             return key
+    return None
+
+
+def detect_indicator(user_query: str) -> str | None:
+    """识别可确定性短答的基础财务指标（Phase D #3A）。"""
+    query = user_query or ""
+    if any(cue in query for cue in _INDICATOR_DIAGNOSIS_CUES):
+        return None
+    if any(pattern in query for pattern in _UNSUPPORTED_INDICATOR_PATTERNS):
+        return "unsupported"
+    for pattern, indicator in _INDICATOR_PATTERNS:
+        if pattern in query:
+            return indicator
     return None
 
 
@@ -451,6 +491,20 @@ def plan_modules_node(state: AgentState) -> dict:
     # R9：公司事实轻量查询——只匹配明确模板（属于什么行业/上市日期等），
     # 直接进 generate_answer，不执行 finance/equity/events/risk。
     if company is not None:
+        indicator = detect_indicator(user_query)
+        if indicator:
+            return {
+                "plan": ExecutionPlan(
+                    intent="indicator",
+                    requested_modules=[],
+                    cross_checks=[],
+                    indicator=indicator,
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+
         fact_key = detect_company_fact(user_query)
         if fact_key:
             return {

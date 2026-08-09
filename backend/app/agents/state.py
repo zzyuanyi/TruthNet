@@ -38,6 +38,8 @@ class ExecutionPlan(BaseModel):
     cross_checks: list[str] = Field(default_factory=list)
     # 公司事实轻量查询键（R9）：industry/exchange/listing_date/comp_type/business/total_shares
     fact_key: str = ""
+    # 财务指标短答键（Phase D #3A）
+    indicator: str = ""
     as_of: date | None = None
     # 期次语义（#5 期次解析）：report_period=财报期 / as_of=信息截止日 / ""=未指定
     as_of_kind: str = ""
