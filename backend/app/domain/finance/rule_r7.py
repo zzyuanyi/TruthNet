@@ -305,10 +305,7 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
                 "净利润增速与现金流/营收增速存在背离，盈利质量有待改善。"
             )
     elif severity == "yellow":
-        if (
-            core_ratio is not None
-            and core_ratio < thresholds.weak_core_profit_ratio
-        ):
+        if core_ratio is not None and core_ratio < thresholds.weak_core_profit_ratio:
             result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性。"
         else:
             result.explanation = "净利润增速与现金流/营收增速存在背离，建议关注。"
