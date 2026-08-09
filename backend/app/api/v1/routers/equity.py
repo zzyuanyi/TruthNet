@@ -100,6 +100,17 @@ async def get_company_equity(
     """股权穿透 — 目标公司来自 MySQL，图来自 Neo4j/NetworkX."""
     trace_id = str(uuid.uuid4())
 
+    # 8.09 审查：适配器边界规范化 as_of（YYYY-MM-DD / YYYYQn → YYYYMMDD），
+    # 无法解析返回 422（不得静默返回空图）；Agent/报告与 REST 统一八位期次。
+    from app.domain.finance.period import normalize_period
+
+    norm_as_of = normalize_period(as_of) if as_of else None
+    if as_of and norm_as_of is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"INVALID_AS_OF: {as_of!r}（支持 YYYYMMDD / YYYY-MM-DD / YYYYQn）",
+        )
+
     # 1. MySQL 解析公司（真实 entity_id/wind_code/sec_name）
     resolver = CompanyResolver()
     company = await resolver.resolve(code)
@@ -122,7 +133,7 @@ async def get_company_equity(
             graph = await adapter.get_graph(
                 company.wind_code,
                 depth=depth,
-                as_of=as_of,
+                as_of=norm_as_of,
                 graph_version=settings.GRAPH_VERSION,
             )
         else:
@@ -205,9 +216,13 @@ async def get_company_equity(
             chains=graph.control_chains,
             node_name_map=node_name_map,
             graph_edges=graph.edges,
-            top_shareholder_records=fetch_shareholder_records(company.wind_code),
+            # 8.09 审查：股东记录与图快照同期次（曾不传 as_of 导致链路
+            # 与历史时点图不一致）
+            top_shareholder_records=fetch_shareholder_records(
+                company.wind_code, as_of=norm_as_of
+            ),
             edge_evidence_map=edge_evidence_map,
-            as_of=as_of or "",
+            as_of=norm_as_of or "",
             source_system=getattr(graph, "source_system", "") or "unknown",
             merge_groups=[],
         )
@@ -216,6 +231,21 @@ async def get_company_equity(
     except Exception as exc:  # noqa: BLE001 — 链路载荷失败不影响基础图
         logger.warning("equity_chains 构建失败: %s", exc, exc_info=True)
         data_warnings.append(f"股权链路载荷构建失败: {exc}")
+
+    # 8.09 审查：路径截断时如实标记 partial + PATH_LIMIT_REACHED
+    truncated = bool(getattr(graph, "truncated", False))
+    if truncated:
+        partial = True
+        msg = "股权路径超过 200 条限制被截断，返回的是深链优先的前 200 条，非精确全集。"
+        warning_items.append(
+            WarningItem(
+                code="PATH_LIMIT_REACHED",
+                message=msg,
+                module="equity",
+                recoverable=False,
+            )
+        )
+        data_warnings.append(msg)
 
     return V12Response(
         data=EquityResponseData(
@@ -228,11 +258,15 @@ async def get_company_equity(
             edges=edges,
             paths=paths,
             equity_chains=equity_chains,
-            as_of=as_of,
+            as_of=norm_as_of or as_of,
             graph_version=getattr(graph, "graph_version", "") or settings.GRAPH_VERSION,
             source_system=getattr(graph, "source_system", "") or "unknown",
             partial=partial,
             warnings=data_warnings,
+            requested_depth=getattr(graph, "requested_depth", 0),
+            max_observed_hops=getattr(graph, "max_observed_hops", 0),
+            truncated=truncated,
+            coverage_note=getattr(graph, "coverage_note", "") or "",
         ),
         meta=ApiMeta(
             request_id=trace_id,

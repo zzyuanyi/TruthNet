@@ -45,7 +45,7 @@ class EquityEdgeDTO(BaseModel):
 
 
 class EquityPathDTO(BaseModel):
-    """控制链路径."""
+    """股权路径（持股或控制关系，随 path_type 区分）."""
 
     path_id: str = Field(default="", description="路径 ID")
     node_ids: list[str] = Field(default_factory=list, description="路径节点 ID 序列")
@@ -54,9 +54,13 @@ class EquityPathDTO(BaseModel):
     )
     depth: int = Field(default=0, description="路径深度")
     final_control_pct: float | None = Field(
-        default=None, description="最终控制比例 (%) 0-100"
+        default=None, description="最终持股或控制比例 (%) 0-100"
     )
-    path_type: str = Field(default="control", description="路径类型")
+    # 8.09 五轮审查：默认 ownership（持股关系）；control 仅在存在明确
+    # 控制证据时使用——手工构造/OpenAPI 消费不再默认断言控制
+    path_type: str = Field(
+        default="ownership", description="路径类型: ownership/control"
+    )
     source_system: str = Field(
         default="unknown", description="数据来源: neo4j/networkx"
     )
@@ -87,6 +91,11 @@ class EquityChainDTO(BaseModel):
     depth: int = Field(default=0, description="链路深度")
     final_control_pct: float | None = Field(
         default=None, description="最终控制比例 (%)"
+    )
+    # 8.09 四轮审查：链路类型——ownership（持股关系，默认）/ control（有
+    # 明确控制证据）；下游按此措辞，不得一律称"控制"
+    path_type: str = Field(
+        default="ownership", description="链路类型: ownership/control"
     )
     evidence_ids: list[str] = Field(
         default_factory=list, description="真实证据 ID（可回查）"
@@ -122,3 +131,17 @@ class EquityResponseData(BaseModel):
     )
     partial: bool = Field(default=False, description="是否为部分结果")
     warnings: list[str] = Field(default_factory=list)
+    # ── 多跳诚实覆盖说明（8.09 审查新增）──
+    requested_depth: int = Field(
+        default=0, description="请求穿透深度（hop_count 口径）"
+    )
+    max_observed_hops: int = Field(
+        default=0, description="实际观测最大跳数（len(edge_ids) 口径）"
+    )
+    truncated: bool = Field(
+        default=False, description="路径结果超过限制被截断（非精确全集）"
+    )
+    coverage_note: str = Field(
+        default="",
+        description="覆盖说明：严格 4 跳+ 为 0 时如实说明，不推断不存在更深关系",
+    )
