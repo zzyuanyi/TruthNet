@@ -373,6 +373,18 @@ def detect_indicator(user_query: str) -> str | None:
     return None
 
 
+def detect_answer_target(user_query: str) -> str | None:
+    """识别需要独立短答的结构化目标（Phase D #3B）。"""
+    query = user_query or ""
+    if "风险等级" in query or "风险级别" in query:
+        return "risk_level"
+    if re.search(r"(?:综合)?风险.{0,4}(?:什么|哪种|多少)?等级", query):
+        return "risk_level"
+    if "什么等级" in query or "哪种等级" in query:
+        return "risk_level"
+    return None
+
+
 def detect_chitchat_intent(user_query: str) -> str | None:
     """高置信寒暄/引导识别（LLM 失败兜底，纯函数）。
 
@@ -553,6 +565,7 @@ def plan_modules_node(state: AgentState) -> dict:
         }
 
     ql = user_query.lower()
+    answer_target = detect_answer_target(user_query) or ""
 
     need_finance = any(kw in ql for kw in _FINANCE_KW)
     need_equity = any(kw in ql for kw in _EQUITY_KW)
@@ -597,5 +610,6 @@ def plan_modules_node(state: AgentState) -> dict:
             as_of=as_of,
             as_of_kind=as_of_kind,
             requested_period_text=period_text,
+            answer_target=answer_target,
         )
     }

@@ -40,6 +40,8 @@ class ExecutionPlan(BaseModel):
     fact_key: str = ""
     # 财务指标短答键（Phase D #3A）
     indicator: str = ""
+    # 结构化回答目标（Phase D #3B，如 risk_level）
+    answer_target: str = ""
     as_of: date | None = None
     # 期次语义（#5 期次解析）：report_period=财报期 / as_of=信息截止日 / ""=未指定
     as_of_kind: str = ""

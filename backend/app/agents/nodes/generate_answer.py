@@ -901,6 +901,56 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
     }
 
 
+def _answer_risk_level(state: AgentState) -> dict:
+    """Phase D #3B：只回答综合等级、截止日和覆盖状态。"""
+    risk_output = state.get("risk_output")
+    claims = state.get("claims", [])
+    evidence = state.get("evidence", [])
+    level = getattr(risk_output, "risk_level", "unknown") if risk_output else "unknown"
+    labels = {
+        "green": "正常",
+        "yellow": "黄色",
+        "orange": "橙色",
+        "red": "红色",
+        "blue": "蓝色",
+        "unknown": "数据不足",
+    }
+    if level not in labels:
+        level = "unknown"
+
+    plan = state.get("plan")
+    as_of = getattr(risk_output, "as_of", "") if risk_output else ""
+    if not as_of and plan and plan.as_of:
+        as_of = plan.as_of.strftime("%Y%m%d")
+    as_of_text = (
+        f"{as_of[:4]}-{as_of[4:6]}-{as_of[6:]}"
+        if len(as_of) == 8 and as_of.isdigit()
+        else "未知"
+    )
+
+    coverage = getattr(risk_output, "data_coverage", None) if risk_output else None
+    ratio = getattr(coverage, "coverage_ratio", None) if coverage else None
+    missing = getattr(coverage, "missing_modules", []) if coverage else []
+    coverage_text = f"数据覆盖率 {ratio:.0%}" if ratio is not None else "数据覆盖未知"
+    if missing:
+        coverage_text += f"，缺失模块：{', '.join(missing)}"
+    answer = (
+        f"综合风险等级：{labels[level]}"
+        f"（数据截止日：{as_of_text}；{coverage_text}）。"
+    )
+    if level == "unknown":
+        answer += "当前数据不足，不能据此判断为正常。"
+    _emit_segment(state, answer)
+    return {
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level=level,
+            claims=claims,
+            evidence=evidence,
+        )
+    }
+
+
 def generate_answer_node(state: AgentState) -> dict:
     company = state.get("company")
     claims = state.get("claims", [])
@@ -1135,6 +1185,8 @@ def generate_answer_node(state: AgentState) -> dict:
         return _answer_indicator(state, getattr(plan, "indicator", "") or "")
     if getattr(plan, "intent", "") == "company_fact":
         return _answer_company_fact(state, getattr(plan, "fact_key", "") or "")
+    if getattr(plan, "answer_target", "") == "risk_level":
+        return _answer_risk_level(state)
 
     # ① 一句话结论（Phase C：Finance 执行时限定母公司报表口径；
     # #11 AnswerMode：按意图选择开场模板，不再一律"综合分析完成"）
