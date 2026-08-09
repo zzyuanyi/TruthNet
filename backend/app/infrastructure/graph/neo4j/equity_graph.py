@@ -16,6 +16,7 @@
 import hashlib
 import logging
 import threading
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -507,14 +508,25 @@ class Neo4jEquityGraph:
         relationships: list[dict[str, Any]],
         graph_version: str | None = None,
         mock: bool = False,
-    ) -> int:
-        """批量导入股权关系（保留历史快照）。
+        import_run_id: str | None = None,
+    ) -> dict:
+        """导入股权关系（P0-2 防误删保护）。
 
-        每条关系使用确定性 relationship_id：
-          make_relationship_id(src, tgt, type, report_period, ann_dt, source_record_id)
+        注意：非完整事务回滚——历史关系属性可能被本次 MERGE 覆盖，无法恢复。
 
-        不同报告期的同一 src→tgt 关系会被保留为独立快照。
-        最新快照的 is_latest 标记为 true。
+            标记语义：
+              - created_run_id：关系**首次创建**时的 run（MERGE 命中旧关系不改写）
+              - seen_run_id：本次运行**见到/更新**过的 run（每次覆盖为本次）
+
+            失败时调用方只删 created_run_id=本次（真正新建的），
+            已有关系不受影响；全部成功验收后删 seen_run_id<>本次（旧图）。
+            批次失败立即抛异常（不记录后继续）。
+
+            每条关系使用确定性 relationship_id：
+              make_relationship_id(src, tgt, type, report_period, ann_dt, source_record_id)
+
+            不同报告期的同一 src→tgt 关系会被保留为独立快照。
+            最新快照的 is_latest 标记为 true。
         """
         if not self._driver:
             logger.warning("Neo4j driver 未初始化，跳过关系导入")
@@ -522,54 +534,35 @@ class Neo4jEquityGraph:
 
         gv = graph_version or _DEFAULT_GRAPH_VERSION
         now = datetime.now(timezone.utc).isoformat()
+        run_id = import_run_id or uuid.uuid4().hex[:12]
         imported = 0
 
-        for rel in relationships:
-            src_id = rel.get("source_entity_id")
-            tgt_id = rel.get("target_entity_id")
-            rel_type = rel.get("relation_type", "OWNS")
-
-            if not src_id or not tgt_id:
-                continue
-
-            relationship_id = make_relationship_id(
-                source_entity_id=src_id,
-                target_entity_id=tgt_id,
-                relation_type=rel_type,
-                report_period=str(rel.get("report_period", "")),
-                ann_dt=str(rel.get("ann_dt", "")),
-                source_record_id=str(rel.get("source_record_id", "")),
-            )
-
-            cypher = f"""
-            MATCH (src:Entity {{entity_id: $src_id}})
-            MATCH (tgt:Entity {{entity_id: $tgt_id}})
-            MERGE (src)-[r:{rel_type} {{relationship_id: $rel_id}}]->(tgt)
-            SET r.ownership_pct = $ownership_pct,
-                r.quantity = $quantity,
-                r.ann_dt = $ann_dt,
-                r.report_period = $report_period,
-                r.source_id = $source_id,
-                r.source_record_id = $source_record_id,
-                r.dataset_version = $dataset_version,
-                r.graph_version = $graph_version,
-                r.match_confidence = $match_confidence,
-                r.is_latest = $is_latest,
-                r.mock = $mock,
-                r.updated_at = $updated_at
-            FOREACH (_ IN CASE WHEN r.created_at IS NULL THEN [1] ELSE [] END |
-                SET r.created_at = $updated_at
-            )
-            RETURN type(r)
-            """
-
-            try:
-                self._driver.execute_query(
-                    cypher,
+        # UNWIND 批量导入（每批 _REL_BATCH_SIZE 条）——逐条 execute_query 在
+        # 64 万条量级需 40 分钟+，批处理压缩到几分钟，且避免单事务内存膨胀。
+        batch_size = getattr(self, "_REL_BATCH_SIZE", 1000)
+        for start in range(0, len(relationships), batch_size):
+            batch = relationships[start : start + batch_size]
+            rows: list[dict] = []
+            for rel in batch:
+                src_id = rel.get("source_entity_id")
+                tgt_id = rel.get("target_entity_id")
+                rel_type = rel.get("relation_type", "OWNS")
+                if not src_id or not tgt_id:
+                    continue
+                relationship_id = make_relationship_id(
+                    source_entity_id=src_id,
+                    target_entity_id=tgt_id,
+                    relation_type=rel_type,
+                    report_period=str(rel.get("report_period", "")),
+                    ann_dt=str(rel.get("ann_dt", "")),
+                    source_record_id=str(rel.get("source_record_id", "")),
+                )
+                rows.append(
                     {
                         "rel_id": relationship_id,
                         "src_id": src_id,
                         "tgt_id": tgt_id,
+                        "rel_type": rel_type,
                         "ownership_pct": _pct_to_neo4j(rel.get("ownership_pct")),
                         "quantity": rel.get("quantity"),
                         "ann_dt": str(rel.get("ann_dt", "")),
@@ -582,18 +575,121 @@ class Neo4jEquityGraph:
                         "is_latest": rel.get("is_latest", True),
                         "mock": mock,
                         "updated_at": now,
-                    },
+                    }
                 )
-                imported += 1
-            except Exception as e:
-                logger.error(
-                    "导入关系 (%s)-[%s]->(%s) 失败: %s", src_id, rel_type, tgt_id, e
+            if not rows:
+                continue
+
+            rel_type = rows[0]["rel_type"]
+            # P0-1（核验修订）：created_run_id 必须只在真正新建时写入（ON CREATE）。
+            # 历史关系没有该字段，若用"字段为空→本次创建"推断，首次升级导入的
+            # 旧关系会被误标为本次创建，失败清理（delete_relationships_by_run）
+            # 会误删旧图。seen_run_id 对所有见到的关系都打标（stale 删除依据）。
+            cypher = f"""
+            UNWIND $rels AS rel
+            MATCH (src:Entity {{entity_id: rel.src_id}})
+            MATCH (tgt:Entity {{entity_id: rel.tgt_id}})
+            MERGE (src)-[r:{rel_type} {{relationship_id: rel.rel_id}}]->(tgt)
+            ON CREATE SET r.created_run_id = $run_id,
+                          r.created_at = rel.updated_at
+            SET r.ownership_pct = rel.ownership_pct,
+                r.quantity = rel.quantity,
+                r.ann_dt = rel.ann_dt,
+                r.report_period = rel.report_period,
+                r.source_id = rel.source_id,
+                r.source_record_id = rel.source_record_id,
+                r.dataset_version = rel.dataset_version,
+                r.graph_version = rel.graph_version,
+                r.match_confidence = rel.match_confidence,
+                r.is_latest = rel.is_latest,
+                r.mock = rel.mock,
+                r.seen_run_id = $run_id,
+                r.updated_at = rel.updated_at
+            RETURN count(r) AS merged
+            """
+
+            try:
+                records, _, _ = self._driver.execute_query(
+                    cypher, {"rels": rows, "run_id": run_id}
                 )
+                merged = records[0]["merged"] if records else 0
+                if merged < len(rows):
+                    raise RuntimeError(
+                        f"批次 {start}: 实际写入 {merged}/{len(rows)} 条，"
+                        "存在缺失端点（MATCH 未命中）"
+                    )
+                imported += merged
+            except Exception as e:  # noqa: BLE001 — 批次失败立即上抛（P0-2）
+                raise RuntimeError(
+                    f"关系导入批次失败 ({len(rows)} 条, 起点 {start}): {e}"
+                ) from e
 
         logger.info(
-            "导入 %d/%d 关系 (graph_version=%s)", imported, len(relationships), gv
+            "导入 %d/%d 关系 (graph_version=%s, import_run_id=%s)",
+            imported,
+            len(relationships),
+            gv,
+            run_id,
         )
-        return imported
+        return {"imported": imported, "total": len(relationships), "run_id": run_id}
+
+    # ── P0-2 防误删保护（非完整事务回滚）──
+    # 核验修订：双标记只保证"失败时不误删旧图"，被 MERGE 原地覆盖的历史
+    # 关系属性不会恢复（真实回滚需版本隔离/蓝绿导入）。
+
+    async def delete_relationships_by_run(self, import_run_id: str) -> dict[str, int]:
+        """失败清理（防误删保护）：仅删除本次运行真正新建的关系
+        （created_run_id=本次），并清除已有关系上的 seen_run_id 标记。
+        注意：历史关系的属性可能已被本次 MERGE 覆盖，无法回滚。"""
+        if not self._driver:
+            return {"deleted": 0}
+        records, _, _ = self._driver.execute_query(
+            "MATCH ()-[r {created_run_id: $run_id}]->() "
+            "DETACH DELETE r "
+            "RETURN count(r) AS cnt",
+            {"run_id": import_run_id},
+        )
+        deleted = records[0]["cnt"] if records else 0
+        # 清除本次打上的 seen 标记（防误删保护：旧关系属性不回滚）
+        self._driver.execute_query(
+            "MATCH ()-[r {seen_run_id: $run_id}]->() " "REMOVE r.seen_run_id",
+            {"run_id": import_run_id},
+        )
+        logger.info(
+            "失败清理 import_run_id=%s: 删除新建 %d, 清除 seen 标记",
+            import_run_id,
+            deleted,
+        )
+        return {"deleted": deleted}
+
+    async def delete_stale_relationships(
+        self, graph_version: str, import_run_id: str
+    ) -> dict[str, int]:
+        """验收成功后删除旧关系：目标版本中本次未见过的关系
+        （seen_run_id <> 本次）。分批删除防内存爆。"""
+        if not self._driver:
+            return {"deleted": 0}
+        total = 0
+        while True:
+            records, _, _ = self._driver.execute_query(
+                "MATCH ()-[r {graph_version: $gv}]->() "
+                "WHERE r.seen_run_id IS NULL OR r.seen_run_id <> $run_id "
+                "WITH r LIMIT 20000 "
+                "DETACH DELETE r "
+                "RETURN count(r) AS cnt",
+                {"gv": graph_version, "run_id": import_run_id},
+            )
+            deleted = records[0]["cnt"] if records else 0
+            total += deleted
+            if not deleted:
+                break
+        # 清理临时标记
+        self._driver.execute_query(
+            "MATCH ()-[r {graph_version: $gv}]->() " "REMOVE r.seen_run_id",
+            {"gv": graph_version},
+        )
+        logger.info("删除旧关系 %d 条 (graph_version=%s)", total, graph_version)
+        return {"deleted": total}
 
     # ── 管理查询 ──
 
@@ -641,3 +737,101 @@ class Neo4jEquityGraph:
         }
         logger.info("清理测试数据 (graph_version=%s): %s", graph_version, result)
         return result
+
+    async def count_multi_hop_paths(
+        self,
+        graph_version: str | None = None,
+        min_depth: int = 3,
+        import_run_id: str | None = None,
+    ) -> int:
+        """统计上市公司间 min_depth 跳以上路径数（P0-2 验收辅助）。
+
+        受限范围：全部节点限定上市公司（wind_code 非空、非自环），
+        避免全图（含 64 万 person/产品边）变长路径指数爆炸。
+        返回计数封顶 10000（仅验收判定用，非精确计数）。
+        import_run_id 非空时限定 r.seen_run_id=本次（核验修订：中间验收
+        不得混合旧图关系）。
+        """
+        if not self._driver:
+            return 0
+        gv = graph_version or _DEFAULT_GRAPH_VERSION
+        # 起点/终点必须是公司；中间节点不限制（真实穿透链路常经股东身份）。
+        # P0-1：仅统计 is_latest=true 的关系 + 路径节点互异（防循环路径）。
+        records, _, _ = self._driver.execute_query(
+            f"""
+            MATCH p = (a:Entity)-[:OWNS*{int(min_depth)}..4]->(b:Entity)
+            WHERE a.wind_code <> '' AND b.wind_code <> ''
+              AND a.wind_code <> b.wind_code
+              AND all(r IN relationships(p)
+                      WHERE r.graph_version = $gv AND r.is_latest = true
+                        AND ($run_id IS NULL OR r.seen_run_id = $run_id))
+              AND all(n IN nodes(p)
+                      WHERE size([m IN nodes(p) WHERE m = n]) = 1)
+            RETURN count(p) AS cnt
+            """,
+            {"gv": gv, "run_id": import_run_id},
+        )
+        return min(records[0]["cnt"], 10000) if records else 0
+
+    async def clear_run_markers(self, import_run_id: str) -> int:
+        """幂等增量导入后清除本次打上的 seen_run_id 标记（不删任何关系）。"""
+        if not self._driver:
+            return 0
+        records, _, _ = self._driver.execute_query(
+            "MATCH ()-[r {seen_run_id: $run_id}]->() "
+            "REMOVE r.seen_run_id "
+            "RETURN count(r) AS cnt",
+            {"run_id": import_run_id},
+        )
+        n = records[0]["cnt"] if records else 0
+        logger.info("清除 seen 标记 %d 条 (run_id=%s)", n, import_run_id)
+        return n
+
+    async def cleanup_relationships(self, graph_version: str) -> dict[str, int]:
+        """R5：仅删除指定版本的关系，不动任何节点。
+
+        与 cleanup_test_data 的 DETACH DELETE 不同——后者会删除节点及
+        其连接的其他版本关系；重建图时必须用本函数（维护窗口内执行）。
+        """
+        if not self._driver:
+            return {"relationships_before": 0, "relationships_after": 0}
+        rels_before = await self.count_relationships(graph_version)
+        # 分批删除：单条 DELETE 删除数十万关系会在单事务内爆内存
+        # （Neo4j 事务内存上限，如 2.8 GiB）
+        while True:
+            records, _, _ = self._driver.execute_query(
+                "MATCH ()-[r {graph_version: $gv}]->() "
+                "WITH r LIMIT 20000 "
+                "DETACH DELETE r "
+                "RETURN count(r) AS cnt",
+                {"gv": graph_version},
+            )
+            deleted = records[0]["cnt"] if records else 0
+            if not deleted:
+                break
+        rels_after = await self.count_relationships(graph_version)
+        result = {
+            "relationships_before": rels_before,
+            "relationships_after": rels_after,
+        }
+        logger.info("清理关系 (graph_version=%s): %s", graph_version, result)
+        return result
+
+    async def cleanup_orphan_corporate_nodes(self) -> dict[str, int]:
+        """R5：删除无任何关系的孤立 corp_* 节点（股东身份节点残留）。
+
+        仅在维护窗口内、且确认无关系后执行；稳定实体（company_*/person_*）
+        不受影响。
+        """
+        if not self._driver:
+            return {"nodes_deleted": 0}
+        records, _, _ = self._driver.execute_query(
+            "MATCH (n:Entity) "
+            "WHERE n.entity_id STARTS WITH 'corp_' "
+            "AND NOT EXISTS { MATCH (n)-[r]-() } "
+            "DETACH DELETE n "
+            "RETURN count(n) AS cnt"
+        )
+        cnt = records[0]["cnt"] if records else 0
+        logger.info("清理孤立 corp_* 节点: %d", cnt)
+        return {"nodes_deleted": cnt}

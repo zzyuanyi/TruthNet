@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import uuid
@@ -201,9 +202,57 @@ def import_companies(
     processed_dir = Path(settings.PROCESSED_DATA_DIR)
     mapping_file = processed_dir / "industry_mapping.csv"
 
+    # 证券主表（security_master.csv）负责 sec_name；industry_mapping.csv
+    # 只提供行业字段，永远不能成为名称权威源。
+    # P1-4：主表缺失/损坏/字段不完整 → 失败关闭（禁止回退行业映射的 sec_name）。
+    master_names: dict[str, str] = {}
+    master_quality: dict[str, str] = {}
+    master_csv = processed_dir / "security_master.csv"
+    if not master_csv.exists():
+        raise ValueError(
+            f"证券主表缺失: {master_csv}，请先运行 python scripts/security_master.py"
+        )
+    try:
+        mdf = pd.read_csv(master_csv)
+        if "wind_code" not in mdf.columns or "sec_name" not in mdf.columns:
+            raise ValueError("security_master.csv 缺少 wind_code/sec_name 列")
+        for _, mr in mdf.iterrows():
+            wc = str(mr.get("wind_code") or "").strip()
+            sn = str(mr.get("sec_name") or "").strip()
+            if not wc or sn == "nan":
+                continue
+            master_names[wc] = sn
+            # 空 quality_flag 在 CSV 读回为 NaN → 归一化为空串（否则误写 {"nan": true}）
+            qflag = str(mr.get("quality_flag") or "").strip()
+            master_quality[wc] = "" if qflag in ("nan", "None") else qflag
+        logger.info(
+            "证券主表 %s 载入 %d 条名称（含质量标记）",
+            master_csv.name,
+            len(master_names),
+        )
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 主表损坏 → 失败关闭
+        raise ValueError(f"证券主表读取失败: {exc}") from exc
+
     if mapping_file.exists():
         df = pd.read_csv(mapping_file)
         logger.info("从行业映射文件导入 %d 家公司 (dry_run=%s)", len(df), dry_run)
+        # P1-4（核验修订）：主表缺少 mapping 中的代码 → 失败关闭（禁止回退
+        # 空字符串 sec_name——名称权威源必须完整，否则产生不可追溯的空白名称）。
+        mapping_codes = []
+        for _, r in df.iterrows():
+            wc = str(r.get("wind_code", ""))
+            try:
+                mapping_codes.append(normalize_wind_code(wc))
+            except ValueError:
+                mapping_codes.append(wc)
+        missing_master = sorted(set(c for c in mapping_codes if c not in master_names))
+        if missing_master:
+            raise ValueError(
+                f"证券主表缺少 {len(missing_master)} 个代码，禁止导入: "
+                + ", ".join(missing_master[:10])
+            )
         rows = []
         for i, (_, r) in enumerate(df.iterrows()):
             wc = str(r.get("wind_code", ""))
@@ -212,11 +261,18 @@ def import_companies(
             except ValueError:
                 normalized = wc
             entity_id = _resolve_entity_id({"wind_code": normalized}, "wind_code")
+            qflag = master_quality.get(normalized, "")
             rows.append(
                 {
                     "entity_id": entity_id,
                     "wind_code": normalized,
-                    "sec_name": str(r.get("stock_name", r.get("sec_name", ""))),
+                    # 名称以证券主表为准（P1-4：禁止回退 industry_mapping，主表缺失已失败关闭）
+                    "sec_name": master_names[normalized],
+                    "quality_flags": (
+                        json.dumps({q: True for q in qflag.split(",") if q})
+                        if qflag
+                        else None
+                    ),
                     "exchange_code": _exchange_from_wind(normalized),
                     "industry_l1": r.get("industry_l1")
                     if pd.notna(r.get("industry_l1"))
@@ -248,8 +304,29 @@ def import_companies(
                 "processed": 0,
                 "failed": 0,
             }
+        # 行业导入禁止覆盖已有 sec_name/aliases（台积电类污染防护）：
+        # 重导只更新行业与审计字段，名称仅首次 INSERT 写入（主表提供）。
         result = _batch_upsert(
-            engine, "companies", companies_df, _UNIQUE_KEYS["companies"]
+            engine,
+            "companies",
+            companies_df,
+            _UNIQUE_KEYS["companies"],
+            update_columns=[
+                "exchange_code",
+                "industry_l1",
+                "industry_l2",
+                "industry_source",
+                "industry_as_of",
+                "source_file",
+                "source_row",
+                "source_type",
+                "dataset_version",
+                "revision_no",
+                "is_latest",
+                "quality_flags",
+                "ingested_at",
+                "updated_at",
+            ],
         )
         return {"source_rows": len(df), "valid_rows": len(companies_df), **result}
 
@@ -266,17 +343,34 @@ def import_companies(
             df = pd.read_csv(fp, usecols=["wind_code"], low_memory=False)
             codes.update(df["wind_code"].dropna().unique())
 
-    rows = []
-    for i, wc in enumerate(sorted(codes)):
+    # P1-3（第二轮审查修订）：备用导入路径与主路径一致——主表缺失财务代码
+    # → 失败关闭，禁止回退代码占位符（占位名会污染 sec_name 权威源）。
+    normalized_codes = []
+    for wc in sorted(codes):
         try:
-            normalized = normalize_wind_code(str(wc))
+            normalized_codes.append(normalize_wind_code(str(wc)))
         except ValueError:
-            normalized = str(wc)
+            normalized_codes.append(str(wc))
+    missing_master = sorted(set(c for c in normalized_codes if c not in master_names))
+    if missing_master:
+        raise ValueError(
+            f"证券主表缺少 {len(missing_master)} 个财务代码，禁止回退导入: "
+            + ", ".join(missing_master[:10])
+        )
+
+    rows = []
+    for i, normalized in enumerate(normalized_codes):
+        qflag = master_quality.get(normalized, "")
         rows.append(
             {
                 "entity_id": _resolve_entity_id({"wind_code": normalized}, "wind_code"),
                 "wind_code": normalized,
-                "sec_name": str(wc),
+                "sec_name": master_names[normalized],
+                "quality_flags": (
+                    json.dumps({q: True for q in qflag.split(",") if q})
+                    if qflag
+                    else None
+                ),
                 "exchange_code": _exchange_from_wind(normalized),
                 "source_file": "derived_from_financials",
                 "source_row": i,
@@ -318,6 +412,7 @@ def import_companies(
             "dataset_version",
             "revision_no",
             "is_latest",
+            "quality_flags",
             "ingested_at",
             "updated_at",
         ],
@@ -857,7 +952,7 @@ def main() -> int:
     total_failed = 0
 
     try:
-        # Step 1
+        # Step 1（P1-4：证券主表缺失/损坏 → ValueError → 退出码非零，失败关闭）
         all_stats["companies"] = import_companies(
             engine, data_root, args.dataset_version
         )
@@ -972,4 +1067,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ValueError as exc:
+        # P1-4：数据校验异常（如证券主表缺失/损坏）→ 明确错误信息 + 非零退出码
+        logger.error("导入前置校验失败: %s", exc)
+        sys.exit(1)
