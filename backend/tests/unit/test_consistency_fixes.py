@@ -175,12 +175,16 @@ def _chain(
     risk_level: str,
     final_control_pct: float,
     evidence_ids: list[str],
+    path_type: str = "ownership",
 ) -> dict:
     return {
         "chain_id": chain_id,
         "path_names": ["股东", "中间", "目标"],
         "depth": 3,
         "final_control_pct": final_control_pct,
+        # 8.09 四轮审查：默认 ownership（持股关系）；control 仅在有明确
+        # 控制证据时使用
+        "path_type": path_type,
         "evidence_ids": evidence_ids,
         "risk_label": "normal" if risk_level == "green" else "concentrated_control",
         "risk_level": risk_level,
@@ -197,7 +201,51 @@ def test_green_chain_claim_is_green():
     equity = [c for c in result["claims"] if c.claim_type == "equity"]
     assert len(equity) == 1
     assert equity[0].severity == "green"
+    # 8.09 四轮审查：默认 ownership 链路 → 持股关系展示，不称"控制关系"
+    assert "持股关系事实展示" in equity[0].limitations[0]
+    assert "不构成控制关系" in equity[0].limitations[0]
+    assert "股权链穿透" in equity[0].text
+    assert "最终持股" in equity[0].text
+
+
+def test_control_chain_claim_keeps_control_wording():
+    """8.09 四轮审查：仅 path_type=control（明确控制证据）使用"控制链/
+    最终控制/事实性控制关系"。"""
+    results = _chain_results(
+        _chain("c1", "green", 60.0, ["ev_eq_a"], path_type="control"),
+    )
+    result = build_claims_node(_state(results))
+    equity = [c for c in result["claims"] if c.claim_type == "equity"]
+    assert len(equity) == 1
+    assert "控制链穿透" in equity[0].text
+    assert "最终控制 60.0%" in equity[0].text
     assert "事实性控制关系展示" in equity[0].limitations[0]
+
+
+def test_fallback_chain_claim_uses_ownership_wording():
+    """8.09 五轮审查：chain_details 缺失的降级 Claim 统一走 _chain_claim_text()
+    ownership 措辞（曾硬编码"控制链穿透/最终控制"，与 ownership 语义冲突）。"""
+    results = ModuleResults(
+        equity=EquityResult(
+            chains=[
+                {
+                    "path": ["A", "B"],
+                    "path_names": ["股东A", "康美药业"],
+                    "total_stake": 0.1,
+                }
+            ],
+            evidence=[_ev("ev_eq_a", source_type="neo4j_relationship")],
+            chain_details=[],
+        )
+    )
+    result = build_claims_node(_state(results))
+    equity = [c for c in result["claims"] if c.claim_type == "equity"]
+    assert len(equity) == 1
+    assert equity[0].severity == "unknown"  # 降级载荷不默认 red
+    assert "股权链穿透" in equity[0].text
+    assert "最终持股 10.0%" in equity[0].text  # total_stake 0.1 → 10% 兜底
+    assert "控制链穿透" not in equity[0].text
+    assert "最终控制" not in equity[0].text
 
 
 def test_high_risk_chain_not_first_is_detected():
