@@ -33,7 +33,6 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     acct_rcv_sr = fetch_series(company_code, "acct_rcv", periods, as_of)
     oth_rcv = oth_rcv_sr.values
     tot_assets = tot_assets_sr.values
-    acct_rcv = acct_rcv_sr.values
 
     field_warnings = [
         w for w in (oth_rcv_sr.warning, tot_assets_sr.warning, acct_rcv_sr.warning) if w
@@ -54,29 +53,89 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    t_idx = -1
-    oth_val = oth_rcv[t_idx] or 0
-    assets_val = tot_assets[t_idx] or 0
-    acct_val = acct_rcv[t_idx] if acct_rcv and acct_rcv[t_idx] is not None else None
+    # P2-3：按期次对齐（current 判定与 history 统一走对齐结果）
+    from app.domain.finance._fetch import align_by_period, prev_year_period
 
-    oth_to_assets = oth_val / assets_val * 100 if assets_val > 0 else 0
+    aligned = align_by_period(
+        oth_rcv=oth_rcv_sr, assets=tot_assets_sr, acct_rcv=acct_rcv_sr
+    )
+    ordered_periods = sorted(aligned.keys())
+
+    # P2-3（核验修订）：current 取核心字段（其他应收/总资产）有效的最后一期，
+    # 而非对齐并集的最后一期——辅助字段（acct_rcv）多出更新一期时，
+    # 并集最后一期 oth_rcv 为空会错误返回 insufficient_data。
+    cur_period = next(
+        (
+            p
+            for p in reversed(ordered_periods)
+            if aligned[p].get("oth_rcv") is not None
+            and aligned[p].get("assets") is not None
+            and aligned[p].get("assets") > 0
+        ),
+        None,
+    )
+    if cur_period is None:
+        result.status = "insufficient_data"
+        result.explanation = "无核心字段（其他应收/总资产）同时有效的报告期"
+        result.quality = build_parent_scope_quality(
+            coverage=oth_rcv_sr.coverage,
+            data_completeness=round(valid_oth / 2, 2),
+            missing_periods=2 - valid_oth,
+        )
+        result.warnings = field_warnings
+        return result
+    cur = aligned[cur_period]
+
+    oth_val = cur.get("oth_rcv")
+    assets_val = cur.get("assets")
+    acct_val = cur.get("acct_rcv")
+
+    # 核心字段缺失 → 数据不足（不按零处理）
+    if oth_val is None or assets_val is None or assets_val <= 0:
+        result.status = "insufficient_data"
+        result.explanation = "当前期其他应收或总资产缺失，无法计算占比"
+        result.quality = build_parent_scope_quality(
+            coverage=oth_rcv_sr.coverage,
+            data_completeness=round(valid_oth / 2, 2),
+            missing_periods=2 - valid_oth,
+        )
+        result.warnings = field_warnings
+        return result
+
+    oth_to_assets = oth_val / assets_val * 100
     oth_to_acct = oth_val / acct_val if acct_val and acct_val > 0 else None
 
-    t4_idx = -5
-    oth_yoy = yoy_growth(oth_rcv[t_idx], oth_rcv[t4_idx]) if len(oth_rcv) >= 5 else None
-    oth_yoy_pct = oth_yoy * 100 if oth_yoy is not None else 0
+    # YoY：当前期与去年同期（P2-3 核验修订：按 prev_year_period 取前一年
+    # 同月日，不再用并集数组下标 -5 推断——错位期次会取到不同月日）。
+    prev4_period = prev_year_period(cur_period, ordered_periods)
+    prev4_val = aligned[prev4_period].get("oth_rcv") if prev4_period else None
+    oth_yoy = yoy_growth(oth_val, prev4_val) if prev4_val is not None else None
+    # P1-3（核验修订）：去年同期缺失 → 同比为 None（不是 0%），
+    # 判定时显式保护，输出时省略该指标。
+    oth_yoy_pct = oth_yoy * 100 if oth_yoy is not None else None
 
     oth_large = oth_val > 50_000_000  # 5000 万
 
     severity = "green"
     # red
-    if oth_to_assets > 10 and oth_yoy_pct > 200 and oth_large:
+    if (
+        oth_to_assets > 10
+        and oth_yoy_pct is not None
+        and oth_yoy_pct > 200
+        and oth_large
+    ):
         severity = "red"
     elif oth_to_assets > 10 and oth_to_acct is not None and oth_to_acct > 1.0:
         severity = "red"
 
     # orange
-    if severity == "green" and oth_to_assets > 10 and oth_yoy_pct > 100 and oth_large:
+    if (
+        severity == "green"
+        and oth_to_assets > 10
+        and oth_yoy_pct is not None
+        and oth_yoy_pct > 100
+        and oth_large
+    ):
         severity = "orange"
     elif (
         severity == "green"
@@ -90,8 +149,8 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     if severity == "green":
         if (
             (oth_to_assets > 10 and oth_large)
-            or (oth_yoy_pct > 200 and oth_large)
-            or (oth_to_assets > 5 and oth_yoy_pct > 200)
+            or (oth_yoy_pct is not None and oth_yoy_pct > 200 and oth_large)
+            or (oth_to_assets > 5 and oth_yoy_pct is not None and oth_yoy_pct > 200)
         ):
             severity = "yellow"
 
@@ -99,9 +158,13 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     result.severity = severity
     result.current = {
         "oth_rcv_to_assets": {"value": round(oth_to_assets, 1), "unit": "percent"},
-        "oth_rcv_yoy": {"value": round(oth_yoy_pct, 1), "unit": "percent"},
         "oth_rcv_large": {"value": oth_large, "unit": "bool"},
     }
+    if oth_yoy_pct is not None:
+        result.current["oth_rcv_yoy"] = {
+            "value": round(oth_yoy_pct, 1),
+            "unit": "percent",
+        }
     if oth_to_acct is not None:
         result.current["oth_rcv_to_acct_rcv"] = {
             "value": round(oth_to_acct, 2),
@@ -117,17 +180,39 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
         },
     )
     result.warnings = field_warnings
+    # 多期展示序列（P2-3）：按对齐结果构建（最近 8 期，升序），
+    # 分子/分母缺失跳过——不制造零值
+    oth_series: list[dict] = []
+    for p in ordered_periods[-8:]:
+        row = aligned[p]
+        o = row.get("oth_rcv")
+        a = row.get("assets")
+        if o is None or a is None or a <= 0:
+            continue
+        oth_series.append({"period": p, "oth_rcv_to_assets": round(o / a * 100, 1)})
+    if len(oth_series) >= 2:
+        result.history = oth_series
+
     result.evidence_ids = [f"ev_bs_oth_rcv_{as_of}", f"ev_bs_tot_assets_{as_of}"]
+    # P1-3：同比缺失（去年同期无数据）时 explanation 不得格式化 None
+    yoy_text = (
+        f"，同比增速 {oth_yoy_pct:.1f}%"
+        if oth_yoy_pct is not None
+        else "，同比数据缺失"
+    )
     if severity == "red":
         result.explanation = (
-            f"其他应收款占总资产 {oth_to_assets:.1f}%，同比增速 {oth_yoy_pct:.1f}%，"
+            f"其他应收款占总资产 {oth_to_assets:.1f}%{yoy_text}，"
             f"金额 {oth_val/1e8:.1f} 亿元，可能存在关联方资金占用。"
         )
     elif severity == "orange":
         result.explanation = (
-            f"其他应收款占总资产 {oth_to_assets:.1f}%，同比增速 {oth_yoy_pct:.1f}%，"
-            f"建议关注具体构成。"
+            f"其他应收款占总资产 {oth_to_assets:.1f}%{yoy_text}，" f"建议关注具体构成。"
         )
     elif severity == "yellow":
-        result.explanation = f"其他应收款增速较快（{oth_yoy_pct:.1f}%），建议持续关注。"
+        result.explanation = (
+            f"其他应收款增速较快（{oth_yoy_pct:.1f}%）"
+            if oth_yoy_pct is not None
+            else "其他应收款占总资产比例偏高"
+        ) + "，建议持续关注。"
     return result

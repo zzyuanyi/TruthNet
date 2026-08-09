@@ -36,6 +36,41 @@ class SeriesResult:
     periods: list = field(default_factory=list)  # 实际读取到的报告期
 
 
+def align_by_period(**series: "SeriesResult") -> dict[str, dict[str, float | None]]:
+    """按期次对齐多字段序列（P2-3）。
+
+    命名参数：align_by_period(cash=cash_sr, assets=assets_sr)
+    返回 {period: {field_name: value}}，按 period 升序；
+    某字段在该期无数据 → None（调用方决定跳过，不按零处理）。
+    """
+    periods: set[str] = set()
+    for s in series.values():
+        periods.update(str(p) for p in (s.periods or []))
+    ordered = sorted(periods)
+    aligned: dict[str, dict[str, float | None]] = {}
+    for p in ordered:
+        row: dict[str, float | None] = {}
+        for name, s in series.items():
+            idx = s.periods.index(p) if p in s.periods else None
+            row[name] = s.values[idx] if idx is not None else None
+        aligned[p] = row
+    return aligned
+
+
+def prev_year_period(period: str, ordered_periods: list[str]) -> str | None:
+    """返回 period 的**精确**前一年同月日报表期 key（P2-3 核验修订）。
+
+    R6/R1/R4 的"4 期前"必须取去年同期（YYYY-1 + 相同 MMDD），不能按并集
+    数组下标 -5 推断——各字段期次错位时下标会取到不同月日的期。
+    精确去年同期不存在时返回 None（R2 审查修订：不得回退到两年前——
+    20251231 + 20231231 会被误当同比）。
+    """
+    if len(period) == 8:
+        prev = f"{int(period[:4]) - 1}{period[4:]}"
+        return prev if prev in ordered_periods else None
+    return None
+
+
 def _repo_root() -> Path:
     # backend/app/domain/finance/_fetch.py -> 项目根
     return Path(__file__).resolve().parents[4]

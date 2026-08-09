@@ -162,6 +162,20 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         extra={"history_periods_available": valid_or},
     )
     result.warnings = field_warnings
+    # 多期展示序列：最近 8 期毛利率（gm_list 已在计算中构建）
+    gm_series: list[dict] = []
+    periods_hist = oper_rev_sr.periods
+    for i in range(max(0, len(gm_list) - 8), len(gm_list)):
+        gm_v = gm_list[i]
+        if gm_v is None:
+            continue
+        label = (
+            str(periods_hist[i]) if i < len(periods_hist) else f"t-{len(gm_list)-1-i}Q"
+        )
+        gm_series.append({"period": label, "gross_margin": round(gm_v, 1)})
+    if len(gm_series) >= 2:
+        result.history = gm_series
+
     result.evidence_ids = [f"ev_is_oper_rev_{as_of}", f"ev_is_oper_cost_{as_of}"]
     if severity == "red":
         result.explanation = (

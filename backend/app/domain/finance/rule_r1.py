@@ -119,11 +119,31 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         "oper_rev_growth": {"value": round(or_pct, 1), "unit": "percent"},
         "gap": {"value": round(gap, 1), "unit": "percentage_point"},
     }
+    # 多期展示序列：逐期 YoY 计算 gap（最近 8 期，图表趋势用）。
+    # P2-3（核验修订）：按报告期对齐 + 去年同期（prev_year_period）计算，
+    # 不再跨报表按数组下标拼接（两字段期次错位时会错配）。
     if prev_gap is not None:
-        result.history = [
-            {"period": "t-1Q", "gap": round(prev_gap, 1)},
-            {"period": "t", "gap": round(gap, 1)},
-        ]
+        from app.domain.finance._fetch import align_by_period, prev_year_period
+
+        aligned = align_by_period(ar=acct_rcv_sr, or_=oper_rev_sr)
+        ordered = sorted(aligned.keys())
+        series: list[dict] = []
+        for p in ordered[-8:]:
+            t4 = prev_year_period(p, ordered)
+            if t4 is None:
+                continue
+            ar_y = yoy_growth(aligned[p].get("ar"), aligned[t4].get("ar"))
+            or_y = yoy_growth(aligned[p].get("or"), aligned[t4].get("or"))
+            if ar_y is None or or_y is None:
+                continue
+            series.append({"period": p, "gap": round((ar_y - or_y) * 100, 1)})
+        if len(series) >= 2:
+            result.history = series
+        else:
+            result.history = [
+                {"period": "t-1Q", "gap": round(prev_gap, 1)},
+                {"period": "t", "gap": round(gap, 1)},
+            ]
     result.quality = build_parent_scope_quality(
         coverage=acct_rcv_sr.coverage,
         data_completeness=round(valid_ar / 4, 2),
