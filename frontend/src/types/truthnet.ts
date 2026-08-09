@@ -96,6 +96,7 @@ export interface Message {
     id: string;
     title: string;
     source: string;
+    url?: string;
   }>;
 }
 
@@ -531,12 +532,12 @@ export const FIELD_MAPPINGS = {
   // Company
   'code': 'wind_code',
   'name': 'sec_name',
-  
+
   // Session
   'id': 'session_id',
-  
+
   // EventCluster
   'cluster_id': 'event_cluster_id',
-  
+
   // EquityNode
 } as const;

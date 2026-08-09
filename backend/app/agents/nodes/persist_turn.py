@@ -87,18 +87,29 @@ def _to_json(value) -> str | None:
 
 
 def _evidence_fingerprint(ev: EvidenceRef) -> str:
+    """核心指纹（与 Evidence ID 生成 digest 一致的字段）。
+
+    value/module/source_table 不参与核心比较：同 ID 已由 digest 保证
+    type/record/field/period/company 一致；value 等展示层字段时有时无
+    （如公告证据 source_title/value 二次解析差异），不应误判冲突
+    （P0：ev_ann_* 反复落库失败即因此）。
+    """
     return "|".join(
         [
             ev.source_type or "",
             ev.source_record_id or "",
             ev.field_path or "",
             ev.period or "",
-            ev.value or "",
             ev.company_code or "",
-            ev.module or "",
-            ev.source_table or "",
         ]
     )
+
+
+def _evidence_value_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
+    """value 冲突判定：双方都有值且不同才算真冲突；一方为空视为可补充。"""
+    a = (existing.value or "").strip()
+    b = (new.value or "").strip()
+    return bool(a and b and a != b)
 
 
 def _claim_fingerprint(cl: Claim) -> str:
@@ -119,13 +130,19 @@ def _claim_fingerprint(cl: Claim) -> str:
 
 
 def _upsert_evidence(conn, ev: EvidenceRef, turn_id: str) -> None:
-    """幂等 upsert evidence_refs；同 ID 不同内容 → 冲突报错。"""
+    """幂等 upsert evidence_refs；同 ID 不同内容 → 冲突报错。
+
+    额外收口（P2-4）：已存记录的空字段（source_title/source_uri/
+    source_excerpt/unit）后续获得非空值时，只填补空字段（CASE WHEN
+    NULL OR ''），绝不覆盖已有非空事实。
+    """
     if not ev.evidence_id:
         return
     existing = conn.execute(
         text(
             "SELECT source_type, source_record_id, field_path, period, value, "
-            "company_code, module, source_table "
+            "company_code, module, source_table, source_title, source_uri, "
+            "source_excerpt, unit "
             "FROM evidence_refs WHERE evidence_id = :eid LIMIT 1"
         ),
         {"eid": ev.evidence_id},
@@ -144,11 +161,20 @@ def _upsert_evidence(conn, ev: EvidenceRef, turn_id: str) -> None:
                 source_table=existing[7],
             )
         )
-        if stored != _evidence_fingerprint(ev):
+        conflict = stored != _evidence_fingerprint(ev) or _evidence_value_conflict(
+            EvidenceRef(
+                evidence_id=ev.evidence_id,
+                value=existing[4],
+            ),
+            ev,
+        )
+        if conflict:
             raise ValueError(
                 f"Evidence ID 冲突（同 ID 不同内容，拒绝覆盖）: {ev.evidence_id}"
             )
-        return  # 已存在且内容一致 → 幂等复用
+        # P2-4：内容一致 → 幂等复用；同时只填补空字段（不覆盖非空值）
+        _fill_evidence_gap_fields(conn, ev, existing)
+        return
 
     now = datetime.now(timezone.utc)
     conn.execute(
@@ -183,6 +209,39 @@ def _upsert_evidence(conn, ev: EvidenceRef, turn_id: str) -> None:
             "module": ev.module or None,
             "table": ev.source_table,
         },
+    )
+
+
+_GAP_FILLABLE_COLS = (
+    ("source_title", "source_title"),
+    ("source_uri", "source_uri"),
+    ("source_excerpt", "source_excerpt"),
+    ("unit", "unit"),
+    # P2-3（核验修订）：已有空 value 后续获得真实值时同样补全
+    ("value", "value"),
+)
+
+
+def _fill_evidence_gap_fields(conn, ev: EvidenceRef, existing_row) -> None:
+    """P2-4：已存证据的空字段用新值补全（CASE WHEN NULL OR ''），
+    不覆盖已有非空值。无空字段可补时零开销返回。"""
+    sets = []
+    params: dict = {}
+    for col, attr in _GAP_FILLABLE_COLS:
+        new_val = getattr(ev, attr)
+        if new_val is None or str(new_val).strip() == "":
+            continue
+        params[attr] = str(new_val)
+        sets.append(
+            f"{col} = CASE WHEN {col} IS NULL OR {col} = '' "
+            f"THEN :{attr} ELSE {col} END"
+        )
+    if not sets:
+        return
+    params["eid"] = ev.evidence_id
+    conn.execute(
+        text(f"UPDATE evidence_refs SET {', '.join(sets)} " "WHERE evidence_id = :eid"),
+        params,
     )
 
 
@@ -276,7 +335,15 @@ def _build_panel_data(state: AgentState) -> dict | None:
     plan = state.get("plan")
     intent = getattr(plan, "intent", "") if plan is not None else ""
     # 闲聊、使用引导、范围外问题和无公司研报不属于风险分析面板。
-    if intent in {"chitchat", "guide", "unsupported", "research"}:
+    # P2-1/P2-2：公司事实与多公司引导同样不属于风险分析面板
+    if intent in {
+        "chitchat",
+        "guide",
+        "unsupported",
+        "research",
+        "company_fact",
+        "comparison_guide",
+    }:
         return None
     results = state.get("results")
     has_analysis_result = bool(
@@ -462,11 +529,21 @@ def persist_turn_node(state: AgentState) -> dict:
             # Provenance 持久化（同一事务，顺序满足外键）
             evidence = state.get("evidence", [])
             claims = state.get("claims", [])
-            for ev in evidence:
+            # P1-2（核验修订）：统一转换为 Pydantic 模型列表（节点产出对象、
+            # 测试/REST 可能传 dict），后续 upsert 与 link 全部使用模型——
+            # 此前 _persist_links 收到原始 dict 访问 .evidence_ids 会 AttributeError。
+            evidence_models = [
+                ev if isinstance(ev, EvidenceRef) else EvidenceRef(**ev)
+                for ev in evidence
+            ]
+            claim_models = [
+                cl if isinstance(cl, Claim) else Claim(**cl) for cl in claims
+            ]
+            for ev in evidence_models:
                 _upsert_evidence(conn, ev, db_turn_id)
-            for cl in claims:
+            for cl in claim_models:
                 _upsert_claim(conn, cl, db_turn_id)
-            _persist_links(conn, claims, db_turn_id)
+            _persist_links(conn, claim_models, db_turn_id)
 
         logger.info(
             "PersistTurn: session=%s turn_index=%d company=%s claims=%d evidence=%d",

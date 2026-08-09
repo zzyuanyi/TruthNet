@@ -39,7 +39,7 @@ const sourceTypeIcons: Record<string, string> = {
 
 export function RiskTimeline({ events, clusters, onEventClick }: RiskTimelineProps) {
   // 按日期排序（最新在前）
-  const sortedEvents = [...events].sort((a, b) => 
+  const sortedEvents = [...events].sort((a, b) =>
     new Date(b.date).getTime() - new Date(a.date).getTime()
   );
 
@@ -108,7 +108,7 @@ export function RiskTimeline({ events, clusters, onEventClick }: RiskTimelinePro
             </div>
             <div className="space-y-2">
               {clusters.slice(0, 3).map(cluster => (
-                <div 
+                <div
                   key={cluster.event_cluster_id}
                   className="flex items-start gap-2 text-xs p-2 rounded-md bg-muted/50"
                 >
@@ -140,7 +140,7 @@ interface TimelineItemProps {
 
 function TimelineItem({ event, onClick }: TimelineItemProps) {
   const sentiment = event.sentiment as keyof typeof sentimentColors;
-  
+
   return (
     <div
       className={cn(
@@ -197,6 +197,24 @@ function TimelineItem({ event, onClick }: TimelineItemProps) {
              sentiment === 'mixed' ? '混合' : '中性'}
           </span>
         </div>
+
+        {/* 来源链接（公告原文，Wind PDF） */}
+        {event.sources && event.sources.filter(Boolean).length > 0 && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1">
+            {event.sources.filter(Boolean).slice(0, 3).map((uri, i) => (
+              <a
+                key={`${uri}-${i}`}
+                href={uri}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-xs text-blue-500 hover:underline"
+              >
+                查看原文{i + 1}
+              </a>
+            ))}
+          </div>
+        )}
 
         {/* 证据引用 */}
         {event.evidence_ids && event.evidence_ids.length > 0 && (

@@ -24,6 +24,10 @@ class CompanyRef(BaseModel):
     sec_name: str
     exchange: str
     industry_l1: str | None = None
+    # 公司事实轻量查询（R10）：resolve_entity 查询时一并填充，
+    # generate_answer 无需再建数据库连接
+    listing_date: str | None = Field(None, description="上市日期(YYYY-MM-DD)")
+    comp_type_code: str | None = Field(None, description="企业类型代码")
 
 
 class ExecutionPlan(BaseModel):
@@ -32,6 +36,8 @@ class ExecutionPlan(BaseModel):
     intent: str = ""
     requested_modules: list[str] = Field(default_factory=list)
     cross_checks: list[str] = Field(default_factory=list)
+    # 公司事实轻量查询键（R9）：industry/exchange/listing_date/comp_type/business/total_shares
+    fact_key: str = ""
     as_of: date | None = None
     # 期次语义（#5 期次解析）：report_period=财报期 / as_of=信息截止日 / ""=未指定
     as_of_kind: str = ""
@@ -91,11 +97,18 @@ class MemoryContext(BaseModel):
     resolved_entity_name: str | None = Field(
         None, description="指代消解后的实体名称（如'康美药业'）"
     )
+    resolved_company_code: str | None = Field(
+        None,
+        description="指代消解后的公司代码（摘要/近期轮次 company_code 恢复）",
+    )
     is_anaphora: bool = Field(
         False, description="当前 query 是否包含指代词（它/上次那家/该公司等）"
     )
     previous_companies: list[str] = Field(
         default_factory=list, description="历史轮次中涉及的股票简称列表"
+    )
+    previous_company_codes: list[str] = Field(
+        default_factory=list, description="历史轮次中的公司代码（最近优先）"
     )
     referenced_indicators: list[str] = Field(
         default_factory=list, description="历史轮次中提及的财务指标"
@@ -174,6 +187,12 @@ class AgentState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
     company: CompanyRef | None
     company_candidates: list[CompanyRef]
+    # 多公司比较目标（R13）：resolve_entity 检出 ≥2 家实体时填充，
+    # plan_modules 据此生成 comparison_guide（引导对比页，不静默选一家）
+    comparison_targets: list[CompanyRef]
+    # P2-2：比较意图标志（命中比较词恒 True，即使 0/1 家候选）——
+    # 避免用空列表同时表达"不是比较"和"比较但零命中"
+    comparison_requested: bool
     plan: ExecutionPlan | None
     module_status: Annotated[dict[str, ModuleStatus], lambda a, b: {**a, **b}]
     results: Annotated[
@@ -191,6 +210,10 @@ class AgentState(TypedDict, total=False):
     # Phase D #11: 造假模式匹配结果（list[dict]，pattern_match 节点产出）
     pattern_matches: list[dict]
     memory_context: MemoryContext | None
+    # 远期记忆摘要（load_context 注入，dict 形态避免分层反向依赖）
+    memory_summary: dict[str, Any] | None
+    # 近期轮次的公司代码（最近优先，load_context 注入）
+    recent_company_codes: list[str]
     provenance_report: Any | None
     cross_validation: CrossValidationResult | None = None
     risk_output: Any | None = None

@@ -352,3 +352,174 @@ def test_extract_companies_common_suffix():
     )
     assert "三一重工" in _extract_companies_from_text("三一重工财务分析")
     assert "欧派家居" in _extract_companies_from_text("欧派家居 2025 年报分析")
+
+
+# ── 长程记忆闭环（P0-1）：摘要/近期代码恢复指代 ────────────────
+
+
+def test_resolve_lite_summary_last_company_code_fallback():
+    """近期无公司 + 摘要 last_company_code → 指代恢复公司代码（十轮外记忆）。
+
+    覆盖验收：第 11 轮"它现在财务造假的风险还高吗"能恢复康美。
+    """
+    from app.agents.nodes.memory import _resolve_lite
+
+    summary = {"last_company_code": "600518.SH", "text": "涉及公司：600518.SH"}
+    ctx = _resolve_lite(
+        "它现在财务造假的风险还高吗",
+        messages=[],  # 近期窗口无公司文本
+        current_company_name=None,
+        recent_company_codes=[],
+        summary=summary,
+    )
+    assert ctx.is_anaphora
+    assert ctx.resolved_entity_name is None
+    assert ctx.resolved_company_code == "600518.SH"
+
+
+def test_resolve_lite_recent_code_beats_summary():
+    """近期轮次提到另一家公司 → 以近期公司代码为准（覆盖摘要）。"""
+    from app.agents.nodes.memory import _resolve_lite
+
+    summary = {"last_company_code": "600518.SH"}
+    ctx = _resolve_lite(
+        "它现在财务造假的风险还高吗",
+        messages=[],
+        current_company_name=None,
+        recent_company_codes=["603180.SH"],  # 金牌家居（近期）
+        summary=summary,
+    )
+    assert ctx.resolved_company_code == "603180.SH"
+
+
+def test_resolve_lite_current_text_beats_codes():
+    """当前 state 有公司（近期文本解析）→ 优先于代码兜底。"""
+    from app.agents.nodes.memory import _resolve_lite
+
+    summary = {"last_company_code": "600518.SH"}
+    ctx = _resolve_lite(
+        "它现在财务造假的风险还高吗",
+        messages=[],
+        current_company_name="金牌家居",
+        recent_company_codes=[],
+        summary=summary,
+    )
+    assert ctx.resolved_entity_name == "金牌家居"
+    assert ctx.resolved_company_code is None
+
+
+def test_memory_summary_old_format_backward_compatible():
+    """旧摘要（无 last_company_code 字段）→ from_dict 不报错、字段为空。"""
+    from app.application.services.memory_distillation import MemorySummary
+
+    old = {
+        "version": "memory-v1",
+        "text": "涉及公司：600518.SH",
+        "company_codes": ["600518.SH"],
+    }
+    s = MemorySummary.from_dict(old)
+    assert s is not None
+    assert s.last_company_code == ""
+    assert s.company_codes == ["600518.SH"]
+
+
+def test_build_summary_uses_turn_company_code():
+    """摘要构建：last_company_code 取最后一个有代码的轮次（结构化字段）。"""
+    from app.application.services.memory_distillation import build_summary_for_turns
+
+    turns = [
+        {
+            "turn_id": "t1",
+            "turn_index": 1,
+            "question": "分析康美",
+            "answer": "a",
+            "company_code": "600518.SH",
+        },
+        {
+            "turn_id": "t2",
+            "turn_index": 2,
+            "question": "分析茅台",
+            "answer": "a",
+            "company_code": "600519.SH",
+        },
+        {
+            "turn_id": "t3",
+            "turn_index": 3,
+            "question": "分析金牌",
+            "answer": "a",
+            "company_code": "",
+        },
+    ]
+    s = build_summary_for_turns(turns)
+    assert s.last_company_code == "600519.SH"
+    assert s.company_codes == ["600518.SH", "600519.SH"]
+
+
+def test_last_company_code_aba_sequence():
+    """A→B→A：last_company_code 必须取最后出现的 A（非去重末尾 B）。"""
+    from app.application.services.memory_distillation import build_summary_for_turns
+
+    turns = [
+        {
+            "turn_id": "t1",
+            "turn_index": 1,
+            "question": "q1",
+            "answer": "a",
+            "company_code": "600518.SH",
+        },
+        {
+            "turn_id": "t2",
+            "turn_index": 2,
+            "question": "q2",
+            "answer": "a",
+            "company_code": "603180.SH",
+        },
+        {
+            "turn_id": "t3",
+            "turn_index": 3,
+            "question": "q3",
+            "answer": "a",
+            "company_code": "600518.SH",
+        },
+    ]
+    s = build_summary_for_turns(turns)
+    assert s.last_company_code == "600518.SH"  # 最后出现的是 A
+    assert s.company_codes == ["600518.SH", "603180.SH"]  # 去重仅用于展示
+
+
+def test_load_context_recent_codes_desc_order(monkeypatch):
+    """recent_company_codes 保持 DESC 最近优先（不随消息注入反转）。"""
+    from app.agents.nodes import load_context as lc
+
+    class _FakeRows:
+        def __init__(self):
+            self._rows = [
+                {"question": "q3", "answer": "a3", "company_code": "600518.SH"},
+                {"question": "q2", "answer": "a2", "company_code": "603180.SH"},
+                {"question": "q1", "answer": "a1", "company_code": None},
+            ]
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _FakeConn:
+        def execute(self, *a, **k):
+            return _FakeRows()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        lc,
+        "_get_engine",
+        lambda: type("E", (), {"connect": lambda self: _FakeConn()})(),
+    )
+    monkeypatch.setattr(lc.settings, "MEMORY_STRATEGY", "none")
+    result = lc.load_context_node({"runtime": type("R", (), {"session_id": "s1"})()})
+    assert result["recent_company_codes"] == ["600518.SH", "603180.SH"]

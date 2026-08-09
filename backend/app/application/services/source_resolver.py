@@ -227,6 +227,39 @@ def _resolve_research_report(source_record_id: str) -> dict:
         return {"resolved": False, "record": {}}
 
 
+def _resolve_company_registry(source_record_id: str) -> dict:
+    """解析公司注册信息来源（R11：公司事实轻量查询的 Evidence 回查）。
+
+    source_record_id = wind_code（如 600518.SH），返回可公开的公司主表字段。
+    P2-1：复用模块内 _get_engine()，不每次新建连接池。
+    """
+    try:
+        from sqlalchemy import text
+
+        with _get_engine().connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT wind_code, sec_name, exchange_code, industry_l1, "
+                        "listing_date, comp_type_code "
+                        "FROM companies WHERE wind_code = :wc AND is_latest = 1 LIMIT 1"
+                    ),
+                    {"wc": source_record_id},
+                )
+                .mappings()
+                .first()
+            )
+        if row is None:
+            return {"resolved": False, "record": {}}
+        return {
+            "resolved": True,
+            "record": {k: (str(v) if v is not None else None) for k, v in row.items()},
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("公司注册信息解析失败: %s", exc)
+        return {"resolved": False, "record": {}}
+
+
 def resolve_source(
     *,
     source_type: str,
@@ -244,4 +277,6 @@ def resolve_source(
         return _resolve_event_cluster(source_record_id)
     if source_type == "research_report":
         return _resolve_research_report(source_record_id)
+    if source_type == "company_registry":
+        return _resolve_company_registry(source_record_id)
     return {"resolved": False, "record": {}}

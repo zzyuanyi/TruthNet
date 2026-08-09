@@ -29,7 +29,7 @@ COMP_TYPE_SECURITIES = 4
 
 
 def company_type_from_code(comp_type_code: int | None) -> str:
-    """将 comp_type_code 映射为公司类型标签.
+    """将 comp_type_code 映射为公司类型分类（规则适用性 Gate 用）.
 
     1=非金融，2=银行，3=保险，4=证券；NULL/非法 → "unknown"。
     禁止把 unknown 默认为非金融（母公司口径 Gate 语义）。
@@ -39,6 +39,21 @@ def company_type_from_code(comp_type_code: int | None) -> str:
     if comp_type_code in (COMP_TYPE_BANK, COMP_TYPE_INSURANCE, COMP_TYPE_SECURITIES):
         return "financial"
     return "unknown"
+
+
+def company_type_label_from_code(comp_type_code: int | None) -> str | None:
+    """将 comp_type_code 映射为中文展示标签（公司事实回答用）.
+
+    与 company_type_from_code 分离：分类函数返回英文分类供 Gate 判断，
+    本函数返回中文标签供用户展示；NULL/非法 → None（回答"未覆盖"）。
+    """
+    labels = {
+        COMP_TYPE_NON_FINANCIAL: "非金融企业",
+        COMP_TYPE_BANK: "银行",
+        COMP_TYPE_INSURANCE: "保险",
+        COMP_TYPE_SECURITIES: "证券",
+    }
+    return labels.get(comp_type_code)
 
 
 class CompanyRecord(BaseModel):

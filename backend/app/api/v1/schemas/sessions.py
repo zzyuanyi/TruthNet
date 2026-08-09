@@ -38,6 +38,18 @@ class SessionCreateDataV1(BaseModel):
     updated_at: str
 
 
+class SessionSourceV1(BaseModel):
+    """历史轮来源项（P2-1 核验修订：与 WS sources 同构 {id,title,source,url}）.
+
+    不再使用裸 dict——OpenAPI 暴露字段结构，契约测试可断言。
+    """
+
+    id: str
+    title: str | None = None
+    source: str | None = None
+    url: str | None = None
+
+
 class SessionTurnV1(BaseModel):
     """单轮历史."""
 
@@ -50,6 +62,8 @@ class SessionTurnV1(BaseModel):
     module_status: dict | None = None
     panel_data: dict | None = None  # 面板摘要（v7；旧数据为 None）
     evidence_ids: list[str] = []
+    # P1-3：来源列表（与 WS sources 同构，最多 10 条）
+    sources: list[SessionSourceV1] = []
     intent: str = ""
     follow_ups: list[str] = []
     supporting_evidence_ids: list[str] = []

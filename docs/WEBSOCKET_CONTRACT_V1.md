@@ -57,7 +57,7 @@
 | `answer.delta` | 文本增量（真流式：generate_answer 实时分段） | ✅ |
 | `artifact.upsert` | 结构化产物更新 (规则/图/时间线/证据/股权链路) | ✅ |
 | `warning.raised` | 数据不足/超时/降级 | 🔸 |
-| `turn.completed` | 最终结果 + intent + 追问建议 + pattern_matches + equity_chains + supporting_evidence_ids（intent 用于区分普通对话/分析；supporting_evidence_ids 为可展示叶子证据子集） | ✅ |
+| `turn.completed` | 最终结果 + intent + 追问建议 + pattern_matches + equity_chains + supporting_evidence_ids + **sources**（intent 用于区分普通对话/分析；supporting_evidence_ids 为可展示叶子证据子集；sources 为带链接来源列表，结构见下） | ✅ |
 | `turn.failed` | 本轮无法继续 | ✅ |
 | `turn.cancelled` | `turn.cancel` 确认（≤2s，幂等，单终态） | ✅ |
 | `stream.resume_ack` | 断线补发结果（replay_count/gap） | ✅ |
@@ -117,6 +117,24 @@ Server → artifact.upsert(event_timeline)
 Server → answer.delta
 Server → turn.completed
 ```
+
+### turn.completed.payload.sources（P2-4 契约）
+
+带链接来源列表（与 REST 历史会话 `SessionTurnV1.sources` 完全同构）：
+
+```json
+"sources": [
+  {
+    "id": "ev_ann_xxxx",
+    "title": "公告标题",
+    "source": "announcement",
+    "url": "https://www.cninfo.com.cn/..."
+  }
+]
+```
+
+- 上限 10 条；有 url 的来源优先排序
+- `intent` 枚举追加：`company_fact`（公司事实轻量查询）、`comparison_guide`（多公司比较引导）——二者 `requested_modules` 恒为空，不触发三大核查模块
 
 ---
 

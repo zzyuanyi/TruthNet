@@ -22,6 +22,7 @@ _VALID_SOURCE_TYPES = {
     "neo4j_relationship",
     "event_cluster",
     "research_report",
+    "company_registry",  # R11: 公司事实轻量查询的注册信息来源
 }
 
 

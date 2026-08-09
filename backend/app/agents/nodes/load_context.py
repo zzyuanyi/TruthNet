@@ -82,7 +82,12 @@ def load_context_node(state: AgentState) -> dict:
 
     session_id = _session_id(state)
     if not session_id:
-        return {"messages": [], "runtime": runtime}
+        return {
+            "messages": [],
+            "memory_summary": None,
+            "recent_company_codes": [],
+            "runtime": runtime,
+        }
 
     strategy = settings.MEMORY_STRATEGY
     history: list[dict] = []
@@ -110,12 +115,14 @@ def load_context_node(state: AgentState) -> dict:
                 }
             )
 
+    # 近期轮次的公司代码（DESC 顺序 = 最近优先，去重保序）
+    recent_company_codes: list[str] = []
     try:
         with _get_engine().connect() as conn:
             rows = (
                 conn.execute(
                     text(
-                        "SELECT question, answer FROM conversation_turns "
+                        "SELECT question, answer, company_code FROM conversation_turns "
                         "WHERE session_id = :sid "
                         "ORDER BY turn_index DESC LIMIT :limit"
                     ),
@@ -126,9 +133,14 @@ def load_context_node(state: AgentState) -> dict:
             )
     except Exception:
         logger.exception("LoadContext 读取失败: session=%s", session_id)
-        return {"messages": history, "runtime": runtime}
+        return {
+            "messages": history,
+            "memory_summary": summary.to_dict() if summary else None,
+            "recent_company_codes": [],
+            "runtime": runtime,
+        }
 
-    # 倒序结果反转 → 按时间升序注入
+    # 倒序结果反转 → 按时间升序注入（消息注入）
     for row in reversed(rows):
         q = str(row["question"] or "")
         a = str(row["answer"] or "")
@@ -136,6 +148,13 @@ def load_context_node(state: AgentState) -> dict:
             history.append({"role": "user", "content": q})
         if a:
             history.append({"role": "assistant", "content": a})
+
+    # recent_company_codes 单独遍历原始 rows（DESC = 最近优先，P1-1）：
+    # 不能随 reversed() 收集——那会把顺序反成最旧在前。
+    for row in rows:
+        code = str(row["company_code"] or "").strip()
+        if code and code not in recent_company_codes:
+            recent_company_codes.append(code)
 
     if history:
         logger.info(
@@ -145,4 +164,9 @@ def load_context_node(state: AgentState) -> dict:
             strategy,
         )
 
-    return {"messages": history, "runtime": runtime}
+    return {
+        "messages": history,
+        "memory_summary": summary.to_dict() if summary else None,
+        "recent_company_codes": recent_company_codes,
+        "runtime": runtime,
+    }

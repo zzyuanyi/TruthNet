@@ -560,6 +560,27 @@ async def _finalize_turn(
             }
         )
 
+    # 来源引用（前端渲染可点链接）：带 uri 的证据（公告/研报）排前、
+    # 无 uri 的规则证据殿后，总量 ≤10——确保可点链接不被规则证据截断挤掉。
+    _src_evs = [
+        ev
+        for ev in state.get("evidence", [])
+        if ev.evidence_id
+        and (getattr(ev, "source_title", "") or getattr(ev, "source_uri", ""))
+    ]
+    _src_evs.sort(
+        key=lambda ev: (not bool(getattr(ev, "source_uri", "")), ev.evidence_id)
+    )
+    _src_sources = [
+        {
+            "id": ev.evidence_id,
+            "title": ev.source_title,
+            "source": ev.source_type,
+            "url": ev.source_uri or "",
+        }
+        for ev in _src_evs
+    ][:10]
+
     await _emit_terminal_once(
         session,
         turn,
@@ -579,6 +600,7 @@ async def _finalize_turn(
                 for ev in state.get("evidence", [])
                 if getattr(ev, "evidence_id", None)
             ],
+            "sources": _src_sources,
             # #13：可展示叶子证据子集（前端默认展示，保留全量入口）
             "supporting_evidence_ids": supporting_evidence_ids(state.get("claims", [])),
             "warnings": warnings,

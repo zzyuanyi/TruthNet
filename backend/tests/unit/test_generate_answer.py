@@ -128,7 +128,8 @@ def test_four_layer_structure():
 
     # ② 三类核心信号摘要
     assert "财务维度检测到 2 项规则信号（R1、R2）" in fr.answer
-    assert "股权维度发现 1 条控制链" in fr.answer
+    # 新契约：股权维度输出控制链细节（控制人/路径/持股），不只计数
+    assert "股权维度：" in fr.answer
     assert "事件维度存在 1 项信号" in fr.answer
 
     # ④ 追问：equity/event claim 触发对应追问

@@ -173,7 +173,7 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
   const Icon = typeConfig.icon;
 
   return (
-    <TableRow 
+    <TableRow
       className="group hover:bg-muted/50 cursor-pointer"
       onClick={() => onNodeClick?.(node)}
     >
@@ -327,16 +327,16 @@ function checkCircularHolding(equityData: EquityResponseData): boolean {
       adjacencyList.get(src)!.push(tgt);
     }
   });
-  
+
   // DFS 检测环
   const visited = new Set<string>();
   const recursionStack = new Set<string>();
-  
+
   function hasCycle(nodeId: string): boolean {
     if (!visited.has(nodeId)) {
       visited.add(nodeId);
       recursionStack.add(nodeId);
-      
+
       const neighbors = adjacencyList.get(nodeId) || [];
       for (const neighbor of neighbors) {
         if (!visited.has(neighbor) && hasCycle(neighbor)) {
@@ -350,12 +350,12 @@ function checkCircularHolding(equityData: EquityResponseData): boolean {
     recursionStack.delete(nodeId);
     return false;
   }
-  
+
   for (const node of equityData.nodes) {
     if (hasCycle(node.id || node.entity_id)) {
       return true;
     }
   }
-  
+
   return false;
 }

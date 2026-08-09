@@ -155,24 +155,54 @@ def _llm_intent_fallback(user_query: str) -> _IntentResult | None:
 # 短而明确的表达走高置信快速路径；口语化和边界表达交给 LLM；
 # 同一规则也作为 LLM 失败/超时时的确定性降级兜底。
 
-_CHITCHAT_KW = (
+# 闲聊意图词表（R8）：按语义拆分，全部"清理标点后精确匹配"，
+# 防止"你好，康美药业怎么样"这类混合输入被问候词吞掉。
+_GREETING_EXACT = (
     "你好",
     "您好",
     "嗨",
+    "哈喽",
     "在吗",
+    "早上好",
+    "上午好",
+    "中午好",
+    "下午好",
+    "晚上好",
+    "hello",
+    "hi",
+)
+
+_THANKS_EXACT = (
     "谢谢",
     "感谢",
+    "多谢",
+    "谢谢你",
+    "谢谢您",
+    "谢谢了",
+)
+
+_FAREWELL_EXACT = (
     "再见",
     "拜拜",
+    "拜拜了",
+    "回头见",
+    "下次见",
+)
+
+_CAPABILITY_EXACT = (
     "你是谁",
     "你是什么",
     "能做什么",
+    "你能做什么",
     "能帮我做什么",
+    "你能帮我做什么",
     "会做什么",
+    "你会做什么",
     "有什么用",
     "有什么功能",
     "介绍一下你",
     "介绍一下自己",
+    "介绍一下",
 )
 
 _ENGLISH_GREETING_RE = re.compile(
@@ -198,6 +228,32 @@ _UNSUPPORTED_KW = (
     "翻译",
     "讲故事",
     "写诗",
+)
+
+# 公司事实轻量查询（R9）：只匹配明确模板，禁止裸"行业/股本"包含匹配
+# （"康美药业行业研报""股本变化风险"不得误路由）。
+_COMPANY_FACT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"属于什么行业|所属行业|什么行业|是什么行业"), "industry"),
+    (
+        re.compile(r"在哪个交易所上市|在哪个市场上市|在哪上市|上市交易所|什么交易所"),
+        "exchange",
+    ),
+    (re.compile(r"上市日期|上市时间|什么时候上市|何时上市"), "listing_date"),
+    (re.compile(r"企业类型|公司类型|是什么类型|什么企业类型"), "comp_type"),
+    (re.compile(r"主营业务|主要业务|是做什么的|做什么的|主营产品"), "business"),
+    (re.compile(r"总股本|股本总额"), "total_shares"),
+]
+
+_COMPANY_FACT_TEMPLATES = (
+    "属于什么行业",
+    "所属行业",
+    "在哪个交易所上市",
+    "上市日期",
+    "企业类型",
+    "公司类型",
+    "主营业务",
+    "总股本",
+    "股本总额",
 )
 
 _ANALYSIS_CUES = (
@@ -258,18 +314,45 @@ def _chitchat_messages(user_query: str) -> list[dict]:
     ]
 
 
+def _strip_punct(s: str) -> str:
+    """清理中文/英文标点与空白，用于问候词精确匹配。"""
+    return re.sub(r"[，。！？、,.!?;\s]+", "", s)
+
+
+def detect_company_fact(user_query: str) -> str | None:
+    """公司事实查询精确模板匹配（R9，纯函数）。
+
+    只命中明确模板（属于什么行业/在哪个交易所上市/上市日期/企业类型/
+    主营业务/总股本等），返回 fact_key；无命中返回 None。
+    不匹配裸"行业""股本"（避免误路由"行业研报""股本变化风险"）。
+    """
+    ql = user_query or ""
+    for pattern, key in _COMPANY_FACT_PATTERNS:
+        if pattern.search(ql):
+            return key
+    return None
+
+
 def detect_chitchat_intent(user_query: str) -> str | None:
     """高置信寒暄/引导识别（LLM 失败兜底，纯函数）。
 
     Returns:
         chitchat / guide / unsupported / None（正常或需 LLM 判断）
 
-    只对短、明确表达做确定性判断。包含真实分析信号的复合问题必须返回
-    None，例如“你好，继续分析它的现金流”，避免问候词吞掉业务请求。
+    R8 规则：
+      1. unsupported（天气等）先于闲聊宽松判定；
+      2. 问候/感谢/道别/能力询问 = 清理标点后"精确匹配"（fullmatch），
+         "你好，康美药业怎么样"清理后 ≠ 任何问候词 → 不判闲聊，交实体解析；
+      3. 业务分析信号（_ANALYSIS_CUES / 6 位代码）始终返回 None。
     """
     ql = (user_query or "").lower().strip()
     if not ql:
         return "chitchat"  # 空问题按寒暄引导
+
+    # 范围外问题（天气/编程/翻译等）先于问候宽松判定：
+    # "你好，今天天气怎么样"应归 unsupported，而非被"你好"抢先为 chitchat。
+    if any(kw in ql for kw in _UNSUPPORTED_KW):
+        return "unsupported"
 
     # 无实体荐股/使用请求优先归 guide；系统只分析用户指定的公司，不荐股。
     if any(kw in ql for kw in _GUIDE_KW) and not any(
@@ -281,15 +364,23 @@ def detect_chitchat_intent(user_query: str) -> str | None:
     if any(cue in ql for cue in _ANALYSIS_CUES) or re.search(r"\d{6}", ql):
         return None
 
-    # 纯寒暄通常很短；限制长度避免长句中偶然出现“你好/谢谢”被误判。
-    if len(ql) <= 16 and (
-        any(kw in ql for kw in _CHITCHAT_KW) or _ENGLISH_GREETING_RE.fullmatch(ql)
+    # 精确匹配（清理标点后全文相等）——混合输入不命中
+    ql_clean = _strip_punct(ql)
+    # 剥离句末语气词（你好呀/谢谢啦）后仍按精确词匹配，避免缩窄词表
+    for particle in ("呀", "啊", "哦", "呢", "啦", "嘛", "吧"):
+        if ql_clean.endswith(particle):
+            ql_clean = ql_clean[: -len(particle)]
+            break
+    if (
+        ql_clean in _GREETING_EXACT
+        or ql_clean in _THANKS_EXACT
+        or ql_clean in _FAREWELL_EXACT
+        # 英文问候用未剥离标点的原文匹配（"hi there!" 含空格）
+        or _ENGLISH_GREETING_RE.fullmatch(ql)
     ):
         return "chitchat"
-    if len(ql) <= 24 and any(kw in ql for kw in _GUIDE_KW):
-        return "guide"
-    if any(kw in ql for kw in _UNSUPPORTED_KW):
-        return "unsupported"
+    if ql_clean in _CAPABILITY_EXACT:
+        return "chitchat"  # "你是谁/能做什么" → 能力引导
     return None
 
 
@@ -340,6 +431,39 @@ def plan_modules_node(state: AgentState) -> dict:
         period_text = request_context.requested_period_text
 
     company = state.get("company")
+
+    # P2-2：多公司比较引导——comparison_requested 标志恒 True 时即进入
+    # comparison_guide（0/1/≥2 家候选都算），不复用 company_disambiguation 的
+    # "请选择一家"文案；文案差异由 generate_answer 按候选数处理。
+    comparison_targets = state.get("comparison_targets") or []
+    if state.get("comparison_requested") or len(comparison_targets) >= 2:
+        return {
+            "plan": ExecutionPlan(
+                intent="comparison_guide",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # R9：公司事实轻量查询——只匹配明确模板（属于什么行业/上市日期等），
+    # 直接进 generate_answer，不执行 finance/equity/events/risk。
+    if company is not None:
+        fact_key = detect_company_fact(user_query)
+        if fact_key:
+            return {
+                "plan": ExecutionPlan(
+                    intent="company_fact",
+                    requested_modules=[],
+                    cross_checks=[],
+                    fact_key=fact_key,
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
 
     if company is None:
         if state.get("company_candidates"):

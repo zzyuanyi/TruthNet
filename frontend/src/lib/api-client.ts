@@ -76,6 +76,13 @@ export interface SessionTurnData {
   module_status?: Record<string, unknown> | null;
   panel_data?: PanelData | null; // 面板摘要（v7；历史旧数据为 null）
   evidence_ids?: string[];
+  // P1-3：历史会话来源链接（与 WS sources 同构 {id,title,source,url}）
+  sources?: Array<{
+    id: string;
+    title: string;
+    source: string;
+    url?: string;
+  }>;
   created_at?: string;
 }
 
