@@ -77,6 +77,8 @@ export default function ChatPage() {
             created_at: t.created_at || '',
             // 历史会话证据链：后端 get_session 已带每轮 evidence_ids
             evidence_ids: t.evidence_ids || [],
+            // P1-3：历史来源链接（后端已组装 {id,title,source,url}）
+            sources: t.sources || [],
             show_evidence_status: Boolean(
               t.company_code || (t.evidence_ids || []).length > 0,
             ),
@@ -253,6 +255,7 @@ export default function ChatPage() {
           answer?: string;
           follow_ups?: string[];
           evidence_ids?: string[];
+          sources?: Array<{ id: string; title: string; source: string; url?: string }>;
           evidence_count?: number;
           claims_count?: number;
           intent?: string;
@@ -333,6 +336,7 @@ export default function ChatPage() {
               // 最终 answer 为权威值：delta 部分丢失时用其补全（非仅空兜底）
               content: result?.answer || updated[targetIdx].content,
               evidence_ids: result?.evidence_ids || [],
+              sources: result?.sources || [],
               follow_ups: result?.follow_ups || [],
               show_evidence_status: showEvidenceStatus,
               is_streaming: false,
@@ -344,6 +348,7 @@ export default function ChatPage() {
               role: 'assistant',
               content: result.answer,
               evidence_ids: result?.evidence_ids || [],
+              sources: result?.sources || [],
               follow_ups: result?.follow_ups || [],
               show_evidence_status: showEvidenceStatus,
               created_at: new Date().toISOString(),
@@ -377,9 +382,9 @@ export default function ChatPage() {
   // 连接 WebSocket
   useEffect(() => {
     if (!currentSessionId) return;
-    
+
     wsRef.current = wsClient.create(currentSessionId, handleWSEvent);
-    
+
     return () => {
       wsRef.current?.close();
       wsRef.current = null;
@@ -389,7 +394,7 @@ export default function ChatPage() {
   // 发送消息
   const handleSendMessage = async (content: string) => {
     if (!currentSessionId || isLoading) return;
-    
+
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
       role: 'user',

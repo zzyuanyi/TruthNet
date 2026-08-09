@@ -114,6 +114,22 @@ def test_sessions_schema_has_key_fields():
     assert "sessions" in lst and "total" in lst
 
 
+def test_sessions_sources_structured_schema():
+    """P2-1（核验修订）：sources 必须是结构化 SessionSourceV1（非裸 dict），
+    OpenAPI 暴露 {id,title,source,url} 字段结构。"""
+    schema = app.openapi()
+    components = schema.get("components", {}).get("schemas", {})
+    src = components.get("SessionSourceV1", {})
+    assert src, "SessionSourceV1 应存在（此前 sources 是裸 list[dict]）"
+    props = src.get("properties", {})
+    assert "id" in props and "title" in props and "source" in props and "url" in props
+    turn = components.get("SessionTurnV1", {}).get("properties", {})
+    sources_ref = turn.get("sources", {}).get("items", {}).get("$ref", "")
+    assert sources_ref.endswith(
+        "SessionSourceV1"
+    ), f"sources 应引用 SessionSourceV1，实际: {sources_ref}"
+
+
 def test_provenance_schema_has_envelope():
     """provenance 契约信封字段."""
     schema = app.openapi()

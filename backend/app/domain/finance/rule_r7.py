@@ -243,6 +243,24 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         },
     )
     result.warnings = field_warnings
+    # 多期展示序列：最近 8 期扣非/归母净利比（图表趋势用；扣非不可用期跳过）
+    r7_series: list[dict] = []
+    periods_hist = net_profit_sr.periods
+    for i in range(max(0, len(net_profit) - 8), len(net_profit)):
+        np_v, cp_v = net_profit[i], core_profit[i]
+        if np_v is None or cp_v is None or np_v == 0:
+            continue
+        label = (
+            str(periods_hist[i])
+            if i < len(periods_hist)
+            else f"t-{len(net_profit)-1-i}Q"
+        )
+        r7_series.append(
+            {"period": label, "core_profit_ratio": round(cp_v / abs(np_v) * 100, 1)}
+        )
+    if len(r7_series) >= 2:
+        result.history = r7_series
+
     # 证据 = 实际参与判断的字段（build_claims 按规则归属绑定，不再静态要求全字段）
     result.evidence_ids = [f"ev_is_net_profit_{as_of}"]
     if core_available:

@@ -148,6 +148,28 @@ def _append_equity_claims(
     chain_details = eq.chain_details or []
     chains = eq.chains or []
 
+    # 同路径不同报告期的股东快照去重：同路径多条链且全部为非风险链
+    # （green/unknown，如厦门市建潘 43.5%/41.5% 两个期次）→ 只保留
+    # 最终控制比例最大的一条；含风险链（red/orange/yellow）时全部保留
+    # （主链与最高风险链并存的既有语义，见 test_high_risk_chain_not_first）。
+    _by_path: dict[str, list[dict]] = {}
+    for cd in chain_details:
+        _by_path.setdefault("→".join(cd.get("path_names") or []), []).append(cd)
+    _deduped: list[dict] = []
+    for items in _by_path.values():
+        risks = [
+            it
+            for it in items
+            if str(it.get("risk_level") or "unknown") in ("red", "orange", "yellow")
+        ]
+        if risks:
+            _deduped.extend(items)
+        else:
+            _deduped.append(
+                max(items, key=lambda d: float(d.get("final_control_pct") or 0.0))
+            )
+    chain_details = _deduped
+
     # 收集可回查证据（canonical ev_*）
     def _valid_ev_ids(ids: list[str]) -> list[str]:
         return [eid for eid in ids if eid in evidence_index]

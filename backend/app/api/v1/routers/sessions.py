@@ -73,6 +73,31 @@ def _json_value(value, default):
         return default
 
 
+def _build_turn_sources(
+    src_map: dict[str, dict], evidence_ids: list[str], max_items: int = 10
+) -> list[dict]:
+    """按轮组装来源列表（P1-3，与 WS 实时 sources 同构）。
+
+    格式：{id: evidence_id, title: source_title, source: source_type, url: source_uri}
+    规则：有 URL 的来源优先 → 按 evidence_id 稳定排序 → 去重 → 截取 max_items。
+    """
+    items = []
+    for eid in evidence_ids:
+        info = src_map.get(eid)
+        if not info:
+            continue
+        items.append(
+            {
+                "id": eid,
+                "title": info.get("source_title", ""),
+                "source": info.get("source_type", ""),
+                "url": info.get("source_uri", ""),
+            }
+        )
+    items.sort(key=lambda x: (0 if x["url"] else 1, x["id"]))
+    return items[:max_items]
+
+
 class SessionCreateRequest(BaseModel):
     """创建会话请求 — V12 §11.2."""
 
@@ -326,6 +351,25 @@ def get_session(session_id: str):
                             lst = ev_map.setdefault(str(tr[0]), [])
                             if str(tr[1]) not in lst:
                                 lst.append(str(tr[1]))
+                    # P1-3：来源详情（sources，与 WS 实时同构 {id,title,source,url}）。
+                    # 批量查全部证据 ID 的来源字段（含 turn_id=NULL 的全局证据，
+                    # 已通过 claims→links 进入 ev_map）。
+                    src_map: dict[str, dict] = {}
+                    all_eids = [eid for eids in ev_map.values() for eid in eids]
+                    if all_eids:
+                        ev_rows = conn.execute(
+                            text(
+                                "SELECT evidence_id, source_type, source_title, source_uri "
+                                "FROM evidence_refs WHERE evidence_id IN :eids"
+                            ).bindparams(bindparam("eids", expanding=True)),
+                            {"eids": all_eids},
+                        ).all()
+                        for er in ev_rows:
+                            src_map[str(er[0])] = {
+                                "source_type": str(er[1] or ""),
+                                "source_title": str(er[2] or ""),
+                                "source_uri": str(er[3] or ""),
+                            }
                     turns = [
                         {
                             "turn_id": str(t["turn_id"]),
@@ -339,6 +383,11 @@ def get_session(session_id: str):
                             # 面板摘要（历史会话分析面板恢复，v7；旧数据为 None）
                             "panel_data": _json_value(t["panel_data"], None),
                             "evidence_ids": ev_map.get(str(t["turn_id"]), []),
+                            # P1-3：与 WS 同构 sources——URI 优先、按 ID 稳定排序、
+                            # 去重并截取 10 条（旧数据无来源则空列表）
+                            "sources": _build_turn_sources(
+                                src_map, ev_map.get(str(t["turn_id"]), [])
+                            ),
                             "intent": _json_value(t["response_meta"], {}).get(
                                 "intent", ""
                             ),

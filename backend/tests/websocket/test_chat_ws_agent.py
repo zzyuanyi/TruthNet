@@ -285,7 +285,7 @@ def test_finance_only_query_runs_finance(ws_session_tracker):
         ws.send_json(
             {
                 "event_type": "chat.query",
-                "payload": {"text": "康美药业应收账款情况如何"},
+                "payload": {"text": "康美药业财务情况如何"},
             }
         )
         events = _collect(ws)

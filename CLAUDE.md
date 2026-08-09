@@ -195,13 +195,19 @@ pip install -r requirements.txt
 # ===== 数据导入（首次搭建）=====
 # 0. 准备：从团队共享渠道获取赛方数据文件，放入 data/raw/ 对应子目录（1-5/）
 #    文件清单见 data/raw/README.md，渠道：微信群/网盘
+#    依赖链：security_master.py 是 import_data.py 的**强制前置**（生成
+#    data/processed/security_master.csv，缺失会失败关闭）；
+#    industry_mapping.csv 缺失时首次导入走备用路径，导入后跑 industry_fill.py
+python scripts/security_master.py               # 证券主表（sec_name 权威 + 质量标记，import_data 前置）
 python scripts/import_data.py --dry-run           # 预检数据
 python scripts/import_data.py                    # MySQL 全量入库（7 表，~83 万行）
 python scripts/announcement_sentiment.py         # 公告情绪分类
 python scripts/backfill_company_names.py --dry-run  # 公司名称回填（预检）
 python scripts/backfill_company_names.py         # 公司名称回填（正式）
-python scripts/neo4j_full_import.py              # Neo4j 全量图谱
-python scripts/industry_fill.py                  # 行业分类补全
+python scripts/neo4j_full_import.py              # Neo4j 全量图谱（幂等增量）
+# 重建（替换旧图）加 --replace-graph-version；防误删保护：失败只删本次新建，
+#    验收通过后才删旧关系（详见 data/raw/README.md）
+python scripts/industry_fill.py                  # 行业分类补全（生成 industry_mapping.csv）
 
 # ===== Chroma 嵌入链路（需先导入 MySQL 研报数据）=====
 pip install -r requirements-chroma.txt           # 安装 ~2GB PyTorch 依赖（仅首次）

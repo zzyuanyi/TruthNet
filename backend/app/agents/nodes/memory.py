@@ -144,12 +144,18 @@ def _resolve_lite(
     user_query: str,
     messages: list,
     current_company_name: str | None,
+    recent_company_codes: list[str] | None = None,
+    summary: dict | None = None,
 ) -> MemoryContext:
     """Lite Profile 确定性指代消解。
 
     1. 检测是否含指代词
-    2. 从 messages 历史提取最近的公司实体
-    3. 从 messages 历史提取最近提及的财务指标
+    2. 从 messages 历史提取最近的公司实体（文本）
+    3. 从近期轮次 company_code / 远期摘要 last_company_code 恢复（代码）
+    4. 从 messages 历史提取最近提及的财务指标
+
+    指代优先级：近期明确公司（文本）> 当前 state 公司 > 近期轮次代码
+    > 摘要 last_company_code。
     """
     is_anaphora = _contains_anaphora(user_query)
     anaphora_type = _extract_anaphora_type(user_query)
@@ -182,13 +188,25 @@ def _resolve_lite(
             unique_companies.append(c)
     previous_companies = unique_companies
 
-    # 指代消解：如果含指代词且历史有公司，取最近的公司
+    # 近期轮次代码（最近优先，load_context 注入）与摘要兜底代码
+    prev_codes: list[str] = list(recent_company_codes or [])
+    summary_code = ""
+    if summary and isinstance(summary, dict):
+        summary_code = str(summary.get("last_company_code") or "").strip()
+
+    # 指代消解优先级：近期明确公司（文本）> 当前 state 公司 >
+    # 近期轮次代码 > 摘要 last_company_code
     resolved_entity_name: str | None = None
+    resolved_company_code: str | None = None
     if is_anaphora and previous_companies:
         resolved_entity_name = previous_companies[0]  # 最近提到的公司
     elif is_anaphora and current_company_name:
         # 历史消息中没有公司但当前 state 有 company
         resolved_entity_name = current_company_name
+    elif is_anaphora and prev_codes:
+        resolved_company_code = prev_codes[0]  # 近期轮次的最近公司代码
+    elif is_anaphora and summary_code:
+        resolved_company_code = summary_code  # 十轮外记忆兜底（长程）
 
     # 提取历史指标
     referenced_indicators: list[str] = []
@@ -213,8 +231,10 @@ def _resolve_lite(
 
     return MemoryContext(
         resolved_entity_name=resolved_entity_name,
+        resolved_company_code=resolved_company_code,
         is_anaphora=is_anaphora,
         previous_companies=previous_companies[:10],
+        previous_company_codes=prev_codes[:10],
         referenced_indicators=referenced_indicators,
     )
 
@@ -229,6 +249,8 @@ def _build_context_message(context: MemoryContext) -> str | None:
 
     if context.resolved_entity_name:
         parts.append(f"当前分析对象: {context.resolved_entity_name}")
+    elif context.resolved_company_code:
+        parts.append(f"当前分析对象代码: {context.resolved_company_code}")
 
     if context.previous_companies and not context.resolved_entity_name:
         parts.append(f"历史涉及公司: {', '.join(context.previous_companies[:5])}")
@@ -259,7 +281,13 @@ def memory_node(state: AgentState) -> dict:
     company = state.get("company")
     current_company_name = company.sec_name if company else None
 
-    context = _resolve_lite(user_query, messages, current_company_name)
+    context = _resolve_lite(
+        user_query,
+        messages,
+        current_company_name,
+        recent_company_codes=state.get("recent_company_codes") or [],
+        summary=state.get("memory_summary"),
+    )
 
     logger.info(
         "Memory: is_anaphora=%s resolved=%s prev_companies=%d indicators=%d",

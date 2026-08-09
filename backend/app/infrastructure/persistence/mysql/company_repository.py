@@ -67,6 +67,23 @@ def _aliases_to_list(raw) -> list[str]:
     return []
 
 
+def _quality_flags_dict(raw) -> dict:
+    """将 quality_flags JSON 列规范为 dict（pymysql 返回字符串，需 json.loads）。"""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            import json
+
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+    return {}
+
+
 def _row_to_record(row) -> CompanyRecord:
     """将 SQLAlchemy Row/Mapping 转为 CompanyRecord."""
     d = dict(row)
@@ -84,7 +101,7 @@ def _row_to_record(row) -> CompanyRecord:
         dataset_version=d.get("dataset_version"),
         source_record_id=d.get("source_record_id"),
         source_type=d.get("source_type"),
-        quality_flags=d.get("quality_flags") or {},
+        quality_flags=_quality_flags_dict(d.get("quality_flags")),
         is_latest=bool(d.get("is_latest", True)),
     )
 

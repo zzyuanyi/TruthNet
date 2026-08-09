@@ -245,6 +245,16 @@ function MessageBubble({
               {message.sources.map(source => (
                 <div key={source.id} className="text-xs text-muted-foreground">
                   • {source.title} - {source.source}
+                  {source.url && (
+                    <a
+                      href={source.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-1.5 text-blue-500 hover:underline"
+                    >
+                      查看原文
+                    </a>
+                  )}
                 </div>
               ))}
             </div>

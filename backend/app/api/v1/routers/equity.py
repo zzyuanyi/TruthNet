@@ -119,7 +119,12 @@ async def get_company_equity(
 
         adapter = Neo4jEquityGraph()
         if await adapter.check_connection():
-            graph = await adapter.get_graph(company.wind_code, depth=depth, as_of=as_of)
+            graph = await adapter.get_graph(
+                company.wind_code,
+                depth=depth,
+                as_of=as_of,
+                graph_version=settings.GRAPH_VERSION,
+            )
         else:
             # Neo4j 不可用：返回 partial + 空图，绝不降级 NetworkX 冒充
             msg = "Neo4j 不可用，本次股权查询返回空图（不降级 NetworkX）。"

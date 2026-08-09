@@ -34,6 +34,8 @@ from app.domain.finance.parent_scope import (
     RISK_SIGNAL_IN_SCOPE,
 )
 from app.domain.provenance.id_factory import (
+    NS_COMPANY_REGISTRY,
+    NS_FINANCE,
     NS_REPORT,
     make_claim_id,
     make_evidence_id,
@@ -217,7 +219,22 @@ def _build_signal_summary(claims: list, results=None, risk_output=None) -> str:
         rules = "、".join(rule_ids) or "多条规则"
         parts.append(f"财务维度检测到 {len(financial)} 项规则信号（{rules}）")
     if equity:
-        parts.append(f"股权维度发现 {len(equity)} 条控制链")
+        # 输出控制链细节（控制人/路径/持股），不只输出数量——
+        # "股权维度发现 X 条控制链"无法回答用户"控制人是谁"。
+        # 同路径多条 claim（主链与风险链为同一控制人，如厦门市建潘
+        # 43.5%/41.5%）→ 展示只保留最终控制比例最大的一条，
+        # 避免回答出现两条几乎相同的控制链。
+        _by_path: dict[str, tuple] = {}
+        for c in equity:
+            m = re.search(r"控制链穿透：(.+?)[，,]", c.text)
+            key = m.group(1) if m else c.text
+            pm = re.search(r"最终控制 ([\d.]+)%", c.text)
+            pct = float(pm.group(1)) if pm else 0.0
+            prev = _by_path.get(key)
+            if prev is None or pct > prev[1]:
+                _by_path[key] = (c, pct)
+        details = "；".join(c.text for c, _ in list(_by_path.values())[:2])
+        parts.append(f"股权维度：{details}")
     if event:
         details = "；".join(c.text for c in event[:2])
         parts.append(f"事件维度存在 {len(event)} 项信号：{details}")
@@ -415,6 +432,9 @@ def _select_answer_mode(
     纯函数判定（关键词/claim 类型/模块状态），同一请求可稳定重放。
     """
     user_query = state.get("user_query", "")
+    plan = state.get("plan")
+    if plan is not None and plan.requested_modules == ["equity"]:
+        return "equity"
     if any(kw in user_query for kw in _FRAUD_KEYWORDS):
         return "fraud_diagnosis"
     if finance_blocked:
@@ -427,6 +447,45 @@ def _select_answer_mode(
     if finance_ran and "financial" in ctypes:
         return "finance"
     return "simple"
+
+
+def _build_equity_overview(state: AgentState) -> str:
+    """从 EquityResult 生成股东/控制链确定性摘要（Phase D #3C）。"""
+    results = state.get("results")
+    equity = results.equity if results else None
+    if equity is None:
+        return "股权数据覆盖不足，未取得可展示的股东或控制链记录。"
+
+    parts: list[str] = []
+    shareholders = equity.shareholders or []
+    if shareholders:
+        period = str(shareholders[0].get("report_period") or "")
+        period_text = (
+            f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(period) == 8 else "最新期"
+        )
+        items = []
+        for item in shareholders[:5]:
+            name = item.get("holder_name") or "未命名股东"
+            pct = item.get("ownership_pct")
+            items.append(f"{name} {pct:.2f}%" if pct is not None else str(name))
+        parts.append(f"主要股东（{period_text}）：" + "、".join(items))
+
+    chains = equity.chain_details or []
+    if chains:
+        chain = max(
+            chains,
+            key=lambda item: float(item.get("final_control_pct") or 0.0),
+        )
+        names = [str(name) for name in (chain.get("path_names") or []) if name]
+        if names:
+            chain_text = " → ".join(names)
+            pct = chain.get("final_control_pct")
+            if pct is not None:
+                chain_text += f"（最终控制 {float(pct):.2f}%）"
+            parts.append(f"控制链：{chain_text}")
+    if not parts:
+        return "股权数据覆盖不足，未取得可展示的股东或控制链记录。"
+    return "；".join(parts) + "。"
 
 
 def _build_rule_details(state: AgentState) -> str:
@@ -636,6 +695,304 @@ def _emit_segment(state: AgentState, text: str) -> None:
         sink.push(text)
 
 
+# 企业类型中文标签（P1-2）：复用 domain 常量函数，避免 3/4 写反
+# （1=非金融、2=银行、3=保险、4=证券）
+# 交易所代码（Wind exchange_code）→ 中文标签
+_EXCHANGE_LABELS = {
+    "XSHG": "上海证券交易所",
+    "XSHE": "深圳证券交易所",
+    "XBEI": "北京证券交易所",
+}
+# 公司事实回答模板：事实键 → (展示名, 取值函数, registry field_path)
+# P2-2（核验修订）：Evidence.field_path 必须与 SourceResolver 返回字段一致
+# （industry_l1 / comp_type_code），字段级定位才能命中。
+_FACT_KEYS: dict[str, tuple[str, str, str]] = {
+    "industry": ("所属行业", "industry", "industry_l1"),
+    "exchange": ("上市交易所", "exchange", "exchange_code"),
+    "listing_date": ("上市日期", "listing_date", "listing_date"),
+    "comp_type": ("企业类型", "comp_type", "comp_type_code"),
+    "business": ("主营业务", "business", "business"),
+    "total_shares": ("总股本", "total_shares", "total_shares"),
+}
+
+
+def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
+    """R9/R11：公司事实轻量回答（精确模板命中，不跑三大模块）。
+
+    诚实边界：
+      - 结构化已覆盖字段（行业/交易所/企业类型/上市日期）直接回答；
+      - 未覆盖字段（主营业务/总股本无字段）明确回答"当前数据范围未覆盖"，
+        不从股东持股等推算，**不生成虚假 Evidence**；
+      - 有真实值 → company_fact Claim（verified）+ company_registry Evidence，
+        顶层 claims/evidence 返回（persist_turn 只读顶层，P2-1）。
+    """
+    company = state.get("company")
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    wind_code = company.wind_code
+    sec_name = company.sec_name
+
+    if fact_key not in _FACT_KEYS:
+        fact_key = "industry"  # 未知键兜底
+    label, source_field, registry_field = _FACT_KEYS[fact_key]
+
+    if source_field == "industry":
+        value = (company.industry_l1 or "").strip() or None
+    elif source_field == "exchange":
+        value = _EXCHANGE_LABELS.get(company.exchange, company.exchange) or None
+    elif source_field == "comp_type":
+        from app.domain.company.models import company_type_label_from_code
+
+        code_str = (company.comp_type_code or "").strip()
+        code_int = int(code_str) if code_str.isdigit() else None
+        value = company_type_label_from_code(code_int)
+    elif source_field == "listing_date":
+        # P2-1：直接消费 company.listing_date（resolve_entity 已一并填充）
+        value = (company.listing_date or "").strip() or None
+    else:  # business / total_shares：无结构化字段
+        value = None
+
+    if value:
+        answer = f"{sec_name}（{wind_code}）的{label}为：{value}。"
+    else:
+        answer = (
+            f"{sec_name}（{wind_code}）的{label}：当前结构化数据范围未覆盖。"
+            "如需进一步核验，请前往企业画像页查看详情。"
+        )
+
+    _emit_segment(state, answer)
+
+    # P2-1：无真实值 → 不生成虚假 Evidence/Claim（三者全空）
+    if not value:
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(
+                answer=answer,
+                risk_level="unknown",
+                claims=[],
+                evidence=[],
+            ),
+        }
+
+    evidence_id = make_evidence_id(
+        source_namespace=NS_COMPANY_REGISTRY,
+        source_type="company_registry",
+        source_record_id=wind_code,
+        field_path=registry_field,
+        company_code=wind_code,
+    )
+    registry_evidence = EvidenceRef(
+        evidence_id=evidence_id,
+        source_type="company_registry",
+        source_record_id=wind_code,
+        field_path=registry_field,
+        value=value,
+        source_title=f"{sec_name} · 公司注册信息",
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=wind_code,
+        module="company_fact",
+    )
+    fact_claim = Claim(
+        claim_id=make_claim_id(
+            turn_id=turn_id,
+            company_code=wind_code,
+            claim_type="company_fact",
+            claim_text=f"{label}：{value}",
+            rule_version="",
+        ),
+        text=f"{label}为：{value}",
+        claim_type="company_fact",
+        severity="unknown",
+        evidence_ids=[evidence_id],
+        verification_status="verified",  # P2-1：注册信息确定性事实
+        limitations=["公司注册信息（证券主表）"],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=wind_code,
+        module="company_fact",
+    )
+    return {
+        "claims": [fact_claim],
+        "evidence": [registry_evidence],
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=[fact_claim],
+            evidence=[registry_evidence],
+        ),
+    }
+
+
+def _format_indicator_value(value: float, unit: str) -> str:
+    if unit == "percent":
+        return f"{value:.2f}%"
+    absolute = abs(value)
+    if absolute >= 100_000_000:
+        return f"{value / 100_000_000:.2f}亿元"
+    if absolute >= 10_000:
+        return f"{value / 10_000:.2f}万元"
+    return f"{value:,.2f}元"
+
+
+def _answer_indicator(state: AgentState, indicator: str) -> dict:
+    """Phase D #3A：基础财务指标确定性短答与可回查证据。"""
+    company = state.get("company")
+    if company is None:
+        return {}
+    if indicator == "unsupported":
+        answer = "该指标暂未覆盖。当前可查询基础报表指标与资产负债率。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    require_exact = bool(plan and plan.as_of_kind == "report_period")
+    from app.application.services.indicator_query_service import query_indicator
+
+    result = query_indicator(
+        company.wind_code,
+        indicator,
+        as_of=as_of,
+        require_exact_period=require_exact,
+    )
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+    if result.status != "ok" or result.value is None:
+        answer = f"{name_code}的{result.label}：数据不足，无法按母公司口径计算。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    value_text = _format_indicator_value(result.value, result.unit)
+    period_text = f"{result.period[:4]}-{result.period[4:6]}-{result.period[6:]}"
+    answer = (
+        f"{name_code}的{result.label}为 {value_text}" f"（{period_text}，母公司口径）。"
+    )
+    evidence: list[EvidenceRef] = []
+    source_record_id = f"{company.wind_code}|{result.period}|408006000"
+    for observation in result.observations:
+        evidence_id = make_evidence_id(
+            source_namespace=NS_FINANCE,
+            source_type="financial_statement",
+            source_record_id=source_record_id,
+            field_path=observation.field_path,
+            period=result.period,
+            dataset_version=settings.DATASET_VERSION,
+            company_code=company.wind_code,
+        )
+        evidence.append(
+            EvidenceRef(
+                evidence_id=evidence_id,
+                source_type="financial_statement",
+                source_record_id=source_record_id,
+                source_table=observation.source_table,
+                field_path=observation.field_path,
+                period=result.period,
+                value=str(observation.value),
+                unit="CNY",
+                source_title=f"{company.sec_name} · 母公司报表",
+                statement_scope="parent_company",
+                module="finance",
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=company.wind_code,
+                dataset_version=settings.DATASET_VERSION,
+            )
+        )
+    evidence_ids = [item.evidence_id for item in evidence]
+    claim = Claim(
+        claim_id=make_claim_id(
+            turn_id=turn_id,
+            company_code=company.wind_code,
+            claim_type="indicator",
+            claim_text=f"{result.label}：{value_text}",
+        ),
+        text=f"{result.label}为 {value_text}",
+        claim_type="indicator",
+        severity="unknown",
+        evidence_ids=evidence_ids,
+        verification_status="verified",
+        limitations=["母公司报表口径"],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=company.wind_code,
+        module="finance",
+    )
+    _emit_segment(state, answer)
+    return {
+        "claims": [claim],
+        "evidence": evidence,
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=[claim],
+            evidence=evidence,
+        ),
+    }
+
+
+def _answer_risk_level(state: AgentState) -> dict:
+    """Phase D #3B：只回答综合等级、截止日和覆盖状态。"""
+    risk_output = state.get("risk_output")
+    claims = state.get("claims", [])
+    evidence = state.get("evidence", [])
+    level = getattr(risk_output, "risk_level", "unknown") if risk_output else "unknown"
+    labels = {
+        "green": "正常",
+        "yellow": "黄色",
+        "orange": "橙色",
+        "red": "红色",
+        "blue": "蓝色",
+        "unknown": "数据不足",
+    }
+    if level not in labels:
+        level = "unknown"
+
+    plan = state.get("plan")
+    as_of = getattr(risk_output, "as_of", "") if risk_output else ""
+    if not as_of and plan and plan.as_of:
+        as_of = plan.as_of.strftime("%Y%m%d")
+    as_of_text = (
+        f"{as_of[:4]}-{as_of[4:6]}-{as_of[6:]}"
+        if len(as_of) == 8 and as_of.isdigit()
+        else "未知"
+    )
+
+    coverage = getattr(risk_output, "data_coverage", None) if risk_output else None
+    ratio = getattr(coverage, "coverage_ratio", None) if coverage else None
+    missing = getattr(coverage, "missing_modules", []) if coverage else []
+    coverage_text = f"数据覆盖率 {ratio:.0%}" if ratio is not None else "数据覆盖未知"
+    if missing:
+        coverage_text += f"，缺失模块：{', '.join(missing)}"
+    answer = (
+        f"综合风险等级：{labels[level]}"
+        f"（数据截止日：{as_of_text}；{coverage_text}）。"
+    )
+    if level == "unknown":
+        answer += "当前数据不足，不能据此判断为正常。"
+    _emit_segment(state, answer)
+    return {
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level=level,
+            claims=claims,
+            evidence=evidence,
+        )
+    }
+
+
 def generate_answer_node(state: AgentState) -> dict:
     company = state.get("company")
     claims = state.get("claims", [])
@@ -654,6 +1011,41 @@ def generate_answer_node(state: AgentState) -> dict:
         user_query = state.get("user_query", "")
         plan = state.get("plan")
         intent = getattr(plan, "intent", "") if plan else ""
+
+        if intent == "comparison_guide":
+            # P2-2: 比较意图独立引导（不复用 company_disambiguation 文案）；
+            # 按 0/1/≥2 家候选区分文案，绝不静默退化为单公司分析。
+            targets = state.get("comparison_targets", [])
+            if len(targets) >= 2:
+                names = "、".join(
+                    f"{item.sec_name}（{item.wind_code}）" for item in targets[:5]
+                )
+                answer = (
+                    f"你提到了 {names} 等多家公司。聊天内暂不支持跨公司对比，"
+                    "请使用页面上方的「跨公司对比」功能查看各家公司的风险规则、"
+                    "指标数值与行业分位差异。"
+                )
+            elif len(targets) == 1:
+                t0 = targets[0]
+                answer = (
+                    f"已识别 {t0.sec_name}（{t0.wind_code}），另一家公司未匹配到"
+                    "数据。请补充另一家公司的名称或代码；跨公司对比请使用页面"
+                    "上方的「跨公司对比」功能。"
+                )
+            else:
+                answer = (
+                    "请提供两家公司的名称或代码（例如「康美药业和金牌家居的"
+                    "差距」），以便进行跨公司对比。"
+                )
+            _emit_segment(state, answer)
+            return {
+                "final_response": FinalResponse(
+                    answer=answer,
+                    risk_level="unknown",
+                    claims=[],
+                    evidence=[],
+                )
+            }
 
         if intent == "company_disambiguation":
             candidates = state.get("company_candidates", [])
@@ -828,6 +1220,16 @@ def generate_answer_node(state: AgentState) -> dict:
             )
         }
 
+    # R9：公司事实轻量回答（company_fact plan：requested_modules=[]，
+    # 未执行 finance/equity/events/risk；诚实回答 + registry Evidence）
+    plan = state.get("plan")
+    if getattr(plan, "intent", "") == "indicator":
+        return _answer_indicator(state, getattr(plan, "indicator", "") or "")
+    if getattr(plan, "intent", "") == "company_fact":
+        return _answer_company_fact(state, getattr(plan, "fact_key", "") or "")
+    if getattr(plan, "answer_target", "") == "risk_level":
+        return _answer_risk_level(state)
+
     # ① 一句话结论（Phase C：Finance 执行时限定母公司报表口径；
     # #11 AnswerMode：按意图选择开场模板，不再一律"综合分析完成"）
     # #8：风险计数只统计叶子信号（排除综合 risk Claim 与绿色控制链）
@@ -900,6 +1302,10 @@ def generate_answer_node(state: AgentState) -> dict:
         seg = summary + "。"
         segments.append(seg)
         _emit_segment(state, seg)
+    if mode == "equity":
+        equity_overview = _build_equity_overview(state)
+        segments.append(equity_overview)
+        _emit_segment(state, equity_overview)
     if rule_details:
         segments.append(rule_details)
         _emit_segment(state, rule_details)

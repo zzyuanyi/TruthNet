@@ -571,3 +571,170 @@ def test_generate_answer_guide_subtypes():
         answer = generate_answer_node(state)["final_response"].answer
         assert expected in answer
         assert "未能在数据覆盖范围内找到匹配的公司" not in answer
+
+
+# ── R8/R9/R13 回归：混合问候、公司事实、多公司比较 ─────────────
+
+
+def test_mixed_greeting_not_chitchat():
+    """R8：问候+公司混合输入不被闲聊吞掉（fullmatch 后不命中问候词）。"""
+    from app.agents.nodes.plan_modules import detect_chitchat_intent
+
+    assert detect_chitchat_intent("你好，康美药业怎么样") is None
+    assert detect_chitchat_intent("在吗，看看金牌家居") is None
+    assert detect_chitchat_intent("你好，帮我分析康美药业") is None
+    assert detect_chitchat_intent("谢谢，继续看它的现金流") is None
+    # unsupported 先于闲聊：含"你好"的天气问题归 unsupported
+    assert detect_chitchat_intent("你好，今天天气怎么样") == "unsupported"
+    # 纯寒暄变体仍识别（词表不缩窄）
+    assert detect_chitchat_intent("你好呀") == "chitchat"
+    assert detect_chitchat_intent("早上好") == "chitchat"
+    assert detect_chitchat_intent("哈喽") == "chitchat"
+    assert detect_chitchat_intent("你能帮我做什么") == "chitchat"
+
+
+def test_detect_company_fact_exact_templates():
+    """R9：公司事实只命中明确模板，裸"行业/股本"不误路由。"""
+    from app.agents.nodes.plan_modules import detect_company_fact
+
+    assert detect_company_fact("康美药业属于什么行业") == "industry"
+    assert detect_company_fact("金牌家居的所属行业") == "industry"
+    assert detect_company_fact("康美药业在哪个交易所上市") == "exchange"
+    assert detect_company_fact("康美药业上市日期") == "listing_date"
+    assert detect_company_fact("金牌家居的企业类型") == "comp_type"
+    assert detect_company_fact("康美药业主营业务") == "business"
+    assert detect_company_fact("康美药业总股本是多少") == "total_shares"
+    # 不误路由：行业研报 / 股本变化
+    assert detect_company_fact("白酒行业近期研报观点") is None
+    assert detect_company_fact("康美药业股本变化风险") is None
+
+
+def test_plan_company_fact_skips_modules(monkeypatch):
+    """R9：公司已解析 + fact 模板 → company_fact plan，requested_modules=[]。"""
+    from app.agents.nodes import plan_modules as pm
+    from app.agents.state import CompanyRef
+
+    state = {
+        "user_query": "康美药业属于什么行业",
+        "company": CompanyRef(
+            entity_id="e",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange="XSHG",
+            industry_l1="医药生物",
+        ),
+        "request_context": None,
+    }
+    result = pm.plan_modules_node(state)
+    plan = result["plan"]
+    assert plan.intent == "company_fact"
+    assert plan.requested_modules == []
+    assert plan.fact_key == "industry"
+
+
+def test_answer_company_fact_honest_and_traceable():
+    """R11：事实回答——已覆盖字段给值，未覆盖字段诚实声明 + registry Evidence。"""
+    from app.agents.nodes.generate_answer import _answer_company_fact
+    from app.agents.state import CompanyRef, RuntimeState
+
+    state = {
+        "company": CompanyRef(
+            entity_id="e",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange="XSHG",
+            industry_l1="医药生物",
+        ),
+        "runtime": RuntimeState(turn_id="t1", trace_id="tr1", session_id="s1"),
+    }
+    # 行业有数据
+    out = _answer_company_fact(state, "industry")
+    assert "医药生物" in out["final_response"].answer
+    assert out["final_response"].evidence[0].source_type == "company_registry"
+    assert out["final_response"].evidence[0].source_record_id == "600518.SH"
+    assert out["final_response"].evidence[0].evidence_id.startswith("ev_cr_")
+    # 总股本无结构化数据 → 诚实"未覆盖"，不推算
+    out2 = _answer_company_fact(state, "total_shares")
+    assert "未覆盖" in out2["final_response"].answer
+    assert out2["final_response"].claims == []
+
+
+def test_comparison_guide_detection(monkeypatch):
+    """R13：多公司比较 → comparison_guide，不静默选一家。"""
+    from app.agents.nodes.resolve_entity import _looks_like_comparison
+
+    assert _looks_like_comparison("中芯国际和台积电的差距")
+    assert _looks_like_comparison("康美药业对比金牌家居")
+    assert not _looks_like_comparison("分析康美药业")
+    assert not _looks_like_comparison("康美药业有风险吗")
+
+
+def test_company_type_labels():
+    """P1-2：中文标签 1=非金融、2=银行、3=保险、4=证券（3/4 不写反）。"""
+    from app.domain.company.models import company_type_label_from_code
+
+    assert company_type_label_from_code(1) == "非金融企业"
+    assert company_type_label_from_code(2) == "银行"
+    assert company_type_label_from_code(3) == "保险"
+    assert company_type_label_from_code(4) == "证券"
+    assert company_type_label_from_code(None) is None
+    assert company_type_label_from_code(99) is None
+    # 分类函数保持英文（Gate 用），不受展示标签影响
+    from app.domain.company.models import company_type_from_code
+
+    assert company_type_from_code(3) == "financial"
+    assert company_type_from_code(4) == "financial"
+
+
+def test_comparison_requested_zero_candidates(monkeypatch):
+    """P2-2：比较意图 0 家候选 → comparison_guide（不退化单公司分析）。"""
+    from app.agents.nodes import plan_modules as pm
+    from app.agents.nodes.resolve_entity import resolve_entity_node
+    from app.agents.state import MemoryContext
+
+    monkeypatch.setattr(
+        "app.agents.nodes.resolve_entity._find_company_candidates",
+        lambda q, limit=5: [],
+    )
+    monkeypatch.setattr(
+        "app.agents.nodes.resolve_entity._find_company",
+        lambda q: None,
+    )
+    state = {
+        "user_query": "甲公司和乙公司的差距",
+        "memory_context": MemoryContext(),
+        "runtime": type("R", (), {"session_id": "s", "trace_id": "t"})(),
+    }
+    result = resolve_entity_node(state)
+    assert result.get("comparison_requested") is True
+    assert result.get("comparison_targets") == []
+
+    plan = pm.plan_modules_node({**result, "user_query": "甲公司和乙公司的差距"})
+    assert plan["plan"].intent == "comparison_guide"
+    assert plan["plan"].requested_modules == []
+
+
+def test_fact_value_persist_shape():
+    """P2-1：事实回答顶层返回 claims/evidence（persist_turn 只读顶层）。"""
+    from app.agents.nodes.generate_answer import _answer_company_fact
+    from app.agents.state import CompanyRef, RuntimeState
+
+    state = {
+        "company": CompanyRef(
+            entity_id="e",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange="XSHG",
+            industry_l1="医药生物",
+        ),
+        "runtime": RuntimeState(turn_id="t1", trace_id="tr1", session_id="s1"),
+    }
+    out = _answer_company_fact(state, "industry")
+    assert len(out["claims"]) == 1
+    assert len(out["evidence"]) == 1
+    assert out["claims"][0].claim_type == "company_fact"
+    assert out["claims"][0].verification_status == "verified"
+    # 无值分支：三者全空，不生成虚假 Evidence
+    out2 = _answer_company_fact(state, "total_shares")
+    assert out2["claims"] == []
+    assert out2["evidence"] == []

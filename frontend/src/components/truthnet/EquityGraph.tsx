@@ -205,7 +205,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
         .attr('x2', (d: any) => d.target.x)
         .attr('y2', (d: any) => d.target.y);
 
-      linkLabel.attr('transform', (d: any) => 
+      linkLabel.attr('transform', (d: any) =>
         `translate(${(d.source.x + d.target.x) / 2},${(d.source.y + d.target.y) / 2})`
       );
 

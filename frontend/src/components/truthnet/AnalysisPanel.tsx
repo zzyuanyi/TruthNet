@@ -190,7 +190,7 @@ function StreamingState({ data }: { data: PanelData | null }) {
 // 就绪状态
 function ReadyState({ data }: { data: PanelData | null }) {
   if (!data) return <EmptyState />;
-  
+
   return (
     <div className="space-y-4">
       <RiskSummary data={data} />
@@ -232,7 +232,7 @@ function DoneState({
       />
 
       {/* 追问建议 */}
-      
+
       {/* 追问建议 */}
       {data.follow_ups && data.follow_ups.length > 0 && (
         <>
@@ -265,7 +265,7 @@ function RiskSummary({ data }: { data: PanelData }) {
   const riskConfig = riskLevelConfig[riskLevel];
   const RiskIcon = riskConfig.icon;
   const triggeredCount = data.triggered_rules?.length || 0;
-  
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -291,16 +291,16 @@ function RiskSummary({ data }: { data: PanelData }) {
 // 关键指标
 function KeyMetrics({ data, onMetricClick }: { data: PanelData; onMetricClick?: (metric: { name: string; value: number }) => void }) {
   const metrics = Object.entries(data.key_metrics || {}).map(([name, value]) => ({ name, value }));
-  
+
   if (metrics.length === 0) return null;
-  
+
   return (
     <div className="space-y-2">
       <h4 className="text-xs font-medium text-muted-foreground">关键指标</h4>
       <div className="grid grid-cols-3 gap-2">
         {metrics.map((metric, index) => (
-          <Card 
-            key={index} 
+          <Card
+            key={index}
             className="cursor-pointer hover:bg-muted/50 transition-colors"
             onClick={() => onMetricClick?.(metric)}
           >
@@ -339,7 +339,7 @@ function TriggeredRules({
   const rules = data.triggered_rules || [];
   const displayRules = rules.slice(0, 3);
   const hasMore = rules.length > 3;
-  
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">

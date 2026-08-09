@@ -72,6 +72,8 @@ class MemorySummary:
     source_turn_ids: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
     company_codes: list[str] = field(default_factory=list)
+    # 摘要覆盖的早期轮次中最后出现的公司代码（指代消解兜底，十轮外记忆）
+    last_company_code: str = ""
     key_facts: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
     updated_at: str = ""
@@ -84,6 +86,7 @@ class MemorySummary:
             "source_turn_ids": self.source_turn_ids,
             "evidence_ids": self.evidence_ids,
             "company_codes": self.company_codes,
+            "last_company_code": self.last_company_code,
             "key_facts": self.key_facts,
             "limitations": self.limitations,
             "updated_at": self.updated_at,
@@ -101,6 +104,7 @@ class MemorySummary:
                 source_turn_ids=list(data.get("source_turn_ids") or []),
                 evidence_ids=list(data.get("evidence_ids") or []),
                 company_codes=list(data.get("company_codes") or []),
+                last_company_code=str(data.get("last_company_code", "")),
                 key_facts=list(data.get("key_facts") or []),
                 limitations=list(data.get("limitations") or []),
                 updated_at=str(data.get("updated_at", "")),
@@ -172,12 +176,12 @@ def _truncate(text: str, max_chars: int | None = None) -> str:
 
 
 def _read_turns(session_id: str, recent_turns: int) -> list[dict]:
-    """读取会话全部轮次（升序），返回 {turn_index, turn_id, question, answer, evidence_ids}。"""
+    """读取会话全部轮次（升序），返回 {turn_index, turn_id, question, answer, company_code, evidence_ids}。"""
     with _get_engine().connect() as conn:
         rows = (
             conn.execute(
                 text(
-                    "SELECT turn_id, turn_index, question, answer "
+                    "SELECT turn_id, turn_index, question, answer, company_code "
                     "FROM conversation_turns WHERE session_id = :sid "
                     "ORDER BY turn_index ASC"
                 ),
@@ -207,6 +211,7 @@ def _read_turns(session_id: str, recent_turns: int) -> list[dict]:
             "turn_index": int(r["turn_index"]),
             "question": str(r["question"] or ""),
             "answer": str(r["answer"] or ""),
+            "company_code": str(r["company_code"] or ""),
             "evidence_ids": ev_by_turn.get(r["turn_id"], [])[:10],
         }
         for r in rows
@@ -222,7 +227,23 @@ def build_summary_for_turns(
     后续可升级为 LLM 压缩表达，但 LLM 输出必须经来源约束校验。
     """
     texts = [t.get("question", "") + " " + t.get("answer", "") for t in turns]
-    company_codes = _extract_company_codes(texts)
+    # 公司代码优先取轮次结构化字段（persist 落库的 company_code），
+    # 文本提取仅作兜底——文本里往往只有中文简称/股票代码混排。
+    company_codes = list(
+        dict.fromkeys(
+            c for t in turns if (c := str(t.get("company_code") or "")).strip()
+        )
+    )
+    if not company_codes:
+        company_codes = _extract_company_codes(texts)
+    # P1-1：last_company_code 必须从 reversed(turns) 找**最后出现**的非空代码
+    # （A→B→A 时最后出现是 A），不能从去重列表末尾推断（去重后是 B）。
+    last_company_code = ""
+    for t in reversed(turns):
+        c = str(t.get("company_code") or "").strip()
+        if c:
+            last_company_code = c
+            break
     key_facts = _extract_key_facts(turns)
     evidence_ids: list[str] = []
     for t in turns:
@@ -247,6 +268,7 @@ def build_summary_for_turns(
         source_turn_ids=source_turn_ids[: settings.MEMORY_SUMMARY_MAX_SOURCE_TURNS],
         evidence_ids=evidence_ids[:50],
         company_codes=company_codes,
+        last_company_code=last_company_code,
         key_facts=key_facts,
         limitations=[
             "确定性摘要（未启用 LLM 压缩）",

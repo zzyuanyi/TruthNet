@@ -98,6 +98,42 @@ def _build_chain_details(
         return []
 
 
+def _latest_shareholders(records: list[dict]) -> list[dict]:
+    """将 top_shareholders 记录规范为最新报告期的回答 DTO。"""
+
+    def normalize_period(value) -> str:
+        return "".join(ch for ch in str(value or "") if ch.isdigit())[:8]
+
+    periods = [normalize_period(item.get("report_period")) for item in records]
+    latest_period = max((period for period in periods if period), default="")
+    if not latest_period:
+        return []
+    shareholders: list[dict] = []
+    for item in records:
+        if normalize_period(item.get("report_period")) != latest_period:
+            continue
+        pct = item.get("pct")
+        shareholders.append(
+            {
+                "holder_name": str(item.get("holder_name") or ""),
+                "ownership_pct": float(pct) if pct is not None else None,
+                "report_period": latest_period,
+                "source_record_id": str(item.get("source_record_id") or ""),
+            }
+        )
+    by_name: dict[str, dict] = {}
+    for item in shareholders:
+        name = item["holder_name"]
+        existing = by_name.get(name)
+        if existing is None or (item.get("ownership_pct") or 0.0) > (
+            existing.get("ownership_pct") or 0.0
+        ):
+            by_name[name] = item
+    shareholders = list(by_name.values())
+    shareholders.sort(key=lambda item: item.get("ownership_pct") or 0.0, reverse=True)
+    return shareholders[:10]
+
+
 def equity_node(state: AgentState) -> dict:
     t0 = time.perf_counter()
     plan = state.get("plan")
@@ -126,6 +162,13 @@ def equity_node(state: AgentState) -> dict:
     if plan is not None and plan.as_of:
         as_of = plan.as_of.strftime("%Y%m%d")
 
+    from app.application.services.equity_shareholder_service import (
+        fetch_shareholder_records,
+    )
+
+    shareholder_records = fetch_shareholder_records(company_code, as_of=as_of or None)
+    shareholders = _latest_shareholders(shareholder_records)
+
     if settings.GRAPH_BACKEND == "neo4j":
         from app.infrastructure.graph.neo4j.equity_graph import Neo4jEquityGraph
 
@@ -141,12 +184,19 @@ def equity_node(state: AgentState) -> dict:
                     )
                 },
                 "results": ModuleResults(
-                    equity=EquityResult(graph={}, chains=[], evidence=[])
+                    equity=EquityResult(
+                        graph={}, chains=[], evidence=[], shareholders=shareholders
+                    )
                 ),
             }
 
         try:
-            graph = adapter._get_graph_sync(company_code, depth=5, as_of=as_of or None)
+            graph = adapter._get_graph_sync(
+                company_code,
+                depth=5,
+                as_of=as_of or None,
+                graph_version=settings.GRAPH_VERSION,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("股权查询失败: %s", company_code)
             return {
@@ -159,7 +209,9 @@ def equity_node(state: AgentState) -> dict:
                     )
                 },
                 "results": ModuleResults(
-                    equity=EquityResult(graph={}, chains=[], evidence=[])
+                    equity=EquityResult(
+                        graph={}, chains=[], evidence=[], shareholders=shareholders
+                    )
                 ),
             }
 
@@ -241,10 +293,6 @@ def equity_node(state: AgentState) -> dict:
 
         # Phase D #12: 正式链路载荷（Agent/WS 与 REST 一致；
         # canonical evidence_id 映射 + 真实股东记录驱动 mismatch 检测）
-        from app.application.services.equity_shareholder_service import (
-            fetch_shareholder_records,
-        )
-
         chain_details = _build_chain_details(
             chains=chains,
             graph_edges=list(graph.edges),
@@ -253,9 +301,7 @@ def equity_node(state: AgentState) -> dict:
             source_system="neo4j",
             node_name_map=node_name,
             edge_evidence_map=edge_evidence_map,
-            top_shareholder_records=fetch_shareholder_records(
-                company_code, as_of=as_of or None
-            ),
+            top_shareholder_records=shareholder_records,
         )
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
@@ -269,6 +315,7 @@ def equity_node(state: AgentState) -> dict:
                     chains=chains,
                     evidence=evidence,
                     chain_details=chain_details,
+                    shareholders=shareholders,
                 )
             ),
         }
@@ -341,10 +388,6 @@ def equity_node(state: AgentState) -> dict:
         edge_evidence_map[rid] = ev_ref.evidence_id
 
     # Phase D #12: 正式链路载荷（Lite 同样产出，source=networkx）
-    from app.application.services.equity_shareholder_service import (
-        fetch_shareholder_records,
-    )
-
     chain_details = _build_chain_details(
         chains=chains,
         graph_edges=list(graph.edges),
@@ -353,9 +396,7 @@ def equity_node(state: AgentState) -> dict:
         source_system="networkx",
         node_name_map=node_name,
         edge_evidence_map=edge_evidence_map,
-        top_shareholder_records=fetch_shareholder_records(
-            company_code, as_of=as_of or None
-        ),
+        top_shareholder_records=shareholder_records,
     )
 
     return {
@@ -366,6 +407,7 @@ def equity_node(state: AgentState) -> dict:
                 chains=chains,
                 evidence=evidence,
                 chain_details=chain_details,
+                shareholders=shareholders,
             )
         ),
     }

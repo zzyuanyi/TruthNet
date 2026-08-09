@@ -299,6 +299,8 @@ def test_r3_not_triggered(rule_db):
     conn = rule_db
     _insert_company(conn, "600009.SH")
     assets = _seq(1000_000_000, [0.1, 0.1, 0.1, 0.1])
+    # P1-3（第二轮审查修订）：借款分项必须完整（lt 缺失时下界未触发 →
+    # insufficient_data 而非绿色），此测试验证双低时正常 not_triggered
     _insert_bs(
         conn,
         "600009.SH",
@@ -307,6 +309,7 @@ def test_r3_not_triggered(rule_db):
             "tot_assets": assets,
             "monetary_cap": [a * 0.05 for a in assets],
             "st_borrow": [a * 0.03 for a in assets],
+            "lt_borrow": [a * 0.03 for a in assets],
         },
     )
     r = evaluate_r3("600009.SH", "20260331")
@@ -661,3 +664,460 @@ def test_finance_node_skips_when_not_planned(rule_db):
     }
     out = finance_node(state)
     assert out["module_status"]["finance"].state == "skipped"
+
+
+def test_align_by_period_offsets():
+    """P2-3：错位期次对齐——下标拼接会错配，对齐后各期值正确。"""
+    from app.domain.finance._fetch import SeriesResult, align_by_period
+
+    cash_sr = SeriesResult(values=[100, 200], periods=["20240331", "20241231"])
+    assets_sr = SeriesResult(values=[1000, None], periods=["20240331", "20250630"])
+    aligned = align_by_period(cash=cash_sr, assets=assets_sr)
+
+    assert list(aligned.keys()) == ["20240331", "20241231", "20250630"]
+    assert aligned["20240331"] == {"cash": 100, "assets": 1000}
+    assert aligned["20241231"] == {"cash": 200, "assets": None}  # 该期无资产
+    assert aligned["20250630"] == {"cash": None, "assets": None}  # 该期无现金
+
+
+def test_r3_aligned_history_no_fake_zero(monkeypatch, rule_db):
+    """P2-3：R3 history——分母缺失跳过、不制造零值、升序真实期次。
+
+    核验修订：此前未插入测试数据，history=[] 空循环假通过；现补真实数据，
+    断言 history 非空且每点期次真实升序。
+    """
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [100, 120, 140, 160, 200, 220],
+            "tot_assets": [1000, 1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [150, 160, 170, 180, 200, 210],
+            "lt_borrow": [100, 100, 100, 100, 100, 100],
+        },
+        periods=[
+            "20250331",
+            "20250630",
+            "20250930",
+            "20251231",
+            "20260331",
+            "20260930",
+        ],
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    assert r.status != "insufficient_data"
+    assert len(r.history or []) >= 2, "插入数据后 history 不得为空（假通过）"
+    for point in r.history:
+        assert point["period"] not in ("", "nan")
+        assert point["period"].isdigit()
+        assert (
+            point["period"].endswith("0331")
+            or point["period"].endswith("1231")
+            or point["period"].endswith("0630")
+            or point["period"].endswith("0930")
+        )
+    periods = [p["period"] for p in r.history]
+    assert periods == sorted(periods)
+
+
+def test_r3_aligned_current_uses_core_period(rule_db):
+    """P2-3（核验修订）：辅助字段（less_fin_exp，income 表）比核心字段多一期
+    → current 取核心字段（cash/assets）最后共同期 20251231，不因并集最后一期
+    20260331 核心缺失而错误 insufficient_data（并集最后一期假阴性）。
+
+    balance_sheet 只到 20251231（最近 2 期 cash/assets 有值，通过早期检查）；
+    income_statement 多出 20260331 的 less_fin_exp → 并集最后一期 = 20260331。
+    """
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    core_periods = ["20241231", "20250331", "20250630", "20250930", "20251231"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [100, 120, 140, 160, 200],
+            "tot_assets": [1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [150, 160, 170, 180, 200],
+            "lt_borrow": [100, 100, 100, 100, 100],
+        },
+        periods=core_periods,
+    )
+    _insert_is(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"less_fin_exp": [30, 30, 30, 30, 30, 30]},  # 辅助字段多出 20260331
+        periods=core_periods + ["20260331"],
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    assert r.status != "insufficient_data"
+    # current 基于 20251231：200/1000=20%，(200+100)/1000=30% → 双高
+    assert r.current["cash_to_assets"]["value"] == 20.0
+    assert r.current["debt_to_assets"]["value"] == 30.0
+
+
+def test_r3_single_borrow_missing_lower_bound_not_triggered_is_insufficient(
+    rule_db,
+):
+    """P1-3（第二轮审查修订）：单个借款分项缺失且下界未触发双高 → 必须返回
+    insufficient_data——缺失项可能使真实负债越过阈值，不能给绿色。
+    实测曾误报 green：cash 20% + st 10% + lt 未知。"""
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20241231", "20250331", "20250630", "20250930", "20251231"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [200, 200, 200, 200, 200],
+            "tot_assets": [1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [100, 100, 100, 100, 100],  # 下界 10% < 20% 未触发
+            "lt_borrow": [None, None, None, None, None],
+        },
+        periods=periods,
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    assert r.status == "insufficient_data"
+    assert "borrow_field_missing" in (r.quality or {})
+    assert r.quality["borrow_field_missing"] == ["lt_borrow"]
+
+
+def test_r3_single_borrow_missing_lower_bound_triggered_conservative(rule_db):
+    """P1-3（第二轮审查修订）：单个借款分项缺失但下界已触发双高 → 保守触发
+    + borrow_partial 标记（真实负债只会更高，不漏报）。"""
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20241231", "20250331", "20250630", "20250930", "20251231"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [200, 200, 200, 200, 200],
+            "tot_assets": [1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [250, 250, 250, 250, 250],  # 下界 25% > 20% 触发
+            "lt_borrow": [None, None, None, None, None],
+        },
+        periods=periods,
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    assert r.status == "triggered"
+    assert r.quality.get("borrow_partial") is True
+    assert r.quality.get("borrow_field_missing") == ["lt_borrow"]
+
+
+def test_r3_prev_looks_back_core_and_borrow_valid(rule_db):
+    """P1-3（第二轮审查修订）：前期趋势比较向前查找"核心字段共同有效 + 借款
+    至少一项有效"的最近期次——直接取并集上一期（20250930 借款缺失）会
+    静默跳过持续扩大判断（severity 停在 orange），回退后应判 red。"""
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20241231", "20250331", "20250630", "20250930", "20251231"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [160, 160, 160, 160, 200],  # current 20%
+            "tot_assets": [1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [180, 180, 180, None, 260],  # 20250930 缺 st
+            "lt_borrow": [0, 0, 0, None, 0],  # 20250930 借款全缺失（st/lt 均 None）
+        },
+        periods=periods,
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    # current 20251231: cash 20% + debt 26% 双高 → 持续扩大检查回退到
+    # 20250630（cash 16% + debt 18%）→ 20>16 且 26>18 → red
+    assert r.status == "triggered"
+    assert r.severity == "red"
+
+
+def test_r6_aligned_current_correct_under_misaligned_periods(rule_db):
+    """P2-3（核验修订）：期次错位下 current 取核心字段（oth_rcv/assets）
+    共同有效期的数据，按下标拼接会取错值。"""
+    from app.domain.finance.rule_r6 import evaluate_r6
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20241231", "20250331", "20250630", "20250930", "20251231", "20260331"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "oth_rcv": [5e8, 6e8, None, 8e8, 10e8, 12e8],  # 缺 20250630
+            "tot_assets": [1e10, 1e10, 1e10, 1e10, 1e10, 1e10],
+            "acct_rcv": [5e9, 5e9, 5e9, 5e9, 5e9, 5e9],
+        },
+        periods=periods,
+    )
+    r = evaluate_r6("TEST", "20260331", periods=8)
+    assert r.status != "insufficient_data"
+    # current = 20260331：12e8/1e10 = 12.0%
+    assert r.current["oth_rcv_to_assets"]["value"] == 12.0
+
+
+def test_r6_yoy_none_not_zero(rule_db):
+    """P1-3（核验修订）：去年同期缺失 → 同比为 None（不是 0%），
+    current 省略该指标，explanation 不格式化 None。"""
+    from app.domain.finance.rule_r6 import evaluate_r6
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "oth_rcv": [10e8, 11e8, 15e8],  # 无前一年同月日期次（≥1 万分母保护）
+            "tot_assets": [1e10, 1e10, 1e10],
+            "acct_rcv": [5e9, 5e9, 5e9],
+        },
+        periods=["20250630", "20250930", "20251231"],
+    )
+    r = evaluate_r6("TEST", "20260331", periods=8)
+    assert r.status != "insufficient_data"
+    assert "oth_rcv_yoy" not in r.current  # 缺失不输出 0%
+    assert "0.0%" not in (r.explanation or "")
+
+
+def test_r6_yoy_uses_prev_year_same_period(rule_db):
+    """P1-3（核验修订）：同比取前一年同月日期次（20251231 vs 20241231），
+    不是并集数组下标 -5（错位时可能取到不同月日）。"""
+    from app.domain.finance.rule_r6 import evaluate_r6
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "oth_rcv": [5e8, 6e8, 7e8, 8e8, 10e8],  # 10e8 vs 5e8 → +100%
+            "tot_assets": [1e10, 1e10, 1e10, 1e10, 1e10],
+            "acct_rcv": [5e9, 5e9, 5e9, 5e9, 5e9],
+        },
+        periods=["20241231", "20250331", "20250630", "20250930", "20251231"],
+    )
+    r = evaluate_r6("TEST", "20260331", periods=8)
+    assert r.status != "insufficient_data"
+    assert r.current["oth_rcv_yoy"]["value"] == 100.0
+
+
+def test_prev_year_period_exact_only():
+    """P1-3（第二轮审查修订）：同比必须只接受精确 YYYY-1+MMDD。
+
+    20251231 配合 20231231（缺 20241231）时不得回退——两年前变化
+    不能被当成同比。
+    """
+    from app.domain.finance._fetch import prev_year_period
+
+    assert prev_year_period("20251231", ["20241231", "20251231"]) == "20241231"
+    # 精确去年同期缺失 → None（不得回退 20231231）
+    assert prev_year_period("20251231", ["20231231", "20251231"]) is None
+    assert prev_year_period("20250331", ["20250331"]) is None
+    assert prev_year_period("20250331", ["20240331", "20250331"]) == "20240331"
+
+
+def test_r2_aligned_does_not_pair_misaligned_periods(rule_db):
+    """P1-1（第二轮审查修订）：R2 判定全部消费对齐结果——最新共同期现金流为
+    正、仅下一期现金流为负时，不得把下一期现金流与上一期利润配成
+    consecutive negative（旧下标拼接会误判 red）。"""
+    from app.domain.finance.rule_r2 import evaluate_r2
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20250331", "20250630", "20250930", "20251231", "20260331"]
+    _insert_is(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_profit_excl_min_int_inc": [1e8, 1e8, 1e8, 1e8, 1e8]},
+        periods=periods,
+    )
+    # 现金流：20260331 无数据（错位），20251231 为负
+    _insert_cf(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_cash_flows_oper_act": [1e8, 1e8, -1e8, 1e8, None]},
+        periods=periods,
+    )
+    r = evaluate_r2("TEST", "20260331", periods=8)
+    # 对齐窗口最近 4 期 = [20250630, 20250930, 20251231, 20260331]
+    # cf = [1e8, -1e8, 1e8, None] → 无连续负现金流；current(20260331) cf=None
+    assert r.status != "insufficient_data"
+    assert r.severity != "red"  # 旧下标拼接会把 -1e8 与下一期利润配对成负流
+    assert r.current["consec_neg_cf"]["value"] < 2
+
+
+def test_r2_common_period_window_detects_risk(rule_db):
+    """P1-1（第三轮审查修订）：R2 按共同有效期判定——利润到 20241231、
+    现金流多出 20250331（单边数据不参与），共同期前连续 3 期正利润负
+    现金流 → 应 red。旧逻辑 current 取并集最后一期（利润 None）→ green 漏报。"""
+    from app.domain.finance.rule_r2 import evaluate_r2
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20240331", "20240630", "20240930", "20241231", "20250331"]
+    _insert_is(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_profit_excl_min_int_inc": [1e8, 1e8, 1e8, 1e8, None]},
+        periods=periods,
+    )
+    _insert_cf(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_cash_flows_oper_act": [-5e7, -5e7, -5e7, -5e7, -5e7]},
+        periods=periods,
+    )
+    r = evaluate_r2("TEST", "20260331", periods=8)
+    assert r.status == "triggered"
+    assert r.severity == "red"  # 共同期窗口内连续 3 期负现金流 + 当前负
+    assert r.current["consec_neg_cf"]["value"] >= 3
+
+
+def test_r2_missing_period_breaks_consecutive(rule_db):
+    """P1-1（第三轮审查修订）：窗口内缺失期打断连续负现金流（不跨期累计）。"""
+    from app.domain.finance.rule_r2 import evaluate_r2
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20240331", "20240630", "20240930", "20241231", "20250331"]
+    _insert_is(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_profit_excl_min_int_inc": [1e8, 1e8, 1e8, 1e8, 1e8]},
+        periods=periods,
+    )
+    # cf 中间缺 20240930 → 负现金流被分成两段（各 1 期），不得累计为 3
+    _insert_cf(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_cash_flows_oper_act": [-5e7, -5e7, None, -5e7, -5e7]},
+        periods=periods,
+    )
+    r = evaluate_r2("TEST", "20260331", periods=8)
+    # 缺失打断后重新累计：20241231+20250331 连续 2 期（非 3 期跨期累计）
+    assert r.current["consec_neg_cf"]["value"] == 2
+    assert r.severity != "red"  # 2 期不满足 red（需 >=3）
+
+
+def test_r3_partial_no_implied_rate_no_red(rule_db):
+    """P1-2（第三轮审查修订）：partial（借款缺失）时不计算隐含利率、不升级
+    red——下界负债会高估利率（实测下界 6.67% vs 真实 3.33%）。"""
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20241231", "20250331", "20250630", "20250930", "20251231"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [300, 300, 300, 300, 300],
+            "tot_assets": [1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [300, 300, 300, 300, 300],  # 下界 30%
+            "lt_borrow": [None, None, None, None, None],  # 未知
+        },
+        periods=periods,
+    )
+    _insert_is(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"less_fin_exp": [20, 20, 20, 20, 20]},
+        periods=periods,
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    assert r.status == "triggered"  # 下界双高 → 保守触发
+    assert r.severity == "orange"  # 上限 orange，不升 red
+    assert "implied_interest_rate" not in r.current  # 不计算隐含利率
+    assert r.quality.get("borrow_partial") is True
+    assert r.quality.get("implied_rate_calculable") is False
+
+
+def test_r2_missing_whole_quarter_resets_consecutive(rule_db):
+    """P1-1（第四轮审查修订）：整季缺失（两张表均无 20240630）时，
+    20240331/20240930/20241231 不是连续季度，连续负现金流不得累计为 3——
+    需要报告期相邻校验。"""
+    from app.domain.finance.rule_r2 import evaluate_r2
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20240331", "20240930", "20241231"]  # 缺 20240630
+    _insert_is(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_profit_excl_min_int_inc": [1e8, 1e8, 1e8]},
+        periods=periods,
+    )
+    _insert_cf(
+        rule_db,
+        "TEST",
+        PARENT,
+        {"net_cash_flows_oper_act": [-5e7, -5e7, -5e7]},
+        periods=periods,
+    )
+    r = evaluate_r2("TEST", "20260331", periods=8)
+    # 20240930 与 20241231 是相邻季度（consec=2），但跨 20240630 的
+    # 20240331 不得与之累计为 3 → 相邻校验生效，不误判 red
+    assert r.current["consec_neg_cf"]["value"] == 2
+    assert r.severity != "red"
+
+
+def test_r3_prev_borrow_incomplete_skips_trend_red(rule_db):
+    """P1-1（第四轮审查修订）：趋势 red 要求前期 st/lt 都完整——前期 lt
+    缺失时用下界判断"持续扩大"会误升 red（真实负债可能反而下降），
+    应跳过趋势升级保留 orange。"""
+    from app.domain.finance.rule_r3 import evaluate_r3
+
+    _insert_company(rule_db, "TEST", comp_type=1)
+    periods = ["20240331", "20240630", "20240930", "20241231", "20250331"]
+    _insert_bs(
+        rule_db,
+        "TEST",
+        PARENT,
+        {
+            "monetary_cap": [240, 240, 240, 250, 260],  # 24%→25%→26%
+            "tot_assets": [1000, 1000, 1000, 1000, 1000],
+            "st_borrow": [200, 200, 200, 200, 260],
+            "lt_borrow": [100, 100, 100, None, 150],  # 前期 20241231 lt 缺失
+        },
+        periods=periods,
+    )
+    r = evaluate_r3("TEST", "20260331", periods=8)
+    # current(20250331) 借款完整 26%+41%；prev(20241231) lt 缺失 →
+    # 下界 20% 显示"持续扩大"——但真实负债可能下降，不得升 red
+    assert r.status == "triggered"
+    assert r.severity == "orange"
+    assert r.quality.get("borrow_partial") is False  # 当前期借款完整
+
+
+def test_next_quarter_validates_full_quarter_end_date():
+    """P2（第五轮审查修订）：_next_quarter 必须校验完整季度末日期，
+    不能只看月份——20240330 月份为 3 但不是季度末（0331），应返回 None。"""
+    from app.domain.finance.rule_r2 import _next_quarter
+
+    assert _next_quarter("20240331") == "20240630"
+    assert _next_quarter("20241231") == "20250331"
+    assert _next_quarter("20250630") == "20250930"
+    assert _next_quarter("20250930") == "20251231"
+    # 月份正确但日期不是季度末 → None
+    assert _next_quarter("20240330") is None
+    assert _next_quarter("20241230") is None
+    assert _next_quarter("20250929") is None
+    # 非季度末月份 → None
+    assert _next_quarter("20250115") is None
+    # 非法格式 → None
+    assert _next_quarter("") is None
+    assert _next_quarter("2024") is None

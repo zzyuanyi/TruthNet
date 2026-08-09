@@ -385,3 +385,293 @@ def test_db_error_not_crashes(monkeypatch):
     result = pt.persist_turn_node(_make_state())
     assert result["messages"] == []
     assert result["module_status"]["persist_turn"].state == "partial"
+
+
+# ── R7 回归：Evidence/Claim 同 ID 不同内容冲突 → 回滚 + partial ───
+
+
+@pytest.fixture
+def sqlite_provenance_engine():
+    """内存 SQLite：conversation + evidence_refs + claims + links 全建。"""
+    from app.infrastructure.persistence.models import (
+        Claim,
+        ClaimEvidenceLink,
+        EvidenceRef,
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    ConversationSession.__table__.create(engine)
+    ConversationTurn.__table__.create(engine)
+    EvidenceRef.__table__.create(engine)
+    Claim.__table__.create(engine)
+    ClaimEvidenceLink.__table__.create(engine)
+    yield engine
+    engine.dispose()
+
+
+def _insert_evidence(engine, eid: str, source_record_id: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO evidence_refs (evidence_id, source_type, source_record_id, "
+                "company_code, dataset_version, retrieved_at) "
+                "VALUES (:eid, 'financial_statement', :src, '600518.SH', 'test-v1', "
+                "CURRENT_TIMESTAMP)"
+            ),
+            {"eid": eid, "src": source_record_id},
+        )
+
+
+def _insert_claim(engine, cid: str, company_code: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO claims (claim_id, company_code, claim_type, "
+                "severity, verification_status, module, text, generated_at) "
+                "VALUES (:cid, :cc, 'rule', 'red', 'pending', 'finance', '旧内容', "
+                "CURRENT_TIMESTAMP)"
+            ),
+            {"cid": cid, "cc": company_code},
+        )
+
+
+@pytest.mark.parametrize("conflict_kind", ["evidence", "claim"])
+def test_id_conflict_rolls_back_all_and_marks_partial(
+    monkeypatch, sqlite_provenance_engine, conflict_kind
+):
+    """R7：同 ID 不同内容 → 异常不外溢 + 全事务回滚 + partial + warning。
+
+    先插入一条合法新证据（ID 不同），再触发冲突——若冲突回滚，合法证据
+    也未落库，证明"前序写入已回滚"而非只跳过冲突项。
+    """
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+
+    # 预插入与 state 冲突的旧记录
+    if conflict_kind == "evidence":
+        _insert_evidence(sqlite_provenance_engine, "ev_conflict_1", "rec_old")
+    else:
+        _insert_claim(sqlite_provenance_engine, "clm_conflict_1", "600518.SH")
+
+    state = _make_state()
+    state["evidence"] = [
+        # 合法新证据（先写入，应被回滚）
+        {
+            "evidence_id": "ev_legit_new",
+            "source_type": "financial_statement",
+            "source_record_id": "rec_new",
+            "company_code": "600518.SH",
+            "module": "finance",
+        },
+        # 冲突证据：同 ID 不同内容
+        {
+            "evidence_id": "ev_conflict_1",
+            "source_type": "financial_statement",
+            "source_record_id": "rec_different",
+            "company_code": "600518.SH",
+            "module": "finance",
+        },
+    ]
+    state["claims"] = [
+        {
+            "claim_id": "clm_conflict_1" if conflict_kind == "claim" else "clm_legit",
+            "text": "新内容",
+            "company_code": "600518.SH",
+            "module": "finance",
+        }
+    ]
+
+    # 1. 不抛异常（ValueError 不逃逸）
+    result = pt.persist_turn_node(state)
+
+    # 2. partial + warning
+    assert result["module_status"]["persist_turn"].state == "partial"
+    assert "PROVENANCE_PERSIST_FAILED" in (
+        result["module_status"]["persist_turn"].error_code
+    )
+    assert any("PROVENANCE_PERSIST_FAILED" in w for w in state["runtime"].warnings)
+
+    # 3. 全事务回滚：合法新证据也未落库
+    with sqlite_provenance_engine.connect() as conn:
+        legit = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM evidence_refs WHERE evidence_id = 'ev_legit_new'"
+            )
+        ).scalar()
+        assert legit == 0, "合法新证据应随冲突一并回滚"
+        if conflict_kind == "evidence":
+            n = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM evidence_refs WHERE evidence_id = 'ev_conflict_1'"
+                )
+            ).scalar()
+            assert n == 1  # 仍是预插入的旧记录
+        else:
+            n = conn.execute(
+                text("SELECT COUNT(*) FROM claims WHERE claim_id = 'clm_legit'")
+            ).scalar()
+            assert n == 0, "Claim 冲突时合法证据外的写入也应回滚"
+
+
+def test_evidence_gap_fill_idempotent(monkeypatch, sqlite_provenance_engine):
+    """P2-4：先写空 title/uri，后写非空 → 只补空字段、不覆盖非空值；幂等。"""
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+
+    # 第一轮：证据 title/uri 为空
+    state1 = _make_state()
+    state1["evidence"] = [
+        {
+            "evidence_id": "ev_gap_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_1",
+            "company_code": "600518.SH",
+            "module": "events",
+            "source_title": "",
+            "source_uri": "",
+        }
+    ]
+    pt.persist_turn_node(state1)
+
+    # 第二轮：同 ID 但 title/uri 非空（补全）
+    state2 = _make_state()
+    state2["evidence"] = [
+        {
+            "evidence_id": "ev_gap_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_1",
+            "company_code": "600518.SH",
+            "module": "events",
+            "source_title": "公告标题",
+            "source_uri": "https://example.com/ann.pdf",
+        }
+    ]
+    result2 = pt.persist_turn_node(state2)
+    assert result2 == {"messages": []}  # 不冲突、不报错
+
+    with sqlite_provenance_engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT source_title, source_uri FROM evidence_refs WHERE evidence_id='ev_gap_1'"
+            )
+        ).first()
+        assert row[0] == "公告标题"  # 空字段被补全
+        assert row[1] == "https://example.com/ann.pdf"
+
+    # 第三轮：已有非空值 + 不同新值 → 不覆盖
+    state3 = _make_state()
+    state3["evidence"] = [
+        {
+            "evidence_id": "ev_gap_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_1",
+            "company_code": "600518.SH",
+            "module": "events",
+            "source_title": "另一个标题",
+            "source_uri": "",
+        }
+    ]
+    pt.persist_turn_node(state3)
+    with sqlite_provenance_engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT source_title, source_uri FROM evidence_refs WHERE evidence_id='ev_gap_1'"
+            )
+        ).first()
+        assert row[0] == "公告标题"  # 已有非空值不被覆盖
+        assert row[1] == "https://example.com/ann.pdf"  # 非空值保持
+
+
+def test_dict_claim_evidence_links_persist_ok(monkeypatch, sqlite_provenance_engine):
+    """P1-2（核验修订）：dict 形式的 Claim + Evidence + link 全部成功落库。
+
+    此前 _persist_links 收到原始 dict 列表访问 .evidence_ids 触发
+    AttributeError，非冲突 dict Claim 的 link 恒空；统一转模型后应完整落库。
+    """
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+    # _persist_links 的 INSERT IGNORE 是 MySQL 语法，SQLite 需 OR IGNORE；
+    # 引擎已注入 SQLite，这里切回 sqlite 分支即可（不依赖真实 MySQL）
+    monkeypatch.setattr(pt.settings, "SQL_BACKEND", "sqlite")
+    state = _make_state()
+    state["claims"] = [
+        {
+            "claim_id": "claim_dict_1",
+            "text": "应收账款增速显著高于营收增速",
+            "claim_type": "rule",
+            "severity": "orange",
+            "verification_status": "verified",
+            "evidence_ids": ["ev_dict_1"],
+            "module": "finance",
+            "company_code": "600518.SH",
+        }
+    ]
+    state["evidence"] = [
+        {
+            "evidence_id": "ev_dict_1",
+            "source_type": "financial_statement",
+            "source_record_id": "bs_600518_20251231",
+            "company_code": "600518.SH",
+            "module": "finance",
+            "value": "123456789",
+        }
+    ]
+    result = pt.persist_turn_node(state)
+    assert result == {"messages": []}
+
+    with sqlite_provenance_engine.connect() as conn:
+        claim = conn.execute(
+            text("SELECT claim_id, text FROM claims WHERE claim_id='claim_dict_1'")
+        ).first()
+        assert claim is not None
+        assert claim[1] == "应收账款增速显著高于营收增速"
+        ev = conn.execute(
+            text(
+                "SELECT evidence_id, value FROM evidence_refs "
+                "WHERE evidence_id='ev_dict_1'"
+            )
+        ).first()
+        assert ev is not None and ev[1] == "123456789"
+        link = conn.execute(
+            text(
+                "SELECT claim_id, evidence_id FROM claim_evidence_links "
+                "WHERE claim_id='claim_dict_1'"
+            )
+        ).first()
+        assert link is not None
+        assert link[0] == "claim_dict_1" and link[1] == "ev_dict_1"
+
+
+def test_evidence_value_gap_fill(monkeypatch, sqlite_provenance_engine):
+    """P2-3（核验修订）：已有空 value 后续获得真实值 → 补全
+    （CASE WHEN 覆盖 value 列，不覆盖非空值）。"""
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+
+    state1 = _make_state()
+    state1["evidence"] = [
+        {
+            "evidence_id": "ev_val_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_v",
+            "company_code": "600518.SH",
+            "module": "events",
+            "value": "",
+        }
+    ]
+    pt.persist_turn_node(state1)
+
+    state2 = _make_state()
+    state2["evidence"] = [
+        {
+            "evidence_id": "ev_val_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_v",
+            "company_code": "600518.SH",
+            "module": "events",
+            "value": "2024年净利润下滑20%",
+        }
+    ]
+    pt.persist_turn_node(state2)
+
+    with sqlite_provenance_engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT value FROM evidence_refs WHERE evidence_id='ev_val_1'")
+        ).first()
+        assert row[0] == "2024年净利润下滑20%"  # 空 value 被补全

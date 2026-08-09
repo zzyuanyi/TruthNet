@@ -489,7 +489,11 @@ def _collect_report_data(company_code: str) -> dict:
 
             adapter = Neo4jEquityGraph()
             if adapter._check_connection_sync():
-                graph = adapter._get_graph_sync(company_code, depth=5)
+                graph = adapter._get_graph_sync(
+                    company_code,
+                    depth=5,
+                    graph_version=settings.GRAPH_VERSION,
+                )
                 node_name = {n.id: n.label for n in graph.nodes}
                 graph_version = (
                     getattr(graph, "graph_version", "") or settings.GRAPH_VERSION

@@ -117,8 +117,8 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
               {rule.rule_name}
             </CardTitle>
           </div>
-          <Badge 
-            variant="outline" 
+          <Badge
+            variant="outline"
             className={cn(
               'text-xs',
               riskLevelColors[rule.severity]
@@ -128,7 +128,7 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
               'w-2 h-2 rounded-full mr-1',
               riskLevelBadgeColors[rule.severity]
             )} />
-            {rule.severity === 'red' ? '高危' : 
+            {rule.severity === 'red' ? '高危' :
              rule.severity === 'orange' ? '中高危' :
              rule.severity === 'yellow' ? '中等' :
              rule.severity === 'blue' ? '低风险' : '正常'}
@@ -177,17 +177,17 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis 
-                dataKey="period" 
+              <XAxis
+                dataKey="period"
                 tick={{ fontSize: 10 }}
                 className="text-muted-foreground"
               />
-              <YAxis 
+              <YAxis
                 tick={{ fontSize: 10 }}
                 className="text-muted-foreground"
               />
-              <Tooltip 
-                contentStyle={{ 
+              <Tooltip
+                contentStyle={{
                   backgroundColor: 'hsl(var(--card))',
                   border: '1px solid hsl(var(--border))',
                   borderRadius: '6px',
@@ -203,9 +203,9 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
                   label={{ value: 'P50', position: 'right', fontSize: 10 }}
                 />
               )}
-              <Line 
-                type="monotone" 
-                dataKey="value" 
+              <Line
+                type="monotone"
+                dataKey="value"
                 stroke={
                   rule.severity === 'red' ? '#ef4444' :
                   rule.severity === 'orange' ? '#f97316' :
@@ -228,9 +228,9 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
         {/* 操作按钮 */}
         <div className="flex gap-2 pt-2">
           {onViewEvidence && (
-            <Button 
-              variant="outline" 
-              size="sm" 
+            <Button
+              variant="outline"
+              size="sm"
               className="flex-1 text-xs"
               onClick={() => onViewEvidence(rule.rule_id)}
             >
@@ -238,9 +238,9 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
             </Button>
           )}
           {onViewDetail && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
+            <Button
+              variant="ghost"
+              size="sm"
               className="flex-1 text-xs"
               onClick={() => onViewDetail(rule.rule_id)}
             >

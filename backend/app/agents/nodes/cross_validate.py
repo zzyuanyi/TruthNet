@@ -375,7 +375,10 @@ def _fetch_shareholder_edges(
                 adapter = Neo4jEquityGraph()
                 if adapter._check_connection_sync():
                     graph = adapter._get_graph_sync(
-                        company_code, depth=2, as_of=as_of or None
+                        company_code,
+                        depth=2,
+                        as_of=as_of or None,
+                        graph_version=settings.GRAPH_VERSION,
                     )
                     for e in graph.edges:
                         pct = e.effective_ownership_pct()

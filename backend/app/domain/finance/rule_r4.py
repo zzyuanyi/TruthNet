@@ -177,6 +177,34 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         extra={"turnover_calculable": turnover_ok},
     )
     result.warnings = field_warnings
+    # 多期展示序列：最近 8 期存货/营收 YoY 与增速差（图表趋势用）
+    # P2-3（核验修订）：按报告期对齐 + 去年同期计算，不再跨报表按下标拼接。
+    from app.domain.finance._fetch import align_by_period, prev_year_period
+
+    aligned = align_by_period(
+        inv=inventories_sr, or_=oper_rev_sr, cost=less_oper_cost_sr
+    )
+    ordered = sorted(aligned.keys())
+    gap_series: list[dict] = []
+    for p in ordered[-8:]:
+        t4 = prev_year_period(p, ordered)
+        if t4 is None:
+            continue
+        inv_y = yoy_growth(aligned[p].get("inv"), aligned[t4].get("inv"))
+        or_y = yoy_growth(aligned[p].get("or"), aligned[t4].get("or"))
+        if inv_y is None or or_y is None:
+            continue
+        gap_series.append(
+            {
+                "period": p,
+                "inventory_yoy": round(inv_y * 100, 1),
+                "oper_rev_yoy": round(or_y * 100, 1),
+                "growth_gap": round((inv_y - or_y) * 100, 1),
+            }
+        )
+    if len(gap_series) >= 2:
+        result.history = gap_series
+
     result.evidence_ids = [f"ev_bs_inventories_{as_of}", f"ev_is_oper_rev_{as_of}"]
     if severity == "red":
         result.explanation = (
