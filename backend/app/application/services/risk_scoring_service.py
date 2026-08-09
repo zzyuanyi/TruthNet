@@ -143,6 +143,11 @@ async def assemble_and_score(
     if out is None:
         raise RuntimeError("RISK_SCORING_ERROR")
     out.rule_set_version = rule_set_version or settings.RULE_SET_VERSION
+    from app.application.services.risk_derivation_service import (
+        build_risk_derivation_chains,
+    )
+
+    out.derivation_chains = build_risk_derivation_chains(out, state["results"].finance)
     return out
 
 
