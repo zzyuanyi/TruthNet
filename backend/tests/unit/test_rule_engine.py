@@ -7,9 +7,13 @@
 全部基于 SQLite 合成数据，不访问 MySQL/网络/模型下载。
 """
 
+import os
 import sqlite3
+from pathlib import Path
 
 import pytest
+import yaml
+from pydantic import ValidationError
 
 from app.agents.nodes.finance import finance_node
 from app.agents.state import AgentState, CompanyRef, ExecutionPlan, RuntimeState
@@ -184,6 +188,78 @@ def test_r1_trigger_red(rule_db):
     assert r.severity == "red"
     assert r.quality["statement_scope"] == "parent_company"
     assert r.evidence_ids  # 有证据引用
+
+
+def test_r1_threshold_change_in_yaml_takes_effect(rule_db, tmp_path, monkeypatch):
+    """#11: modifying the YAML thresholds changes runtime rule behavior."""
+    from app.domain.finance import financial_rule_config
+
+    conn = rule_db
+    _insert_company(conn, "CFG_R1")
+    ar = _seq(100_000_000, [0.05, 0.05, 0.15, 0.60])
+    ore = _seq(200_000_000, [0.0, 0.0, 0.0, -0.20])
+    _insert_bs(conn, "CFG_R1", PARENT, {"acct_rcv": ar})
+    _insert_is(conn, "CFG_R1", PARENT, {"oper_rev": ore})
+
+    source = Path(financial_rule_config.__file__).with_name("financial_rules.yaml")
+    config_path = tmp_path / "financial_rules.yaml"
+    config_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(financial_rule_config, "_FINANCIAL_RULES_FILE", config_path)
+    financial_rule_config.clear_financial_rule_config_cache()
+
+    assert evaluate_r1("CFG_R1", "20260331").severity == "red"
+
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    for key in raw["rules"]["R1"]["thresholds"]:
+        raw["rules"]["R1"]["thresholds"][key] = 10_000
+    previous_mtime = config_path.stat().st_mtime_ns
+    config_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    os.utime(
+        config_path,
+        ns=(previous_mtime + 1_000_000, previous_mtime + 1_000_000),
+    )
+    assert config_path.stat().st_mtime_ns != previous_mtime
+
+    assert evaluate_r1("CFG_R1", "20260331").status == "not_triggered"
+
+
+def test_financial_rule_switch_returns_explicit_not_applicable(tmp_path, monkeypatch):
+    """#11: a disabled rule is explicit and does not query financial data."""
+    from app.domain.finance import financial_rule_config
+
+    source = Path(financial_rule_config.__file__).with_name("financial_rules.yaml")
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    raw["rules"]["R2"]["enabled"] = False
+    config_path = tmp_path / "financial_rules.yaml"
+    config_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(financial_rule_config, "_FINANCIAL_RULES_FILE", config_path)
+    financial_rule_config.clear_financial_rule_config_cache()
+
+    result = evaluate_r2("NO_DATABASE_ACCESS", "20260331")
+
+    assert result.status == "not_applicable"
+    assert result.severity == "unknown"
+    assert result.warnings == ["RULE_DISABLED"]
+
+
+def test_financial_rule_config_rejects_missing_threshold(tmp_path):
+    """#11: invalid YAML fails closed instead of using hidden defaults."""
+    from app.domain.finance.financial_rule_config import load_financial_rules
+
+    source = Path(__file__).parents[2] / "app/domain/finance/financial_rules.yaml"
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    del raw["rules"]["R7"]["thresholds"]["cash_divergence_pp"]
+    config_path = tmp_path / "invalid_financial_rules.yaml"
+    config_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+
+    with pytest.raises(ValidationError):
+        load_financial_rules(config_path)
 
 
 def test_r1_not_triggered(rule_db):

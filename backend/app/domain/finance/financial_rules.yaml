@@ -1,0 +1,77 @@
+# R1-R7 financial warning rule configuration.
+# This file is the runtime source of truth for rule switches and decision thresholds.
+
+version: "1.0.0"
+rules:
+  R1:
+    enabled: true
+    thresholds:
+      red_consecutive_gap_pp: 50
+      red_previous_gap_pp: 30
+      red_declining_revenue_gap_pp: 30
+      red_receivable_growth_pct: 50
+      orange_gap_pp: 30
+      orange_consecutive_gap_pp: 20
+      orange_previous_gap_pp: 20
+      yellow_gap_pp: 20
+  R2:
+    enabled: true
+    thresholds:
+      red_consecutive_negative_cashflow_periods: 3
+      red_growth_consecutive_periods: 2
+      red_profit_yoy_pct: 20
+      orange_consecutive_negative_cashflow_periods: 2
+      orange_cashflow_profit_ratio: 0.3
+      yellow_cashflow_profit_ratio: 0.5
+  R3:
+    enabled: true
+    thresholds:
+      dual_high_cash_pct: 15
+      dual_high_debt_pct: 20
+      red_cash_pct: 25
+      red_debt_pct: 25
+      red_implied_interest_rate_pct: 5
+      yellow_cash_pct: 20
+  R4:
+    enabled: true
+    thresholds:
+      red_growth_gap_pp: 50
+      red_inventory_growth_pct: 50
+      red_revenue_growth_max_pct: 10
+      red_turnover_change_pct: 100
+      red_turnover_days: 365
+      orange_growth_gap_pp: 30
+      orange_turnover_change_pct: 50
+      yellow_growth_gap_pp: 30
+      yellow_turnover_change_pct: 50
+  R5:
+    enabled: true
+    thresholds:
+      gross_margin_deviation_pct: 10
+      red_gross_margin_deviation_pct: 15
+      red_expense_rate_drop_pct: 10
+      expense_rate_drop_pct: 5
+      combined_deviation_pct: 15
+  R6:
+    enabled: true
+    thresholds:
+      large_amount: 50000000
+      red_assets_ratio_pct: 10
+      red_yoy_pct: 200
+      red_receivable_ratio: 1.0
+      orange_assets_ratio_pct: 10
+      orange_yoy_pct: 100
+      orange_receivable_ratio: 0.5
+      yellow_assets_ratio_pct: 10
+      yellow_secondary_assets_ratio_pct: 5
+      yellow_yoy_pct: 200
+  R7:
+    enabled: true
+    thresholds:
+      red_core_profit_ratio: 0.3
+      weak_core_profit_ratio: 0.5
+      quality_divergence_pp: 30
+      revenue_divergence_pp: 20
+      cash_divergence_pp: 30
+      orange_non_operating_ratio_pct: 50
+      yellow_non_operating_ratio_pct: 30

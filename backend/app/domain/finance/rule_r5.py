@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -16,6 +20,10 @@ from app.domain.finance.rule_utils import count_valid, mean_or_none
 
 
 def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
+    config = get_rule_config("R5")
+    if not config.enabled:
+        return disabled_rule_result("R5", "毛利率/费用率异常")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R5",
         rule_version="1.0.0",
@@ -118,23 +126,41 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     )
 
     severity = "green"
-    if gm_deviation is not None and gm_deviation > 10:
-        if er_deviation is not None and er_deviation < -10:
+    if (
+        gm_deviation is not None
+        and gm_deviation > thresholds.gross_margin_deviation_pct
+    ):
+        if (
+            er_deviation is not None
+            and er_deviation < -thresholds.red_expense_rate_drop_pct
+        ):
             severity = "red"  # 毛利率提升 + 费用率大幅下降
-        elif gm_deviation > 15:
+        elif gm_deviation > thresholds.red_gross_margin_deviation_pct:
             severity = "red"  # 极端偏离
 
-    if severity == "green" and gm_deviation is not None and gm_deviation > 10:
+    if (
+        severity == "green"
+        and gm_deviation is not None
+        and gm_deviation > thresholds.gross_margin_deviation_pct
+    ):
         severity = "orange"
-    elif severity == "green" and er_deviation is not None and er_deviation < -5:
+    elif (
+        severity == "green"
+        and er_deviation is not None
+        and er_deviation < -thresholds.expense_rate_drop_pct
+    ):
         severity = "orange"
 
     if severity == "green":
-        if (gm_deviation is not None and gm_deviation > 10) or (
-            er_deviation is not None and er_deviation < -5
+        if (
+            gm_deviation is not None
+            and gm_deviation > thresholds.gross_margin_deviation_pct
+        ) or (
+            er_deviation is not None
+            and er_deviation < -thresholds.expense_rate_drop_pct
         ):
             severity = "yellow"
-        elif combined is not None and combined > 15:
+        elif combined is not None and combined > thresholds.combined_deviation_pct:
             severity = "yellow"
 
     result.status = "triggered" if severity != "green" else "not_triggered"

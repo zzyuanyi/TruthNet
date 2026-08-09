@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.financial_rule_config import (
+    disabled_rule_result,
+    get_rule_config,
+)
 from app.domain.finance.models import RuleResult
 from app.domain.finance.parent_scope import (
     build_gate_result,
@@ -16,6 +20,10 @@ from app.domain.finance.rule_utils import count_valid
 
 
 def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
+    config = get_rule_config("R3")
+    if not config.enabled:
+        return disabled_rule_result("R3", "存贷双高")
+    thresholds = config.thresholds
     result = RuleResult(
         rule_id="R3",
         rule_version="1.0.0",
@@ -156,7 +164,10 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
 
     cash_to_assets = cash_val / assets_val * 100
     debt_to_assets = total_debt / assets_val * 100
-    if borrow_partial and not (cash_to_assets > 15 and debt_to_assets > 20):
+    if borrow_partial and not (
+        cash_to_assets > thresholds.dual_high_cash_pct
+        and debt_to_assets > thresholds.dual_high_debt_pct
+    ):
         result.status = "insufficient_data"
         result.explanation = (
             f"借款分项缺失（{','.join(missing_borrow)}），有息负债下界 "
@@ -182,18 +193,21 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
     if not borrow_partial and fin_cur is not None and total_debt > 0:
         implied_rate = abs(fin_cur) / total_debt * 100
 
-    dual_high = cash_to_assets > 15 and debt_to_assets > 20
+    dual_high = (
+        cash_to_assets > thresholds.dual_high_cash_pct
+        and debt_to_assets > thresholds.dual_high_debt_pct
+    )
 
     severity = "green"
     if (
         not borrow_partial
-        and cash_to_assets > 25
-        and debt_to_assets > 25
+        and cash_to_assets > thresholds.red_cash_pct
+        and debt_to_assets > thresholds.red_debt_pct
         and implied_rate is not None
-        and implied_rate > 5
+        and implied_rate > thresholds.red_implied_interest_rate_pct
     ):
         severity = "red"
-    elif not borrow_partial and cash_to_assets > 15 and debt_to_assets > 20:
+    elif not borrow_partial and dual_high:
         # 检查是否持续扩大（前期按对齐结果取，缺失则不比）
         prev_assets = prev.get("assets")
         prev_cash = prev.get("cash")
@@ -217,7 +231,11 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
 
     if severity == "green" and dual_high:
         severity = "orange"
-    if severity == "green" and cash_to_assets > 20 and total_debt > 0:
+    if (
+        severity == "green"
+        and cash_to_assets > thresholds.yellow_cash_pct
+        and total_debt > 0
+    ):
         severity = "yellow"
 
     result.status = "triggered" if severity != "green" else "not_triggered"
