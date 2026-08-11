@@ -101,3 +101,4 @@ data/model_cache/
 .preview
 frontend-source.tar.gz
 public/*.tar.gz
+data/backups/

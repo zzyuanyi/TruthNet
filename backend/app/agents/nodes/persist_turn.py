@@ -86,23 +86,28 @@ def _to_json(value) -> str | None:
         return None
 
 
-def _evidence_fingerprint(ev: EvidenceRef) -> str:
-    """核心指纹（与 Evidence ID 生成 digest 一致的字段）。
+_MISSING_SOURCE_TYPES = {"", "unknown"}
 
-    value/module/source_table 不参与核心比较：同 ID 已由 digest 保证
-    type/record/field/period/company 一致；value 等展示层字段时有时无
-    （如公告证据 source_title/value 二次解析差异），不应误判冲突
-    （P0：ev_ann_* 反复落库失败即因此）。
+
+def _evidence_core_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
+    """核心字段冲突判定（空值兼容，P0：ev_ann_* 反复落库失败根因修复）。
+
+    - source_type：NULL/""/"unknown" 视为缺失；两个已知且不同的类型才冲突
+    - source_record_id/field_path/period/company_code：一方为空兼容，
+      双方非空且不同才冲突（历史记录 period=NULL 而新值为公告日期时
+      属于补全，不判冲突）
+    - value：双方非空且不同才冲突
     """
-    return "|".join(
-        [
-            ev.source_type or "",
-            ev.source_record_id or "",
-            ev.field_path or "",
-            ev.period or "",
-            ev.company_code or "",
-        ]
-    )
+    et = (existing.source_type or "").strip()
+    nt = (new.source_type or "").strip()
+    if et not in _MISSING_SOURCE_TYPES and nt not in _MISSING_SOURCE_TYPES and et != nt:
+        return True
+    for attr in ("source_record_id", "field_path", "period", "company_code"):
+        a = (getattr(existing, attr) or "").strip()
+        b = (getattr(new, attr) or "").strip()
+        if a and b and a != b:
+            return True
+    return _evidence_value_conflict(existing, new)
 
 
 def _evidence_value_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
@@ -148,26 +153,18 @@ def _upsert_evidence(conn, ev: EvidenceRef, turn_id: str) -> None:
         {"eid": ev.evidence_id},
     ).first()
     if existing is not None:
-        stored = _evidence_fingerprint(
-            EvidenceRef(
-                evidence_id=ev.evidence_id,
-                source_type=str(existing[0] or ""),
-                source_record_id=str(existing[1] or ""),
-                field_path=existing[2],
-                period=existing[3],
-                value=existing[4],
-                company_code=str(existing[5] or ""),
-                module=str(existing[6] or ""),
-                source_table=existing[7],
-            )
+        stored = EvidenceRef(
+            evidence_id=ev.evidence_id,
+            source_type=str(existing[0] or ""),
+            source_record_id=str(existing[1] or ""),
+            field_path=existing[2],
+            period=existing[3],
+            value=existing[4],
+            company_code=str(existing[5] or ""),
+            module=str(existing[6] or ""),
+            source_table=existing[7],
         )
-        conflict = stored != _evidence_fingerprint(ev) or _evidence_value_conflict(
-            EvidenceRef(
-                evidence_id=ev.evidence_id,
-                value=existing[4],
-            ),
-            ev,
-        )
+        conflict = _evidence_core_conflict(stored, ev)
         if conflict:
             raise ValueError(
                 f"Evidence ID 冲突（同 ID 不同内容，拒绝覆盖）: {ev.evidence_id}"
@@ -219,12 +216,20 @@ _GAP_FILLABLE_COLS = (
     ("unit", "unit"),
     # P2-3（核验修订）：已有空 value 后续获得真实值时同样补全
     ("value", "value"),
+    # P0（8.11）：历史公告证据 period/source_type 等为 NULL/"unknown"，
+    # 后续获得真实值时补全；source_type 特判 unknown 视为缺失可覆盖
+    ("source_type", "source_type"),
+    ("source_record_id", "source_record_id"),
+    ("field_path", "field_path"),
+    ("period", "period"),
+    ("company_code", "company_code"),
 )
 
 
 def _fill_evidence_gap_fields(conn, ev: EvidenceRef, existing_row) -> None:
     """P2-4：已存证据的空字段用新值补全（CASE WHEN NULL OR ''），
-    不覆盖已有非空值。无空字段可补时零开销返回。"""
+    不覆盖已有非空值。source_type 额外把 "unknown" 视为缺失可补全。
+    无空字段可补时零开销返回。"""
     sets = []
     params: dict = {}
     for col, attr in _GAP_FILLABLE_COLS:
@@ -232,10 +237,11 @@ def _fill_evidence_gap_fields(conn, ev: EvidenceRef, existing_row) -> None:
         if new_val is None or str(new_val).strip() == "":
             continue
         params[attr] = str(new_val)
-        sets.append(
-            f"{col} = CASE WHEN {col} IS NULL OR {col} = '' "
-            f"THEN :{attr} ELSE {col} END"
-        )
+        if col == "source_type":
+            cond = f"{col} IS NULL OR {col} = '' OR {col} = 'unknown'"
+        else:
+            cond = f"{col} IS NULL OR {col} = ''"
+        sets.append(f"{col} = CASE WHEN {cond} THEN :{attr} ELSE {col} END")
     if not sets:
         return
     params["eid"] = ev.evidence_id
