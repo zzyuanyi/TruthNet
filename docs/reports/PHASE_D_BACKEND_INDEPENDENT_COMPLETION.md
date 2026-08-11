@@ -15,7 +15,7 @@
 | 工作分支 HEAD | `dbee7b00d6d0194362e21c096ead8be31765aea7`（与 origin/main 一致） |
 | 同步方式 | `git fetch origin --prune` → `git switch feature/zzyuanyi-workspace` → `git merge --ff-only origin/main` |
 | 分歧检测 | 无分歧（工作分支 0 ahead / 69 behind，FF 合并成功） |
-| Python | 3.11.15（conda env `truthnet` @ `E:\anaconda\envs\truthnet`） |
+| Python | 3.11.15（conda env `truthnet`，路径按本机安装位置而定） |
 | MySQL | 8.4.9（本地，端口 3306） |
 | Neo4j | 2025.06.1 Community（本地，bolt://127.0.0.1:7687） |
 | Java | JDK 21（Eclipse Adoptium 21.0.11） |
@@ -280,7 +280,7 @@ alembic upgrade head → e9f5a6b7c8d9（重建）✅
 ### 本机环境限制
 - Docker Desktop WSL2 代理网络不可达（127.0.0.1:7897）；
 - Chroma 嵌入模型（sentence_transformers，~2GB）未安装，语义检索降级 SQL；
-- `C:\Python314` 系统 Python 干扰 pre-commit（需用 truthnet 环境 PATH 运行，已记录）。
+- 本机安装的系统 Python 干扰 pre-commit（需用 truthnet 环境 PATH 运行，已记录）。
 
 ### 依赖其他组的限制
 - **后端 #14 未实施**：等待数据 #5 金融企业字段前置（贷款/保险/证券专属字段）。

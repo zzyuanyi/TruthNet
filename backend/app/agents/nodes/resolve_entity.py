@@ -156,23 +156,25 @@ def _find_company(query: str) -> CompanyRef | None:
                         comp_type_code=str(row.get("comp_type_code", "") or ""),
                     )
 
-            # 2. 完整名称匹配：LOCATE(sec_name, query)
-            row = (
+            # 2. 完整名称匹配：多候选不得 LIMIT 1 静默选最长名称（8.11）——
+            #    仅唯一命中时返回，多候选交由 resolve 主路径进歧义确认
+            rows = (
                 conn.execute(
                     text(
                         "SELECT entity_id, wind_code, sec_name, exchange_code, industry_l1, listing_date, comp_type_code "
                         "FROM companies "
                         "WHERE is_latest = 1 AND sec_name IS NOT NULL "
                         "AND LOCATE(sec_name, :query) > 0 "
-                        "ORDER BY CHAR_LENGTH(sec_name) DESC LIMIT 1"
+                        "ORDER BY CHAR_LENGTH(sec_name) DESC"
                     ),
                     {"query": query},
                 )
                 .mappings()
-                .first()
+                .all()
             )
 
-            if row:
+            if len(rows) == 1:
+                row = rows[0]
                 return CompanyRef(
                     entity_id=str(row["entity_id"]),
                     wind_code=str(row["wind_code"]),
@@ -430,37 +432,65 @@ def resolve_entity_node(state: AgentState) -> dict:
     }:
         return {"company": None}
 
-    # 指代消解优先级（R3）：
-    #   request_context.company_code > 当前问题明确公司 > 记忆代码
-    #   （近期轮次/远期摘要 last_company_code）> 记忆名称（近期文本）> 主语延续
+    # 指代消解优先级（R3，8.11 修订）：
+    #   request_context.company_code > 当前问题唯一明确公司 >
+    #   多候选歧义确认（绝不静默取最长名/沿用历史公司）> 纯指代消解
+    #   （记忆代码/名称）> 无新实体信号时的主语延续
     mc = state.get("memory_context")
 
     # 优先级 1: request_context 显式代码
     company = _find_company(explicit_company_code) if explicit_company_code else None
 
+    # 当前问题公司候选只计算一次（8.11）：完整名/别名命中，
+    # 供比较意图、唯一命中与歧义确认共用
+    candidates: list[CompanyRef] = []
+    if company is None and not explicit_company_code:
+        candidates = _find_company_candidates(user_query)
+
     # 优先级 1.5 (P2-2/P1-1): 多公司比较——强比较词恒进 comparison_guide；
     # 弱连接词（和/与/还是）需两家完整名称命中才判比较（核验修订），
     # 避免"康美药业营收和现金流怎么样"被误吞。
+    if (
+        company is None
+        and not explicit_company_code
+        and _looks_like_comparison(user_query, candidates)
+    ):
+        logger.info(
+            "ResolveEntity: 比较意图，识别 %d 家公司 %s",
+            len(candidates),
+            [c.sec_name for c in candidates],
+        )
+        return {
+            "company": None,
+            "comparison_targets": candidates,
+            "comparison_requested": True,
+            "company_candidates": [],
+        }
+
+    # 优先级 2（8.11）：当前问题明确公司——候选唯一命中时采用；
+    # 多个完整名称命中时立即进入歧义确认，不得 LIMIT 1 静默选最长名称，
+    # 也不得沿用历史公司（即使记忆里有上一家）。
     if company is None and not explicit_company_code:
-        comparison_targets = _find_company_candidates(user_query)
-        if _looks_like_comparison(user_query, comparison_targets):
+        if len(candidates) == 1:
+            company = candidates[0]
+            logger.info("ResolveEntity: 唯一候选 %s", company.sec_name)
+        elif len(candidates) >= 2:
             logger.info(
-                "ResolveEntity: 比较意图，识别 %d 家公司 %s",
-                len(comparison_targets),
-                [c.sec_name for c in comparison_targets],
+                "ResolveEntity: 多候选歧义 %d 家 %s，进入候选确认",
+                len(candidates),
+                [c.sec_name for c in candidates],
             )
             return {
                 "company": None,
-                "comparison_targets": comparison_targets,
-                "comparison_requested": True,
-                "company_candidates": [],
+                "company_candidates": candidates,
+                "comparison_requested": False,
             }
 
-    # 优先级 2: 当前问题明确出现的公司/代码（不得被记忆覆盖）
-    if company is None:
+    # 优先级 3: 无候选时的确定性兜底（Wind Code / 前缀唯一命中）
+    if company is None and not explicit_company_code:
         company = _find_company(user_query)
 
-    # 优先级 3: 记忆消解的代码（近期轮次 company_code / 摘要 last_company_code）
+    # 优先级 4: 记忆消解的代码（近期轮次 company_code / 摘要 last_company_code）
     if company is None and mc is not None:
         resolved_code = str(getattr(mc, "resolved_company_code", "") or "").strip()
         if resolved_code:
@@ -472,13 +502,13 @@ def resolve_entity_node(state: AgentState) -> dict:
                     company.sec_name,
                 )
 
-    # 优先级 4: 记忆消解的名称（如"它"→"康美药业"），追加到搜索文本
+    # 优先级 5: 记忆消解的名称（如"它"→"康美药业"），追加到搜索文本
     if company is None and mc is not None:
         resolved = str(getattr(mc, "resolved_entity_name", "") or "").strip()
         if resolved:
             company = _find_company(f"{user_query} {resolved}")
 
-    # 优先级 5: 主语省略延续：query 无公司名但含明确追问线索时，延续最近对话主体
+    # 优先级 6: 主语省略延续：query 无公司名但含明确追问线索时，延续最近对话主体
     # （V12 §7.6 当前主体恢复）。
     if (
         company is None
@@ -495,9 +525,6 @@ def resolve_entity_node(state: AgentState) -> dict:
                 )
 
     if company is None:
-        candidates = (
-            [] if explicit_company_code else _find_company_candidates(user_query)
-        )
         return {"company": None, "company_candidates": candidates}
 
     return {"company": company, "company_candidates": []}

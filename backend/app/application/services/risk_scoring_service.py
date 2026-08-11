@@ -59,6 +59,23 @@ _BM_PCT_ORANGE = 90.0
 _BM_PCT_YELLOW = 75.0
 
 
+def _evidence_summary(ev, label: str) -> str:
+    """真实摘要：source_title → source_excerpt → "字段 期次: 值" → 模块兜底。"""
+    title = str(getattr(ev, "source_title", "") or "").strip()
+    if title:
+        return title
+    excerpt = str(getattr(ev, "source_excerpt", "") or "").strip()
+    if excerpt:
+        return excerpt
+    field_path = str(getattr(ev, "field_path", "") or "").strip()
+    period = str(getattr(ev, "period", "") or "").strip()
+    value = getattr(ev, "value", None)
+    value_str = "" if value is None else str(value).strip()
+    if field_path or period or value_str:
+        return f"{field_path} {period}: {value_str}".strip(" :")
+    return f"{label} 模块证据"
+
+
 async def assemble_and_score(
     code: str,
     as_of: str,
@@ -346,7 +363,7 @@ class RiskScoringService:
         coverage.events = ev_status == "success"
         coverage.benchmarks = bm_status == "success"
 
-        # ── 证据与 Claim 收集 ──
+        # ── 证据与 Claim 收集（8.11：真实类型 + 真实摘要，按 evidence_id 去重）──
         for label, mod_result, mod_name in [
             ("finance", finance_result, "finance"),
             ("equity", equity_result, "equity"),
@@ -355,11 +372,14 @@ class RiskScoringService:
             if mod_result is None:
                 continue
             for ev in getattr(mod_result, "evidence", []):
+                eid = getattr(ev, "evidence_id", "") or ""
+                if not eid or any(e.evidence_id == eid for e in all_evidence):
+                    continue
                 all_evidence.append(
                     RiskEvidence(
-                        evidence_id=ev.evidence_id,
-                        source_type=getattr(ev, "source_type", "") or mod_name,
-                        summary=f"{label} 模块证据",
+                        evidence_id=eid,
+                        source_type=getattr(ev, "source_type", "") or "",
+                        summary=_evidence_summary(ev, label),
                         claim_ids=getattr(ev, "claim_ids", []) or [],
                     )
                 )
@@ -414,6 +434,7 @@ class RiskScoringService:
                 risk_level="unknown",
                 data_coverage=coverage,
                 confidence=0.0,
+                evidence=all_evidence,
                 mitigating_factors=[
                     f"全部维度均不可用（{unavailable}），无法评分，不按 0 风险处理"
                 ],
@@ -593,5 +614,6 @@ class RiskScoringService:
             pattern_matches=pattern_matches,
             claim_ids=claim_ids,
             evidence_ids=evidence_ids,
+            evidence=all_evidence,
             warnings=warnings,
         )

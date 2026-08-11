@@ -6,6 +6,7 @@ import json
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,11 +17,12 @@ _POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _WATCHDOG = _REPO_ROOT / "scripts/services/watch_truthnet_backend.ps1"
 _REGISTER = _REPO_ROOT / "scripts/services/register_truthnet_backend_watchdog.ps1"
-_TRUTHNET_PYTHON = Path("D:/anaconda/envs/truthnet/python.exe")
+# 用当前解释器而非硬编码盘符路径：任何机器上测试都真正生效
+_PYTHON = Path(sys.executable)
 
 pytestmark = pytest.mark.skipif(
-    not _POWERSHELL or not _TRUTHNET_PYTHON.exists(),
-    reason="Windows PowerShell and the truthnet Python runtime are required",
+    not _POWERSHELL,
+    reason="Windows PowerShell is required",
 )
 
 
@@ -47,6 +49,7 @@ def _run_watchdog(log_dir: Path, *arguments: str) -> subprocess.CompletedProcess
         capture_output=True,
         text=True,
         encoding="utf-8-sig",
+        errors="replace",  # 中文 Windows 下 PowerShell 输出 GBK，容错替换而非解码崩溃
         timeout=30,
         check=False,
     )
@@ -125,7 +128,7 @@ def test_watchdog_records_exit_code_and_restart_count(tmp_path):
         "-Port",
         str(_free_port()),
         "-PythonPath",
-        str(_TRUTHNET_PYTHON),
+        str(_PYTHON),
         "-BackendDirectory",
         str(_REPO_ROOT / "backend"),
         "-AppModule",
@@ -160,7 +163,7 @@ def test_task_registration_whatif_has_no_side_effects():
             "-File",
             str(_REGISTER),
             "-PythonPath",
-            str(_TRUTHNET_PYTHON),
+            str(_PYTHON),
             "-Port",
             str(_free_port()),
             "-WhatIf",
@@ -169,6 +172,7 @@ def test_task_registration_whatif_has_no_side_effects():
         capture_output=True,
         text=True,
         encoding="utf-8-sig",
+        errors="replace",  # 中文 Windows 下 PowerShell 输出 GBK，容错替换而非解码崩溃
         timeout=30,
         check=False,
     )

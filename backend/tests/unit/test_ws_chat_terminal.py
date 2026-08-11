@@ -266,3 +266,29 @@ def test_lifespan_janitor_runs_and_stops(monkeypatch):
     time.sleep(0.15)
     assert calls["n"] == n_after_exit, "shutdown 后 janitor 不得继续调用"
     monkeypatch.setattr(session_manager, "janitor", orig_janitor)
+
+
+def test_company_confirm_without_pending_rejected():
+    """8.11：无待确认候选时发送 company.confirm → turn.failed NO_PENDING。"""
+
+    sid = _test_session_id()
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/api/v1/chat/ws?session_id={sid}") as ws:
+            ws.send_json(
+                {
+                    "event_type": "company.confirm",
+                    "payload": {
+                        "company_ref": "000001.SZ",
+                        "session_id": sid,
+                        "turn_id": "turn_none",
+                    },
+                }
+            )
+            events = []
+            for _ in range(5):
+                ev = ws.receive_json()
+                events.append(ev)
+                if ev["event_type"] == "turn.failed":
+                    break
+    failed = next(e for e in events if e["event_type"] == "turn.failed")
+    assert failed["payload"]["error_code"] == "NO_PENDING_DISAMBIGUATION"

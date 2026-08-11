@@ -262,3 +262,113 @@ def test_cleanup_report_jobs():
             text("DELETE FROM report_jobs WHERE report_id = :rid"), {"rid": report_id}
         )
     assert report_service.get_report_job(report_id) is None
+
+
+@_NEED_MYSQL
+def test_retry_failed_report_job_atomic():
+    """8.11（C6）：failed → 原子重置 queued，清理旧字段；同 idempotency_key 仍一行。"""
+    from app.application.services import report_service
+    from app.domain.finance._fetch import _get_engine
+    from sqlalchemy import text
+
+    key = f"retry_{uuid.uuid4().hex[:10]}"
+    report_id, created = report_service.create_report_job(
+        company_code="600518.SH",
+        session_id=None,
+        idempotency_key=key,
+        request_payload={},
+        trace_id="t",
+    )
+    assert created is True
+    try:
+        # 置为 failed + 残留字段
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE report_jobs SET status='failed', progress=42, "
+                    "error_code='E', error_message='x', file_path='/tmp/x.pdf', "
+                    "file_sha256='abc', started_at=CURRENT_TIMESTAMP, "
+                    "completed_at=CURRENT_TIMESTAMP WHERE report_id=:rid"
+                ),
+                {"rid": report_id},
+            )
+
+        # 非 failed 状态不得重置
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text("UPDATE report_jobs SET status='running' WHERE report_id=:rid"),
+                {"rid": report_id},
+            )
+        assert report_service.retry_failed_report_job(report_id) is False
+
+        # 置回 failed → 原子重置成功
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text("UPDATE report_jobs SET status='failed' WHERE report_id=:rid"),
+                {"rid": report_id},
+            )
+        assert report_service.retry_failed_report_job(report_id) is True
+
+        job = report_service.get_report_job(report_id)
+        assert job["status"] == "queued"
+        assert job["progress"] == 0
+        assert job["error_code"] is None
+        assert job["error_message"] is None
+        assert job["file_path"] is None
+        assert job["file_sha256"] is None
+        assert job["started_at"] is None
+        assert job["completed_at"] is None
+
+        # 同 idempotency_key 仍只有一行
+        with _get_engine().connect() as conn:
+            n = conn.execute(
+                text("SELECT COUNT(*) FROM report_jobs WHERE idempotency_key = :k"),
+                {"k": key},
+            ).scalar()
+        assert n == 1
+    finally:
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text("DELETE FROM report_jobs WHERE report_id = :rid"),
+                {"rid": report_id},
+            )
+
+
+@_NEED_MYSQL
+def test_retry_failed_report_concurrent_starts_once():
+    """8.11（C6）：并发重试仅 rowcount=1 的一方成功（只启动一次）。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.application.services import report_service
+    from app.domain.finance._fetch import _get_engine
+    from sqlalchemy import text
+
+    report_id, _ = report_service.create_report_job(
+        company_code="600518.SH",
+        session_id=None,
+        idempotency_key=None,
+        request_payload={},
+        trace_id="t",
+    )
+    try:
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text("UPDATE report_jobs SET status='failed' WHERE report_id=:rid"),
+                {"rid": report_id},
+            )
+        barrier = threading.Barrier(2)
+
+        def _retry(_):
+            barrier.wait()
+            return report_service.retry_failed_report_job(report_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(_retry, range(2)))
+        assert results.count(True) == 1, f"并发重试应恰好一个成功，实际 {results}"
+        assert results.count(False) == 1
+    finally:
+        with _get_engine().begin() as conn:
+            conn.execute(
+                text("DELETE FROM report_jobs WHERE report_id = :rid"),
+                {"rid": report_id},
+            )

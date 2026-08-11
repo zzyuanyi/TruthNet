@@ -675,3 +675,150 @@ def test_evidence_value_gap_fill(monkeypatch, sqlite_provenance_engine):
             text("SELECT value FROM evidence_refs WHERE evidence_id='ev_val_1'")
         ).first()
         assert row[0] == "2024年净利润下滑20%"  # 空 value 被补全
+
+
+# ── P0（8.11）：Evidence 空值兼容与冲突安全 ─────────────────
+
+
+def test_evidence_null_period_filled_with_new_period(
+    monkeypatch, sqlite_provenance_engine
+):
+    """P0（8.11）：历史记录 period=NULL，新值=公告日期 → 兼容补全不冲突
+    （ev_ann_* 反复落库失败根因场景）。"""
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+    with sqlite_provenance_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO evidence_refs (evidence_id, source_type, source_record_id, "
+                "company_code, dataset_version, retrieved_at) "
+                "VALUES ('ev_ann_1', 'announcement', 'ann_rec_1', '600518.SH', "
+                "'test-v1', CURRENT_TIMESTAMP)"
+            )
+        )
+
+    state = _make_state()
+    state["evidence"] = [
+        {
+            "evidence_id": "ev_ann_1",
+            "source_type": "announcement",
+            "source_record_id": "ann_rec_1",
+            "company_code": "600518.SH",
+            "module": "events",
+            "period": "2026-01-15",
+        }
+    ]
+    result = pt.persist_turn_node(state)
+    assert result == {"messages": []}  # 空 period 兼容，不冲突
+
+    with sqlite_provenance_engine.connect() as conn:
+        period = conn.execute(
+            text("SELECT period FROM evidence_refs WHERE evidence_id='ev_ann_1'")
+        ).scalar()
+        assert period == "2026-01-15"  # 空 period 被补全
+
+
+def test_evidence_unknown_source_type_filled_with_real(
+    monkeypatch, sqlite_provenance_engine
+):
+    """P0（8.11）：source_type='unknown' 视为缺失，可被真实类型补全。"""
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+    with sqlite_provenance_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO evidence_refs (evidence_id, source_type, source_record_id, "
+                "company_code, dataset_version, retrieved_at) "
+                "VALUES ('ev_unk_1', 'unknown', 'rec_u', '600518.SH', 'test-v1', "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+
+    state = _make_state()
+    state["evidence"] = [
+        {
+            "evidence_id": "ev_unk_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_u",
+            "company_code": "600518.SH",
+            "module": "events",
+        }
+    ]
+    result = pt.persist_turn_node(state)
+    assert result == {"messages": []}
+
+    with sqlite_provenance_engine.connect() as conn:
+        st = conn.execute(
+            text("SELECT source_type FROM evidence_refs WHERE evidence_id='ev_unk_1'")
+        ).scalar()
+        assert st == "announcement"
+
+
+def test_evidence_real_source_type_conflict_rejected(
+    monkeypatch, sqlite_provenance_engine
+):
+    """P0（8.11）：两个已知且不同的 source_type → 冲突回滚，保留旧值。"""
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+    with sqlite_provenance_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO evidence_refs (evidence_id, source_type, source_record_id, "
+                "company_code, dataset_version, retrieved_at) "
+                "VALUES ('ev_ct_1', 'announcement', 'rec_1', '600518.SH', 'test-v1', "
+                "CURRENT_TIMESTAMP)"
+            )
+        )
+
+    state = _make_state()
+    state["evidence"] = [
+        {
+            "evidence_id": "ev_ct_1",
+            "source_type": "financial_statement",
+            "source_record_id": "rec_1",
+            "company_code": "600518.SH",
+            "module": "finance",
+        }
+    ]
+    result = pt.persist_turn_node(state)
+    assert result["module_status"]["persist_turn"].state == "partial"
+    assert any("PROVENANCE_PERSIST_FAILED" in w for w in state["runtime"].warnings)
+
+    with sqlite_provenance_engine.connect() as conn:
+        st = conn.execute(
+            text("SELECT source_type FROM evidence_refs WHERE evidence_id='ev_ct_1'")
+        ).scalar()
+        assert st == "announcement"  # 旧值保留
+
+
+def test_evidence_nonempty_period_conflict_rejected(
+    monkeypatch, sqlite_provenance_engine
+):
+    """P0（8.11）：双方 period 均非空且不同 → 冲突回滚。"""
+    _patch_mysql(monkeypatch, sqlite_provenance_engine)
+    with sqlite_provenance_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO evidence_refs (evidence_id, source_type, source_record_id, "
+                "company_code, period, dataset_version, retrieved_at) "
+                "VALUES ('ev_pc_1', 'announcement', 'rec_1', '600518.SH', "
+                "'2025-12-31', 'test-v1', CURRENT_TIMESTAMP)"
+            )
+        )
+
+    state = _make_state()
+    state["evidence"] = [
+        {
+            "evidence_id": "ev_pc_1",
+            "source_type": "announcement",
+            "source_record_id": "rec_1",
+            "company_code": "600518.SH",
+            "module": "events",
+            "period": "2026-03-31",
+        }
+    ]
+    result = pt.persist_turn_node(state)
+    assert result["module_status"]["persist_turn"].state == "partial"
+
+    with sqlite_provenance_engine.connect() as conn:
+        period = conn.execute(
+            text("SELECT period FROM evidence_refs WHERE evidence_id='ev_pc_1'")
+        ).scalar()
+        assert period == "2025-12-31"  # 旧值保留

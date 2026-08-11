@@ -13,6 +13,8 @@ interface SessionSidebarProps {
   sessions: Session[];
   currentSessionId: string;
   currentCompanyCode?: string | null;
+  // 8.11（C9）：本对话涉及的公司（去重后的 code 列表，每公司一个画像入口）
+  involvedCompanies?: string[];
   isBusy?: boolean;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -23,6 +25,7 @@ export function SessionSidebar({
   sessions,
   currentSessionId,
   currentCompanyCode,
+  involvedCompanies = [],
   isBusy = false,
   onSelectSession,
   onNewSession,
@@ -47,16 +50,38 @@ export function SessionSidebar({
 
       {/* 快捷入口 */}
       <div className="p-2 border-b border-border space-y-1">
-        <Button
-          variant="ghost"
-          className="w-full justify-start gap-2 h-9"
-          onClick={() => currentCompanyCode && navigate(`/company/${encodeURIComponent(currentCompanyCode)}`)}
-          disabled={!currentCompanyCode || isBusy}
-          title={currentCompanyCode ? `查看 ${currentCompanyCode} 企业画像` : '当前会话尚未解析企业'}
-        >
-          <Building2 className="h-4 w-4" />
-          企业画像
-        </Button>
+        {/* 8.11（C9）：本对话每家公司一个画像入口；Header 的"当前公司"仍表示最近一家 */}
+        {involvedCompanies.length > 0 ? (
+          <>
+            <p className="px-2 pt-1 text-[10px] text-muted-foreground">
+              本对话涉及公司（{involvedCompanies.length}）
+            </p>
+            {involvedCompanies.map(code => (
+              <Button
+                key={code}
+                variant="ghost"
+                className="w-full justify-start gap-2 h-9"
+                onClick={() => navigate(`/company/${encodeURIComponent(code)}`)}
+                disabled={isBusy}
+                title={`查看 ${code} 企业画像`}
+              >
+                <Building2 className="h-4 w-4 shrink-0" />
+                <span className="truncate text-xs">{code}</span>
+              </Button>
+            ))}
+          </>
+        ) : (
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-2 h-9"
+            onClick={() => currentCompanyCode && navigate(`/company/${encodeURIComponent(currentCompanyCode)}`)}
+            disabled={!currentCompanyCode || isBusy}
+            title={currentCompanyCode ? `查看 ${currentCompanyCode} 企业画像` : '当前会话尚未解析企业'}
+          >
+            <Building2 className="h-4 w-4" />
+            企业画像
+          </Button>
+        )}
         <Button
           variant="ghost"
           className="w-full justify-start gap-2 h-9"

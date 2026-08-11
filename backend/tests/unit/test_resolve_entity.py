@@ -158,6 +158,64 @@ def test_ambiguous_company_returns_candidates(monkeypatch):
     assert result["company_candidates"] == candidates
 
 
+# ── 8.11：多候选歧义确认（不得沿用历史公司/静默选最长名）───
+
+
+def test_ambiguous_new_company_not_inherited_from_memory(monkeypatch):
+    """8.11：历史康美 + 当前问'分析国药的财务风险'（多候选）→ 返回候选，
+    绝不沿用康美（新公司词解析失败不得静默恢复旧公司）。"""
+    from app.agents.nodes import resolve_entity as node
+
+    candidates = [
+        _ref("国药股份", "600511.SH"),
+        _ref("国药一致", "000028.SZ"),
+    ]
+    monkeypatch.setattr(node, "_find_company", lambda _q: None)
+    monkeypatch.setattr(node, "_find_company_candidates", lambda _q: candidates)
+    mc = MemoryContext(
+        resolved_entity_name=None,
+        previous_companies=["康美药业"],
+    )
+    result = resolve_entity_node(_make_state("分析国药的财务风险", mc))
+    assert result["company"] is None
+    assert result["company_candidates"] == candidates
+    assert not result.get("comparison_requested", False)
+
+
+def test_single_new_company_overrides_history(monkeypatch):
+    """8.11：唯一新公司（候选唯一命中）覆盖历史公司。"""
+    from app.agents.nodes import resolve_entity as node
+
+    candidates = [_ref("国药股份", "600511.SH")]
+    monkeypatch.setattr(node, "_find_company", lambda _q: None)
+    monkeypatch.setattr(node, "_find_company_candidates", lambda _q: candidates)
+    mc = MemoryContext(
+        resolved_entity_name=None,
+        previous_companies=["康美药业"],
+        resolved_company_code="600518.SH",
+    )
+    result = resolve_entity_node(_make_state("分析国药股份", mc))
+    assert result["company"] is not None
+    assert result["company"].sec_name == "国药股份"
+
+
+def test_candidates_computed_once(monkeypatch):
+    """8.11：当前问题候选只查询一次（唯一命中路径不重复查询）。"""
+    from app.agents.nodes import resolve_entity as node
+
+    calls: list[str] = []
+
+    def fake_candidates(query, limit=5):
+        calls.append(query)
+        return [_ref("国药股份", "600511.SH")]
+
+    monkeypatch.setattr(node, "_find_company", lambda _q: None)
+    monkeypatch.setattr(node, "_find_company_candidates", fake_candidates)
+    result = resolve_entity_node(_make_state("分析国药股份", MemoryContext()))
+    assert result["company"] is not None
+    assert calls == ["分析国药股份"]
+
+
 def test_alias_only_ambiguity_returns_candidates(monkeypatch):
     """共享别名命中多家公司时也必须进入候选确认，不能静默返回空。"""
     from app.agents.nodes import resolve_entity as node

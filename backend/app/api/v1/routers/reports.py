@@ -96,6 +96,14 @@ async def create_report(request: ReportCreateRequest):
     # 幂等命中 → 直接返回既有任务（不重新启动）
     if not created:
         job = report_service.get_report_job(report_id)
+        # 8.11（C6）：failed 任务同一幂等键重试 → 原子重置 queued 并重新启动；
+        # 并发重试仅 rowcount=1 的一方启动
+        if job is not None and job.get("status") == "failed":
+            if report_service.retry_failed_report_job(report_id):
+                await report_service.start_report_generation(report_id)
+            # 8.11 P1（审查）：CAS 失败（并发请求已重置并启动）时也必须
+            # 重新查询最新状态，不得返回先前读取的陈旧 failed 对象
+            job = report_service.get_report_job(report_id)
         return _status_response(job, trace_id)
 
     # 启动受控后台生成

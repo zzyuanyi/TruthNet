@@ -56,3 +56,32 @@ def is_valid_period(value: str) -> bool:
     if not 1 <= day <= 31:
         return False
     return True
+
+
+_QUARTER_END_MMDD = ("0331", "0630", "0930", "1231")
+
+
+def is_quarter_end(period: str) -> bool:
+    """YYYYMMDD 是否为完整季度末日期（0331/0630/0930/1231）。
+
+    仅月份匹配不够——20240330 的月份是 3 但日期不是季度末，返回 False。
+    （8.11：从 rule_r2 提取为公共函数，R2 与 CV-NUM-01 共用）
+    """
+    if len(period) != 8 or not period.isdigit():
+        return False
+    return period[4:] in _QUARTER_END_MMDD
+
+
+def next_quarter(period: str) -> str | None:
+    """YYYYMMDD 报告期的下一季度末日期（跨年 1231→0331 正常连续）。
+
+    非法或非季度末期返回 None（20240330 → None）。
+    """
+    if not is_quarter_end(period):
+        return None
+    y, m = int(period[:4]), int(period[4:6])
+    m += 3
+    if m > 12:
+        m -= 12
+        y += 1
+    return f"{y}{_QUARTER_END_MMDD[(m // 3) - 1]}"

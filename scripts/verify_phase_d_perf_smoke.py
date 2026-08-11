@@ -38,12 +38,28 @@ TARGETS = {
 }
 
 
-def _percentile(values: list[float], q: float) -> float:
+def _percentile(values: list[float], q: float) -> float | None:
+    """nearest-rank P 分位（ceil(q*n)-1，8.11 C8 修正）。
+
+    - n=5, q=0.95 → ceil(4.75)-1 = 4 → 最大值（原 int() 取到第 4 个）
+    - 空样本返回 None → 标 N/A，不得按 0ms 假达标
+    """
+    import math
+
     if not values:
-        return 0.0
+        return None
     vals = sorted(values)
-    idx = min(len(vals) - 1, int(q * len(vals)) - 1)
+    idx = min(len(vals) - 1, math.ceil(q * len(vals)) - 1)
     return round(vals[idx], 3)
+
+
+def _reached(p95: float | None, target: float) -> bool:
+    """P95 达成判断：N/A（无样本）不得判达成。"""
+    return p95 is not None and p95 <= target
+
+
+def _fmt_ms(v: float | None) -> str:
+    return "N/A" if v is None else f"{v}ms"
 
 
 def _measure_rest(client: TestClient, collector: MetricsCollector) -> list[float]:
@@ -111,33 +127,39 @@ def main() -> int:
     rest = _measure_rest(client, collector)
     ws = _measure_ws_first_delta(client)
 
+    search_p95 = _percentile(search, 0.95)
+    rest_p95 = _percentile(rest, 0.95)
+    ws_p95 = _percentile(ws, 0.95)
     rows = [
         {
             "metric": "search.p95_ms",
             "count": len(search),
             "p50_ms": _percentile(search, 0.5),
-            "p95_ms": _percentile(search, 0.95),
+            "p95_ms": search_p95,
             "target_ms": TARGETS["search.p95_ms"],
-            "reached": _percentile(search, 0.95) <= TARGETS["search.p95_ms"],
+            "reached": _reached(search_p95, TARGETS["search.p95_ms"]),
         },
         {
             "metric": "rest.standard_full.p95_ms",
             "count": len(rest),
             "p50_ms": _percentile(rest, 0.5),
-            "p95_ms": _percentile(rest, 0.95),
+            "p95_ms": rest_p95,
             "target_ms": TARGETS["rest.agent_total_ms.p95_ms"],
-            "reached": _percentile(rest, 0.95) <= TARGETS["rest.agent_total_ms.p95_ms"],
+            "reached": _reached(rest_p95, TARGETS["rest.agent_total_ms.p95_ms"]),
         },
         {
             "metric": "ws.first_delta.p95_ms",
             "count": len(ws),
             "p50_ms": _percentile(ws, 0.5),
-            "p95_ms": _percentile(ws, 0.95),
+            "p95_ms": ws_p95,
             "target_ms": TARGETS["ws.first_delta_ms.p95_ms"],
-            "reached": _percentile(ws, 0.95) <= TARGETS["ws.first_delta_ms.p95_ms"],
+            "reached": _reached(ws_p95, TARGETS["ws.first_delta_ms.p95_ms"]),
         },
     ]
-    all_ok = all(r["reached"] for r in rows)
+    # 任一指标 N/A（无样本）→ all_reached 不得为 true（8.11 C8）
+    all_ok = all(r["reached"] for r in rows) and all(
+        r["p95_ms"] is not None for r in rows
+    )
 
     report = {
         "phase": "Phase D #7 性能 smoke（本地）",
@@ -157,8 +179,9 @@ def main() -> int:
     md.append("|------|:----:|----:|----:|-----:|:----:|")
     for r in rows:
         md.append(
-            f"| {r['metric']} | {r['count']} | {r['p50_ms']}ms | {r['p95_ms']}ms | "
-            f"≤{r['target_ms']}ms | {'✅' if r['reached'] else '❌'} |"
+            f"| {r['metric']} | {r['count']} | {_fmt_ms(r['p50_ms'])} | "
+            f"{_fmt_ms(r['p95_ms'])} | ≤{r['target_ms']}ms | "
+            f"{'✅' if r['reached'] else '❌'} |"
         )
     md.append("")
     md.append(f"**全部达成**: {'✅' if all_ok else '❌'}")

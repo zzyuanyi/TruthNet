@@ -23,6 +23,13 @@ export default function ChatPage() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const wsRef = useRef<ReturnType<typeof wsClient.create> | null>(null);
+  // 8.11：待确认公司候选（后端 company.candidates 事件，选择后重跑原问题）
+  const [pendingCandidates, setPendingCandidates] = useState<{
+    turn_id: string;
+    candidates: Array<{ wind_code: string; sec_name: string }>;
+  } | null>(null);
+  // 8.11（C9）：本对话涉及的公司列表（按 company_code 去重，每公司一个画像入口）
+  const [involvedCompanies, setInvolvedCompanies] = useState<string[]>([]);
 
   // Task 7: 面板联动状态
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
@@ -63,6 +70,12 @@ export default function ChatPage() {
           .reverse()
           .find(turn => turn.company_code)?.company_code || null;
         setCurrentCompanyCode(latestCompanyCode);
+        // 8.11（C9）：聚合本对话涉及的公司（去重）
+        setInvolvedCompanies(
+          [...new Set(
+            turns.map(t => t.company_code).filter((c): c is string => Boolean(c)),
+          )],
+        );
         const msgs: Message[] = turns.flatMap(t => [
           {
             id: `q-${t.turn_id}`,
@@ -118,6 +131,8 @@ export default function ChatPage() {
       setPanelData(null);
       setPanelState('empty');
       setCurrentCompanyCode(null);
+      setInvolvedCompanies([]);
+      setPendingCandidates(null);
     } catch (error) {
       console.error('Failed to create session:', error);
     }
@@ -127,9 +142,10 @@ export default function ChatPage() {
   const handleSelectSession = (sessionId: string) => {
     if (isLoading && sessionId !== currentSessionId) return;
     setCurrentSessionId(sessionId);
-    // 切换会话时清空规则筛选（对齐审计 P1-3）
+    // 切换会话时清空规则筛选（对齐审计 P1-3）与待确认候选（8.11）
     setActiveRuleId(null);
     setFilteredEvidenceIds(null);
+    setPendingCandidates(null);
   };
 
   // 删除会话
@@ -144,6 +160,8 @@ export default function ChatPage() {
         setPanelData(null);
         setPanelState('empty');
         setCurrentCompanyCode(null);
+        setInvolvedCompanies([]);
+        setPendingCandidates(null);
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
@@ -211,11 +229,15 @@ export default function ChatPage() {
       }
       case 'error':
         console.error('WebSocket error:', payload);
+        setPendingCandidates(null);
         setPanelState('error');
         setIsLoading(false);
         break;
       // 旧格式兼容
       case 'turn.accepted':
+        // 8.11 P0（审查）：新一轮开始，作废上一张候选卡
+        // （候选确认后重跑的轮次在此清空已确认卡片）
+        setPendingCandidates(null);
         setPanelState('loading');
         break;
       case 'module.started':
@@ -357,23 +379,47 @@ export default function ChatPage() {
           return updated;
         });
         setPanelState(hasAnalysisPayload ? 'done' : 'empty');
+        // 8.11 P0（审查）：歧义确认轮次（intent=company_disambiguation）的
+        // completed 不得清空候选卡片——候选卡片要保留到用户点选
+        if ((result.intent || '') !== 'company_disambiguation') {
+          setPendingCandidates(null);
+        }
         setIsLoading(false);
         void loadSessions(false);
         // WS completed 载荷不含 company_code，完成后从会话详情同步画像入口。
         void apiClient.getSession(currentSessionId).then(res => {
-          const latestCompanyCode = [...(res.data?.turns || [])]
+          const turns = res.data?.turns || [];
+          const latestCompanyCode = [...turns]
             .reverse()
             .find(turn => turn.company_code)?.company_code || null;
           setCurrentCompanyCode(latestCompanyCode);
+          setInvolvedCompanies(
+            [...new Set(
+              turns.map(t => t.company_code).filter((c): c is string => Boolean(c)),
+            )],
+          );
         }).catch(() => undefined);
         break;
       }
       case 'turn.failed':
+        setPendingCandidates(null);
         setPanelState('error');
         setIsLoading(false);
         break;
-      case 'company.candidates':
+      case 'company.candidates': {
+        // 8.11：保存候选供用户点选；本轮无公司照常完成，确认后重跑原问题
+        const cand = payload as {
+          turn_id?: string;
+          candidates?: Array<{ wind_code?: string; sec_name?: string }>;
+        };
+        const candidates = (cand.candidates || [])
+          .filter(c => c.wind_code && c.sec_name)
+          .map(c => ({ wind_code: c.wind_code!, sec_name: c.sec_name! }));
+        if (candidates.length > 0) {
+          setPendingCandidates({ turn_id: cand.turn_id || '', candidates });
+        }
         break;
+      }
       case 'heartbeat':
         break;
     }
@@ -422,6 +468,14 @@ export default function ChatPage() {
     handleSendMessage(suggestion);
   };
 
+  // 8.11：确认候选公司 → 后端以新 turn 重跑原问题
+  const handleConfirmCompany = useCallback((turnId: string, windCode: string) => {
+    setPendingCandidates(null);
+    setPanelState('loading');
+    setIsLoading(true);
+    wsRef.current?.confirmCompany(turnId, windCode);
+  }, []);
+
   // Task 7: 面板联动 - 点击规则（对齐审计 P1-3：筛选证据而非仅滚动）
   const handleRuleClick = useCallback((ruleId: string) => {
     // 再次点击已激活规则 → 取消筛选
@@ -464,6 +518,7 @@ export default function ChatPage() {
         sessions={sessions}
         currentSessionId={currentSessionId}
         currentCompanyCode={currentCompanyCode}
+        involvedCompanies={involvedCompanies}
         isBusy={isLoading}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
@@ -482,6 +537,8 @@ export default function ChatPage() {
             setActiveRuleId(null);
             setFilteredEvidenceIds(null);
           }}
+          pendingCandidates={pendingCandidates}
+          onConfirmCompany={handleConfirmCompany}
         />
       </div>
 

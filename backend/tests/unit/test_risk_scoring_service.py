@@ -466,3 +466,78 @@ def test_coverage_bools_match_missing_modules():
     assert "events" in out.data_coverage.missing_modules
     assert "benchmarks" in out.data_coverage.missing_modules
     assert "equity" not in out.data_coverage.missing_modules
+
+
+# ── 8.11：真实证据类型与摘要 ────────────────────────────────
+
+
+def test_risk_evidence_real_types_and_deduped():
+    """8.11：证据按真实类型/摘要返回（字段期次值），重复 ID 只保留一次。"""
+    svc = RiskScoringService()
+    fin_ev = EvidenceRef(
+        evidence_id="ev_fin_1",
+        source_type="financial_statement",
+        source_record_id="bs_1",
+        field_path="资产负债率",
+        period="20251231",
+        value="0.47",
+        module="finance",
+    )
+    ann_ev = EvidenceRef(
+        evidence_id="ev_ann_1",
+        source_type="announcement",
+        source_record_id="ann_1",
+        source_title="关于股权质押的公告",
+        module="events",
+    )
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(
+            statuses={"R1": "triggered"},
+            evidence=[fin_ev, fin_ev],  # 重复 ID
+        ),
+        equity_result=_eq_result(chains=[{"a": 1}]),
+        events_result=_ev_result(evidence=[ann_ev]),
+        rule_set_version="finance-rules-1.0.0",
+    )
+    evs = {e.evidence_id: e for e in out.evidence}
+    assert set(evs) == {"ev_fin_1", "ev_ann_1"}, "重复 ID 只保留一次"
+    assert evs["ev_fin_1"].source_type == "financial_statement"
+    assert evs["ev_fin_1"].summary == "资产负债率 20251231: 0.47"
+    assert evs["ev_ann_1"].source_type == "announcement"
+    assert evs["ev_ann_1"].summary == "关于股权质押的公告"
+
+
+def test_risk_evidence_summary_fallbacks():
+    """8.11：无 title 用 excerpt；字段缺失时用模块兜底文案，不伪造类型。"""
+    svc = RiskScoringService()
+    out: RiskOutput = svc.score(
+        wind_code="600518.SH",
+        as_of="20260331",
+        finance_result=_fin_result(
+            statuses={"R1": "triggered"},
+            evidence=[
+                EvidenceRef(
+                    evidence_id="ev_x_1",
+                    source_type="",
+                    source_record_id="r1",
+                    source_excerpt="某摘要",
+                    module="events",
+                ),
+                EvidenceRef(
+                    evidence_id="ev_x_2",
+                    source_type="ownership_record",
+                    source_record_id="r2",
+                    module="equity",
+                ),
+            ],
+        ),
+        equity_result=_eq_result(chains=[{"a": 1}]),
+        rule_set_version="finance-rules-1.0.0",
+    )
+    by_id = {e.evidence_id: e for e in out.evidence}
+    assert by_id["ev_x_1"].summary == "某摘要"
+    assert by_id["ev_x_1"].source_type == ""  # 空值保留，Router 侧转 unknown
+    assert by_id["ev_x_2"].summary == "finance 模块证据"
+    assert by_id["ev_x_2"].source_type == "ownership_record"
