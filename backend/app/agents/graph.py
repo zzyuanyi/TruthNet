@@ -87,7 +87,9 @@ def create_agent_graph() -> StateGraph:
         },
     )
 
-    # serial for Phase B; Phase C fan-out with Send
+    # 8.11（D10）：当前为确定性串行执行（非 fan-out）——
+    # finance → equity → events → cross_validate → risk → pattern_match
+    # → build_claims → generate_answer → validate_evidence → persist_turn
     graph.add_edge("finance", "equity")
     graph.add_edge("equity", "events")
     graph.add_edge("events", "cross_validate")
