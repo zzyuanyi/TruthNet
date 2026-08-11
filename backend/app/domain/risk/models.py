@@ -144,4 +144,7 @@ class RiskOutput(BaseModel):
     derivation_chains: list[RiskDerivationChain] = Field(default_factory=list)
     claim_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+    # 8.11：结构化真实证据（服务层直接从模块原始 Evidence 构造，
+    # 不再由 Router 伪造 source_type="risk"）
+    evidence: list[RiskEvidence] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
