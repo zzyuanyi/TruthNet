@@ -85,6 +85,42 @@ class KeywordSummary(BaseModel):
     negative_keywords: list[str] = Field(default_factory=list, description="负面关键词")
 
 
+class CausalityStep(BaseModel):
+    """因果链步骤（⑧ B2：结构化步骤数组，每步带 statement_type 与证据）."""
+
+    text: str = Field(..., description="步骤说明")
+    statement_type: str = Field(
+        default="inference", description="observed | inference | projection"
+    )
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class ImpactConclusion(BaseModel):
+    """舆情影响结论（⑧ B2 第一阶段，include_impacts=true 时生成）."""
+
+    conclusion: str = Field(..., description="影响结论文本")
+    impact_type: str = Field(
+        default="operation",
+        description="equity_structure | operation | financing | market",
+    )
+    direction: str = Field(
+        default="neutral", description="positive | negative | neutral"
+    )
+    severity: str = Field(default="low", description="low | medium | high")
+    evidence_ids: list[str] = Field(
+        default_factory=list, description="必须 ⊆ 输入证据集合"
+    )
+    causality_chain: list[CausalityStep] = Field(default_factory=list)
+    statement_type: str = Field(
+        default="inference", description="observed | inference | projection"
+    )
+    display_tag: str = Field(
+        default="推断",
+        description="后端按 statement_type 确定性渲染：observed=已发生 / "
+        "inference=推断 / projection=风险推演（不由 LLM 措辞决定）",
+    )
+
+
 class EventsResponseData(BaseModel):
     """舆情事件响应数据 — V12 §11.11 + Phase C 事件簇."""
 
@@ -95,6 +131,10 @@ class EventsResponseData(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
     rating_changes: list[RatingChange] = Field(default_factory=list)
     keyword_summary: KeywordSummary = Field(default_factory=KeywordSummary)
+    impact_conclusions: list[ImpactConclusion] = Field(
+        default_factory=list,
+        description="舆情影响结论（⑧ B2，include_impacts=true 时生成）",
+    )
     evidence_ids: list[str] = Field(default_factory=list)
     announcements_available: bool = Field(default=True, description="公告数据是否可用")
     months_covered: int = Field(default=36, description="覆盖月数")
