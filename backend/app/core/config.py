@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     MYSQL_USER: str = "truthnet"
     MYSQL_PASSWORD: str = ""
 
+    # MySQL 测试库（external 测试强制隔离）
+    # 默认全空：mysql 模式跑 pytest 必须显式指定三件套，否则 fail-fast 拒绝
+    # （测试不得直连演示库；守卫见 backend/tests/conftest.py）
+    MYSQL_TEST_DATABASE: str = ""
+    MYSQL_TEST_USER: str = ""
+    MYSQL_TEST_PASSWORD: str = ""
+
     # ===== 图数据库后端 =====
     GRAPH_BACKEND: str = "networkx"  # networkx | neo4j
 
