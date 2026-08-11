@@ -156,17 +156,17 @@ export default function ComparePage() {
     const loadCompanies = async () => {
       setLoading(true);
       setError(null);
-      
+
       try {
         // 获取对比公司代码
         const codes = searchParams.get('codes')?.split(',').filter(Boolean) || [];
-        
+
         if (codes.length === 0) {
           setError('请选择要对比的公司');
           setLoading(false);
           return;
         }
-        
+
         // 调用对比 API
         const response = await truthnetAPI.compareCompanies(codes);
         const data = response.data;
