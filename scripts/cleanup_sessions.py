@@ -72,6 +72,8 @@ def _integrity_stats(conn) -> dict[str, int]:
 
     曾出现清理后残留无效 turn_id 证据（turn 被删但 evidence 未被置空/
     删除）。清理后必须复查，残留时提示运行 restore_evidence.py --confirm。
+    8.11：补充四项验收统计（claims_missing_turn / evidence_missing_turn /
+    links_missing_claim / links_missing_evidence，全部应清理为 0）。
     """
     return {
         "rating_missing": conn.execute(
@@ -113,6 +115,45 @@ def _integrity_stats(conn) -> dict[str, int]:
                 """
             )
         ).scalar(),
+        # 8.11 四项验收：缺失 turn 的 Claim / Evidence；断链 link（双向）
+        "claims_missing_turn": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM claims c
+                LEFT JOIN conversation_turns t ON c.turn_id = t.turn_id
+                WHERE c.turn_id IS NOT NULL AND c.turn_id != ''
+                  AND t.turn_id IS NULL
+                """
+            )
+        ).scalar(),
+        "evidence_missing_turn": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM evidence_refs e
+                LEFT JOIN conversation_turns t ON e.turn_id = t.turn_id
+                WHERE e.turn_id IS NOT NULL AND e.turn_id != ''
+                  AND t.turn_id IS NULL
+                """
+            )
+        ).scalar(),
+        "links_missing_claim": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM claim_evidence_links l
+                LEFT JOIN claims c ON l.claim_id = c.claim_id
+                WHERE c.claim_id IS NULL
+                """
+            )
+        ).scalar(),
+        "links_missing_evidence": conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM claim_evidence_links l
+                LEFT JOIN evidence_refs e ON l.evidence_id = e.evidence_id
+                WHERE e.evidence_id IS NULL
+                """
+            )
+        ).scalar(),
     }
 
 
@@ -125,6 +166,14 @@ def _report_integrity(engine) -> int:
     print(f"  事件簇证据缺失: {st['cluster_missing']}")
     print(f"  无效 turn_id: {st['invalid_turn']}")
     print(f"  断链 Claim: {st['broken_claims']}")
+    print(
+        f"  缺失 turn 的 Claim: {st['claims_missing_turn']} | "
+        f"缺失 turn 的 Evidence: {st['evidence_missing_turn']}"
+    )
+    print(
+        f"  断链 link(claim): {st['links_missing_claim']} | "
+        f"断链 link(evidence): {st['links_missing_evidence']}"
+    )
     ok = all(v == 0 for v in st.values())
     if ok:
         print("✅ 完整性通过")
@@ -154,7 +203,10 @@ def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
         )
     ).scalar()
     # 统计口径必须与下方 DELETE 完全一致（含评级/事件簇保护），
-    # 否则预检报告的数字与实际执行不符（P2 教训）
+    # 否则预检报告的数字与实际执行不符（P2 教训）。
+    # 8.11 P0（审查）：必须限定 turn_id 非空——turn_id=NULL 的是全局资产
+    # （如 neo4j_relationship 股权证据），LEFT JOIN 对 NULL turn_id 也
+    # 匹配 t.turn_id IS NULL，无此条件会误删全局证据。
     orphan_ev = conn.execute(
         text(
             """
@@ -163,6 +215,7 @@ def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
             LEFT JOIN rating_changes r ON r.evidence_id = e.evidence_id
             LEFT JOIN event_cluster_sources s ON s.evidence_id = e.evidence_id
             WHERE t.turn_id IS NULL
+              AND e.turn_id IS NOT NULL AND e.turn_id != ''
               AND NOT EXISTS (
                     SELECT 1 FROM claim_evidence_links l
                     JOIN claims c ON c.claim_id = l.claim_id
@@ -189,9 +242,33 @@ def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
                 """
             )
         )
+        # 8.11：turn 失效但仍被有效 Claim/评级/事件簇引用的 evidence——
+        # 只置空 turn_id（保留行），不删除全局资产
+        conn.execute(
+            text(
+                """
+                UPDATE evidence_refs e
+                LEFT JOIN conversation_turns t ON e.turn_id = t.turn_id
+                SET e.turn_id = NULL
+                WHERE t.turn_id IS NULL
+                  AND e.turn_id IS NOT NULL AND e.turn_id != ''
+                  AND (
+                    EXISTS (SELECT 1 FROM claim_evidence_links l
+                            JOIN claims c ON c.claim_id = l.claim_id
+                            JOIN conversation_turns vt ON vt.turn_id = c.turn_id
+                            WHERE l.evidence_id = e.evidence_id)
+                    OR EXISTS (SELECT 1 FROM rating_changes r
+                               WHERE r.evidence_id = e.evidence_id)
+                    OR EXISTS (SELECT 1 FROM event_cluster_sources s
+                               WHERE s.evidence_id = e.evidence_id)
+                  )
+                """
+            )
+        )
         # LEFT JOIN 形式：NOT IN 子查询对 NULL turn_id 不生效（返回 NULL 被过滤），
-        # 评估查询用 LEFT JOIN（含 NULL turn_id 的 evidence）——执行必须同口径
-        # evidence_refs 是全局资产：仍被 Claim/评级/事件簇引用的不得删（P1 教训）
+        # 评估查询用 LEFT JOIN（含 NULL turn_id 的 evidence）——执行必须同口径。
+        # 8.11 P0（审查）：限定 e.turn_id 非空——turn_id=NULL 的全局资产
+        # （neo4j_relationship 股权证据）绝不可被孤儿清理删除。
         conn.execute(
             text(
                 """
@@ -200,12 +277,66 @@ def _cleanup_orphans(conn, execute: bool) -> tuple[int, int, int]:
                 LEFT JOIN claim_evidence_links l ON l.evidence_id = e.evidence_id
                 LEFT JOIN rating_changes r ON r.evidence_id = e.evidence_id
                 LEFT JOIN event_cluster_sources s ON s.evidence_id = e.evidence_id
-                WHERE t.turn_id IS NULL AND l.evidence_id IS NULL
+                WHERE t.turn_id IS NULL AND e.turn_id IS NOT NULL AND e.turn_id != ''
+                  AND l.evidence_id IS NULL
                   AND r.evidence_id IS NULL AND s.evidence_id IS NULL
                 """
             )
         )
     return len(orphan_claim_ids), int(orphan_links or 0), int(orphan_ev or 0)
+
+
+def _global_evidence_ids(conn) -> set[str]:
+    """全局空 turn Evidence 的 ID 集合（清理提交前保护，8.11 P0 审查）。
+
+    保护对象是"turn_id 为空的全局资产"（neo4j_relationship 股权证据等）。
+    8.11 P3（审查）：用 ID 集合而非计数——
+      - 允许"被有效引用的失效 Evidence 合法置空"导致集合新增（不误回滚）；
+      - 任何已有全局 Evidence 的 ID 消失（被删）都会触发回滚；
+      - "一删一增、总数不变"的绕过也无法通过（ID 级校验）。
+    """
+    rows = (
+        conn.execute(
+            text(
+                "SELECT evidence_id FROM evidence_refs "
+                "WHERE turn_id IS NULL OR turn_id = ''"
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {str(r) for r in rows}
+
+
+def _backup_tables(conn, tables: tuple[str, ...], scope: str) -> Path:
+    """执行前备份受影响表到 data/backups/（含时间/范围/行数/校验摘要）。
+
+    备份为 JSON 文件，便于审计与必要时人工恢复；不依赖外部工具。
+    """
+    import hashlib
+    import json
+    from datetime import datetime
+
+    backup_dir = _REPO_ROOT / "data" / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = backup_dir / f"cleanup_{stamp}_{scope}.json"
+
+    dump: dict = {"created_at": stamp, "scope": scope, "tables": {}}
+    for table in tables:
+        rows = conn.execute(text(f"SELECT * FROM {table}")).mappings().all()
+        dump["tables"][table] = [dict(r) for r in rows]
+    raw = json.dumps(dump, ensure_ascii=False, default=str, sort_keys=True)
+    dump["counts"] = {t: len(rows) for t, rows in dump["tables"].items()}
+    dump["sha256"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    path.write_text(
+        # 行值含 datetime 等类型（created_at/updated_at），必须 default=str
+        json.dumps(dump, ensure_ascii=False, default=str, indent=1, sort_keys=True),
+        encoding="utf-8",
+        newline="\n",
+    )
+    print(f"  备份: {path}（行数 {dump['counts']}，sha256 {dump['sha256'][:16]}…）")
+    return path
 
 
 def _confirm_requires_keep(args) -> bool:
@@ -243,8 +374,42 @@ def main() -> int:
         before = _counts(conn)
 
         if args.orphans:
+            if execute:
+                # 8.11：执行前备份受影响表（安全网，便于人工恢复）
+                _backup_tables(
+                    conn,
+                    ("claims", "evidence_refs", "claim_evidence_links"),
+                    "orphans",
+                )
+                # 8.11 P0（审查）：提交前保护——记录全局证据 ID 集合
+                global_before = _global_evidence_ids(conn)
             n_claims, n_links, n_ev = _cleanup_orphans(conn, execute)
             if execute:
+                global_after = _global_evidence_ids(conn)
+                missing_ids = global_before - global_after
+                if missing_ids:
+                    print(
+                        "❌ 全局 Evidence 被清理，回滚（不得删除全局资产）："
+                        f"{len(missing_ids)} 条，样例 {sorted(missing_ids)[:3]}"
+                    )
+                    conn.rollback()
+                    return 2
+                # 8.11 P1（审查）：提交前在同一连接做四项完整性验收，
+                # 任一非零立即回滚（不再等到 commit 后才发现清理遗漏）
+                st = _integrity_stats(conn)
+                pending = {
+                    k: st[k]
+                    for k in (
+                        "claims_missing_turn",
+                        "evidence_missing_turn",
+                        "links_missing_claim",
+                        "links_missing_evidence",
+                    )
+                }
+                if any(v != 0 for v in pending.values()):
+                    print("❌ 提交前完整性验收失败，回滚：", pending)
+                    conn.rollback()
+                    return 2
                 conn.commit()
             print(
                 f"孤儿清理: {n_claims} claims / {n_links} links / {n_ev} evidence "
@@ -257,6 +422,18 @@ def main() -> int:
                 delta = before[table] - after[table]
                 mark = "" if delta == 0 else f"  (-{delta})"
                 print(f"  {table}: {before[table]} → {after[table]}{mark}")
+            if not execute:
+                # 8.11 P2（审查）：dry-run 下残留是预期存量，不报失败码
+                st = _integrity_stats(conn)
+                print(
+                    "  存量（--confirm 清理后应归零）: "
+                    f"claims_missing_turn={st['claims_missing_turn']}, "
+                    f"evidence_missing_turn={st['evidence_missing_turn']}, "
+                    f"links_missing_claim={st['links_missing_claim']}, "
+                    f"links_missing_evidence={st['links_missing_evidence']}"
+                )
+                print("预检模式：上述残留为当前存量，本次未写库。")
+                return 0
             return _report_integrity(engine)
         all_rows = conn.execute(
             text(
@@ -275,6 +452,19 @@ def main() -> int:
             print("预检模式（--dry-run），不写库；确认执行加 --confirm")
 
         deleted_turns = 0
+        if execute:
+            # 8.11：执行前备份 5 张表（含会话/轮次，便于审计与恢复）
+            _backup_tables(
+                conn,
+                (
+                    "conversation_sessions",
+                    "conversation_turns",
+                    "claims",
+                    "evidence_refs",
+                    "claim_evidence_links",
+                ),
+                "sessions",
+            )
         for sid, turn_count in to_delete:
             print(f"  {'[预检]' if not execute else '[删除]'} {sid} ({turn_count} 轮)")
             if not execute:
@@ -337,6 +527,21 @@ def main() -> int:
             )
             deleted_turns += len(turn_ids)
         if execute:
+            # 8.11 P1（审查）：提交前在同一连接做四项完整性验收
+            st = _integrity_stats(conn)
+            pending = {
+                k: st[k]
+                for k in (
+                    "claims_missing_turn",
+                    "evidence_missing_turn",
+                    "links_missing_claim",
+                    "links_missing_evidence",
+                )
+            }
+            if any(v != 0 for v in pending.values()):
+                print("❌ 提交前完整性验收失败，回滚：", pending)
+                conn.rollback()
+                return 2
             conn.commit()
 
     with engine.connect() as conn:
@@ -347,6 +552,19 @@ def main() -> int:
         mark = "" if delta == 0 else f"  (-{delta})"
         print(f"  {table}: {before[table]} → {after[table]}{mark}")
     print(f"合计删除: {len(to_delete)} 会话 / {deleted_turns} 轮")
+    if not execute:
+        # 8.11 P2（审查）：dry-run 下残留是预期存量，不报失败码
+        with engine.connect() as conn:
+            st = _integrity_stats(conn)
+        print(
+            "  存量（--confirm 清理后应归零）: "
+            f"claims_missing_turn={st['claims_missing_turn']}, "
+            f"evidence_missing_turn={st['evidence_missing_turn']}, "
+            f"links_missing_claim={st['links_missing_claim']}, "
+            f"links_missing_evidence={st['links_missing_evidence']}"
+        )
+        print("预检模式：上述残留为当前存量，本次未写库。")
+        return 0
     return _report_integrity(engine)
 
 
