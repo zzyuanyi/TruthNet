@@ -7,6 +7,7 @@
 
 from app.domain.finance._fetch import fetch_series
 from app.domain.finance.financial_rule_config import (
+    get_execution_version,
     disabled_rule_result,
     get_rule_config,
 )
@@ -26,7 +27,7 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
     thresholds = config.thresholds
     result = RuleResult(
         rule_id="R4",
-        rule_version="1.0.0",
+        rule_version=get_execution_version(),
         rule_name="存货–营收背离",
         status="not_triggered",
     )

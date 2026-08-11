@@ -24,6 +24,7 @@ from app.api.v1.schemas.events import (
     EventCluster,
     EventSourceDTO,
     EventsResponseData,
+    ImpactConclusion,
     KeywordSummary,
     RatingChange,
     SentimentSummary,
@@ -207,6 +208,10 @@ def _build_keyword_summary(titles: list[str]) -> KeywordSummary:
 async def get_company_events(
     code: str = Path(..., description="公司代码，如 600518.SH"),
     months: int = Query(default=36, ge=1, le=120, description="回溯月数"),
+    include_impacts: bool = Query(
+        default=False,
+        description="是否生成舆情影响结论（⑧ B2：默认 false 不调用 LLM）",
+    ),
 ):
     """舆情事件 — 事件簇 + 公告时间线 + 评级拐点。"""
     trace_id = _trace()
@@ -229,6 +234,7 @@ async def get_company_events(
         )
     wind_code = company.wind_code
     sec_name = company.sec_name
+    data_warnings: list[str] = []  # ⑧ B2 影响结论降级提示（字符串级，不进 WarningItem）
 
     if settings.SQL_BACKEND != "mysql":
         return V12Response(
@@ -423,6 +429,44 @@ async def get_company_events(
             )
         )
 
+    # ── ⑧ B2：舆情影响结论（include_impacts=true 按需调用；失败降级）──
+    impact_conclusions: list[ImpactConclusion] = []
+    if include_impacts:
+        try:
+            from app.application.services.events_impact_service import (
+                build_equity_impact_facts,
+                build_impact_facts,
+                generate_impacts,
+            )
+
+            facts, input_evidence = build_impact_facts(
+                event_clusters=event_clusters,
+                timeline=timeline,
+                rating_changes=rating_changes,
+            )
+            # v3.4：股权事实只送已材料化（evidence_refs 可回查）的
+            # Neo4j 直接持股边证据（不可回查的边保守丢弃）
+            try:
+                eq_facts, eq_evidence = await build_equity_impact_facts(
+                    wind_code, settings.GRAPH_VERSION
+                )
+                facts.extend(eq_facts)
+                input_evidence |= eq_evidence
+            except Exception as exc:  # noqa: BLE001 — 股权事实失败不阻塞影响分析
+                data_warnings.append(f"IMPACT_EQUITY_FACTS_FAILED: {exc}")
+            impact_conclusions, impact_warnings = await generate_impacts(
+                wind_code=wind_code,
+                sec_name=sec_name,
+                months=months,
+                graph_version=settings.GRAPH_VERSION,
+                facts=facts,
+                input_evidence_ids=input_evidence,
+            )
+            for iw in impact_warnings:
+                data_warnings.append(iw)
+        except Exception as exc:  # noqa: BLE001 — 影响结论失败不阻塞基础事件
+            data_warnings.append(f"IMPACT_ANALYSIS_FAILED: {exc}")
+
     return V12Response(
         data=EventsResponseData(
             wind_code=wind_code,
@@ -432,10 +476,11 @@ async def get_company_events(
             timeline=timeline,
             rating_changes=rating_changes,
             keyword_summary=keyword_summary,
+            impact_conclusions=impact_conclusions,
             evidence_ids=all_evidence_ids,
             announcements_available=announcements_available,
             months_covered=months,
-            warnings=[w.message for w in warnings],
+            warnings=[w.message for w in warnings] + data_warnings,
         ),
         meta=ApiMeta(
             request_id=trace_id,

@@ -1,7 +1,10 @@
 # R1-R7 financial warning rule configuration.
 # This file is the runtime source of truth for rule switches and decision thresholds.
 
-version: "1.0.0"
+# version=展示元数据版本（D2 规则页）；execution_version=规则执行版本
+# （R1-R7 输出/Claim/API 标识统一来源，与 settings.RULE_SET_VERSION 尾号一致）
+version: "1.1.0"
+execution_version: "1.0.0"
 rules:
   R1:
     enabled: true
@@ -75,3 +78,147 @@ rules:
       cash_divergence_pp: 30
       orange_non_operating_ratio_pct: 50
       yellow_non_operating_ratio_pct: 30
+
+# ── 展示元数据（v1.1.0，D2 规则定义接口）────────────
+# 规则名称/描述/指标/参数说明/严重等级判定说明——人工维护，
+# 与 RULES_SPEC.md 同步；conditions 为展示说明，不从代码反推。
+metadata:
+  R1:
+    name: "应收–营收背离"
+    description: "应收账款增速持续且显著高于营业收入增速，可能表明放宽信用、提前确认收入或虚构销售。"
+    metrics:
+      - {key: acct_rcv_growth, label: "应收账款同比增速", unit: "percent", formula: "acct_rcv(t)/acct_rcv(t-4Q)-1", risk_direction: higher_is_riskier}
+      - {key: oper_rev_growth, label: "营业收入同比增速", unit: "percent", formula: "oper_rev(t)/oper_rev(t-4Q)-1", risk_direction: higher_is_riskier}
+      - {key: gap, label: "背离幅度", unit: "percentage_point", formula: "应收增速-营收增速", risk_direction: higher_is_riskier}
+    parameters:
+      red_consecutive_gap_pp: {unit: "pp", description: "连续多期严重背离阈值（红色）"}
+      red_previous_gap_pp: {unit: "pp", description: "上一期严重背离阈值（红色）"}
+      red_declining_revenue_gap_pp: {unit: "pp", description: "营收下滑场景背离阈值（红色）"}
+      red_receivable_growth_pct: {unit: "percent", description: "应收暴增阈值（红色）"}
+      orange_gap_pp: {unit: "pp", description: "中等背离阈值（橙色）"}
+      orange_consecutive_gap_pp: {unit: "pp", description: "连续两期背离阈值（橙色）"}
+      orange_previous_gap_pp: {unit: "pp", description: "上一期背离阈值（橙色）"}
+      yellow_gap_pp: {unit: "pp", description: "轻度背离阈值（黄色）"}
+    conditions:
+      red: "gap>50pp 且连续两期严重背离；或应收暴增但营收下滑"
+      orange: "gap>30pp 且应收增长；或连续两期中等背离"
+      yellow: "gap>20pp"
+  R2:
+    name: "现金流–利润背离"
+    description: "净利润持续为正但经营现金流持续为负或远低于净利润，利润缺乏现金支撑。"
+    metrics:
+      - {key: cf_to_profit_ratio, label: "经营现金流/净利润", unit: "ratio", formula: "avg(cash_flow)/avg(net_profit)", risk_direction: lower_is_riskier}
+      - {key: consec_neg_cf, label: "连续负现金流期数", unit: "quarters", formula: "连续净利润为正但现金流为负的期数", risk_direction: higher_is_riskier}
+    parameters:
+      red_consecutive_negative_cashflow_periods: {unit: "quarters", description: "连续负现金流红色阈值"}
+      red_growth_consecutive_periods: {unit: "quarters", description: "利润增长但现金恶化连续期数（红色）"}
+      red_profit_yoy_pct: {unit: "percent", description: "利润增速红色阈值"}
+      orange_consecutive_negative_cashflow_periods: {unit: "quarters", description: "连续负现金流橙色阈值"}
+      orange_cashflow_profit_ratio: {unit: "ratio", description: "现金/利润比橙色阈值"}
+      yellow_cashflow_profit_ratio: {unit: "ratio", description: "现金/利润比黄色阈值"}
+    conditions:
+      red: "盈利且现金为负连续≥3 期；或利润增长>20% 且现金流持续恶化（连续≥2 期）"
+      orange: "盈利且现金为负连续≥2 期；或盈利且 0≤现金/利润比<0.3"
+      yellow: "盈利且现金为负 1 期；或盈利且 0.3≤现金/利润比<0.5"
+  R3:
+    name: "存贷双高"
+    description: "同时持有大量货币资金与大量有息负债，可能意味着货币资金虚增、受限或被占用（康美模式）。"
+    metrics:
+      - {key: cash_to_assets, label: "货币资金占比", unit: "percent", formula: "货币资金/总资产", risk_direction: higher_is_riskier}
+      - {key: debt_to_assets, label: "有息负债占比", unit: "percent", formula: "(短期借款+长期借款)/总资产", risk_direction: higher_is_riskier}
+      - {key: implied_interest_rate, label: "隐含借款利率", unit: "percent", formula: "利息支出/有息负债", risk_direction: higher_is_riskier}
+    parameters:
+      dual_high_cash_pct: {unit: "percent", description: "货币资金占比双高阈值"}
+      dual_high_debt_pct: {unit: "percent", description: "有息负债占比双高阈值"}
+      red_cash_pct: {unit: "percent", description: "现金占比红色阈值"}
+      red_debt_pct: {unit: "percent", description: "负债占比红色阈值"}
+      red_implied_interest_rate_pct: {unit: "percent", description: "隐含利率红色阈值"}
+      yellow_cash_pct: {unit: "percent", description: "现金占比黄色阈值"}
+    conditions:
+      red: "双高且隐含利率>5%（现金可能不存在/受限）；或双高且持续扩大"
+      orange: "双高同时满足（现金>15% 且负债>20%）"
+      yellow: "现金占比>20% 且存在有息负债（未达双高）"
+  R4:
+    name: "存货–营收背离"
+    description: "存货增速持续显著高于营收增速，或存货周转天数大幅延长，可能存在滞销积压或虚增利润。"
+    metrics:
+      - {key: inventory_yoy, label: "存货同比增速", unit: "percent", formula: "存货YoY", risk_direction: higher_is_riskier}
+      - {key: oper_rev_yoy, label: "营业收入同比增速", unit: "percent", formula: "营业收入YoY", risk_direction: higher_is_riskier}
+      - {key: growth_gap, label: "存货-营收增速背离", unit: "percentage_point", formula: "存货增速-营收增速", risk_direction: higher_is_riskier}
+      - {key: inventory_turnover_days, label: "存货周转天数", unit: "days", formula: "单季还原后年化周转天数", risk_direction: higher_is_riskier}
+      - {key: turnover_change, label: "周转天数同比变化", unit: "percent", formula: "周转天数YoY变化", risk_direction: higher_is_riskier}
+    parameters:
+      red_growth_gap_pp: {unit: "pp", description: "存货-营收增速背离红色阈值"}
+      red_inventory_growth_pct: {unit: "percent", description: "存货增速红色阈值"}
+      red_revenue_growth_max_pct: {unit: "percent", description: "营收增速上限（红色场景）"}
+      red_turnover_change_pct: {unit: "percent", description: "周转恶化红色阈值"}
+      red_turnover_days: {unit: "days", description: "周转天数红色阈值"}
+      orange_growth_gap_pp: {unit: "pp", description: "增速背离橙色阈值"}
+      orange_turnover_change_pct: {unit: "percent", description: "周转恶化橙色阈值"}
+      yellow_growth_gap_pp: {unit: "pp", description: "增速背离黄色阈值"}
+      yellow_turnover_change_pct: {unit: "percent", description: "周转恶化黄色阈值"}
+    conditions:
+      red: "存货暴增但营收几乎停滞；或周转天数翻倍且超过一年"
+      orange: "增速背离>30pp 且周转恶化>50% 同时出现"
+      yellow: "增速背离>30pp；或周转恶化>50%"
+  R5:
+    name: "毛利率/费用率异常"
+    description: "毛利率或费用率短期显著变化，且与自身历史趋势和行业方向不一致，可能存在成本少结转或费用资本化。"
+    metrics:
+      - {key: gross_margin, label: "毛利率", unit: "percent", formula: "毛利/营收", risk_direction: neutral}
+      - {key: gm_deviation, label: "毛利率偏离", unit: "percentage_point", formula: "毛利率-8季均值", risk_direction: higher_is_riskier}
+      - {key: er_deviation, label: "费用率偏离", unit: "percentage_point", formula: "费用率-自身均值", risk_direction: lower_is_riskier}
+    parameters:
+      gross_margin_deviation_pct: {unit: "pp", description: "毛利率偏离自身均值阈值"}
+      red_gross_margin_deviation_pct: {unit: "pp", description: "毛利率偏离红色阈值"}
+      red_expense_rate_drop_pct: {unit: "pp", description: "费用率下降红色阈值"}
+      expense_rate_drop_pct: {unit: "pp", description: "费用率下降基础阈值"}
+      combined_deviation_pct: {unit: "pp", description: "综合偏离阈值"}
+    conditions:
+      red: "毛利率偏离>15pp（极端偏离）；或毛利率升且费用率大幅降（异常叠加）"
+      orange: "毛利率偏离>10pp；或费用率下降>5pp"
+      yellow: "毛利率偏离>10pp；或费用率下降>5pp；或综合偏离>15pp"
+  R6:
+    name: "其他应收款与关联占用风险"
+    description: "其他应收款异常增长且占比偏高，可能是关联方资金占用、虚假交易的'垃圾桶'科目。"
+    metrics:
+      - {key: oth_rcv_to_assets, label: "其他应收款占总资产比例", unit: "percent", formula: "其他应收款/总资产", risk_direction: higher_is_riskier}
+      - {key: oth_rcv_large, label: "绝对金额是否大额", unit: "bool", formula: "其他应收款>5000万元", risk_direction: neutral}
+      - {key: oth_rcv_yoy, label: "其他应收款同比增速", unit: "percent", formula: "其他应收款YoY", risk_direction: higher_is_riskier}
+      - {key: oth_rcv_to_acct_rcv, label: "其他应收款/应收账款", unit: "ratio", formula: "其他应收款/应收账款", risk_direction: higher_is_riskier}
+    parameters:
+      large_amount: {unit: "CNY", description: "绝对金额大额阈值（5000 万元）"}
+      red_assets_ratio_pct: {unit: "percent", description: "占总资产比例红色阈值"}
+      red_yoy_pct: {unit: "percent", description: "同比增速红色阈值"}
+      red_receivable_ratio: {unit: "ratio", description: "其他应收/应收红色阈值"}
+      orange_assets_ratio_pct: {unit: "percent", description: "占总资产比例橙色阈值"}
+      orange_yoy_pct: {unit: "percent", description: "同比增速橙色阈值"}
+      orange_receivable_ratio: {unit: "ratio", description: "其他应收/应收橙色阈值"}
+      yellow_assets_ratio_pct: {unit: "percent", description: "占总资产比例黄色阈值"}
+      yellow_secondary_assets_ratio_pct: {unit: "percent", description: "次级资产占比黄色阈值"}
+      yellow_yoy_pct: {unit: "percent", description: "同比增速黄色阈值"}
+    conditions:
+      red: "占比>10% 且增速>200% 且绝对额大；或占比>10% 且超过应收账款"
+      orange: "占比>10% 且增速>100% 且绝对额大；或占比>10% 且超过应收账款一半"
+      yellow: "占比>10% 且绝对额大；或增速>200% 且绝对额大；或占比>5% 且增速>200%"
+  R7:
+    name: "盈利质量与非经常性依赖"
+    description: "净利润增长应来自主业改善；若显著高于扣非利润、经营现金流和营收增长，可能存在依赖一次性收益粉饰。"
+    metrics:
+      - {key: core_profit_ratio, label: "扣非利润占比", unit: "ratio", formula: "扣非净利润/净利润", risk_direction: lower_is_riskier}
+      - {key: non_recurring_ratio, label: "非经常性损益占比", unit: "ratio", formula: "非经常性损益/净利润", risk_direction: higher_is_riskier}
+      - {key: net_profit_yoy, label: "净利润同比增速", unit: "percent", formula: "净利润YoY", risk_direction: neutral}
+      - {key: quality_divergence, label: "扣非背离", unit: "percentage_point", formula: "净利润增速-扣非利润增速", risk_direction: higher_is_riskier}
+      - {key: revenue_divergence, label: "营收背离", unit: "percentage_point", formula: "净利润增速-营收增速", risk_direction: higher_is_riskier}
+    parameters:
+      red_core_profit_ratio: {unit: "ratio", description: "扣非占比红色阈值（极依赖非经常性）"}
+      weak_core_profit_ratio: {unit: "ratio", description: "扣非占比较弱阈值"}
+      quality_divergence_pp: {unit: "pp", description: "扣非背离阈值"}
+      revenue_divergence_pp: {unit: "pp", description: "营收背离阈值"}
+      cash_divergence_pp: {unit: "pp", description: "现金流背离阈值"}
+      orange_non_operating_ratio_pct: {unit: "percent", description: "营业外占比橙色阈值"}
+      yellow_non_operating_ratio_pct: {unit: "percent", description: "营业外占比黄色阈值"}
+    conditions:
+      red: "扣非占比<0.3 且质量/营收严重背离"
+      orange: "扣非占比<0.5 且质量/营收背离；或扣非占比<0.3（极依赖非经常性）；或营业外占比>50%"
+      yellow: "扣非占比<0.5；或质量/营收背离；或营业外占比>30%"

@@ -19,12 +19,12 @@ export default defineConfig({
     proxy: {
       // TruthNet 后端 API (端口 8000)
       '/api/v1': { target: BACKEND_API, changeOrigin: true },
-      
+
       // WebSocket 对话
-      '/api/v1/chat/ws': { 
-        target: BACKEND_API.replace('http', 'ws'), 
-        changeOrigin: true, 
-        ws: true 
+      '/api/v1/chat/ws': {
+        target: BACKEND_API.replace('http', 'ws'),
+        changeOrigin: true,
+        ws: true
       },
     },
   },

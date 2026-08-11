@@ -340,8 +340,8 @@ export default function CompanyProfilePage() {
               舆情时间线
             </h2>
             {sentimentEvents.length > 0 ? (
-              <RiskTimeline 
-                events={sentimentEvents} 
+              <RiskTimeline
+                events={sentimentEvents}
                 clusters={eventClusters}
                 onEventClick={() => {
                   const evidenceSection = sectionRefs.evidence;

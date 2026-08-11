@@ -39,23 +39,10 @@ def _trace() -> str:
 
 
 def _normalize_evidence_id(legacy: str, wind_code: str, as_of: str) -> str:
-    """把规则引擎 legacy evidence_id（ev_bs_<field>_<period>）映射为统一 ID。"""
-    from app.domain.provenance.id_factory import NS_FINANCE, make_evidence_id
+    """legacy evidence_id → 统一 ID（⑥ 起委托共享模块，与 /comparisons 同源）。"""
+    from app.application.services.finance_evidence import normalize_rule_evidence_id
 
-    field = legacy
-    if legacy.startswith("ev_"):
-        parts = legacy.split("_")
-        if len(parts) >= 3:
-            field = "_".join(parts[2:]).removesuffix(f"_{as_of}")
-    return make_evidence_id(
-        source_namespace=NS_FINANCE,
-        source_type="financial_statement",
-        source_record_id=f"{wind_code}|{as_of}",
-        field_path=field or legacy,
-        period=as_of,
-        dataset_version=settings.DATASET_VERSION,
-        company_code=wind_code,
-    )
+    return normalize_rule_evidence_id(legacy, wind_code, as_of)
 
 
 async def _resolve_company(code: str) -> tuple[str, str, str, str] | None:
@@ -139,36 +126,38 @@ async def get_company_finance(
         engine_error = str(exc)
         results = {}
 
-    # 4. 规则结果 + 统一 Evidence ID
+    # 4. 规则结果 + 统一 Evidence ID（v3.4 方向 A：共享 builder，真实财务字段）
     rule_evidence_map: dict[str, str] = {}
-    evidence_for_persist: list[dict] = []
     claim_for_persist: list[dict] = []
     trigger_claim_texts: dict[str, str] = {}
+    evidence_for_persist: list[dict] = []
+    built_evidence = None
     if rule_engine_ok:
+        from app.application.services.finance_evidence import (
+            build_finance_rule_evidence_drafts,
+            normalize_rule_evidence_id,
+        )
+
+        built_evidence = build_finance_rule_evidence_drafts(
+            rules=results, wind_code=wind_code, as_of=as_of_str
+        )
+        # 唯一 drafts（同 ID 只落库一次）+ 规则→证据映射（含共享）
+        evidence_for_persist = list(built_evidence["unique_drafts"].values())
+        rule_evidence_by_rule = built_evidence["rule_evidence_map"]
         for rid in [f"R{i}" for i in range(1, 8)]:
             r = results.get(rid)
             if r is None:
                 continue
-            unified_evidence: list[str] = []
             for legacy_ev in r.evidence_ids:
-                new_id = _normalize_evidence_id(legacy_ev, wind_code, as_of_str)
-                unified_evidence.append(new_id)
-                if legacy_ev not in rule_evidence_map:
-                    rule_evidence_map[legacy_ev] = new_id
-                evidence_for_persist.append(
-                    {
-                        "evidence_id": new_id,
-                        "source_type": "financial_statement",
-                        "source_record_id": f"{wind_code}|{as_of_str}",
-                        "company_code": wind_code,
-                        "field_path": f"rule_{rid}",
-                        "period": as_of_str,
-                        "statement_scope": "parent_company",
-                        "source_title": f"母公司报表 · 财务反欺诈规则 {rid}",
-                        "module": "finance",
-                        "source_table": "financial_statement",
-                    }
+                rule_evidence_map.setdefault(
+                    legacy_ev,
+                    normalize_rule_evidence_id(legacy_ev, wind_code, as_of_str),
                 )
+        for rid in [f"R{i}" for i in range(1, 8)]:
+            r = results.get(rid)
+            if r is None:
+                continue
+            unified_evidence: list[str] = list(rule_evidence_by_rule.get(rid, []))
             if r.status == "triggered":
                 trigger_claim_texts[rid] = (
                     f"{r.rule_name}触发（{r.severity}）：{r.explanation or '财务异常信号'}"

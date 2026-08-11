@@ -23,6 +23,68 @@ logger = logging.getLogger(__name__)
 _engines: dict[str, Engine] = {}
 
 
+class EvidenceConflictError(Exception):
+    """同 evidence_id 已存在但 canonical 内容不一致（调用方应回滚处理）。"""
+
+
+def _evidence_core_conflict(existing, new_fields: tuple) -> bool:
+    """canonical 六字段逐项比较；一方为空（None/""）或 source_type="unknown"
+    视为缺失（可补全）。
+
+    与 persist_turn._evidence_core_conflict 同语义（A1，2026-08-11）。
+    仅双方非空且不同才算冲突。
+    """
+    for old, new in zip(existing, new_fields):
+        old_empty = old is None or old == "" or old == "unknown"
+        new_empty = new is None or new == "" or new == "unknown"
+        if old_empty or new_empty:
+            continue
+        if old != new:
+            return True
+    return False
+
+
+_GAP_FILL_COLS = (
+    "source_type",
+    "source_record_id",
+    "field_path",
+    "period",
+    "company_code",
+    "value",
+    "unit",
+    "source_title",
+)
+
+
+def _gap_fill_evidence(conn, eid: str, ev: dict) -> None:
+    """④：一方为空（或 source_type='unknown'）→ UPDATE 补全空字段。
+
+    与 persist_turn._fill_evidence_gap_fields 同语义：只补空，不覆盖非空。
+    """
+    sets: list[str] = []
+    params: dict = {"eid": eid}
+    for col in _GAP_FILL_COLS:
+        new_val = ev.get(col)
+        if new_val is None:
+            continue
+        if col == "source_type" and new_val == "unknown":
+            continue
+        if col == "source_type":
+            # source_type 的 'unknown' 视为缺失（与 _evidence_core_conflict 一致）
+            sets.append(
+                f"{col} = COALESCE(NULLIF(NULLIF({col}, ''), 'unknown'), :v_{col})"
+            )
+        else:
+            sets.append(f"{col} = COALESCE(NULLIF({col}, ''), :v_{col})")
+        params[f"v_{col}"] = new_val
+    if not sets:
+        return
+    conn.execute(
+        text(f"UPDATE evidence_refs SET {', '.join(sets)} WHERE evidence_id = :eid"),
+        params,
+    )
+
+
 def _get_engine() -> Engine:
     backend = settings.SQL_BACKEND
     if backend in _engines:
@@ -72,8 +134,13 @@ class ProvenanceService:
         company_codes: list[str] | None = None,
         period: str | None = None,
         statement_scope: str = "parent_company",
+        status: str = "completed",
     ) -> str:
-        """创建独立分析溯源记录，返回 run_id。"""
+        """创建独立分析溯源记录，返回 run_id。
+
+        v3.5：status 可显式传（comparisons 生命周期 running → 完成后
+        经 update_analysis_run_status 更新为 completed/partial/failed）。
+        """
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         with self._engine.begin() as conn:
             conn.execute(
@@ -81,7 +148,7 @@ class ProvenanceService:
                     "INSERT INTO analysis_runs (run_id, trace_id, endpoint, "
                     "company_codes, period, statement_scope, status, created_at) "
                     "VALUES (:rid, :trace, :ep, :codes, :per, :scope, "
-                    "'completed', CURRENT_TIMESTAMP)"
+                    ":status, CURRENT_TIMESTAMP)"
                 ),
                 {
                     "rid": run_id,
@@ -90,16 +157,37 @@ class ProvenanceService:
                     "codes": _to_json(company_codes),
                     "per": period,
                     "scope": statement_scope,
+                    "status": status,
                 },
             )
         return run_id
+
+    def update_analysis_run_status(self, run_id: str, status: str) -> bool:
+        """v3.5：更新 analysis_run 状态（completed/partial/failed）。
+
+        请求级失败（HTTPException/异常）也须把 running 标记为 failed——
+        失败记录不得停留在 running 或误标 completed。
+        """
+        with self._engine.begin() as conn:
+            res = conn.execute(
+                text("UPDATE analysis_runs SET status = :s WHERE run_id = :rid"),
+                {"s": status, "rid": run_id},
+            )
+        return (res.rowcount or 0) > 0
 
     # ── 幂等持久化 ────────────────────────────────────────
 
     def persist_evidence(
         self, evidence: list[dict], *, trace_id: str, turn_id: str
     ) -> list[str]:
-        """幂等写入 evidence_refs；同 ID 不同内容 → 冲突报错。返回已写入 ID。"""
+        """幂等写入 evidence_refs；同 ID 不同内容 → 冲突报错并回滚。返回已写入 ID。
+
+        ⑥/④（2026-08-11）：原实现"已存在 → 直接复用"不比较内容。现按
+        canonical 身份六字段 + value 比较——全部一致（或一方为空视为
+        可补全）→ 幂等复用并 **gap-fill 补全空字段**（source_type 的
+        "unknown" 视为缺失，与 persist_turn 同语义）；任一字段双方非空
+        且不同 → EvidenceConflictError（事务回滚）。
+        """
         if not evidence:
             return []
         written: list[str] = []
@@ -110,14 +198,43 @@ class ProvenanceService:
                     continue
                 existing = conn.execute(
                     text(
-                        "SELECT source_record_id, field_path, period, company_code "
+                        "SELECT source_type, source_record_id, field_path, "
+                        "period, dataset_version, company_code, value "
                         "FROM evidence_refs WHERE evidence_id = :eid LIMIT 1"
                     ),
                     {"eid": eid},
                 ).first()
                 if existing is not None:
+                    new_fields = (
+                        ev.get("source_type", "unknown"),
+                        ev.get("source_record_id", ""),
+                        ev.get("field_path"),
+                        ev.get("period"),
+                        ev.get("dataset_version") or settings.DATASET_VERSION,
+                        ev.get("company_code"),
+                    )
+                    conflict = _evidence_core_conflict(existing[:6], new_fields)
+                    if not conflict:
+                        # value 冲突：双方均非空且不同 → 冲突
+                        old_val = existing[6]
+                        new_val = ev.get("value")
+                        old_empty = old_val is None or old_val == ""
+                        new_empty = new_val is None or new_val == ""
+                        if (
+                            not old_empty
+                            and not new_empty
+                            and str(old_val) != str(new_val)
+                        ):
+                            conflict = True
+                    if conflict:
+                        raise EvidenceConflictError(
+                            f"evidence {eid} 已存在但 canonical 内容不一致: "
+                            f"现有={existing[:6]}，新={new_fields}"
+                        )
+                    # gap-fill：一方为空（或 source_type='unknown'）→ UPDATE 补全
+                    _gap_fill_evidence(conn, eid, ev)
                     written.append(eid)
-                    continue  # 已存在 → 幂等复用（内容一致性由 digest 保证）
+                    continue  # 内容一致（或已补全）→ 幂等复用
                 conn.execute(
                     text(
                         "INSERT INTO evidence_refs "

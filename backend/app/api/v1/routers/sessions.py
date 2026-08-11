@@ -469,6 +469,12 @@ def delete_session(session_id: str):
         )
 
     try:
+        # v3.4：级联删除复用共享 SessionCleanupService（单事务，共享
+        # Evidence 保留 turn_id=NULL、无引用才删除），不在此复制 SQL。
+        from app.application.services.session_cleanup_service import (
+            SessionCleanupService,
+        )
+
         with _get_engine().connect() as conn:
             # 先确认会话存在（不能以 turn_rows 判断：零轮次会话也应可删除）
             exists = conn.execute(
@@ -488,70 +494,8 @@ def delete_session(session_id: str):
                         "recoverable": True,
                     },
                 )
-            turn_rows = (
-                conn.execute(
-                    text(
-                        "SELECT turn_id FROM conversation_turns "
-                        "WHERE session_id = :sid"
-                    ),
-                    {"sid": session_id},
-                )
-                .mappings()
-                .all()
-            )
-            # 级联删除（依赖顺序：links → claims → evidence → turns → session）
-            for t in turn_rows:
-                conn.execute(
-                    text(
-                        "DELETE FROM claim_evidence_links WHERE claim_id IN "
-                        "(SELECT claim_id FROM claims WHERE turn_id = :t)"
-                    ),
-                    {"t": t["turn_id"]},
-                )
-                conn.execute(
-                    text("DELETE FROM claims WHERE turn_id = :t"),
-                    {"t": t["turn_id"]},
-                )
-                # evidence_refs 是全局资产（曾无条件按 turn 删除导致共享证据
-                # 丢失——P1 教训）：
-                # 1) 仍被 Claim/评级/事件簇引用的证据：清空 turn_id，
-                #    避免对已删 turn 产生无效引用（IN 子查询写法，
-                #    MySQL/SQLite 通用，不用 MySQL 特有表别名）
-                conn.execute(
-                    text(
-                        "UPDATE evidence_refs SET turn_id = NULL "
-                        "WHERE turn_id = :t AND ("
-                        "  evidence_id IN (SELECT l.evidence_id "
-                        "                   FROM claim_evidence_links l) "
-                        "  OR evidence_id IN (SELECT r.evidence_id "
-                        "                      FROM rating_changes r) "
-                        "  OR evidence_id IN (SELECT s.evidence_id "
-                        "                      FROM event_cluster_sources s))"
-                    ),
-                    {"t": t["turn_id"]},
-                )
-                # 2) 不再被任何地方引用的会话本地证据：删除
-                conn.execute(
-                    text(
-                        "DELETE FROM evidence_refs WHERE turn_id = :t "
-                        "AND NOT EXISTS (SELECT 1 FROM claim_evidence_links l "
-                        "  WHERE l.evidence_id = evidence_refs.evidence_id) "
-                        "AND NOT EXISTS (SELECT 1 FROM rating_changes r "
-                        "  WHERE r.evidence_id = evidence_refs.evidence_id) "
-                        "AND NOT EXISTS (SELECT 1 FROM event_cluster_sources s "
-                        "  WHERE s.evidence_id = evidence_refs.evidence_id)"
-                    ),
-                    {"t": t["turn_id"]},
-                )
-            conn.execute(
-                text("DELETE FROM conversation_turns WHERE session_id = :sid"),
-                {"sid": session_id},
-            )
-            conn.execute(
-                text("DELETE FROM conversation_sessions WHERE session_id = :sid"),
-                {"sid": session_id},
-            )
-            conn.commit()
+        # 传入 router 引擎：测试 fixture 注入 SQLite 时保持一致
+        SessionCleanupService(engine=_get_engine()).cleanup_session(session_id)
     except HTTPException:
         raise
     except Exception:

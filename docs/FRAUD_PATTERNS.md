@@ -1,7 +1,7 @@
 # 织网鉴真 · 财务造假手法模式库
 
-> 版本：1.0.0 | 日期：2026-07-30 | 负责人：数据组  
-> 参考文档：RULES_SPEC.md（7 条规则）、V12 §2.2（造假模式识别）  
+> 版本：1.0.0 | 日期：2026-07-30 | 负责人：数据组
+> 参考文档：RULES_SPEC.md（7 条规则）、V12 §2.2（造假模式识别）
 > 状态：Phase C 初稿，5 种模式定义，≥2 种可被规则触发
 
 ---
@@ -363,7 +363,7 @@ unknown           — 数据不足无法评估
 ```python
 def all_triggered(rule_ids: set[str], results: dict) -> bool:
     """所有指定规则均触发（severity != not_triggered 且 status = applicable）。
-    
+
     若任一规则的 status 为 insufficient_data 或 not_applicable，
     该规则不算入触发，但标记在返回结果的 partial_coverage 中。
     """
@@ -385,7 +385,7 @@ def count_triggered(results: dict) -> int:
 
 def _check_related_parties(company_code: str) -> bool:
     """检查 Neo4j 图谱中是否存在关联方信号。Phase C 默认返回 False。
-    
+
     Phase D 接入：查询 Neo4j 中 ACTS_IN_CONCERT_WITH 边，
     或同一 entity_id 出现在 ≥3 家上市公司股东中。
     """
