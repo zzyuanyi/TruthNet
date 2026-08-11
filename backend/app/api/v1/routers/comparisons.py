@@ -9,6 +9,12 @@ POST /api/v1/comparisons
   - statement_scope 固定 parent_company
   - 单家公司失败 → partial warning（绝不 except: pass 静默吞错）
   - 输出指标、风险、coverage、evidence
+
+v3.5（契约收口）:
+  - analysis_run 生命周期：请求开始 status=running → 完成后更新
+    completed / partial / failed；失败记录不得标 completed
+    （请求级 HTTPException/异常同样标 failed）；
+  - 全程复用同一个 ProvenanceService 实例。
 """
 
 import uuid
@@ -23,42 +29,71 @@ from app.api.v1.schemas.comparisons import (
     ComparisonRequest,
     ComparisonsResponseData,
     IndicatorCompare,
+    RuleMetricValue,
+    TriggeredRuleDetail,
 )
 from app.core.config import settings
 
 router = APIRouter(tags=["comparisons"])
-
-_INDICATOR_LABELS = {
-    "R1": "应收–营收背离",
-    "R2": "现金流–利润背离",
-    "R3": "存贷双高",
-    "R4": "存货–营收背离",
-    "R5": "毛利率/费用率异常",
-    "R6": "其他应收款/关联占用",
-    "R7": "盈利质量/非经常性依赖",
-}
 
 
 def _trace() -> str:
     return str(uuid.uuid4())
 
 
-def _unified_evidence(wind_code: str, as_of: str, rule_ids: list[str]) -> list[str]:
-    """统一 Evidence ID（与 Finance 端点同口径）。"""
-    from app.domain.provenance.id_factory import NS_FINANCE, make_evidence_id
+def _indicator_label(rid: str) -> str:
+    """指标标签（单一来源：D2 规则元数据，替代原硬编码 _INDICATOR_LABELS）。"""
+    from app.domain.finance.financial_rule_config import load_financial_rules
 
-    return [
-        make_evidence_id(
-            source_namespace=NS_FINANCE,
-            source_type="financial_statement",
-            source_record_id=f"{wind_code}|{as_of}",
-            field_path=f"rule_{rid}",
-            period=as_of,
-            dataset_version=settings.DATASET_VERSION,
-            company_code=wind_code,
+    meta = load_financial_rules().metadata.get(rid)
+    return meta.name if meta else rid
+
+
+def _build_rule_details(
+    results, rule_evidence_map: dict[str, list[str]], period_ymd: str
+) -> list[TriggeredRuleDetail]:
+    """触发规则详情（⑥/③）：D2 元数据 + current 多指标展开。
+
+    证据规则级（v3.4 方向 A）：evidence_ids 从 rule_evidence_map[rid] 取
+    ——同一 Evidence 可被多条规则引用（如营业收入被 R1/R4 共用），
+    但只落库一次；不再通过 field_path=rule_Rx 反查（历史反查导致
+    R4/R7 共享证据丢失）。
+    """
+    from app.domain.finance.financial_rule_config import load_financial_rules
+
+    meta_map = load_financial_rules().metadata
+    details: list[TriggeredRuleDetail] = []
+    for rid, r in results.items():
+        if r is None or r.status != "triggered":
+            continue
+        meta = meta_map.get(rid)
+        metrics: list[RuleMetricValue] = []
+        for key, m in (r.current or {}).items():
+            mm = next((x for x in meta.metrics if x.key == key), None) if meta else None
+            metrics.append(
+                RuleMetricValue(
+                    key=key,
+                    label=mm.label if mm else key,
+                    value=m.get("value") if isinstance(m, dict) else m,
+                    unit=(m.get("unit") if isinstance(m, dict) else "")
+                    or (mm.unit if mm else ""),
+                    risk_direction=mm.risk_direction if mm else "neutral",
+                )
+            )
+        rid_evidence = sorted(rule_evidence_map.get(rid, []))
+        details.append(
+            TriggeredRuleDetail(
+                rule_id=rid,
+                label=meta.name if meta else rid,
+                status=r.status,
+                severity=r.severity,
+                as_of=period_ymd,
+                metrics=metrics,
+                evidence_ids=rid_evidence,
+                explanation=r.explanation or "",
+            )
         )
-        for rid in rule_ids
-    ]
+    return details
 
 
 async def _resolve_company(code: str):
@@ -77,6 +112,51 @@ async def create_comparison(body: ComparisonRequest):
     # 固定母公司口径（任务 13：不接受其他 scope）
     statement_scope = "parent_company"
 
+    # v3.5：统一复用同一 ProvenanceService + analysis_run 生命周期
+    from app.application.services.provenance_service import ProvenanceService
+
+    svc = ProvenanceService()
+    run_id: str | None = None
+    try:
+        run_id = svc.create_analysis_run(
+            trace_id=trace_id,
+            endpoint="companies/{code}/comparisons",
+            company_codes=list(body.company_codes),
+            period=body.period,
+            status="running",
+        )
+    except Exception:  # noqa: BLE001 — run 载体失败不阻塞主流程
+        run_id = None
+
+    def _finalize(status: str) -> None:
+        if run_id:
+            try:
+                svc.update_analysis_run_status(run_id, status)
+            except Exception:  # noqa: BLE001 — 状态更新失败不阻塞响应
+                pass
+
+    try:
+        return await _create_comparison_impl(
+            body, trace_id, warnings, data_warnings, statement_scope, svc, _finalize
+        )
+    except HTTPException:
+        _finalize("failed")  # v3.5：请求级失败不得停留 running
+        raise
+    except Exception:
+        _finalize("failed")
+        raise
+
+
+async def _create_comparison_impl(
+    body: ComparisonRequest,
+    trace_id: str,
+    warnings: list[WarningItem],
+    data_warnings: list[str],
+    statement_scope: str,
+    svc,
+    _finalize,
+):
+    """comparisons 主体（v3.5 拆分：外层统一 finalize 生命周期）。"""
     # period 规范化（2026Q2 → 20260630）
     from app.domain.finance.period import normalize_period
 
@@ -125,20 +205,42 @@ async def create_comparison(body: ComparisonRequest):
             },
         )
 
-    # ── 2. 每家公司只执行一次规则分析（缓存）──
+    # ── 2. 每家公司只执行一次规则分析（缓存）+ 证据幂等落库（⑥）──
+    #    drafts 与 /finance 同源（finance_evidence 共享纯函数），
+    #    落库成功才返回 evidence_ids（不可回查的 ID 不返回）。
     rule_cache: dict[str, dict] = {}
     company_failures: dict[str, str] = {}
 
+    from app.application.services.finance_evidence import (
+        build_finance_rule_evidence_drafts,
+    )
     from app.domain.finance.rule_engine import evaluate_all_rules
 
     for code, rec in resolved_map.items():
         try:
             results = evaluate_all_rules(rec.wind_code, period_ymd)
+            built = build_finance_rule_evidence_drafts(
+                rules=results, wind_code=rec.wind_code, as_of=period_ymd
+            )
+            drafts = list(built["unique_drafts"].values())
+            rule_evidence_map = built["rule_evidence_map"]
+            persist_ok = True
+            if drafts:
+                try:
+                    svc.persist_evidence(drafts, trace_id=trace_id, turn_id=trace_id)
+                except Exception as exc:  # noqa: BLE001 — 落库失败不伪造可回查 ID
+                    persist_ok = False
+                    data_warnings.append(
+                        f"{code} 证据落库失败（该公司标记 partial，不返回不可回查 ID）: {exc}"
+                    )
             rule_cache[code] = {
                 "wind_code": rec.wind_code,
                 "sec_name": rec.sec_name,
                 "industry_l1": rec.industry_l1 or "",
                 "results": results,
+                "drafts": drafts,
+                "rule_evidence_map": rule_evidence_map,
+                "persist_ok": persist_ok,
             }
         except Exception as exc:  # noqa: BLE001 — 记录失败，不静默吞掉
             company_failures[code] = str(exc)
@@ -198,6 +300,31 @@ async def create_comparison(body: ComparisonRequest):
         except Exception:  # noqa: BLE001 — pattern 失败不阻塞对比
             pattern_names = []
 
+        # ⑥/③ 触发规则详情（v3.4 失败契约：落库失败 → partial +
+        # 详情证据清空 + 结构化 recoverable warning，不返回不可回查 ID）
+        details = _build_rule_details(
+            entry["results"], entry["rule_evidence_map"], period_ymd
+        )
+        evidence_ids: list[str] = []
+        if entry["persist_ok"]:
+            evidence_ids = sorted(
+                eid
+                for rid in triggered
+                for eid in entry["rule_evidence_map"].get(rid, [])
+            )
+            evidence_ids = sorted(set(evidence_ids))
+        else:
+            for d in details:
+                d.evidence_ids = []
+            warnings.append(
+                WarningItem(
+                    code="EVIDENCE_PERSIST_FAILED",
+                    message=f"{entry['sec_name']} 规则证据落库失败，详情证据已清空"
+                    "（不返回不可回查 ID）",
+                    module="comparisons",
+                    recoverable=True,
+                )
+            )
         company_summaries.append(
             CompanyRiskSummary(
                 wind_code=entry["wind_code"],
@@ -206,12 +333,11 @@ async def create_comparison(body: ComparisonRequest):
                 risk_level=risk_level,
                 overall_score=round(overall_score, 3),
                 triggered_rules=triggered,
+                triggered_rule_details=details,
                 pattern_matches=pattern_names,
                 coverage=coverage,
-                evidence_ids=_unified_evidence(
-                    entry["wind_code"], period_ymd, triggered or []
-                ),
-                partial=False,
+                evidence_ids=evidence_ids,
+                partial=not entry["persist_ok"],
             )
         )
 
@@ -260,10 +386,18 @@ async def create_comparison(body: ComparisonRequest):
         indicator_compares.append(
             IndicatorCompare(
                 indicator=ind,
-                label=_INDICATOR_LABELS.get(ind, ind),
+                label=_indicator_label(ind),
                 companies=companies,
             )
         )
+
+    # v3.5：完成状态——全失败 failed / 有失败 partial / 全部成功 completed
+    if company_failures and len(company_failures) == len(resolved_map):
+        _finalize("failed")
+    elif company_failures or any(not e["persist_ok"] for e in rule_cache.values()):
+        _finalize("partial")
+    else:
+        _finalize("completed")
 
     return V12Response(
         data=ComparisonsResponseData(
