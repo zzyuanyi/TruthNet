@@ -586,16 +586,21 @@ def test_wrong_db_backup_rejected(mig, tmp_path):
 
 
 def test_rollback_without_confirm_rejected(mig, monkeypatch, tmp_path):
-    """无 --confirm 的 rollback 拒绝（main 层 SystemExit）。"""
+    """无 --confirm 的 rollback 拒绝（main 层 SystemExit）。
+
+    CI 非 mysql 模式无 MYSQL_TEST_DATABASE 环境变量（白名单为空会先拒绝
+    --db），此处显式 setenv 兜底，使测试真正走到 --confirm 检查。
+    """
     path = tmp_path / "b.json"
     path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("MYSQL_TEST_DATABASE", "truthnet_test")
     monkeypatch.setattr(
         __import__("sys"),
         "argv",
         [
             "migrate_finance_evidence.py",
             "--db",
-            os.environ.get("MYSQL_TEST_DATABASE", "truthnet_test"),
+            "truthnet_test",
             "--rollback",
             str(path),
         ],
