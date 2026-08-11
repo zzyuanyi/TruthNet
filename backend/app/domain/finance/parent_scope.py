@@ -11,6 +11,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from app.domain.finance.financial_rule_config import get_execution_version
 from app.domain.finance._fetch import fetch_company_field
 from app.domain.finance.models import RuleResult
 from app.domain.finance.statement_type import (
@@ -110,7 +111,7 @@ def build_gate_result(
     if gate.status == "unknown":
         return RuleResult(
             rule_id=rule_id,
-            rule_version="1.0.0",
+            rule_version=get_execution_version(),
             rule_name=rule_name,
             status="insufficient_data",
             severity="unknown",
@@ -120,7 +121,7 @@ def build_gate_result(
         )
     return RuleResult(
         rule_id=rule_id,
-        rule_version="1.0.0",
+        rule_version=get_execution_version(),
         rule_name=rule_name,
         status="not_applicable",
         severity="unknown",

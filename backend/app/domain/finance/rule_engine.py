@@ -1,5 +1,6 @@
 """规则引擎主入口 — 统一调度 7 条规则."""
 
+from app.domain.finance.financial_rule_config import get_execution_version
 from app.domain.finance.models import RuleResult
 from app.domain.finance.rule_r1 import evaluate_r1
 from app.domain.finance.rule_r2 import evaluate_r2
@@ -40,7 +41,7 @@ def evaluate_all_rules(
         except Exception as e:
             results[rule_id] = RuleResult(
                 rule_id=rule_id,
-                rule_version="1.0.0",
+                rule_version=get_execution_version(),
                 status="insufficient_data",
                 explanation=f"规则执行异常: {e}",
             )

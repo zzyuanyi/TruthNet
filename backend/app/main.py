@@ -38,6 +38,7 @@ from app.api.v1.routers import benchmarks as benchmarks_v1
 from app.api.v1.routers import chat as chat_v1
 from app.api.v1.routers import companies as companies_v1
 from app.api.v1.routers import comparisons as comparisons_v1
+from app.api.v1.routers import rules as rules_v1
 from app.api.v1.routers import equity as equity_v1
 from app.api.v1.routers import events as events_v1
 from app.api.v1.routers import finance as finance_v1
@@ -180,6 +181,7 @@ app.include_router(risk_v1.router, prefix="/api/v1")
 app.include_router(benchmarks_v1.router, prefix="/api/v1")
 app.include_router(provenance_v1.router, prefix="/api/v1")
 app.include_router(comparisons_v1.router, prefix="/api/v1")
+app.include_router(rules_v1.router, prefix="/api/v1")
 app.include_router(chat_v1.router, prefix="/api/v1")
 app.include_router(reports_v1.router, prefix="/api/v1")
 app.include_router(sessions_v1.router, prefix="/api/v1")

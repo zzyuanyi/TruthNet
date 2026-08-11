@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from threading import RLock
 from typing import Literal
@@ -137,9 +139,46 @@ class FinancialRuleDefinitions(_StrictModel):
     r7: R7RuleConfig = Field(alias="R7")
 
 
+# ── 展示元数据（v1.1.0，D2 规则定义接口）────────────────
+# 与 financial_rules.yaml metadata 段一一对应；conditions 为人工维护的
+# 判定说明文本（不尝试从代码反推）。展示元数据不参与规则执行。
+
+_RISK_DIRECTIONS = ("higher_is_riskier", "lower_is_riskier", "neutral")
+
+
+class RuleMetricMeta(_StrictModel):
+    key: str
+    label: str
+    unit: str = ""
+    formula: str = ""
+    risk_direction: Literal[_RISK_DIRECTIONS] = "neutral"
+
+
+class RuleParameterMeta(_StrictModel):
+    unit: str = ""
+    description: str = ""
+
+
+class RuleConditionsMeta(_StrictModel):
+    red: str = ""
+    orange: str = ""
+    yellow: str = ""
+
+
+class RuleMetadata(_StrictModel):
+    name: str
+    description: str = ""
+    metrics: list[RuleMetricMeta] = Field(default_factory=list)
+    parameters: dict[str, RuleParameterMeta] = Field(default_factory=dict)
+    conditions: RuleConditionsMeta = Field(default_factory=RuleConditionsMeta)
+
+
 class FinancialRulesConfig(_StrictModel):
-    version: str = Field(min_length=1)
+    version: str = Field(min_length=1)  # 展示元数据版本（D2 规则页）
+    execution_version: str = Field(default="1.0.0", min_length=1)  # 规则执行版本
     rules: FinancialRuleDefinitions
+    # 键为 R1..R7；缺省空 dict 兼容旧版本文件（无展示元数据）
+    metadata: dict[str, RuleMetadata] = Field(default_factory=dict)
 
 
 RuleConfig = (
@@ -176,6 +215,31 @@ def clear_financial_rule_config_cache() -> None:
         _CACHE = None
 
 
+def rule_hashes() -> tuple[str, str]:
+    """双 hash（D2，v3.1）：
+    - evaluation_config_hash：仅覆盖 enabled + thresholds（风险缓存失效键）；
+    - definition_hash：完整展示元数据（规则页版本识别）。
+    均基于规范化 JSON（sort_keys），同内容稳定、任意字段变化即变。
+    """
+    config = load_financial_rules()
+    rules_dump = config.rules.model_dump(by_alias=True)
+    eval_part = {  # v3.4：展示元数据升级（version）不使执行缓存失效
+        "rules": {
+            rid: {"enabled": cfg["enabled"], "thresholds": cfg["thresholds"]}
+            for rid, cfg in rules_dump.items()
+        },
+    }
+    def_part = config.model_dump(by_alias=True, exclude_none=True)
+    return (
+        hashlib.sha256(
+            json.dumps(eval_part, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16],
+        hashlib.sha256(
+            json.dumps(def_part, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16],
+    )
+
+
 def get_rule_config(
     rule_id: Literal["R1", "R2", "R3", "R4", "R5", "R6", "R7"],
 ) -> RuleConfig:
@@ -183,9 +247,14 @@ def get_rule_config(
     return getattr(config.rules, rule_id.lower())
 
 
+def get_execution_version() -> str:
+    """规则执行版本（v3.4：R1-R7 输出/Claim/缓存键统一来源）。"""
+    return load_financial_rules().execution_version
+
+
 def disabled_rule_result(rule_id: str, rule_name: str) -> RuleResult:
     """Return an explicit result when an administrator disables a rule."""
-    version = load_financial_rules().version
+    version = get_execution_version()
     return RuleResult(
         rule_id=rule_id,
         rule_version=version,
