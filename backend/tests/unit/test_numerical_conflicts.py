@@ -43,7 +43,8 @@ def test_cv_num_01_conflict():
     assert r.status == "conflict"
     assert r.conflict_type == "CV-NUM-01"
     assert r.severity == "red"  # 全正利润 + 全负现金流
-    assert r.periods == periods
+    # 8.11（C5）：periods 统一规范化为 YYYYMMDD 季度末格式
+    assert r.periods == ["20251231", "20260331", "20260630"]
     assert r.evidence_ids == ["ev_fin_1", "ev_fin_2", "ev_fin_3"]
     assert r.alternative_explanation  # 有非舞弊解释
 
@@ -269,3 +270,68 @@ def test_run_numerical_conflicts_all():
     )
     assert len(results) == 2
     assert {r.conflict_type for r in results} == {"CV-NUM-01", "CV-NUM-02"}
+
+
+# ── 8.11（C5）：CV-NUM-01 相邻季度连续性 ─────────────────────
+
+
+def test_cv_num_01_missing_quarter_breaks_consecutive():
+    """缺 Q2 不得判连续三期：20240331/20240930/20241231 各背离但缺季断开，
+    最大连续窗口 2 < min_periods=3 → pass。"""
+    periods = ["20240331", "20240930", "20241231"]
+    r = _c1(
+        profit=[100.0, 120.0, 130.0],
+        cash=[-50.0, -60.0, -70.0],
+        periods=periods,
+    )
+    assert r.status == "pass", f"缺季度必须断开连续计数，实际 {r.status}"
+
+
+def test_cv_num_01_cross_year_quarters_are_consecutive():
+    """跨年 1231→0331 正常连续：3 个相邻季度 → conflict。"""
+    periods = ["20241231", "20250331", "20250630"]
+    r = _c1(
+        profit=[100.0, 120.0, 130.0],
+        cash=[-50.0, -60.0, -70.0],
+        periods=periods,
+    )
+    assert r.status == "conflict"
+    assert r.periods == periods  # 输出只含实际触发窗口
+
+
+def test_cv_num_01_consecutive_three_quarters_triggers():
+    """连续三期背离触发：2024Q4/2025Q1/2025Q2 → conflict。"""
+    periods = ["20241231", "20250331", "20250630"]
+    r = _c1(
+        profit=[100.0, 120.0, 130.0],
+        cash=[-50.0, -60.0, -70.0],
+        periods=periods,
+    )
+    assert r.status == "conflict"
+    assert r.severity == "red"
+
+
+def test_cv_num_01_invalid_period_breaks_consecutive():
+    """非法日期（非季度末）断开连续性：20250330 不是季度末 → 不连续。"""
+    periods = ["20241231", "20250330", "20250630"]
+    r = _c1(
+        profit=[100.0, 120.0, 130.0],
+        cash=[-50.0, -60.0, -70.0],
+        periods=periods,
+    )
+    # 20250330 与两侧都不相邻 → 最大窗口 1 < 3 → pass
+    assert r.status == "pass"
+
+
+def test_cv_num_01_window_only_reports_trigger_window():
+    """periods/details 只展示实际触发窗口，不包含非背离期。"""
+    periods = ["20241231", "20250331", "20250630", "20250930"]
+    # 第 4 期现金流为正（不背离）→ 窗口只含前 3 期
+    r = _c1(
+        profit=[100.0, 120.0, 130.0, 140.0],
+        cash=[-50.0, -60.0, -70.0, 80.0],
+        periods=periods,
+    )
+    assert r.status == "conflict"
+    assert r.periods == ["20241231", "20250331", "20250630"]
+    assert r.details["divergence_count"] == 3

@@ -1180,20 +1180,21 @@ def test_r3_prev_borrow_incomplete_skips_trend_red(rule_db):
 
 
 def test_next_quarter_validates_full_quarter_end_date():
-    """P2（第五轮审查修订）：_next_quarter 必须校验完整季度末日期，
-    不能只看月份——20240330 月份为 3 但不是季度末（0331），应返回 None。"""
-    from app.domain.finance.rule_r2 import _next_quarter
+    """P2（第五轮审查修订）：next_quarter 必须校验完整季度末日期，
+    不能只看月份——20240330 月份为 3 但不是季度末（0331），应返回 None。
+    （8.11 C5：提取到公共 period.next_quarter，R2 与 CV-NUM-01 共用）"""
+    from app.domain.finance.period import next_quarter
 
-    assert _next_quarter("20240331") == "20240630"
-    assert _next_quarter("20241231") == "20250331"
-    assert _next_quarter("20250630") == "20250930"
-    assert _next_quarter("20250930") == "20251231"
+    assert next_quarter("20240331") == "20240630"
+    assert next_quarter("20241231") == "20250331"
+    assert next_quarter("20250630") == "20250930"
+    assert next_quarter("20250930") == "20251231"
     # 月份正确但日期不是季度末 → None
-    assert _next_quarter("20240330") is None
-    assert _next_quarter("20241230") is None
-    assert _next_quarter("20250929") is None
+    assert next_quarter("20240330") is None
+    assert next_quarter("20241230") is None
+    assert next_quarter("20250929") is None
     # 非季度末月份 → None
-    assert _next_quarter("20250115") is None
+    assert next_quarter("20250115") is None
     # 非法格式 → None
-    assert _next_quarter("") is None
-    assert _next_quarter("2024") is None
+    assert next_quarter("") is None
+    assert next_quarter("2024") is None

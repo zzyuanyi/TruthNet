@@ -16,28 +16,8 @@ from app.domain.finance.parent_scope import (
     build_parent_scope_quality,
     check_company_type,
 )
+from app.domain.finance.period import next_quarter  # noqa: E402 — 与 R2 共用公共季度函数（8.11）
 from app.domain.finance.rule_utils import mean_or_none, safe_div, yoy_growth
-
-_QUARTER_END = {3: "0331", 6: "0630", 9: "0930", 12: "1231"}
-
-
-def _next_quarter(period: str) -> str | None:
-    """YYYYMMDD 报告期的下一季度末日期（季度末日不同：0331/0630/0930/1231）。
-
-    必须校验完整季度末日期（P2 审查修订：仅月份匹配不够——
-    20240330 的月份是 3 但日期不是季度末，应返回 None）。
-    非法或非季度末期返回 None。
-    """
-    if len(period) != 8 or not period.isdigit():
-        return None
-    if period[4:] not in _QUARTER_END.values():
-        return None  # MMDD 必须是 0331/0630/0930/1231
-    y, m = int(period[:4]), int(period[4:6])
-    m += 3
-    if m > 12:
-        m -= 12
-        y += 1
-    return f"{y}{_QUARTER_END[m]}"
 
 
 def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -150,7 +130,7 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
     max_consec_neg = 0
     prev_period = None
     for p, np, cf in zip(recent_periods, recent_np, recent_cf):
-        if prev_period is not None and _next_quarter(prev_period) != p:
+        if prev_period is not None and next_quarter(prev_period) != p:
             consec_neg = 0  # 非相邻季度（整季缺失）→ 重置连续计数
         prev_period = p
         if np is None or cf is None:

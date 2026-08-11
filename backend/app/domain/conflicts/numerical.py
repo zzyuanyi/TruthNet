@@ -110,6 +110,13 @@ def detect_profit_cashflow_conflict(
     )
     evidence_ids = evidence_ids or []
 
+    # 8.11（C5）：报告期统一规范化为 YYYYMMDD（复用财务规则 normalize_period，
+    # 兼容 YYYYQn / YYYY-MM-DD），相邻季度判断只接受季度末日期
+    from app.domain.finance.period import normalize_period
+
+    profit_periods = [(normalize_period(str(p)) or str(p)) for p in profit_periods]
+    cashflow_periods = [(normalize_period(str(p)) or str(p)) for p in cashflow_periods]
+
     # 报告期对齐（取交集，同期间比较）
     common = sorted(set(profit_periods) & set(cashflow_periods))
     if not common:
@@ -168,36 +175,57 @@ def detect_profit_cashflow_conflict(
         ratios.append(cash_seq[i] / npv)
         ratio_periods.append(p)
 
-    # 判定条件：净利润为正/上升而经营现金流持续为负，或比值低于阈值
-    profit_positive = [p > 0 for p in profit_seq]
-    cash_negative = [c < 0 for c in cash_seq]
+    # 判定条件：净利润为正/上升而经营现金流持续为负，或比值低于阈值。
+    # 8.11（C5）：只统计"相邻季度连续背离"窗口——缺季度（非相邻）或
+    # 非背离期都重置连续计数；非法/非季度末日期由 next_quarter 判断开。
+    from app.domain.finance.period import next_quarter
 
-    # 连续期数中"利润为正但现金流为负"或"比值 < 阈值"
-    divergence_count = 0
-    divergence_periods: list[str] = []
-    for i, p in enumerate(valid_periods):
+    def _is_diverging(i: int) -> bool:
         npv = profit_seq[i]
         cv = cash_seq[i]
-        low_ratio = False
-        if npv > 0:
-            low_ratio = cv / npv < threshold
-        if (npv > 0 and cv < 0) or low_ratio:
-            divergence_count += 1
-            divergence_periods.append(p)
+        if npv <= 0:
+            return False
+        return cv < 0 or cv / npv < threshold
 
-    if divergence_count >= min_periods:
-        severity = "red" if all(cash_negative) and all(profit_positive) else "orange"
+    windows: list[list[int]] = []
+    cur: list[int] = []
+    for i, _p in enumerate(valid_periods):
+        if not _is_diverging(i):
+            if cur:
+                windows.append(cur)
+                cur = []
+            continue
+        if cur and next_quarter(valid_periods[cur[-1]]) == valid_periods[i]:
+            cur.append(i)
+        else:
+            if cur:
+                windows.append(cur)
+            cur = [i]
+    if cur:
+        windows.append(cur)
+
+    trigger_window = max(windows, key=len) if windows else []
+    if len(trigger_window) >= min_periods:
+        win_idx = trigger_window
+        win_periods = [valid_periods[i] for i in win_idx]
+        win_profit = [profit_seq[i] for i in win_idx]
+        win_cash = [cash_seq[i] for i in win_idx]
+        severity = (
+            "red"
+            if all(c < 0 for c in win_cash) and all(p > 0 for p in win_profit)
+            else "orange"
+        )
         return NumericalConflict(
             conflict_id=f"{CV_NUM_01}_{company_code}",
             conflict_type=CV_NUM_01,
             status="conflict",
             severity=severity,
-            periods=valid_periods,
-            left_values=profit_seq,
-            right_values=cash_seq,
+            periods=win_periods,
+            left_values=win_profit,
+            right_values=win_cash,
             threshold={"cf_to_profit_ratio": threshold, "min_periods": min_periods},
             explanation=(
-                f"{divergence_count} 期净利润为正而经营现金流为负或比值低于 "
+                f"{len(win_periods)} 个相邻季度净利润为正而经营现金流为负或比值低于 "
                 f"{threshold}，利润与现金流持续背离"
             ),
             alternative_explanation=(
@@ -206,16 +234,17 @@ def detect_profit_cashflow_conflict(
             ),
             evidence_ids=evidence_ids,
             limitations=[
-                "仅基于母公司报表口径（408006000）",
+                "仅统计相邻季度连续背离（缺季度断开计数）；仅基于母公司报表口径（408006000）",
                 "比值口径为经营现金流/净利润，未考虑非付现成本",
                 "背离不等于造假，需结合审计意见与监管文件进一步核验",
             ],
             details={
                 "company_code": company_code,
-                "divergence_count": divergence_count,
-                "divergence_periods": divergence_periods,
-                "profit_positive_all": all(profit_positive),
-                "cashflow_negative_all": all(cash_negative),
+                "divergence_count": len(win_periods),
+                "divergence_periods": win_periods,
+                "window_length": len(trigger_window),
+                "profit_positive_all": all(p > 0 for p in win_profit),
+                "cashflow_negative_all": all(c < 0 for c in win_cash),
             },
         )
 
