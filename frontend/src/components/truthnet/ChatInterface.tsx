@@ -11,6 +11,11 @@ import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText } from 'luc
 import type { Message, RiskLevel } from '@/types/truthnet';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 
+interface CompanyCandidate {
+  wind_code: string;
+  sec_name: string;
+}
+
 interface ChatInterfaceProps {
   messages: Message[];
   onSendMessage: (content: string) => void;
@@ -18,6 +23,9 @@ interface ChatInterfaceProps {
   highlightedEvidenceIds?: string[] | null;
   activeRuleName?: string | null;
   onClearEvidenceHighlight?: () => void;
+  // 8.11：公司歧义候选确认（后端 company.candidates → 点选 → company.confirm 重跑）
+  pendingCandidates?: { turn_id: string; candidates: CompanyCandidate[] } | null;
+  onConfirmCompany?: (turnId: string, windCode: string) => void;
 }
 
 // 风险等级颜色
@@ -37,9 +45,25 @@ export function ChatInterface({
   highlightedEvidenceIds,
   activeRuleName,
   onClearEvidenceHighlight,
+  pendingCandidates,
+  onConfirmCompany,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
+  const [confirmingCode, setConfirmingCode] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 8.11 P0（审查）：新的候选轮次（turn_id 变化）重置确认状态，
+  // 避免第二次歧义时按钮全部被禁用
+  useEffect(() => {
+    setConfirmingCode(null);
+  }, [pendingCandidates?.turn_id]);
+
+  // 8.11：确认候选公司（点击后禁用重复选择，等待后端重跑原问题）
+  const handleConfirm = (windCode: string) => {
+    if (!pendingCandidates || confirmingCode) return;
+    setConfirmingCode(windCode);
+    onConfirmCompany?.(pendingCandidates.turn_id, windCode);
+  };
 
   // 自动滚动到底部
   useEffect(() => {
@@ -124,6 +148,36 @@ export function ChatInterface({
               />
             );
           })}
+
+          {/* 8.11：公司歧义候选确认卡片 */}
+          {pendingCandidates && pendingCandidates.candidates.length > 0 && (
+            <div className="max-w-[70%] rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <p className="text-sm font-medium text-foreground mb-2">
+                检测到多家公司，请选择您想问的是哪一家：
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {pendingCandidates.candidates.map(c => (
+                  <Button
+                    key={c.wind_code}
+                    variant={confirmingCode === c.wind_code ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-auto py-1.5 text-xs"
+                    disabled={Boolean(confirmingCode)}
+                    onClick={() => handleConfirm(c.wind_code)}
+                  >
+                    {c.sec_name}
+                    <span className="ml-1 text-[10px] opacity-70">{c.wind_code}</span>
+                  </Button>
+                ))}
+              </div>
+              {confirmingCode && (
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  已确认，正在重新分析该公司的数据...
+                </p>
+              )}
+            </div>
+          )}
 
           {/* 加载指示器 */}
           {isLoading && (

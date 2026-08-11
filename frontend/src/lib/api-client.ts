@@ -308,6 +308,18 @@ export const wsClient = {
           onMessage({ event_type: 'error', payload: { message: '连接不可用，请稍后重试' } });
         }
       },
+      // 8.11：公司歧义确认——携带选中公司重跑原问题（company.confirm 事件）
+      confirmCompany: (turnId: string, companyRef: string) => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          onMessage({ event_type: 'error', payload: { message: '连接不可用，无法确认公司' } });
+          return;
+        }
+        ws.send(JSON.stringify({
+          event_type: 'company.confirm',
+          payload: { company_ref: companyRef, session_id: sessionId, turn_id: turnId },
+          type: 'company.confirm',
+        }));
+      },
       close: () => {
         closeRequested = true;
         pendingQuestions.length = 0;
