@@ -131,6 +131,29 @@ def create_report_job(
     return report_id, True
 
 
+def retry_failed_report_job(report_id: str) -> bool:
+    """原子重置 failed 任务为 queued（8.11 C6：PDF 失败重试）。
+
+    仅当当前状态为 failed 时才重置（WHERE status='failed'），并清理旧的
+    progress/error/file 字段；并发重试时仅 rowcount=1 的一方真正重置，
+    其余返回 False（不会重复启动）。
+    """
+    with _get_engine().begin() as conn:
+        result = conn.execute(
+            text(
+                "UPDATE report_jobs SET "
+                "status = 'queued', progress = 0, "
+                "error_code = NULL, error_message = NULL, "
+                "file_path = NULL, file_sha256 = NULL, "
+                "started_at = NULL, completed_at = NULL, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE report_id = :rid AND status = 'failed'"
+            ),
+            {"rid": report_id},
+        )
+    return result.rowcount == 1
+
+
 def get_report_job(report_id: str) -> dict | None:
     """读取报告任务状态。"""
     with _get_engine().connect() as conn:
