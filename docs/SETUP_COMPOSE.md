@@ -17,8 +17,8 @@ cp .env.compose.example .env.compose
 docker compose --env-file .env.compose -p truthnet-compose up -d --build
 
 # 3. 检查健康
-curl http://127.0.0.1:8001/healthz
-curl http://127.0.0.1:8001/readyz
+curl http://127.0.0.1:8001/api/v1/healthz
+curl http://127.0.0.1:8001/api/v1/readyz
 
 # 4. 冒烟
 bash scripts/verify_compose_smoke.sh

@@ -32,7 +32,7 @@ echo "  OK 服务已启动"
 
 echo "[3/6] 等待服务健康..."
 for i in $(seq 1 30); do
-  if curl -fsS "${LOCAL_BACKEND}/healthz" >/dev/null 2>&1; then
+  if curl -fsS "${LOCAL_BACKEND}/api/v1/healthz" >/dev/null 2>&1; then
     echo "  OK backend /healthz 响应"
     break
   fi
@@ -45,7 +45,7 @@ for i in $(seq 1 30); do
 done
 
 echo "[4/6] /readyz..."
-curl -fsS "${LOCAL_BACKEND}/readyz" >/dev/null && echo "  OK /readyz 响应"
+curl -fsS "${LOCAL_BACKEND}/api/v1/readyz" >/dev/null && echo "  OK /readyz 响应"
 
 echo "[5/6] API smoke（公司搜索）..."
 curl -fsS "${LOCAL_BACKEND}/api/v1/companies?query=康美&limit=5" >/dev/null && echo "  OK 公司搜索响应"

@@ -91,7 +91,7 @@ services:
       LLM_FALLBACK_BACKEND: ${LLM_FALLBACK_BACKEND:-}
       DATASET_VERSION: ${DATASET_VERSION:-competition-2026}
       RULE_SET_VERSION: ${RULE_SET_VERSION:-finance-rules-1.0.0}
-      GRAPH_VERSION: ${GRAPH_VERSION:-equity-competition-2026}
+      GRAPH_VERSION: ${GRAPH_VERSION:-equity-2026Q2}
       REPORT_ROOT_DIR: /app/data/reports
     ports:
       - "${BACKEND_PORT:-8001}:8000"    # 避开本地 8000
@@ -100,7 +100,7 @@ services:
       - truthnet-report-data:/app/data/reports
       - truthnet-bge-cache:/root/.cache/huggingface   # BGE 模型缓存卷
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/healthz"]
       interval: 15s
       timeout: 5s
       retries: 10
