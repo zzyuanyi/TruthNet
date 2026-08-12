@@ -95,22 +95,73 @@ function Test-TcpPort {
     }
 }
 
-function Get-PortState {
-    $healthUrl = "http://${HostAddress}:${Port}/api/v1/healthz"
+function Test-HealthEndpoint {
+    # Raw TCP health probe: bypasses the system proxy; hard timeouts on connect and read.
+    # Avoids Invoke-RestMethod hanging during the connect phase (its -TimeoutSec does not bound connect).
+    # NOTE: keep comments ASCII-only - PowerShell 5.1 reads BOM-less .ps1 as ANSI/GBK, and
+    # non-ASCII comment bytes can consume the following line, dropping the $client assignment below.
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $stream = $null
     try {
-        $response = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
-        if ($response.data.status -eq "healthy") {
-            return "truthnet"
+        $connect = $client.BeginConnect($HostAddress, $Port, $null, $null)
+        if (-not $connect.AsyncWaitHandle.WaitOne(1000)) {
+            return $false
+        }
+        $client.EndConnect($connect)
+        if (-not $client.Connected) {
+            return $false
+        }
+        $stream = $client.GetStream()
+        $request = "GET /api/v1/healthz HTTP/1.1`r`nHost: ${HostAddress}:${Port}`r`nConnection: close`r`n`r`n"
+        $requestBytes = [System.Text.Encoding]::ASCII.GetBytes($request)
+        $stream.Write($requestBytes, 0, $requestBytes.Length)
+        $stream.Flush()
+        $buffer = New-Object byte[] 8192
+        $body = New-Object System.Text.StringBuilder
+        $deadline = [DateTime]::UtcNow.AddSeconds(3)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if ($stream.DataAvailable) {
+                $read = $stream.Read($buffer, 0, $buffer.Length)
+                if ($read -le 0) {
+                    break
+                }
+                [void]$body.Append([System.Text.Encoding]::UTF8.GetString($buffer, 0, $read))
+            }
+            else {
+                Start-Sleep -Milliseconds 50
+            }
+        }
+        if ($body.Length -eq 0) {
+            return $false
+        }
+        try {
+            $parsed = $body.ToString() | ConvertFrom-Json
+            return ($parsed.data.status -eq "healthy")
+        }
+        catch {
+            return $false
         }
     }
     catch {
-        # A failed health probe may still mean another process owns the port.
+        return $false
     }
+    finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+        $client.Dispose()
+    }
+}
 
-    if (Test-TcpPort) {
-        return "occupied"
+function Get-PortState {
+    # TCP probe first (bounded to ~500ms); skip any HTTP probe when the port is closed.
+    if (-not (Test-TcpPort)) {
+        return "free"
     }
-    return "free"
+    if (Test-HealthEndpoint) {
+        return "truthnet"
+    }
+    return "occupied"
 }
 
 function Stop-WithPortState {
