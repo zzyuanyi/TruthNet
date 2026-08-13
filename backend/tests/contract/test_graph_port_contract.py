@@ -1,6 +1,7 @@
 """Graph Port Contract 测试 — NetworkX 和 Neo4j 共享接口."""
 
 import pytest
+
 from app.application.ports.equity_graph import EquityGraphPort
 from app.infrastructure.graph.networkx.equity_graph import NetworkXEquityGraph
 

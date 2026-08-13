@@ -1,73 +1,180 @@
 """V12 核心模型单元测试."""
 
-from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.core.enums import ModuleStatus, RiskLevel
+from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.domain.company.models import CompanyRef
-from app.domain.evidence.models import Claim, ConfidenceLevel, EvidenceRef, EvidenceType
+from app.domain.evidence.models import Claim, EvidenceRef
 from app.domain.risk.models import RiskScore
 
 
 class TestEvidenceRef:
-    """EvidenceRef 序列化测试."""
+    """EvidenceRef 序列化测试（canonical 字段）."""
 
     def test_evidence_ref_creation(self):
         ref = EvidenceRef(
-            id="ev_001",
-            type=EvidenceType.FINANCIAL_STATEMENT,
-            source="2023年报 利润表",
-            field="营业收入",
+            evidence_id="ev_001",
+            source_type="financial_statement",
+            source_record_id="2023_annual_bs",
+            source_title="2023年报 利润表",
+            field_path="营业收入",
             value="1505.60亿",
+            dataset_version="2026-07-19",
         )
-        assert ref.id == "ev_001"
-        assert ref.type == EvidenceType.FINANCIAL_STATEMENT
-        assert ref.source == "2023年报 利润表"
+        assert ref.evidence_id == "ev_001"
+        assert ref.source_type == "financial_statement"
+        assert ref.field_path == "营业收入"
 
     def test_evidence_ref_serialization(self):
         ref = EvidenceRef(
-            id="ev_001",
-            type=EvidenceType.FINANCIAL_STATEMENT,
-            source="2023年报 利润表",
-            field="营业收入",
+            evidence_id="ev_001",
+            source_type="financial_statement",
+            source_title="2023年报 利润表",
+            field_path="营业收入",
             value="1505.60亿",
         )
         data = ref.model_dump()
-        assert data["id"] == "ev_001"
-        assert data["type"] == "financial_statement"
-        assert data["source"] == "2023年报 利润表"
+        assert data["evidence_id"] == "ev_001"
+        assert data["source_type"] == "financial_statement"
+        assert data["source_title"] == "2023年报 利润表"
 
 
 class TestClaim:
-    """Claim 序列化测试."""
+    """Claim 序列化测试（canonical 字段）."""
 
     def test_claim_creation(self):
         claim = Claim(
-            id="cl_001",
-            statement="营业收入与现金流匹配良好",
-            confidence=ConfidenceLevel.HIGH,
-            evidence=[
-                EvidenceRef(
-                    id="ev_001",
-                    type=EvidenceType.FINANCIAL_STATEMENT,
-                    source="2023年报 利润表",
-                    field="营业收入",
-                    value="1505.60亿",
-                ),
-            ],
+            claim_id="cl_001",
+            text="营业收入与现金流匹配良好",
+            claim_type="financial",
+            confidence=0.85,
+            evidence_ids=["ev_001"],
         )
-        assert claim.id == "cl_001"
-        assert claim.confidence == ConfidenceLevel.HIGH
-        assert len(claim.evidence) == 1
+        assert claim.claim_id == "cl_001"
+        assert claim.confidence == 0.85
+        assert claim.evidence_ids == ["ev_001"]
 
     def test_claim_serialization(self):
         claim = Claim(
-            id="cl_001",
-            statement="测试声明",
-            confidence=ConfidenceLevel.MEDIUM,
+            claim_id="cl_001",
+            text="测试声明",
+            confidence=0.5,
         )
         data = claim.model_dump()
-        assert data["id"] == "cl_001"
-        assert data["confidence"] == "medium"
+        assert data["claim_id"] == "cl_001"
+        assert data["confidence"] == 0.5
+        assert data["evidence_ids"] == []
         assert "generated_at" in data
+
+
+class TestEvidenceModelUnity:
+    """Agent 与 domain 必须使用同一 canonical 模型类（防双模型漂移）."""
+
+    def test_agents_state_reuses_domain_model(self):
+        from app.agents.state import Claim as StateClaim
+        from app.agents.state import EvidenceRef as StateEvidenceRef
+
+        assert StateEvidenceRef is EvidenceRef
+        assert StateClaim is Claim
+
+
+class TestModuleStatusV1:
+    """ModuleStatusV1.from_status 输入兼容与防御."""
+
+    def test_from_string(self):
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        assert ModuleStatusV1.from_status("success").state == "success"
+
+    def test_from_dict(self):
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        m = ModuleStatusV1.from_status(
+            {
+                "state": "failed",
+                "error_code": "X",
+                "recoverable": True,
+                "duration_ms": 12,
+            }
+        )
+        assert m.state == "failed"
+        assert m.error_code == "X"
+        assert m.recoverable is True
+        assert m.duration_ms == 12
+
+    def test_from_model_object(self):
+        from app.agents.state import ModuleStatus
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        m = ModuleStatusV1.from_status(
+            ModuleStatus(state="partial", error_code="E", duration_ms=99)
+        )
+        assert m.state == "partial"
+        assert m.duration_ms == 99
+
+    def test_none_and_unknown_fallback_pending(self):
+        from app.api.v1.schemas.chat import ModuleStatusV1
+
+        assert ModuleStatusV1.from_status(None).state == "pending"
+        assert ModuleStatusV1.from_status(object()).state == "pending"
+        # 未知 state 值回退 pending，响应组装不再失败
+        assert ModuleStatusV1.from_status("weird-state").state == "pending"
+        assert ModuleStatusV1.from_status({"state": "weird-state"}).state == "pending"
+
+    def test_serialization_shape(self):
+        from app.api.v1.schemas.chat import ChatDataV1, ModuleStatusV1
+
+        data = ChatDataV1(
+            answer="x",
+            trace_id="t",
+            module_status={"finance": ModuleStatusV1.from_status("success")},
+        )
+        payload = data.model_dump()
+        assert payload["module_status"]["finance"]["state"] == "success"
+        assert payload["module_status"]["finance"]["error_code"] is None
+        assert "duration_ms" in payload["module_status"]["finance"]
+
+
+class TestChatEvidenceV1:
+    """ChatEvidenceV1.from_evidence 映射细节."""
+
+    def test_source_prefers_readable_title(self):
+        from app.api.v1.schemas.chat import ChatEvidenceV1
+
+        item = ChatEvidenceV1.from_evidence(
+            {
+                "source_type": "financial_statement",
+                "source_title": "2023年报 利润表",
+                "field_path": "营业收入",
+                "value": "1505.60亿",
+            }
+        )
+        assert item.source == "2023年报 利润表", "source 应优先可读标题而非机器值"
+
+    def test_value_none_renders_empty_not_string(self):
+        from app.api.v1.schemas.chat import ChatEvidenceV1
+
+        item = ChatEvidenceV1.from_evidence({"source_type": "x", "value": None})
+        assert item.value == "", "value=None 不得输出字符串 'None'"
+
+    def test_from_evidence_model_object(self):
+        from app.api.v1.schemas.chat import ChatEvidenceV1
+
+        ref = EvidenceRef(
+            evidence_id="ev_001",
+            source_type="financial_statement",
+            source_record_id="600519_2023_bs",
+            source_title="2023年报 利润表",
+            field_path="营业收入",
+            value="1505.60亿",
+            period="2023-12-31",
+            unit="亿元",
+            dataset_version="2026-07-19",
+        )
+        item = ChatEvidenceV1.from_evidence(ref)
+        assert item.evidence_id == "ev_001"
+        assert item.source_record_id == "600519_2023_bs"
+        assert item.period == "2023-12-31"
+        assert item.dataset_version == "2026-07-19"
 
 
 class TestCompanyRef:

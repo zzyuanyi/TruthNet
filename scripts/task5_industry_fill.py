@@ -29,8 +29,14 @@ print("Step 1: Extract all stock codes from 3 CSVs")
 print("=" * 60)
 
 codes_all = set()
-for fname in ["asharebalancesheet_202605261517", "asharecashflow_202605261518", "ashareincome_202605261519"]:
-    df = pd.read_csv(BASE / "4" / f"{fname}.csv", low_memory=False, usecols=["s_info_windcode"])
+for fname in [
+    "asharebalancesheet_202605261517",
+    "asharecashflow_202605261518",
+    "ashareincome_202605261519",
+]:
+    df = pd.read_csv(
+        BASE / "4" / f"{fname}.csv", low_memory=False, usecols=["s_info_windcode"]
+    )
     codes_all.update(df["s_info_windcode"].dropna().unique())
 
 # 只保留标准格式: 6位数字.SZ/SH/BJ
@@ -91,46 +97,48 @@ for _, row in df_rr_ind.iterrows():
         L2_TO_L1[row["industry_l2"]] = row["industry_l1"]
 
 # 关键补充（常见申万行业分类）
-L2_TO_L1.update({
-    "白酒Ⅱ": "食品饮料",
-    "中药Ⅱ": "医药生物",
-    "房地产开发": "房地产",
-    "银行Ⅱ": "银行",
-    "证券Ⅱ": "非银金融",
-    "保险Ⅱ": "非银金融",
-    "一般零售": "商贸零售",
-    "基础建设": "建筑装饰",
-    "轨交设备Ⅱ": "机械设备",
-    "综合Ⅱ": "综合",
-    "化学制药": "医药生物",
-    "生物制品": "医药生物",
-    "医疗器械": "医药生物",
-    "医药商业": "医药生物",
-    "医疗服务": "医药生物",
-    "电力": "公用事业",
-    "风电设备": "电力设备",
-    "光伏设备": "电力设备",
-    "电网设备": "电力设备",
-    "电池": "电力设备",
-    "半导体": "电子",
-    "光学光电子": "电子",
-    "消费电子": "电子",
-    "元件": "电子",
-    "软件开发": "计算机",
-    "计算机设备": "计算机",
-    "IT服务Ⅱ": "计算机",
-    "通信设备": "通信",
-    "通信服务": "通信",
-    "化学纤维": "基础化工",
-    "化学制品": "基础化工",
-    "农化制品": "基础化工",
-    "塑料": "基础化工",
-    "橡胶": "基础化工",
-    "钢铁": "钢铁",
-    "工业金属": "有色金属",
-    "贵金属": "有色金属",
-    "小金属": "有色金属",
-})
+L2_TO_L1.update(
+    {
+        "白酒Ⅱ": "食品饮料",
+        "中药Ⅱ": "医药生物",
+        "房地产开发": "房地产",
+        "银行Ⅱ": "银行",
+        "证券Ⅱ": "非银金融",
+        "保险Ⅱ": "非银金融",
+        "一般零售": "商贸零售",
+        "基础建设": "建筑装饰",
+        "轨交设备Ⅱ": "机械设备",
+        "综合Ⅱ": "综合",
+        "化学制药": "医药生物",
+        "生物制品": "医药生物",
+        "医疗器械": "医药生物",
+        "医药商业": "医药生物",
+        "医疗服务": "医药生物",
+        "电力": "公用事业",
+        "风电设备": "电力设备",
+        "光伏设备": "电力设备",
+        "电网设备": "电力设备",
+        "电池": "电力设备",
+        "半导体": "电子",
+        "光学光电子": "电子",
+        "消费电子": "电子",
+        "元件": "电子",
+        "软件开发": "计算机",
+        "计算机设备": "计算机",
+        "IT服务Ⅱ": "计算机",
+        "通信设备": "通信",
+        "通信服务": "通信",
+        "化学纤维": "基础化工",
+        "化学制品": "基础化工",
+        "农化制品": "基础化工",
+        "塑料": "基础化工",
+        "橡胶": "基础化工",
+        "钢铁": "钢铁",
+        "工业金属": "有色金属",
+        "贵金属": "有色金属",
+        "小金属": "有色金属",
+    }
+)
 
 have_industry = set(report_map.keys())
 need_akshare = []
@@ -230,25 +238,29 @@ rows = []
 
 # 来自研报的
 for wind_code, number, info in already_have:
-    rows.append({
-        "wind_code": wind_code,
-        "stock_name": info.get("name", ""),
-        "industry_l1": info.get("l1", ""),
-        "industry_l2": info.get("l2", ""),
-        "industry_l3": info.get("l3", ""),
-        "source": "research_report",
-    })
+    rows.append(
+        {
+            "wind_code": wind_code,
+            "stock_name": info.get("name", ""),
+            "industry_l1": info.get("l1", ""),
+            "industry_l2": info.get("l2", ""),
+            "industry_l3": info.get("l3", ""),
+            "source": "research_report",
+        }
+    )
 
 # 来自 akshare
 for wind_code, info in sorted(akshare_results.items()):
-    rows.append({
-        "wind_code": wind_code,
-        "stock_name": info.get("name", ""),
-        "industry_l1": info.get("industry_l1", ""),
-        "industry_l2": info.get("industry_l2", ""),
-        "industry_l3": "",
-        "source": info.get("source", "akshare"),
-    })
+    rows.append(
+        {
+            "wind_code": wind_code,
+            "stock_name": info.get("name", ""),
+            "industry_l1": info.get("industry_l1", ""),
+            "industry_l2": info.get("industry_l2", ""),
+            "industry_l3": "",
+            "source": info.get("source", "akshare"),
+        }
+    )
 
 df_out = pd.DataFrame(rows)
 df_out = df_out.sort_values("wind_code").reset_index(drop=True)
@@ -277,8 +289,8 @@ print("Step 6: Check remaining gaps")
 print("=" * 60)
 
 missing_l1 = df_out[
-    (df_out["industry_l1"].isna() | (df_out["industry_l1"] == "")) &
-    (df_out["industry_l2"].notna() & (df_out["industry_l2"] != ""))
+    (df_out["industry_l1"].isna() | (df_out["industry_l1"] == ""))
+    & (df_out["industry_l2"].notna() & (df_out["industry_l2"] != ""))
 ]
 if len(missing_l1) > 0:
     unique_l2_missing = missing_l1["industry_l2"].unique()

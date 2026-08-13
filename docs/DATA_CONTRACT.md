@@ -34,7 +34,7 @@ CREATE TABLE balance_sheet (
     wind_code TEXT NOT NULL,
     report_period TEXT NOT NULL,       -- 报告期，如 "2024-12-31"
     ann_dt TEXT,                       -- 公告日期
-    statement_type TEXT,               -- 408001000=合并报表（推荐主口径）
+    statement_type TEXT,               -- 408006000=母公司报表（项目固定分析口径）；408001000 合并报表可存储但 R1-R7 不使用
     -- 资产
     monetary_cap REAL,                 -- 货币资金
     acct_rcv REAL,                     -- 应收账款
@@ -69,7 +69,7 @@ CREATE TABLE income_statement (
     wind_code TEXT NOT NULL,
     report_period TEXT NOT NULL,
     ann_dt TEXT,
-    statement_type TEXT,               -- 408001000=合并报表（推荐主口径）
+    statement_type TEXT,               -- 408006000=母公司报表（项目固定分析口径）；408001000 合并报表可存储但 R1-R7 不使用
     -- 收入
     tot_oper_rev REAL,                 -- 营业总收入
     oper_rev REAL,                     -- 营业收入
@@ -99,7 +99,7 @@ CREATE TABLE cash_flow (
     wind_code TEXT NOT NULL,
     report_period TEXT NOT NULL,
     ann_dt TEXT,
-    statement_type TEXT,               -- 408001000=合并报表（推荐主口径）
+    statement_type TEXT,               -- 408006000=母公司报表（项目固定分析口径）；408001000 合并报表可存储但 R1-R7 不使用
     -- 经营活动
     cash_recp_sg_and_rs REAL,         -- 销售商品、提供劳务收到的现金
     net_cash_flows_oper_act REAL,     -- 经营活动现金流量净额
@@ -169,7 +169,7 @@ CREATE TABLE research_reports (
 
 > **表设计说明**：三表（BS/IS/CF）采用宽表映射 CSV 列，不再使用早期 EAV 模型（`item_name`/`item_value`）。建表时仅选取勾稽相关核心字段（各 ~20 列），完整字段定义见各 `*_dict.txt`。数值字段以 DECIMAL 存储，空值统一为 NULL。
 
-> **数据筛选建议**：`statement_type='408001000'`（合并报表）为主口径；`comp_type_code=1`（非金融）排除金融企业特殊科目。实际 SQL 见 `backend/app/core/schema.sql`（Phase 0 创建）。
+> **数据筛选建议**：项目财务反欺诈规则固定采用 `statement_type='408006000'`（母公司报表）口径，`comp_type_code=1`（非金融）执行规则，2/3/4 排除，NULL/非法类型按数据不足处理。实际 SQL 见 `backend/app/core/schema.sql`（Phase 0 创建）。
 
 ---
 
@@ -218,8 +218,8 @@ CREATE TABLE research_reports (
 
 1. 三表 CSV 直接入库，不需 JSON 中转——数据组交付 `truthnet.db` 即可
 2. 数值字段转为 DECIMAL，空字符串转为 NULL
-3. `statement_type` 默认筛选 `408001000`（合并报表）
-4. `comp_type_code` 默认筛选 `1`（非金融）
+3. `statement_type` 默认筛选 `408006000`（母公司报表，项目固定分析口径）
+4. `comp_type_code` 默认筛选 `1`（非金融）；2/3/4 排除，NULL/非法按数据不足处理
 5. 所有表以 `s_info_windcode` 为主键关联
 
 ### 股权关系数据交付

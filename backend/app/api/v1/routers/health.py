@@ -11,12 +11,18 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
+from app.api.v1.schemas.health import HealthDataV1, ReadyDataV1
 from app.core.config import settings
+from app.core.errors import ProblemDetail
 
 router = APIRouter(tags=["health"])
 
 
-@router.get("/healthz")
+@router.get(
+    "/healthz",
+    response_model=V12Response[HealthDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 async def healthz():
     """V12 健康检查 — 进程存活探针（不依赖外部服务）."""
     trace_id = str(uuid.uuid4())
@@ -58,7 +64,7 @@ def _check_mysql() -> dict:
             "host": settings.MYSQL_HOST,
             "port": settings.MYSQL_PORT,
         }
-    except (TimeoutError, ConnectionRefusedError, OSError) as e:
+    except (socket.timeout, ConnectionRefusedError, OSError) as e:
         return {"status": "unreachable", "reason": str(e)[:80]}
     except Exception as e:
         return {"status": "error", "reason": str(e)[:80]}
@@ -91,7 +97,7 @@ def _check_neo4j() -> dict:
         sock = socket.create_connection((host, port), timeout=3)
         sock.close()
         return {"status": "reachable", "host": host, "port": port}
-    except (TimeoutError, ConnectionRefusedError, OSError) as e:
+    except (socket.timeout, ConnectionRefusedError, OSError) as e:
         return {"status": "unreachable", "reason": str(e)[:80]}
     except Exception as e:
         return {"status": "error", "reason": str(e)[:80]}
@@ -135,7 +141,11 @@ def _check_llm() -> dict:
     return {"status": "unknown", "reason": f"unknown backend: {backend}"}
 
 
-@router.get("/readyz")
+@router.get(
+    "/readyz",
+    response_model=V12Response[ReadyDataV1],
+    responses={503: {"model": ProblemDetail}},
+)
 async def readyz():
     """V12 就绪检查 — 依赖服务探针.
 
@@ -145,6 +155,12 @@ async def readyz():
     """
     trace_id = str(uuid.uuid4())
     profile = settings.TRUTHNET_PROFILE
+
+    # 2️⃣ 启动预热门控：预热未完成（启动中）不算 ready——
+    # 避免首请求承担冷启动 4s+（真流式首块优化）
+    from app.core.startup import is_prewarmed
+
+    prewarmed = is_prewarmed()
 
     if profile == "full":
         checks = {
@@ -159,7 +175,7 @@ async def readyz():
             s == "ok" or s == "reachable" or s == "configured" or s == "mock"
             for s in statuses
         ):
-            overall = "ready"
+            overall = "ready" if prewarmed else "starting"
         elif any(s == "error" or s == "unreachable" for s in statuses):
             overall = "degraded"
         else:

@@ -5,7 +5,7 @@
 
 from typing import Protocol, runtime_checkable
 
-from app.domain.finance.models import FinanceWarning, FinancialItem
+from app.domain.finance.models import FinancialItem, FinanceWarning
 
 
 @runtime_checkable

@@ -16,13 +16,14 @@
 | **API 契约** | `docs/API_CONTRACT.md` | REST + WebSocket 完整契约 |
 | **数据核验清单** | `docs/DATA_CHECKLIST.md` | 7 条勾稽规则公式+阈值+字段覆盖率 |
 
-## 当前状态（V12 基线 · 2026-07-19）
+## 当前状态（Phase D 联调打磨 · 2026-08-11）
 
-- 设计阶段结束，V12 定稿，API 契约/WS 事件/Evidence 模型已冻结
-- **Phase B 启动（7/20）**：三组并行，康美 E2E 打通
-- 后端：FastAPI 骨架就绪，29/29 测试通过，待出 MySQL 建表脚本
-- 前端：React + Vite + TypeScript 已初始化，`pnpm build` 通过
-- 数据组：待出康美 fixture
+- V12 设计定稿；**Phase A-C 已收口**（契约/最小 E2E/核心业务），**Phase D 联调打磨中（8/7-8/14）**，提交截止 8/20
+- main = f900c20：PR #33（四轮修复）+ PR #34（八轮审查：风险聚合关键维度保护、股权时点快照整体切换、多跳统计参数化、路径顺序修复、ownership 语义全链路贯通、契约与缓存运维约束）已合入
+- **PR #35 已创建（CI 全绿，待专人合并）**：8/11 演示前修复批 11 个原子提交——Evidence 空值兼容（ev_ann_* 落库根因）、/risk 真实证据类型（禁伪造 risk）、公司歧义确认闭环（多候选点选重跑 + 精选 alias 回填）、B4 孤儿清理（已受控执行：110/286/39 归零，全局 2780 个 ID 无损）、CV-NUM-01 连续季度、PDF failed 原子重试、P95 nearest-rank、多公司画像入口、Compose 静态修正、图注释
+- **股权多跳真库口径**：起点不限/目标端上市公司——3..10 跳=568、严格 >3（4..10）=10 条可验证四跳持股路径、5..10=0、最大深度四跳（集成测试固化）
+- 后端：**948 passed + 60 skipped**，ruff/format 全绿，真库集成 11 passed（PDF full integration）
+- 待办：待修复清单 8.09（竞赛管理仓库）8/11 看板——前端 10 项 / 后端 6 项 / 数据组 5-6 项，已排入开发手册 PhaseE.md
 - 协作：`main ← PR ← feature/<user>-<task>`
 
 ## 技术栈
@@ -187,17 +188,27 @@ TruthNet/
 # ===== 环境 =====
 conda create -n truthnet python=3.11 -y && conda activate truthnet
 pip install -r requirements.txt
+# ⚠️ 强制约定：所有 Python 命令（测试/脚本/服务/doctor）必须在 truthnet 环境执行
+#    （`conda activate truthnet` 或直接调用 envs/truthnet/python.exe）
+#    禁止使用 base 或其他环境——依赖按 requirements.txt == 固定版本，
+#    环境不匹配会导致测试误报（如 Chroma 持久化测试在 base 下 4 个假失败）。
 
 # ===== 数据导入（首次搭建）=====
 # 0. 准备：从团队共享渠道获取赛方数据文件，放入 data/raw/ 对应子目录（1-5/）
 #    文件清单见 data/raw/README.md，渠道：微信群/网盘
+#    依赖链：security_master.py 是 import_data.py 的**强制前置**（生成
+#    data/processed/security_master.csv，缺失会失败关闭）；
+#    industry_mapping.csv 缺失时首次导入走备用路径，导入后跑 industry_fill.py
+python scripts/security_master.py               # 证券主表（sec_name 权威 + 质量标记，import_data 前置）
 python scripts/import_data.py --dry-run           # 预检数据
 python scripts/import_data.py                    # MySQL 全量入库（7 表，~83 万行）
 python scripts/announcement_sentiment.py         # 公告情绪分类
 python scripts/backfill_company_names.py --dry-run  # 公司名称回填（预检）
 python scripts/backfill_company_names.py         # 公司名称回填（正式）
-python scripts/neo4j_full_import.py              # Neo4j 全量图谱
-python scripts/industry_fill.py                  # 行业分类补全
+python scripts/neo4j_full_import.py              # Neo4j 全量图谱（幂等增量）
+# 重建（替换旧图）加 --replace-graph-version；防误删保护：失败只删本次新建，
+#    验收通过后才删旧关系（详见 data/raw/README.md）
+python scripts/industry_fill.py                  # 行业分类补全（生成 industry_mapping.csv）
 
 # ===== Chroma 嵌入链路（需先导入 MySQL 研报数据）=====
 pip install -r requirements-chroma.txt           # 安装 ~2GB PyTorch 依赖（仅首次）

@@ -1,0 +1,154 @@
+# 财务造假手法模式库 — 机器可读唯一来源（数据任务 2）
+# 与 docs/FRAUD_PATTERNS.md 保持同步（同一结构）。
+# 风险 Router / comparisons / risk_scoring_service 一律从此文件加载，
+# 禁止在代码中维护第二套 pattern 定义。
+# 模式匹配结果仅表示"风险信号/疑似模式"，不代表造假认定。
+
+version: "1.0.0"
+updated_at: "2026-08-03"
+min_triggered_rules_for_pattern: 2
+
+patterns:
+  - pattern_id: P1
+    pattern_name: 收入虚增型
+    applicable_company_types: [1]
+    required_rules: [R1, R2]
+    optional_rules: [R4]
+    core_logic: 应收飙升 + 现金流不支撑 → 收入可能虚构
+    confidence_rules:
+      - when: all_required_and_optional_triggered
+        confidence: high
+        reason: 三条独立信号跨报表交叉印证，误判概率低
+      - when: required_only
+        confidence: medium
+        reason: 核心逻辑成立，缺少存货端增强信号
+    exclusion_conditions:
+      - 建筑/工程等天然账期长行业可能正常高应收
+      - 客户结构由中小转大客户导致账期结构性变化
+      - 新并购子公司并表导致的应收/存货跳升
+    supporting_signals:
+      - R4 存货-营收背离同时触发
+      - 连续多期 gap 扩大
+    typical_companies: ["康美药业(600518.SH)", "乐视网(300104.SZ)"]
+    evidence_requirements: ["R1 evidence", "R2 evidence", "R4 evidence(可选)"]
+    limitations: 仅财务信号组合，未纳入股权/舆情信号
+    partial_coverage_supported: true
+    # Phase D #16 模式三要素（可审计基础定义）
+    phase: 收入端异常信号已检测
+    alternative_explanation: 应收飙升可能源于大客户账期延长、收入确认政策差异或新并购并表，现金流滞后不必然构成虚构
+    regulatory_hint: 建议核查收入确认政策、前五大客户集中度与回款周期；结合审计意见与监管文件进一步核验，不构成法律定罪结论
+
+  - pattern_id: P2
+    pattern_name: 资金占用型
+    applicable_company_types: [1]
+    required_rules: [R3, R6]
+    optional_rules: []
+    core_logic: 存贷双高 + 其他应收款大 → 资金可能被关联方挪用
+    confidence_rules:
+      - when: all_triggered_with_related_party
+        confidence: high
+        reason: 财务信号 + 关系证据（Neo4j 关联方信号）逻辑链完整
+      - when: required_only
+        confidence: medium
+        reason: 财务信号明确但缺关系证据支撑
+    exclusion_conditions:
+      - 房地产等预售制行业可能同时高现金高债务
+      - 大型并购前现金储备与既有债务并存
+      - 境外资金受限无法调回
+    supporting_signals:
+      - 隐含借款利率显著高于现金收益率
+      - 其他应收款/应收账款 > 1.0
+    typical_companies: ["康美药业(600518.SH)", "康得新(002450.SZ)"]
+    evidence_requirements: ["R3 evidence", "R6 evidence", "关联方图谱信号(可选)"]
+    limitations: 关联方信号判定规则 Phase C 默认关闭，仅财务信号时置信度降级
+    partial_coverage_supported: true
+    # Phase D #16 模式三要素
+    phase: 资金占用信号已检测
+    alternative_explanation: 存贷双高可能源于行业预售/备货特性或并购资金安排，其他应收款大额未必构成资金占用
+    regulatory_hint: 建议核查货币资金受限情况、其他应收款对手方性质与关联交易；结合审计意见与监管文件进一步核验，不构成法律定罪结论
+
+  - pattern_id: P3
+    pattern_name: 利润调节型
+    applicable_company_types: [1]
+    required_rules: [R5, R7]
+    optional_rules: []
+    core_logic: 毛利率/费用率异常 + 依赖非经常性损益 → 利润可能被人为调节
+    confidence_rules:
+      - when: all_triggered_and_opposite_industry_trend
+        confidence: high
+        reason: 毛利率逆行业趋势操作，粉饰动机强烈
+      - when: required_only
+        confidence: high
+        reason: 利润结构与来源双异常
+    exclusion_conditions:
+      - 真实技术突破导致毛利率结构性提升
+      - 产品结构升级带来高毛利占比提升
+      - 资产处置属合理战略优化
+    supporting_signals:
+      - gm_deviation 与行业趋势方向相反
+      - 扣非占净利润比连续下降
+    typical_companies: ["獐子岛(002069.SZ)", "ST信威(600485.SH)"]
+    evidence_requirements: ["R5 evidence", "R7 evidence"]
+    limitations: 毛利率异常可能由多种正当原因导致
+    partial_coverage_supported: true
+    # Phase D #16 模式三要素
+    phase: 利润结构异常信号已检测
+    alternative_explanation: 毛利率异常可能源于真实技术突破、产品结构升级或合理的资产处置，扣非占比变化未必构成利润调节
+    regulatory_hint: 建议核查毛利率与行业趋势的偏离、非经常性损益明细；结合审计意见与监管文件进一步核验，不构成法律定罪结论
+
+  - pattern_id: P4
+    pattern_name: 资产虚增型
+    applicable_company_types: [1]
+    required_rules: [R1, R4]
+    optional_rules: [R2]
+    core_logic: 应收+存货同时膨胀 + 现金跟不上 → 资产端系统性虚增
+    confidence_rules:
+      - when: all_required_and_optional_triggered
+        confidence: high
+        reason: 覆盖收入→存货→现金全链条
+      - when: required_only
+        confidence: medium
+        reason: 资产负债表两端膨胀，缺现金流验证
+    exclusion_conditions:
+      - 高速成长企业应收存货同步增长但营收/现金可支撑
+      - 消费电子/芯片等需提前备货行业
+      - 并购合并报表导致一次性跳升
+    supporting_signals:
+      - 存货周转天数 > 365 天
+      - 现金流/利润比持续 < 0
+    typical_companies: ["康美药业(600518.SH)", "雏鹰农牧(002477.SZ)"]
+    evidence_requirements: ["R1 evidence", "R4 evidence", "R2 evidence(可选)"]
+    limitations: 备货性行业需谨慎解读
+    partial_coverage_supported: true
+    # Phase D #16 模式三要素
+    phase: 资产端膨胀信号已检测
+    alternative_explanation: 应收存货同步增长可能源于高速成长备货、消费电子/芯片提前备货或并购并表，现金滞后需结合业务验证
+    regulatory_hint: 建议核查存货周转、备货合理性及资产减值计提；结合审计意见与监管文件进一步核验，不构成法律定罪结论
+
+  - pattern_id: P5
+    pattern_name: 综合粉饰型
+    applicable_company_types: [1]
+    required_rules: []
+    optional_rules: [R1, R2, R3, R4, R5, R6, R7]
+    core_logic: 5 条及以上规则同时触发 → 多科目协同粉饰嫌疑
+    confidence_rules:
+      - when: triggered_count >= 5
+        confidence: high
+        reason: 多维度信号叠加，独立发生概率极低
+      - when: triggered_count >= 3 and triggered_count < 5
+        confidence: medium
+        reason: 多维度有信号，尚不构成系统性判断
+    exclusion_conditions:
+      - 可用规则总数不足 5 条时按比例调整（见 partial_coverage）
+      - 行业特性导致多条规则同时触发的正当情形
+    supporting_signals:
+      - 至少 2 条规则 red
+      - R5/R7 标记 insufficient_data 时输出 partial_coverage
+    typical_companies: ["康美药业(600518.SH)"]
+    evidence_requirements: ["触发规则的 evidence 汇总"]
+    limitations: 触发数高不等于确认造假，需结合事件/股权综合判断
+    partial_coverage_supported: true
+    # Phase D #16 模式三要素
+    phase: 多维度信号叠加已检测
+    alternative_explanation: 多条规则同时触发可能源于行业特性或数据口径差异，系统性能度信号需结合事件/股权综合验证
+    regulatory_hint: 建议对各触发科目逐项核查并评估行业基准；结合公告、审计意见与监管文件进一步核验，不构成法律定罪结论

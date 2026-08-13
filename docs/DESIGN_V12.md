@@ -140,7 +140,7 @@
 | 研报       |                                                   55,214 篇 | RAG、评级拐点、行业分类        | `rating_change` 约 87.5% 覆盖 |
 | 行业分类   | 三表股票 45.6% 可匹配到研报行业分类（研报字段覆盖率 99.3%） | 行业分位和同行比较             | 需通过 akshare 补全至 ≥90%     |
 
-**数据口径约束**：三表当前主要为 `statement_type=408006000` 的母公司报表口径。商誉、固定资产、在建工程等字段覆盖率不足时，不进入依赖这些字段的规则；任何“不适用”必须与“未触发”分开显示。
+**数据口径约束**：项目财务反欺诈规则固定采用母公司报表口径（`statement_type=408006000`，scope=`parent_company`）。数据库可保存其他 statement_type 原始记录（含 408001000 合并报表），但 R1–R7 当前版本不使用 408001000，固定单一分析口径，不做口径切换。商誉、固定资产、在建工程等字段覆盖率不足时，不进入依赖这些字段的规则；任何“不适用”必须与“未触发”分开显示。公司类型 comp_type_code=NULL/非法时规则按数据不足处理（COMPANY_TYPE_UNKNOWN），不得默认当作非金融企业。
 
 ## 1.5 评分方式
 
@@ -1679,7 +1679,7 @@ language
 | 参数                | 用途                                     |
 | ------------------- | ---------------------------------------- |
 | `as_of`           | 指定数据快照日期                         |
-| `statement_scope` | `parent_company / consolidated / auto` |
+| `statement_scope` | `parent_company`（固定母公司报表口径 408006000；`auto/consolidated` 已停用） |
 | `include`         | 指定摘要接口包含的可选区域               |
 | `periods`         | 财务历史期数                             |
 | `months`          | 事件回溯月数                             |
@@ -2253,7 +2253,7 @@ pnpm build
 ## 16.3 CI Jobs
 
 ```text
-  
+
 frontend:
   lint + typecheck + test + build
 

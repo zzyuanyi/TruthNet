@@ -7,7 +7,7 @@
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from typing import AsyncIterator
 
 from pydantic import BaseModel
 

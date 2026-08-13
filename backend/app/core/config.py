@@ -1,6 +1,12 @@
 """应用配置（基于 pydantic-settings）· V12 baseline."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+# 仓库根目录下的 .env（绝对路径，与进程工作目录无关）
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -34,6 +40,13 @@ class Settings(BaseSettings):
     MYSQL_USER: str = "truthnet"
     MYSQL_PASSWORD: str = ""
 
+    # MySQL 测试库（external 测试强制隔离）
+    # 默认全空：mysql 模式跑 pytest 必须显式指定三件套，否则 fail-fast 拒绝
+    # （测试不得直连演示库；守卫见 backend/tests/conftest.py）
+    MYSQL_TEST_DATABASE: str = ""
+    MYSQL_TEST_USER: str = ""
+    MYSQL_TEST_PASSWORD: str = ""
+
     # ===== 图数据库后端 =====
     GRAPH_BACKEND: str = "networkx"  # networkx | neo4j
 
@@ -64,7 +77,11 @@ class Settings(BaseSettings):
     LLM_RETRY_MAX_ATTEMPTS: int = 2  # 共 2 次尝试 = 1 次重试
     LLM_RETRY_MIN_WAIT: float = 1.0  # 秒
     LLM_RETRY_MAX_WAIT: float = 5.0  # 秒
-    LLM_REQUEST_TIMEOUT: int = 30  # 秒
+    LLM_REQUEST_TIMEOUT: int = (
+        60  # 秒 — read 超时（长文本生成 20-60s）；connect 超时固定 10s 快速失败
+    )
+    LLM_MAX_CONCURRENCY: int = 4
+    LLM_QUEUE_TIMEOUT_SECONDS: float = 5.0
 
     # ===== 嵌入模型（兼容旧字段）=====
     LLM_API_KEY: str = ""
@@ -88,11 +105,46 @@ class Settings(BaseSettings):
     RULE_SET_VERSION: str = "finance-rules-1.0.0"
     GRAPH_VERSION: str = "equity-mock-v12"
 
+    # ===== WS 事件缓冲（Phase D #6 断线恢复）=====
+    WS_EVENT_BUFFER_MAX_EVENTS: int = 2000  # 每会话事件缓冲上限（内存受限）
+    WS_EVENT_BUFFER_TTL_SECONDS: int = 3600  # 事件 TTL（秒），过期被 expire 清除
+    WS_SESSION_IDLE_TTL_SECONDS: int = 7200  # 会话空闲回收 TTL（秒）
+    WS_CANCEL_ACK_TIMEOUT_SECONDS: float = 2.0  # turn.cancel 确认时限（验收 ≤2s）
+    WS_JANITOR_INTERVAL_SECONDS: int = 300  # WS janitor 周期（缓冲 TTL + 空闲会话回收）
+
+    # ===== 回答生成（#7 确定性输出优先）=====
+    ANSWER_POLISH_ENABLED: bool = (
+        False  # REST LLM 润色开关（默认关闭；开启时仍有事实校验回退）
+    )
+
+    # ===== 远期记忆提炼（Phase D #15）=====
+    MEMORY_RECENT_TURNS: int = 10  # 近期 N 轮全量加载；更早进入摘要
+    MEMORY_SUMMARY_MAX_CHARS: int = 2000  # 摘要最大字符数
+    MEMORY_SUMMARY_MAX_SOURCE_TURNS: int = 50  # 摘要最多引用来源轮次数
+    MEMORY_SUMMARY_VERSION: str = "memory-v1"  # 摘要结构版本
+    MEMORY_STRATEGY: str = (
+        "summary_plus_recent"  # none | recent_only | summary_plus_recent
+    )
+
+    # ===== PDF 报告（Phase D #8）=====
+    REPORT_ROOT_DIR: str = "data/reports"  # 报告文件根目录（相对项目根解析）
+    REPORT_MAX_CONCURRENCY: int = 2  # 并发报告生成数
+    REPORT_JOB_STALE_SECONDS: int = 1800  # running 超过该时长视为卡死（重启恢复）
+
+    # ===== 深度数值冲突检测（Phase D #2）=====
+    CV_NUM_01_CF_TO_PROFIT_THRESHOLD: float = 0.5  # 现金流/净利润比值阈值
+    CV_NUM_01_MIN_PERIODS: int = 3  # 至少需连续观察的有效期数
+    CV_NUM_02_OWNERSHIP_TOLERANCE: float = (
+        1.0  # MySQL 股东表与 Neo4j 边比例允许误差（pp）
+    )
+
     # ===== 日志 =====
     LOG_LEVEL: str = "INFO"
 
     model_config = {
-        "env_file": ".env",
+        # 绝对路径：无论从哪个工作目录启动都指向仓库根目录 .env；
+        # .env 不存在时退化为 None（纯默认值 + 环境变量），不报错
+        "env_file": _ENV_FILE if _ENV_FILE.exists() else None,
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }

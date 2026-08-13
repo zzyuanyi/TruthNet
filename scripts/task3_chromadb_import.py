@@ -14,7 +14,11 @@ from sqlalchemy import create_engine
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
-def log(msg): print(msg, flush=True)
+
+
+def log(msg):
+    print(msg, flush=True)
+
 
 # ── 配置 ──
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +45,7 @@ collection = client.create_collection(
 )
 log(f"  Created '{COLLECTION_NAME}' with {MODEL_NAME}")
 
+
 # ── 分块 ──
 def chunk_text(text, chunk_size=600, overlap=80):
     if not text or not isinstance(text, str):
@@ -64,13 +69,16 @@ def chunk_text(text, chunk_size=600, overlap=80):
         start = end - overlap
     return chunks
 
+
 # ── 读取 ──
 log("Reading MySQL...")
 engine = create_engine(DB_URL)
 df = pd.read_sql(
     "SELECT report_id, wind_code, sec_name, org_name, title, "
     "publish_date, abstract, rating_change FROM research_reports "
-    "WHERE abstract IS NOT NULL AND abstract != ''", engine)
+    "WHERE abstract IS NOT NULL AND abstract != ''",
+    engine,
+)
 engine.dispose()
 log(f"  {len(df)} reports")
 
@@ -79,19 +87,29 @@ log("Chunking...")
 all_ids, all_texts, all_metas = [], [], []
 for _, row in df.iterrows():
     rid = str(row["report_id"])
-    for ci, chunk in enumerate(chunk_text(str(row["abstract"]), CHUNK_SIZE, CHUNK_OVERLAP)):
+    for ci, chunk in enumerate(
+        chunk_text(str(row["abstract"]), CHUNK_SIZE, CHUNK_OVERLAP)
+    ):
         all_ids.append(f"{rid}_chunk_{ci}")
         all_texts.append(chunk)
-        all_metas.append({
-            "report_id": rid,
-            "wind_code": str(row["wind_code"]) if pd.notna(row["wind_code"]) else "",
-            "sec_name": str(row["sec_name"]) if pd.notna(row["sec_name"]) else "",
-            "org_name": str(row["org_name"]) if pd.notna(row["org_name"]) else "",
-            "title": str(row["title"]) if pd.notna(row["title"]) else "",
-            "publish_date": str(row["publish_date"]) if pd.notna(row["publish_date"]) else "",
-            "rating_change": str(row["rating_change"]) if pd.notna(row["rating_change"]) else "",
-            "chunk_index": ci,
-        })
+        all_metas.append(
+            {
+                "report_id": rid,
+                "wind_code": str(row["wind_code"])
+                if pd.notna(row["wind_code"])
+                else "",
+                "sec_name": str(row["sec_name"]) if pd.notna(row["sec_name"]) else "",
+                "org_name": str(row["org_name"]) if pd.notna(row["org_name"]) else "",
+                "title": str(row["title"]) if pd.notna(row["title"]) else "",
+                "publish_date": str(row["publish_date"])
+                if pd.notna(row["publish_date"])
+                else "",
+                "rating_change": str(row["rating_change"])
+                if pd.notna(row["rating_change"])
+                else "",
+                "chunk_index": ci,
+            }
+        )
 total = len(all_texts)
 log(f"  {total} chunks")
 
@@ -119,6 +137,8 @@ log(f"\nDone! {total} chunks in {elapsed/60:.1f} min")
 log(f"\nCollection count: {collection.count()}")
 r = collection.query(query_texts=["财务造假风险"], n_results=3)
 log(f"Query '财务造假风险': {len(r['ids'][0])} hits")
-r2 = collection.query(query_texts=["财务欺诈"], where={"wind_code": "600518.SH"}, n_results=3)
+r2 = collection.query(
+    query_texts=["财务欺诈"], where={"wind_code": "600518.SH"}, n_results=3
+)
 log(f"Query 600518.SH: {len(r2['ids'][0])} hits")
 log("Task ③ complete!")

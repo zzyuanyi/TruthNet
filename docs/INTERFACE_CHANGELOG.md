@@ -5,6 +5,33 @@
 
 ---
 
+## 2026-08-07 — Phase D #5/#6/#8/#10/#12/#15/#16 契约更新
+
+### Added
+- **WS**: `turn.cancel`（turn_id/reason）→ `turn.cancelled`（协作式取消，≤2s 确认，幂等）；
+  `stream.resume`（session_id/last_sequence）→ `stream.resume_ack`（断线补发，原 event_id/sequence/turn_id）；
+  `answer.delta` 改为真流式（generate_answer 实时分段，拼接 == 最终答案）；
+  `module.started` 在节点实际执行前发送。
+- **WS turn.completed**: 追加 `pattern_matches`（模式三要素）与 `equity_chains`（股权链路）。
+- **REST 报告**: `POST /api/v1/reports`（202 + 幂等键）、`GET /api/v1/reports/{report_id}`（状态）、
+  `GET /api/v1/reports/{report_id}/file`（PDF 下载）。
+- **REST equity**: `GET /api/v1/companies/{code}/equity` 追加 `equity_chains`（每条含
+  chain_id/path_names/depth/final_control_pct/evidence_ids/risk_label/risk_level/risk_reasons/merge_explanation/source_system/as_of）。
+- **REST risk**: `pattern_matches` 追加 `phase`/`alternative_explanation`/`regulatory_hint`。
+- **REST chat**: 追加 `pattern_matches` 与 `equity_chains`。
+- **数据库**: 新增 `report_jobs` 表（v9 migration，含 downgrade）。
+- **配置**: 新增 WS_EVENT_BUFFER_MAX_EVENTS / TTL_SECONDS / SESSION_IDLE_TTL_SECONDS、
+  MEMORY_RECENT_TURNS / SUMMARY_MAX_CHARS / MAX_SOURCE_TURNS / VERSION / STRATEGY、
+  REPORT_ROOT_DIR / MAX_CONCURRENCY / STALE_SECONDS、
+  CV_NUM_01_* / CV_NUM_02_OWNERSHIP_TOLERANCE。
+- **索引**: `research_reports` 新增 `is_latest` 与 `(is_latest, publish_date)` 索引（v8 migration）。
+
+### Breaking Changes
+- 是否有破坏性修改：无（全部追加字段/新事件/新端点，旧字段保留兼容）
+- 是否已由项目负责人审阅：⏳ 待审阅（Phase D 契约冻结 D2）
+
+---
+
 ## 模板
 
 ```markdown
@@ -28,6 +55,20 @@
 - 迁移方式：
 - 是否已由项目负责人审阅：
 ```
+
+---
+
+## 2026-08-04 — POST /api/v1/chat 追加 claims + module_status
+
+### Added
+- `ChatDataV1` 追加 `claims`（list[ClaimV1]：结论声明，含 rule_version/limitations）与 `module_status`（dict[str, str]：各模块执行状态）
+- `ChatDataV1` 追加 `risk_level`（str：red/orange/yellow/green/unknown）——优先 final_response.risk_level（最终阶段等级），不从 risk_score.overall 换算（避免双口径）；异常路径显式返回 unknown
+- 原因：前端 Phase D #1（partial 场景 UI）需要 module_status；评测需走对外接口；claims 是结构化问答创新点载体；前端 8 处消费 risk_level 但 REST 独缺
+- 影响范围：仅追加字段（不删除不重命名），旧响应兼容；REST 与 WS 契约不变；会话列表（sessions 端点）的 risk_level 不在本批范围（待前端合入后评估）
+
+### Breaking Changes
+- 是否有破坏性修改：无（纯追加）
+- 是否已由项目负责人审阅：✅
 
 ---
 

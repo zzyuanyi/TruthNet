@@ -15,6 +15,7 @@
 
 import re
 import unicodedata
+from typing import Optional
 
 # ── 交易所后缀映射（长→短）──
 _EXCHANGE_TO_SHORT = {"XSHG": "SH", "XSHE": "SZ"}
@@ -44,7 +45,7 @@ _WIND_CODE_RE = re.compile(
 )
 
 
-def parse_wind_code(code: str) -> tuple[str, str | None]:
+def parse_wind_code(code: str) -> tuple[str, Optional[str]]:
     """将 Wind Code 解析为 (纯数字代码, 短后缀或None)。
 
     Args:
@@ -88,7 +89,7 @@ def parse_wind_code(code: str) -> tuple[str, str | None]:
     return digits, suffix
 
 
-def infer_suffix_from_digits(digits: str) -> str | None:
+def infer_suffix_from_digits(digits: str) -> Optional[str]:
     """根据 6 位数字代码前缀推断交易所短后缀。
 
     规则：
@@ -206,7 +207,7 @@ def make_listed_company_entity_id(wind_code: str) -> str:
     return f"company_{digits}_{suffix}"
 
 
-def parse_entity_id(entity_id: str) -> tuple[str, str] | None:
+def parse_entity_id(entity_id: str) -> Optional[tuple[str, str]]:
     """从 entity_id 中提取 Wind Code 信息。
 
     Args:
@@ -221,7 +222,7 @@ def parse_entity_id(entity_id: str) -> tuple[str, str] | None:
     return match.group(1), match.group(2)
 
 
-def entity_id_to_wind_code(entity_id: str) -> str | None:
+def entity_id_to_wind_code(entity_id: str) -> Optional[str]:
     """从 entity_id 反推 Wind Code。
 
     Args:

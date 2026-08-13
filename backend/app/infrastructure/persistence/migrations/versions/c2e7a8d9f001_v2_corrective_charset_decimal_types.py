@@ -11,16 +11,17 @@ Create Date: 2026-07-22 10:00:00.000000
 4. 将 top_shareholders.s_holder_quantity 从 FLOAT 转为 DECIMAL(20,2)
 """
 
-from collections.abc import Sequence
+from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
+
 
 # revision identifiers
 revision: str = "c2e7a8d9f001"
-down_revision: str | None = "f5d9389bbef0"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, None] = "f5d9389bbef0"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -101,18 +102,25 @@ def upgrade() -> None:
     )
 
     # ── 派生表 charset/collation ─────────────────────────
+    # 注意: 存在外键约束的表（conversation_turns→conversation_sessions,
+    # rule_evaluations→rule_definitions）执行 CONVERT TO 时，MySQL 会校验 FK
+    # 两侧 collation 兼容性并报 3780（无论先转父表还是先转子表均失败）。
+    # 因此必须临时关闭 FK 检查，转换完成后重新开启；否则全新数据库
+    # `alembic upgrade head` 无法完成。转换后两侧均为 utf8mb4_0900_ai_ci，
+    # FK 关系保持有效（实测 CASCADE 删除仍生效）。
 
-    op.execute(
-        "ALTER TABLE conversation_sessions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
-    )
+    op.execute("SET FOREIGN_KEY_CHECKS = 0")
     op.execute(
         "ALTER TABLE conversation_turns CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
     op.execute(
-        "ALTER TABLE rule_definitions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+        "ALTER TABLE conversation_sessions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
     op.execute(
         "ALTER TABLE rule_evaluations CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+    )
+    op.execute(
+        "ALTER TABLE rule_definitions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
     op.execute(
         "ALTER TABLE evidence_refs CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
@@ -123,6 +131,7 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE risk_assessments CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
     )
+    op.execute("SET FOREIGN_KEY_CHECKS = 1")
 
 
 def downgrade() -> None:

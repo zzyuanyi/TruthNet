@@ -8,8 +8,8 @@ import logging
 
 from app.application.ports.llm_provider import LLMProvider
 from app.core.config import settings
-from app.infrastructure.llm.deepseek.provider import DeepSeekProvider
 from app.infrastructure.llm.degradation import create_degradation_response
+from app.infrastructure.llm.deepseek.provider import DeepSeekProvider
 from app.infrastructure.llm.mock.provider import MockLLMProvider
 from app.infrastructure.llm.qwen.provider import QwenProvider
 
@@ -66,16 +66,29 @@ class FallbackLLMProvider:
         return self._primary.provider_name
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        """带降级的 chat."""
+        """带降级的 chat.
+
+        主 Provider 失败（抛异常或返回空串——base 失败语义统一为空串）
+        → 尝试备选 → 全部失败返回降级文案。
+        """
         try:
-            return await self._primary.chat(messages, **kwargs)
+            result = await self._primary.chat(messages, **kwargs)
+            if result:
+                return result
+            logger.warning("主 Provider (%s) chat 返回空，视为失败", self.provider_name)
         except Exception as e:
             logger.warning("主 Provider (%s) chat 失败: %s", self.provider_name, e)
 
         if self._fallback is not None:
             try:
                 logger.info("尝试备选 Provider (%s)", self._fallback.provider_name)
-                return await self._fallback.chat(messages, **kwargs)
+                result = await self._fallback.chat(messages, **kwargs)
+                if result:
+                    return result
+                logger.warning(
+                    "备选 Provider (%s) chat 返回空，视为失败",
+                    self._fallback.provider_name,
+                )
             except Exception as e:
                 logger.warning("备选 Provider chat 也失败: %s", e)
 
@@ -103,10 +116,20 @@ class FallbackLLMProvider:
         yield create_degradation_response(self._task_type)
 
     async def structured_chat(self, messages: list[dict], output_schema, **kwargs):
-        """带降级的 structured_chat."""
+        """带降级的 structured_chat.
+
+        主 Provider 失败（抛异常或返回 None——base 失败语义统一为 None）
+        → 尝试备选 → 全部失败返回降级结构化对象。
+        """
         try:
-            return await self._primary.structured_chat(
+            result = await self._primary.structured_chat(
                 messages, output_schema, **kwargs
+            )
+            if result is not None:
+                return result
+            logger.warning(
+                "主 Provider (%s) structured_chat 返回 None，视为失败",
+                self.provider_name,
             )
         except Exception as e:
             logger.warning(
@@ -115,9 +138,12 @@ class FallbackLLMProvider:
 
         if self._fallback is not None:
             try:
-                return await self._fallback.structured_chat(
+                result = await self._fallback.structured_chat(
                     messages, output_schema, **kwargs
                 )
+                if result is not None:
+                    return result
+                logger.warning("备选 Provider structured_chat 返回 None，视为失败")
             except Exception as e:
                 logger.warning("备选 Provider structured_chat 也失败: %s", e)
 

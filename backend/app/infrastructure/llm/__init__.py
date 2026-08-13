@@ -17,9 +17,9 @@ from app.infrastructure.llm.factory import (
 
 __all__ = [
     "BaseOpenAICompatibleProvider",
+    "create_llm_provider",
+    "create_llm_provider_with_fallback",
     "FallbackLLMProvider",
     "create_degradation_response",
     "create_degradation_structured",
-    "create_llm_provider",
-    "create_llm_provider_with_fallback",
 ]

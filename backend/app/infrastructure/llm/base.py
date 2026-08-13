@@ -11,16 +11,16 @@ DeepSeek、Qwen 等 OpenAI 兼容 API 的公共实现：
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from typing import AsyncIterator
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 from tenacity import (
-    before_sleep_log,
     retry,
     retry_if_exception,
     stop_after_attempt,
     wait_exponential_jitter,
+    before_sleep_log,
 )
 
 from app.core.config import settings
@@ -29,13 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 def _is_transient_error(exception: BaseException) -> bool:
-    """判断是否为可重试的瞬时错误."""
-    try:
-        from openai import APIConnectionError, APIStatusError, APITimeoutError
+    """判断是否为可重试的瞬时错误.
 
-        return isinstance(
-            exception, (APIStatusError, APITimeoutError, APIConnectionError)
-        )
+    只重试服务端可恢复错误（5xx/429/读取超时）；
+    连接错误（APIConnectionError）不重试——网络问题重试成功率低，
+    且每次重试叠加等待（connect 10s + 退避），直接快速降级。
+    """
+    try:
+        from openai import APIStatusError, APITimeoutError
+
+        return isinstance(exception, (APIStatusError, APITimeoutError))
     except ImportError:
         return False
 
@@ -62,10 +65,22 @@ class BaseOpenAICompatibleProvider:
         self._client: AsyncOpenAI | None = None
 
         if self._available:
+            # 分层超时：connect 10s 快速失败（网络问题不傻等），
+            # read = 配置超时（长文本生成 20-60s），write/pool 10s
+            from httpx import Timeout
+
             self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=float(timeout),
+                timeout=Timeout(
+                    connect=10.0,
+                    read=float(timeout),
+                    write=10.0,
+                    pool=10.0,
+                ),
+                # openai 库层不重试（默认 2 次），统一由 tenacity 管理，
+                # 避免连接错误时双重重试（最多 4 次 × 等待）拉长失败路径
+                max_retries=0,
             )
             logger.info(
                 "%s: 客户端已初始化 (model=%s, base_url=%s)",
@@ -109,9 +124,13 @@ class BaseOpenAICompatibleProvider:
     # ── 聊天 ──────────────────────────────────────────────
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        """发送对话请求，返回文本回答（带重试）."""
+        """发送对话请求，返回文本回答（带重试）.
+
+        无客户端（API key 缺失）时返回空串——降级语义统一：
+        非空=成功，空=失败（错误文案会被 llm_sync 当成功结果用于回答）。
+        """
         if self._client is None:
-            return self._unavailable_response()
+            return ""
 
         @retry(
             retry=retry_if_exception(_is_transient_error),
@@ -136,7 +155,10 @@ class BaseOpenAICompatibleProvider:
             return await _call()
         except Exception as e:
             logger.error("%s: chat 调用失败（重试已用尽）: %s", self.provider_name, e)
-            return f"[{self.provider_name}] 服务暂时不可用，请稍后重试。错误: {e}"
+            # 失败必须返回空字符串（降级语义统一：非空=成功，空=失败）。
+            # 返回"[provider] 服务不可用"式非空文本会被 llm_sync 当成功结果
+            # 用于回答，甚至替换整个回答（模板无规则/数值时指纹校验为空==空）。
+            return ""
 
     # ── 流式聊天 ──────────────────────────────────────────
 
@@ -168,14 +190,10 @@ class BaseOpenAICompatibleProvider:
         messages: list[dict],
         output_schema: type[BaseModel],
         **kwargs,
-    ) -> BaseModel:
-        """结构化对话请求，返回 Pydantic 模型实例.
-
-        使用 JSON 模式确保输出符合指定的 Pydantic schema。
-        验证失败时自动重试一次。
-        """
+    ) -> BaseModel | None:
+        """返回结构化模型；失败时返回 None，由上层切换备用 Provider."""
         if self._client is None:
-            return self._degraded_structured(output_schema, "Provider 不可用")
+            return None  # 失败语义：None=失败（llm_sync 据此切换备用）
 
         schema_json = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
 
@@ -234,9 +252,7 @@ class BaseOpenAICompatibleProvider:
                             self.provider_name,
                             ve.errors(),
                         )
-                        return self._degraded_structured(
-                            output_schema, f"JSON 解析失败: {ve.errors()}"
-                        )
+                        return None
             except Exception as e:
                 if attempt == 0:
                     logger.warning(
@@ -252,9 +268,9 @@ class BaseOpenAICompatibleProvider:
                         self.provider_name,
                         e,
                     )
-                    return self._degraded_structured(output_schema, str(e))
+                    return None
 
-        return self._degraded_structured(output_schema, "未知错误")
+        return None
 
     # ── 内部辅助 ──────────────────────────────────────────
 
@@ -264,20 +280,3 @@ class BaseOpenAICompatibleProvider:
             f"[{self.provider_name}] Provider 未激活，请配置 "
             f"{self.provider_name.upper()}_API_KEY。"
         )
-
-    def _degraded_structured(
-        self,
-        output_schema: type[BaseModel],
-        reason: str,
-    ) -> BaseModel:
-        """返回降级的结构化结果——使用模型默认值."""
-        logger.warning(
-            "%s: 返回降级结构化结果 (schema=%s, reason=%s)",
-            self.provider_name,
-            output_schema.__name__,
-            reason,
-        )
-        try:
-            return output_schema()
-        except Exception:
-            return output_schema.model_validate({})

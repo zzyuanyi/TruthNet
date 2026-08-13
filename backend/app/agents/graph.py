@@ -15,9 +15,11 @@ from app.agents.nodes.finance import finance_node
 from app.agents.nodes.generate_answer import generate_answer_node
 from app.agents.nodes.load_context import load_context_node
 from app.agents.nodes.memory import memory_node
+from app.agents.nodes.pattern_match import pattern_match_node
 from app.agents.nodes.persist_turn import persist_turn_node
 from app.agents.nodes.plan_modules import plan_modules_node
 from app.agents.nodes.resolve_entity import resolve_entity_node
+from app.agents.nodes.risk import risk_node
 from app.agents.nodes.validate_evidence import validate_evidence_node
 from app.agents.state import AgentState
 
@@ -55,6 +57,8 @@ def create_agent_graph() -> StateGraph:
     graph.add_node("equity", equity_node)
     graph.add_node("events", events_node)
     graph.add_node("cross_validate", cross_validate_node)
+    graph.add_node("risk", risk_node)
+    graph.add_node("pattern_match", pattern_match_node)
     graph.add_node("build_claims", build_claims_node)
     graph.add_node("generate_answer", generate_answer_node)
     graph.add_node("validate_evidence", validate_evidence_node)
@@ -65,10 +69,12 @@ def create_agent_graph() -> StateGraph:
     graph.add_edge("load_context", "memory")
     graph.add_edge("memory", "resolve_entity")
 
+    # P1-3：无公司路径也先经过 plan_modules——行业研报查询因此能获得
+    # 期次解析（as_of/requested_period_text），不再直接跳 generate_answer
     graph.add_conditional_edges(
         "resolve_entity",
         _after_resolve,
-        {"continue": "plan_modules", "no_company": "generate_answer"},
+        {"continue": "plan_modules", "no_company": "plan_modules"},
     )
 
     graph.add_conditional_edges(
@@ -81,11 +87,15 @@ def create_agent_graph() -> StateGraph:
         },
     )
 
-    # serial for Phase B; Phase C fan-out with Send
+    # 8.11（D10）：当前为确定性串行执行（非 fan-out）——
+    # finance → equity → events → cross_validate → risk → pattern_match
+    # → build_claims → generate_answer → validate_evidence → persist_turn
     graph.add_edge("finance", "equity")
     graph.add_edge("equity", "events")
     graph.add_edge("events", "cross_validate")
-    graph.add_edge("cross_validate", "build_claims")
+    graph.add_edge("cross_validate", "risk")
+    graph.add_edge("risk", "pattern_match")
+    graph.add_edge("pattern_match", "build_claims")
     graph.add_edge("build_claims", "generate_answer")
     graph.add_edge("generate_answer", "validate_evidence")
     graph.add_edge("validate_evidence", "persist_turn")

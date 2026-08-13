@@ -7,14 +7,6 @@ import ChatPage from './pages/ChatPage';
 import CompanyProfilePage from './pages/CompanyProfilePage';
 import ComparePage from './pages/ComparePage';
 
-// FinForge 原有页面（保留，注释掉以便后续参考）
-// import Dashboard from './pages/dashboard';
-// import Login from './pages/login';
-// import Copilot from './pages/copilot';
-// import Repository from './pages/repository/index';
-// import Tasks from './pages/tasks';
-// import Service from './pages/service';
-
 export default function App() {
   return (
     <BrowserRouter>
@@ -25,19 +17,6 @@ export default function App() {
           <Route path="/company/:code" element={<CompanyProfilePage />} />
           <Route path="/compare" element={<ComparePage />} />
         </Route>
-
-        {/* FinForge 原有路由（保留供参考） */}
-        {/*
-        <Route path="/login" element={<Login />} />
-        <Route element={<AuthGuard><Layout /></AuthGuard>}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/copilot" element={<Copilot />} />
-          <Route path="/repository" element={<Repository />} />
-          <Route path="/repository/:id" element={<RepositoryDetail />} />
-          <Route path="/tasks" element={<Tasks />} />
-          <Route path="/service" element={<Service />} />
-        </Route>
-        */}
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

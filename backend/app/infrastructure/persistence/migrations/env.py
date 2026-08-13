@@ -9,10 +9,11 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, pool
 from sqlalchemy.engine import URL as EngineURL
+
+from alembic import context
 
 # Load .env file before any settings resolution
 _repo_root = (

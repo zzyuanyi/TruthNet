@@ -34,3 +34,117 @@ class CompanyRiskProfile(BaseModel):
     risk_score: RiskScore = Field(default_factory=RiskScore)
     risk_factors: list[RiskFactor] = Field(default_factory=list)
     last_updated: str = Field(default="", description="最后更新时间 (ISO 8601)")
+
+
+# ══════════════════════════════════════════════════════════
+# Phase C 后端任务 6/11 — 统一风险评分结构
+# ══════════════════════════════════════════════════════════
+
+
+class RiskSubScore(BaseModel):
+    """分项风险分."""
+
+    dimension: str
+    label: str
+    score: float = 0.0
+    weight: float = 0.0
+    contribution: float = 0.0
+    status: str = "skipped"  # success / partial / skipped / failed
+
+
+class RiskDataCoverage(BaseModel):
+    """数据覆盖."""
+
+    finance: bool = False
+    equity: bool = False
+    events: bool = False
+    benchmarks: bool = False
+    coverage_ratio: float = 0.0
+    missing_modules: list[str] = Field(default_factory=list)
+
+
+class RiskEvidence(BaseModel):
+    """风险证据."""
+
+    evidence_id: str
+    source_type: str
+    summary: str
+    claim_ids: list[str] = Field(default_factory=list)
+
+
+class RiskPatternMatch(BaseModel):
+    """造假模式匹配结果."""
+
+    pattern_id: str
+    pattern_name: str
+    triggered_rules: list[str] = Field(default_factory=list)
+    confidence: str = "low"
+    reasoning: str = ""
+    partial_coverage: bool = False
+    # Phase D #16 模式三要素（REST/Agent/WS 一致透出）
+    phase: str = ""
+    alternative_explanation: str = ""
+    regulatory_hint: str = ""
+
+
+class RiskDataReference(BaseModel):
+    """推导链中的原始数据引用。"""
+
+    evidence_id: str = ""
+    source_type: str = ""
+    field_path: str = ""
+    period: str = ""
+    value: str | None = None
+    unit: str | None = None
+
+
+class RiskDerivationSignal(BaseModel):
+    """支撑结论的一条确定性信号。"""
+
+    signal_id: str
+    signal_type: str
+    label: str
+    severity: str = "unknown"
+    explanation: str = ""
+    current: dict = Field(default_factory=dict)
+    industry_percentile: float | None = None
+    data_refs: list[RiskDataReference] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class RiskDerivationChain(BaseModel):
+    """结论 → 信号 → 数据引用 → Evidence 的推导链。"""
+
+    conclusion_id: str
+    conclusion_type: str
+    conclusion: str
+    risk_level: str = "unknown"
+    signals: list[RiskDerivationSignal] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class RiskOutput(BaseModel):
+    """统一风险评分输出（服务层 → Router/Agent 共用）."""
+
+    wind_code: str
+    sec_name: str = ""
+    as_of: str = ""
+    overall_score: float = 0.0
+    risk_level: str = "unknown"  # red/orange/yellow/green/unknown
+    sub_scores: list[RiskSubScore] = Field(default_factory=list)
+    weights: dict[str, float] = Field(default_factory=dict)
+    contributions: dict[str, float] = Field(default_factory=dict)
+    strategy_version: str = "1.0.0"
+    rule_set_version: str = ""
+    data_coverage: RiskDataCoverage = Field(default_factory=RiskDataCoverage)
+    confidence: float = 0.0
+    key_contributors: list[str] = Field(default_factory=list)
+    mitigating_factors: list[str] = Field(default_factory=list)
+    pattern_matches: list[RiskPatternMatch] = Field(default_factory=list)
+    derivation_chains: list[RiskDerivationChain] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    # 8.11：结构化真实证据（服务层直接从模块原始 Evidence 构造，
+    # 不再由 Router 伪造 source_type="risk"）
+    evidence: list[RiskEvidence] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

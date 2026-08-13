@@ -17,6 +17,7 @@ env/
 .env
 .env.local
 .env.*.local
+.env.compose
 
 # IDE
 .vscode/
@@ -51,6 +52,8 @@ data/raw/*
 !data/raw/README.md
 data/processed/*
 !data/processed/.gitkeep
+# 评测集 manifest 含赛方评测问题内容（1410/77），仅本地生成，不提交（评测集隔离）
+tests/evaluation/dataset_manifest.json
 
 # Logs
 logs/
@@ -93,3 +96,9 @@ htmlcov/
 .gguf
 .safetensors
 data/model_cache/
+.env.lite.bak
+.codegraph/
+.preview
+frontend-source.tar.gz
+public/*.tar.gz
+data/backups/

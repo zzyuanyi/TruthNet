@@ -48,6 +48,10 @@ IGNORE_DIRS: set[str] = {
     ".eggs",
     "*.egg-info",
     ".local",  # 本地环境数据目录（MySQL/Neo4j/JDK 等）
+    ".agents",  # 本地智能体技能（不入库）
+    ".codex",  # 本地 Codex 配置（不入库）
+    ".vscode",  # 本地编辑器配置
+    "model_cache",  # 本地模型缓存（BGE 大文件，不入库）
 }
 
 # 可忽略目录内的子路径前缀 (glob 风格)
@@ -115,29 +119,106 @@ def should_ignore(path: Path, repo_root: Path) -> bool:
     # 检查是否匹配可忽略路径前缀
     rel_str = str(rel).replace("\\", "/")
     for prefix in IGNORE_PATH_PREFIXES:
-        if rel_str.startswith(prefix):
+        # 目录本身（如 data/raw）也要命中：prefix="data/raw/" 时
+        # rel_str="data/raw" 不 startswith（缺尾部斜杠），须同时比较归一化值
+        normalized = prefix.rstrip("/")
+        if rel_str == normalized or rel_str.startswith(prefix):
             return True
 
     return False
 
 
+# 显式排除的本地内容（未跟踪但存在；git ls-files -o 会包含它们）
+EXCLUDE_LOCAL_PREFIXES: tuple[str, ...] = (
+    ".agents/",
+    ".codex/",
+    ".claude/",
+    "AGENTS.md",
+)
+
+
 def iter_text_files(repo_root: Path) -> list[Path]:
     """收集所有可扫描的文本文件."""
-    result: list[Path] = []
-    for p in repo_root.rglob("*"):
-        if p.is_file() and p.suffix in TEXT_EXTENSIONS:
-            if not should_ignore(p, repo_root):
-                result.append(p)
-    return result
+    return _collect_files(repo_root, suffixes=TEXT_EXTENSIONS)
 
 
 def iter_python_files(repo_root: Path) -> list[Path]:
     """收集所有可扫描的 Python 文件."""
-    result: list[Path] = []
-    for p in repo_root.rglob("*.py"):
-        if p.is_file() and not should_ignore(p, repo_root):
-            result.append(p)
-    return result
+    return _collect_files(repo_root, suffixes={".py"})
+
+
+def _collect_files(repo_root: Path, suffixes: set[str]) -> list[Path]:
+    """git ls-files 快查文件列表（不遍历 data/model_cache 等本机目录）.
+
+    曾用 repo_root.rglob("*")：即使 should_ignore 事后判断，rglob 仍会下钻
+    遍历 model_cache/.agents/.vscode 等，--ci 实测 126s 触发 doctor 30s 超时。
+    """
+    files = _git_listed_files(repo_root)
+    if files is None:
+        files = _walk_files(repo_root)
+    return [
+        p
+        for p in files
+        # suffix 或 name 命中均可（.gitignore/.env.example 等点文件 suffix 为空）
+        if (p.suffix in suffixes or p.name in suffixes)
+        and not should_ignore(p, repo_root)
+    ]
+
+
+def _git_listed_files(repo_root: Path) -> list[Path] | None:
+    """git ls-files -z：已跟踪 + 未跟踪（排除 ignore 的）.
+
+    - core.quotepath=false：中文/特殊字符路径不转义（否则输出八进制转义，
+      Path.is_file() 失效，中文文档被静默漏扫）
+    - -z + NUL 分割：路径含空格/引号也安全
+    """
+    try:
+        import subprocess
+
+        r = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "ls-files",
+                "-z",
+                "-co",
+                "--exclude-standard",
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    files: list[Path] = []
+    for raw in r.stdout.split(b"\0"):
+        rel = raw.decode("utf-8", errors="replace")
+        if not rel or rel.startswith(EXCLUDE_LOCAL_PREFIXES):
+            continue
+        p = repo_root / rel
+        if p.is_file():
+            files.append(p)
+    return files
+
+
+def _walk_files(repo_root: Path) -> list[Path]:
+    """非 git 仓库回退：按完整相对路径剪枝 os.walk.
+
+    用 should_ignore 对完整路径判断（data/raw、.claude/skills 等前缀生效），
+    而不是只按目录名过滤——否则这些前缀目录仍会被完整遍历。
+    """
+    import os
+
+    files: list[Path] = []
+    for root, dirs, names in os.walk(repo_root):
+        root_path = Path(root)
+        dirs[:] = [d for d in dirs if not should_ignore(root_path / d, repo_root)]
+        for n in names:
+            files.append(root_path / n)
+    return files
 
 
 # ============================================================
@@ -331,9 +412,16 @@ def check_env_tracked(repo_root: Path) -> list[str]:
 
 
 def check_large_files(repo_root: Path) -> list[str]:
-    """检查是否存在大文件 (>500KB)."""
+    """检查是否存在大文件 (>500KB).
+
+    用与 iter_* 相同的收集器（git ls-files / 剪枝 walk），
+    不 rglob 全库——曾遍历 data/model_cache 下 ~370MB 模型文件耗时 46s。
+    """
     issues: list[str] = []
-    for p in repo_root.rglob("*"):
+    files = _git_listed_files(repo_root)
+    if files is None:
+        files = _walk_files(repo_root)
+    for p in files:
         if p.is_file() and not should_ignore(p, repo_root):
             try:
                 size = p.stat().st_size

@@ -1,8 +1,28 @@
 """V12 错误模型 — RFC 9457 Problem Details."""
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class ErrorCode(StrEnum):
+    """V12 错误码 — DESIGN_V12 §11.6 单一事实来源.
+
+    路由层统一引用，防止错误码漂移（曾出现 COMPANY_NOT_FOUND / DB_UNAVAILABLE
+    与契约不一致，前端按契约匹配错误分支落空）。
+    """
+
+    INVALID_ARGUMENT = "INVALID_ARGUMENT"
+    COMPANY_NOT_COVERED = "COMPANY_NOT_COVERED"
+    TURN_ALREADY_RUNNING = "TURN_ALREADY_RUNNING"
+    SCHEMA_VALIDATION_FAILED = "SCHEMA_VALIDATION_FAILED"
+    RATE_LIMITED = "RATE_LIMITED"
+    LLM_TIMEOUT = "LLM_TIMEOUT"
+    GRAPH_UNAVAILABLE = "GRAPH_UNAVAILABLE"
+    DATASTORE_UNAVAILABLE = "DATASTORE_UNAVAILABLE"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    NOT_FOUND = "NOT_FOUND"
 
 
 class ProblemDetail(BaseModel):

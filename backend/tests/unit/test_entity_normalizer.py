@@ -61,7 +61,7 @@ class TestExtractWindCodeSuffix:
         assert suffix is None
 
     def test_invalid_format(self):
-        code, _suffix = extract_wind_code_suffix("INVALID")
+        code, suffix = extract_wind_code_suffix("INVALID")
         assert code == "INVALID"
 
 

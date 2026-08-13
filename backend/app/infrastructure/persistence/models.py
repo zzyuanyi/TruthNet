@@ -5,7 +5,7 @@
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON,
@@ -31,6 +31,7 @@ def _utcnow() -> datetime:
 class Base(DeclarativeBase):
     """SQLAlchemy 声明式基类."""
 
+    pass
 
 
 # ============================================================================
@@ -204,7 +205,7 @@ class BalanceSheet(Base, SystemFieldsMixin):
     statement_type: Mapped[str] = mapped_column(
         String(32),
         default="408006000",
-        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径) (详见 domain/finance/statement_type.py)",
+        comment="报表类型代码: 408006000=母公司报表(项目固定分析口径), 408001000=合并报表(数据字典保留, R1-R7 不使用) (详见 domain/finance/statement_type.py)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期 (YYYY-MM-DD)"
@@ -282,7 +283,7 @@ class IncomeStatement(Base, SystemFieldsMixin):
     statement_type: Mapped[str] = mapped_column(
         String(32),
         default="408006000",
-        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径)",
+        comment="报表类型代码: 408006000=母公司报表(项目固定分析口径), 408001000=合并报表(数据字典保留, R1-R7 不使用)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期"
@@ -350,7 +351,7 @@ class CashFlow(Base, SystemFieldsMixin):
     statement_type: Mapped[str] = mapped_column(
         String(32),
         default="408006000",
-        comment="报表类型代码: 408001000=合并报表(推荐主口径), 408006000=母公司报表(当前数据口径)",
+        comment="报表类型代码: 408006000=母公司报表(项目固定分析口径), 408001000=合并报表(数据字典保留, R1-R7 不使用)",
     )
     ann_dt: Mapped[str | None] = mapped_column(
         String(10), nullable=True, comment="公告日期"
@@ -609,6 +610,16 @@ class ConversationTurn(Base):
     module_status: Mapped[dict | None] = mapped_column(
         JSON, nullable=True, comment="各模块执行状态"
     )
+    panel_data: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="面板摘要 {risk_level, triggered_rules, key_metrics, follow_ups}（v7）",
+    )
+    response_meta: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="回答元数据 {intent, follow_ups, supporting_evidence_ids, requested_period_text}",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="创建时间"
     )
@@ -752,6 +763,19 @@ class EvidenceRef(Base):
     retrieved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="检索时间"
     )
+    # Phase C: 全局追溯字段
+    turn_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="关联轮次 ID"
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="追踪 ID"
+    )
+    module: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="来源模块: finance/equity/events"
+    )
+    source_table: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="来源表名"
+    )
 
     def __repr__(self) -> str:
         return f"<Evidence {self.evidence_id} [{self.source_type}]>"
@@ -774,13 +798,15 @@ class Claim(Base):
     )
     text: Mapped[str] = mapped_column(Text, nullable=False, comment="声明内容")
     claim_type: Mapped[str | None] = mapped_column(
-        String(32), nullable=True, comment="声明类型: fact/analysis/suggestion"
+        String(32),
+        nullable=True,
+        comment="声明类型: financial/equity/event/fact/analysis",
     )
     severity: Mapped[str] = mapped_column(
         String(16), default="low", comment="严重程度: none/low/medium/high/critical"
     )
-    confidence: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, comment="置信度: high/medium/low/unverified"
+    confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="置信度 (0-1)"
     )
     rule_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="关联规则 ID"
@@ -797,9 +823,166 @@ class Claim(Base):
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, comment="生成时间"
     )
+    # Phase C: 全局追溯字段
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="追踪 ID"
+    )
+    company_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="公司代码"
+    )
+    module: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="来源模块: finance/equity/events"
+    )
 
     def __repr__(self) -> str:
         return f"<Claim {self.claim_id} [{self.confidence}]>"
+
+
+# ============================================================================
+# Phase C 派生表 15: claim_evidence_links — Claim↔Evidence 关联 (§6.4)
+# ============================================================================
+
+
+class ClaimEvidenceLink(Base):
+    __tablename__ = "claim_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "claim_id",
+            "evidence_id",
+            "relation_type",
+            name="uq_claim_evidence_link",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    claim_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("claims.claim_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Claim ID",
+    )
+    evidence_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("evidence_refs.evidence_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Evidence ID",
+    )
+    relation_type: Mapped[str] = mapped_column(
+        String(16),
+        default="supports",
+        comment="关系类型: supports/contradicts/context",
+    )
+    sequence_no: Mapped[int] = mapped_column(Integer, default=0, comment="顺序号")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Link {self.claim_id} → {self.evidence_id}>"
+
+
+# ============================================================================
+# Phase C 派生表 16: event_clusters — 事件簇交接 (§5.5)
+# ============================================================================
+
+
+class EventCluster(Base):
+    __tablename__ = "event_clusters"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+
+    event_cluster_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="事件簇唯一 ID"
+    )
+    entity_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="公司 entity_id"
+    )
+    wind_code: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True, comment="Wind 代码"
+    )
+    topic: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="事件簇主题"
+    )
+    summary: Mapped[str] = mapped_column(Text, default="", comment="摘要")
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, comment="起始日期")
+    end_date: Mapped[date] = mapped_column(Date, nullable=False, comment="结束日期")
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, comment="事件数")
+    sentiment: Mapped[str] = mapped_column(String(16), nullable=False, comment="情感")
+    sentiment_score: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="情感得分 [-1,1]"
+    )
+    cluster_method: Mapped[str] = mapped_column(
+        String(64), default="", comment="聚类方法"
+    )
+    cluster_version: Mapped[str] = mapped_column(
+        String(32), default="", comment="聚类版本"
+    )
+    dataset_version: Mapped[str] = mapped_column(
+        String(64), default="", comment="数据集版本"
+    )
+    quality_flags: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="质量标记"
+    )
+    evidence_ids: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="关联 Evidence ID 列表"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="更新时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<EventCluster {self.event_cluster_id} [{self.topic[:20]}]>"
+
+
+class EventClusterSource(Base):
+    __tablename__ = "event_cluster_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_cluster_id",
+            "source_record_id",
+            name="uq_event_cluster_source",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_cluster_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("event_clusters.event_cluster_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="事件簇 ID",
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="来源类型"
+    )
+    source_record_id: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="来源记录 ID"
+    )
+    evidence_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="关联 Evidence ID"
+    )
+    source_title: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="来源标题"
+    )
+    source_uri: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="来源 URI"
+    )
+    published_at: Mapped[date | None] = mapped_column(
+        Date, nullable=True, comment="发布日期"
+    )
+    content_hash: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, comment="内容哈希"
+    )
+    sequence_no: Mapped[int] = mapped_column(Integer, default=0, comment="顺序号")
+
+    def __repr__(self) -> str:
+        return f"<ClusterSource {self.event_cluster_id} {self.source_record_id}>"
 
 
 # ============================================================================
@@ -848,3 +1031,250 @@ class RiskAssessment(Base):
 
     def __repr__(self) -> str:
         return f"<RiskAssessment {self.wind_code} [{self.level}]>"
+
+
+# ============================================================================
+# Phase C 派生表 17: industry_benchmarks — 行业分位基准（数据任务 3）
+# ============================================================================
+
+
+class IndustryBenchmark(Base):
+    __tablename__ = "industry_benchmarks"
+    __table_args__ = (
+        UniqueConstraint(
+            "industry_l1",
+            "metric_id",
+            "period",
+            "statement_scope",
+            "dataset_version",
+            name="uq_industry_benchmark_key",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    benchmark_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="基准唯一 ID"
+    )
+    industry_l1: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, comment="申万一级行业"
+    )
+    industry_l2: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="申万二级行业"
+    )
+    metric_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True, comment="指标 ID"
+    )
+    rule_id: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="关联规则 R1-R7"
+    )
+    period: Mapped[str] = mapped_column(
+        String(10), nullable=False, index=True, comment="报告期 YYYYMMDD"
+    )
+    statement_scope: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="parent_company", comment="报表口径"
+    )
+    company_type: Mapped[int | None] = mapped_column(
+        SmallInteger, nullable=True, comment="公司类型代码 (1=非金融)"
+    )
+    sample_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="有效样本数"
+    )
+    mean_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="均值"
+    )
+    std_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="标准差"
+    )
+    min_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="最小值"
+    )
+    p05: Mapped[float | None] = mapped_column(Float, nullable=True, comment="5 分位")
+    p25: Mapped[float | None] = mapped_column(Float, nullable=True, comment="25 分位")
+    p50: Mapped[float | None] = mapped_column(Float, nullable=True, comment="中位数")
+    p75: Mapped[float | None] = mapped_column(Float, nullable=True, comment="75 分位")
+    p95: Mapped[float | None] = mapped_column(Float, nullable=True, comment="95 分位")
+    max_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="最大值"
+    )
+    dataset_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="数据集版本"
+    )
+    rule_set_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="规则集版本"
+    )
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="计算时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<IndustryBenchmark {self.industry_l1}/{self.metric_id}@{self.period}>"
+
+
+# ============================================================================
+# Phase C 派生表 18: rating_changes — 研报评级拐点（数据任务 5）
+# ============================================================================
+
+
+class RatingChange(Base):
+    __tablename__ = "rating_changes"
+    __table_args__ = (
+        UniqueConstraint(
+            "wind_code",
+            "quarter",
+            "institution",
+            "report_id",
+            name="uq_rating_change_key",
+        ),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"},
+    )
+
+    rating_change_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="拐点唯一 ID"
+    )
+    wind_code: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True, comment="Wind 代码"
+    )
+    quarter: Mapped[str] = mapped_column(
+        String(8), nullable=False, index=True, comment="季度 YYYYQn"
+    )
+    institution: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="研究机构"
+    )
+    previous_rating: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="上次评级（原始）"
+    )
+    current_rating: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="本次评级（原始）"
+    )
+    direction: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="方向: down/up/keep"
+    )
+    report_id: Mapped[str] = mapped_column(
+        String(128), nullable=True, comment="研报 ID"
+    )
+    published_at: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, comment="发布日期 YYYY-MM-DD"
+    )
+    confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="解析置信度 [0,1]"
+    )
+    evidence_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="关联 Evidence ID"
+    )
+    dataset_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="数据集版本"
+    )
+
+    def __repr__(self) -> str:
+        return f"<RatingChange {self.wind_code}/{self.quarter} {self.direction}>"
+
+
+# ============================================================================
+# Phase C 派生表 19: analysis_runs — 直接 REST 分析溯源（任务 16）
+# ============================================================================
+
+
+class AnalysisRun(Base):
+    __tablename__ = "analysis_runs"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+
+    run_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="分析运行唯一 ID"
+    )
+    trace_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, comment="追踪 ID"
+    )
+    endpoint: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="端点标识"
+    )
+    company_codes: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="分析公司列表"
+    )
+    period: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, comment="报告期"
+    )
+    statement_scope: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="报表口径"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="completed", comment="状态"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+
+    def __repr__(self) -> str:
+        return f"<AnalysisRun {self.run_id} {self.endpoint}>"
+
+
+# ============================================================================
+# 派生表 16: report_jobs — PDF 报告任务（Phase D #8）
+# ============================================================================
+
+
+class ReportJob(Base):
+    """PDF 报告长任务（Phase D #8，V12 §10.8：analysis_runs 不可复用）.
+
+    状态机：queued → running → succeeded | failed | cancelled。
+    幂等：idempotency_key 唯一约束，同一请求重试不重复建任务。
+    """
+
+    __tablename__ = "report_jobs"
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_0900_ai_ci"}
+
+    report_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: f"report_{uuid.uuid4().hex[:12]}"
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="关联会话 ID"
+    )
+    company_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True, comment="公司代码"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="queued",
+        index=True,
+        comment="queued/running/succeeded/failed/cancelled",
+    )
+    progress: Mapped[int] = mapped_column(Integer, default=0, comment="进度 0-100")
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True, comment="幂等键（唯一约束）"
+    )
+    request_payload: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="创建请求载荷"
+    )
+    file_path: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="报告文件相对路径"
+    )
+    file_sha256: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="文件 SHA-256"
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, comment="重试次数")
+    error_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="错误码"
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="错误信息"
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="追踪 ID"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, comment="创建时间"
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="开始时间"
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="完成时间"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        onupdate=_utcnow,
+        comment="更新时间",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReportJob {self.report_id} status={self.status}>"

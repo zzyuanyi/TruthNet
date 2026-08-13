@@ -41,7 +41,10 @@ STEPS = {
     "mysql": {
         "name": "MySQL 全量入库",
         "desc": "导入 companies/三表/股东/公告/研报 共 7 表",
-        "cmd": [sys.executable, str(PROJECT_ROOT / "scripts" / "task1_mysql_import.py")],
+        "cmd": [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "task1_mysql_import.py"),
+        ],
         "cwd": str(PROJECT_ROOT),
         "timeout_min": 30,
     },
@@ -49,7 +52,8 @@ STEPS = {
         "name": "Neo4j 股权图谱",
         "desc": "导入康美 fixture 至 Neo4j 图数据库",
         "cmd": [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             (
                 "import asyncio; from app.infrastructure.graph.neo4j.importer import main_import; "
                 "print(asyncio.run(main_import(source='fixture', mock=True)))"
@@ -61,7 +65,10 @@ STEPS = {
     "chroma": {
         "name": "ChromaDB 研报向量化",
         "desc": "55K 研报 → 147K 文本块 → BGE 向量嵌入（⚠ 纯 CPU 约 2-3 小时）",
-        "cmd": [sys.executable, str(PROJECT_ROOT / "scripts" / "task3_chromadb_import.py")],
+        "cmd": [
+            sys.executable,
+            str(PROJECT_ROOT / "scripts" / "task3_chromadb_import.py"),
+        ],
         "cwd": str(PROJECT_ROOT),
         "timeout_min": 240,
     },
@@ -102,11 +109,15 @@ def _run_step(step_key: str) -> bool:
             log(f"  ✓ {info['name']} — PASS ({elapsed/60:.1f} min)")
             return True
         else:
-            log(f"  ✗ {info['name']} — FAILED (exit={result.returncode}, {elapsed/60:.1f} min)")
+            log(
+                f"  ✗ {info['name']} — FAILED (exit={result.returncode}, {elapsed/60:.1f} min)"
+            )
             return False
     except subprocess.TimeoutExpired:
         elapsed = time.time() - t0
-        log(f"  ✗ {info['name']} — TIMEOUT ({elapsed/60:.1f} min > {info['timeout_min']} min)")
+        log(
+            f"  ✗ {info['name']} — TIMEOUT ({elapsed/60:.1f} min > {info['timeout_min']} min)"
+        )
         return False
     except FileNotFoundError as e:
         log(f"  ✗ {info['name']} — COMMAND NOT FOUND: {e}")
@@ -117,6 +128,7 @@ def _run_step(step_key: str) -> bool:
 # Prerequisites Check
 # ====================================================================
 
+
 def check_prereqs(requested_steps: set[str]) -> bool:
     """检查所需步骤的前置条件."""
     _banner("PRECHECK — Prerequisites")
@@ -124,7 +136,9 @@ def check_prereqs(requested_steps: set[str]) -> bool:
     all_ok = True
 
     # Python
-    log(f"  Python: {sys.executable} ({sys.version_info.major}.{sys.version_info.minor})")
+    log(
+        f"  Python: {sys.executable} ({sys.version_info.major}.{sys.version_info.minor})"
+    )
 
     # Data files (required for mysql step)
     if "mysql" in requested_steps:
@@ -150,10 +164,14 @@ def check_prereqs(requested_steps: set[str]) -> bool:
     if {"alembic", "mysql", "chroma"} & requested_steps:
         try:
             import pymysql
+
             conn = pymysql.connect(
-                host="localhost", port=3306,
-                user="truthnet", password="truthnet123",
-                database="truthnet", connect_timeout=5,
+                host="localhost",
+                port=3306,
+                user="truthnet",
+                password="truthnet123",
+                database="truthnet",
+                connect_timeout=5,
             )
             conn.close()
             log("  ✓ MySQL (localhost:3306)")
@@ -165,6 +183,7 @@ def check_prereqs(requested_steps: set[str]) -> bool:
     if "neo4j" in requested_steps:
         try:
             from neo4j import GraphDatabase
+
             driver = GraphDatabase.driver("bolt://localhost:7687")
             driver.verify_connectivity()
             driver.close()
@@ -179,6 +198,7 @@ def check_prereqs(requested_steps: set[str]) -> bool:
 # ====================================================================
 # Main
 # ====================================================================
+
 
 def main():
     # 解析参数

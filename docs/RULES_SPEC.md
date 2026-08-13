@@ -1,8 +1,14 @@
 # 织网鉴真 · 财务反欺诈规则引擎规格说明书
 
-> 版本：1.0.0 | 日期：2026-07-22 | 负责人：数据组
-> 适用报表口径：母公司报表（statement_type=408006000），合并报表数据可用时切换口径
-> 适用公司类型：非金融企业（comp_type_code=1），银行/保险/证券排除
+> 版本：1.0.2 | 日期：2026-08-02 | 负责人：数据组
+> 适用报表口径：**固定母公司报表（statement_type=408006000，statement_scope=parent_company）**。
+> R1–R7 一律只读取 408006000，不查询合并报表（408001000），固定单一分析口径，不做口径切换。
+> 若某字段缺少母公司报表数据，返回 `insufficient_data` 并输出"缺少母公司报表数据" warning，
+> 绝不回退合并口径。
+> （数据库可保存其他 statement_type 的原始记录，但 R1–R7 当前版本不使用 408001000。）
+> 适用公司类型：非金融企业（comp_type_code=1）；银行/保险/证券（2/3/4）排除为
+> `not_applicable`；NULL/非法类型为 `insufficient_data`（COMPANY_TYPE_UNKNOWN），
+> 不得默认当作非金融企业。
 
 ---
 
@@ -25,10 +31,18 @@
 ### 1.1 数据口径
 
 ```text
-statement_scope = "parent_company"   # 母公司报表（408006000）
-fallback_scope  = "consolidated"     # 合并报表（408001000），仅在母公司字段缺失时用
-comp_type_filter = [1]               # 仅非金融企业
+statement_type = "408006000"         # 母公司报表 — 固定分析口径（唯一）
+statement_scope = "parent_company"   # 恒为 parent_company
+                                       # 所有规则状态（triggered / not_triggered /
+                                       # not_applicable / insufficient_data）的
+                                       # quality 均携带 statement_scope / statement_type /
+                                       # coverage / data_completeness / missing_periods /
+                                       # company_type_status
+comp_type_filter = [1]               # 仅非金融企业；2/3/4 → not_applicable；
+                                       # NULL/非法 → insufficient_data(COMPANY_TYPE_UNKNOWN)
 ```
+
+> 说明：408001000（合并报表）仅作为 Wind 数据字典保留，数据库可存储，R1–R7 不读取。
 
 ### 1.2 增速计算约定
 
@@ -1111,8 +1125,9 @@ Phase C 阶段目标: 将规则定义从文档迁移到 rule_definitions 数据�
 | 分母为 0 | 应用分母下限保护（1 万元），标记 `denominator_small` |
 | 历史数据不足 | 降低 `history_window`，置信度降级，标记 `short_history` |
 | 行业样本 < 5 | 跳过行业分位比较，仅用 absolute_threshold |
-| 金融企业 | `comp_type_code != 1` → 规则整体 `not_applicable` |
-| 母公司字段缺失但合并表有值 | 使用合并表 fallback，标记 `statement_scope=consolidated`，置信度降级 |
+| 金融企业 | `comp_type_code` 为 2/3/4 → 规则整体 `not_applicable`，warning=`COMPANY_TYPE_FINANCIAL_EXCLUDED` |
+| 公司类型 NULL/非法 | `comp_type_code` 为 NULL/非法 → 规则整体 `insufficient_data`，warning=`COMPANY_TYPE_UNKNOWN`，禁止默认当作非金融 |
+| 母公司字段缺失 | 返回 `insufficient_data` / 模块 `partial`，warning 明确"缺少母公司报表数据（408006000）"，**不使用合并表 fallback** |
 | 单季度数据异常 | 用 `z-score` 或 `IQR` 检测离群值，标记 `outlier_detected` |
 | 增速为负但背离方向相反 | 正常记录，不影响严重程度判定方向（如应收和营收同时大幅下滑不触发 R1） |
 

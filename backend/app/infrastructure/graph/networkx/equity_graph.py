@@ -4,9 +4,13 @@
 内存图分析，无需外部服务。
 """
 
+import logging
+
 import networkx as nx
 
 from app.domain.equity.models import EquityEdge, EquityGraph, EquityNode, OwnershipChain
+
+logger = logging.getLogger(__name__)
 
 
 class NetworkXEquityGraph:
@@ -50,9 +54,27 @@ class NetworkXEquityGraph:
     async def get_graph(
         self, company_code: str, depth: int = 3, direction: str = "upstream"
     ) -> EquityGraph:
-        """获取股权穿透图谱 — 向上游穿透股东."""
+        """获取股权穿透图谱 — 异步入口（sync 核心）."""
+        return self._get_graph_sync(company_code, depth=depth, direction=direction)
+
+    def _get_graph_sync(
+        self, company_code: str, depth: int = 3, direction: str = "upstream"
+    ) -> EquityGraph:
+        """获取股权穿透图谱 — 向上游穿透股东（同步核心）."""
         nodes = []
-        edges = []
+
+        # 8.09 七轮审查：适配器边界规范化 Wind Code——真实 CompanyResolver
+        # 返回 "600518.SH" 而内置图键为裸码 "600518"；600518 / 600518.SH /
+        # 600518.XSHG 必须解析为同一内部键，否则 Lite 路径查空图
+        # （曾复现：真实 Resolver → nodes=0 / paths=0，Lite 实际不可用）。
+        try:
+            from app.infrastructure.graph.normalizer import parse_wind_code
+
+            digits, _ = parse_wind_code(company_code)
+        except ValueError:
+            logger.warning("NetworkX: 无法解析 Wind Code: %s", company_code)
+            return EquityGraph(company_id=company_code)
+        company_code = digits
 
         if company_code not in self._graph:
             return EquityGraph(company_id=company_code)
@@ -73,23 +95,31 @@ class NetworkXEquityGraph:
                         label=attrs.get("label", node),
                         type=attrs.get("type", "company"),
                         depth=attrs.get("depth", 0),
+                        entity_id=node,
+                        source_system="networkx",
+                        mock=True,
                     )
                 )
 
         # 收集子图内所有边（入边方向 = 股东 → 公司，去重）
-        edges_seen: set[tuple[str, str]] = set()
+        edges_seen: dict[tuple[str, str], EquityEdge] = {}
         for node in bfs_nodes:
             for u, v, data in self._graph.in_edges(node, data=True):
                 edge_key = (u, v)
                 if u in nodes_seen and edge_key not in edges_seen:
-                    edges_seen.add(edge_key)
-                    edges.append(
-                        EquityEdge(
-                            source=u,
-                            target=v,
-                            relation=data.get("relation", "holds"),
-                            stake_ratio=data.get("stake_ratio"),
-                        )
+                    stake = data.get("stake_ratio")
+                    rel_id = f"nx_{u}_{v}"
+                    edges_seen[edge_key] = EquityEdge(
+                        source=u,
+                        target=v,
+                        relation=data.get("relation", "holds"),
+                        stake_ratio=stake,
+                        ownership_pct=round(stake * 100, 4)
+                        if stake is not None
+                        else None,
+                        relationship_id=rel_id,
+                        source_system="networkx",
+                        mock=True,
                     )
 
         # 控制链
@@ -105,15 +135,23 @@ class NetworkXEquityGraph:
                 )
                 for path in simple_paths:
                     total = 1.0
+                    edge_ids: list[str] = []
                     for i in range(len(path) - 1):
                         ed = self._graph.get_edge_data(path[i + 1], path[i])
                         if ed:
                             total *= ed.get("stake_ratio", 0) or 0
+                        edge_ids.append(f"nx_{path[i + 1]}_{path[i]}")
                     chains.append(
                         OwnershipChain(
                             path=path,
                             total_stake=total,
                             depth=len(path) - 1,
+                            edge_ids=edge_ids,
+                            final_control_pct=round(total * 100, 4),
+                            # 8.09 五轮审查：Lite 内置图同样是持股路径（十大股东
+                            # 语义），不得标记 control——与 Neo4j 主路径语义一致
+                            path_type="ownership",
+                            source_system="networkx",
                         )
                     )
             except (nx.NodeNotFound, nx.NetworkXNoPath):
@@ -122,14 +160,17 @@ class NetworkXEquityGraph:
         return EquityGraph(
             company_id=company_code,
             nodes=nodes,
-            edges=edges,
+            edges=list(edges_seen.values()),
             control_chains=chains,
+            graph_version="networkx-lite",
+            dataset_version="lite-fixture",
+            source_system="networkx",
         )
 
     async def get_control_chains(
         self, company_code: str, max_depth: int = 5
     ) -> list[OwnershipChain]:
-        """获取控制链."""
+        """获取股权路径（持股或控制关系，随 path_type 区分）."""
         graph = await self.get_graph(company_code, depth=max_depth)
         return graph.control_chains
 
