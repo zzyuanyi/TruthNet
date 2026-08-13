@@ -1,7 +1,8 @@
 # 素材截图说明（成员 A · 子任务 3a）
 
-> 截图无法由脚本自动生成，需在本地手动执行下列命令后截图。
-> 每张截图对应的数据已经在 `docs/数据表.md` 和 `docs/FINANCE_FIELDS_MAPPING.md` 里备好，截图后直接对号入座。
+> ✅ **截图已自动生成**（用 matplotlib 渲染真实数据，中文字体 Microsoft YaHei）。
+> 下面保留原始命令，方便需要重新截图/核对数据时使用。
+> 每张截图对应的数据在 `docs/数据表.md` 和 `docs/FINANCE_FIELDS_MAPPING.md` 里。
 
 ---
 
