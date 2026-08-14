@@ -67,7 +67,12 @@ def test_apply_missing_test_env_raises(acceptance_server, tmp_path):
 def test_apply_overrides_before_settings_instance_picks_test_db(
     acceptance_server, tmp_path, monkeypatch
 ):
-    """顺序契约回归：注入先于 Settings 实例化 → 测试库身份。"""
+    """顺序契约回归：注入先于 Settings 实例化 → 测试库身份。
+
+    必须自包含：Settings 显式传入临时 _env_file（不依赖仓库根 .env——
+    CI 环境无 .env，此前依赖真实 .env 导致 CI 失败）；MYSQL_TEST_* 环境
+    变量一并清除，避免外部环境残留干扰。
+    """
     env = _write_env(
         tmp_path / ".env",
         [
@@ -81,7 +86,14 @@ def test_apply_overrides_before_settings_instance_picks_test_db(
     )
     saved = {
         k: monkeypatch.delenv(k, raising=False)
-        for k in ("MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE")
+        for k in (
+            "MYSQL_USER",
+            "MYSQL_PASSWORD",
+            "MYSQL_DATABASE",
+            "MYSQL_TEST_USER",
+            "MYSQL_TEST_PASSWORD",
+            "MYSQL_TEST_DATABASE",
+        )
     }
     try:
         overrides = acceptance_server.apply_test_env_overrides(env)
@@ -89,9 +101,10 @@ def test_apply_overrides_before_settings_instance_picks_test_db(
 
         from app.core.config import Settings
 
-        fresh = Settings()
+        fresh = Settings(_env_file=env)
         assert fresh.MYSQL_DATABASE == "truthnet_test"
         assert fresh.MYSQL_USER == "truthnet_test"
+        assert fresh.MYSQL_TEST_DATABASE == "truthnet_test"
         assert fresh.MYSQL_DATABASE == fresh.MYSQL_TEST_DATABASE
     finally:
         for key, value in saved.items():
