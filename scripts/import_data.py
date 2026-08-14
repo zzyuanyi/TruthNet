@@ -189,6 +189,16 @@ def _exchange_from_wind(wind_code: str) -> str | None:
     return None
 
 
+def _normalize_optional_text(value: object) -> str | None:
+    """行业补全档案 v1.1 §8：None/nan/none/null/空白 → None，杜绝 "nan" 字符串落库。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return None
+    return text
+
+
 # ═══════════════════════════════════════════════════════════
 # 导入函数（所有读取/映射/规范化逻辑，仅在 dry_run=False 时写库）
 # ═══════════════════════════════════════════════════════════
@@ -280,8 +290,12 @@ def import_companies(
                     "industry_l2": r.get("industry_l2")
                     if pd.notna(r.get("industry_l2"))
                     else None,
-                    "industry_source": str(r.get("source", "")),
-                    "industry_as_of": NOW.date(),
+                    # 行业补全档案 v1.1 §8：禁止把 NaN 字符串写进 source
+                    "industry_source": _normalize_optional_text(r.get("source")),
+                    # 行业补全档案 v1.1 §2.1：仅有行业值的行才写 as_of
+                    "industry_as_of": (
+                        NOW.date() if pd.notna(r.get("industry_l1")) else None
+                    ),
                     "source_file": "industry_mapping.csv",
                     "source_row": i,
                     "source_type": "industry_mapping",
@@ -304,8 +318,9 @@ def import_companies(
                 "processed": 0,
                 "failed": 0,
             }
-        # 行业导入禁止覆盖已有 sec_name/aliases（台积电类污染防护）：
-        # 重导只更新行业与审计字段，名称仅首次 INSERT 写入（主表提供）。
+        # 行业导入禁止覆盖已有 sec_name/aliases（台积电类污染防护）；
+        # 行业补全档案 v1.1 §7.4：行业字段写权统一移交 scripts/industry_fill.py，
+        # 重导不再更新行业列（防止旧 CSV 抹掉 apply 后的补全结果）。
         result = _batch_upsert(
             engine,
             "companies",
@@ -313,10 +328,6 @@ def import_companies(
             _UNIQUE_KEYS["companies"],
             update_columns=[
                 "exchange_code",
-                "industry_l1",
-                "industry_l2",
-                "industry_source",
-                "industry_as_of",
                 "source_file",
                 "source_row",
                 "source_type",
@@ -395,8 +406,9 @@ def import_companies(
             "failed": 0,
         }
 
-    # 回退导入：仅更新 exchange_code、industry_l1、source_file 等审计字段，
-    # 不覆盖已有的 sec_name、aliases（P0 修复）
+    # 回退导入：仅更新 exchange_code、source_file 等审计字段，
+    # 不覆盖已有的 sec_name、aliases（P0 修复）；
+    # 行业补全档案 v1.1 §7.4：行业列写权移交 scripts/industry_fill.py。
     result = _batch_upsert(
         engine,
         "companies",
@@ -404,8 +416,6 @@ def import_companies(
         _UNIQUE_KEYS["companies"],
         update_columns=[
             "exchange_code",
-            "industry_l1",
-            "industry_l2",
             "source_file",
             "source_row",
             "source_type",
