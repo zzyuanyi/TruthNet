@@ -208,7 +208,7 @@ python scripts/backfill_company_names.py         # 公司名称回填（正式�
 python scripts/neo4j_full_import.py              # Neo4j 全量图谱（幂等增量）
 # 重建（替换旧图）加 --replace-graph-version；防误删保护：失败只删本次新建，
 #    验收通过后才删旧关系（详见 data/raw/README.md）
-python scripts/industry_fill.py                  # 行业分类补全（生成 industry_mapping.csv）
+python scripts/industry_fill.py --database truthnet_test --dry-run  # 行业分类补全（唯一入口，--database 必填；默认 dry-run 零写入，--apply 单事务写库 + 重生成 industry_mapping.csv + 重建 industry_benchmarks，见竞赛管理档案 v1.1）
 
 # ===== Chroma 嵌入链路（需先导入 MySQL 研报数据）=====
 pip install -r requirements-chroma.txt           # 安装 ~2GB PyTorch 依赖（仅首次）
