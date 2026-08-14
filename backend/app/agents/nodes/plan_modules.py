@@ -13,7 +13,16 @@ from datetime import date
 
 from pydantic import BaseModel
 
-from app.agents.state import AgentState, ExecutionPlan
+from app.agents.state import (
+    AgentState,
+    ComparisonSpec,
+    ExecutionPlan,
+    validate_comparison_spec,
+)
+from app.domain.comparison.scope_registry import (
+    COMPARISON_FULL_COMPOSITE_CUES,
+    COMPARISON_FULL_SCOPE_WORDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,25 +265,12 @@ _COMPANY_FACT_TEMPLATES = (
     "股本总额",
 )
 
-_UNSUPPORTED_INDICATOR_PATTERNS = (
-    "应收账款周转率",
-    "存货周转率",
-    "总资产周转率",
-)
-_INDICATOR_PATTERNS: list[tuple[str, str]] = [
-    ("资产负债率", "debt_to_assets"),
-    ("应收账款余额", "accounts_receivable"),
-    ("应收账款", "accounts_receivable"),
-    ("经营活动现金流", "operating_cash_flow"),
-    ("经营现金流", "operating_cash_flow"),
-    ("营业收入", "operating_revenue"),
-    ("总资产", "total_assets"),
-    ("总负债", "total_liabilities"),
-    ("净利润", "net_profit"),
-    ("存货", "inventories"),
-]
+# v3.3.3 批次 A（方案 §5.3）：中文指标语义入口收敛到
+# app.application.services.indicator_semantics（单一 canonical ID 表），
+# 此处不再维护 _UNSUPPORTED_INDICATOR_PATTERNS / _INDICATOR_PATTERNS。
+# 2026-08-12 修订：移除"分析"——"分析一下资产负债率"是明确指标短答，
+# "分析资产负债率异常原因"仍由"异常/原因"等诊断词路由到诊断分支。
 _INDICATOR_DIAGNOSIS_CUES = (
-    "分析",
     "风险",
     "造假",
     "舞弊",
@@ -308,6 +304,60 @@ _ANALYSIS_CUES = (
 
 _RESEARCH_CUES = ("研报", "行业", "板块", "观点")
 _CONTEXT_CUES = ("它", "该公司", "这家公司", "继续", "再看", "刚才", "前面")
+
+# v3.3.3 批次 C（方案 §5.6）：同主体跨指标比较语义 cue——
+# "和营业收入增速对比呢" 由 Resolver 的
+# _SINGLE_COMPANY_COMPARISON_EXCLUSIONS 排除出公司比较（含"增速"），
+# 此处以「比较词 + 当前指标 + 历史成功指标」确定性识别。
+_SAME_COMPANY_COMPARE_CUES = ("对比", "比较")
+
+# v3.3.3 批次 D（方案 §2.4/§5.6）+ v3.3.4（方案 §2.1/§4.1）：全面比较词——
+# 恰好两家 finalized → overview 预览 + requested_scope=full；不足两家或
+# 三家及以上 → comparison_guide（页面）。风险维度词 → 诚实路由
+# （对话内暂无双公司风险执行能力）。
+# 收口复核审查 P2a：范围词统一取自 domain/comparison/scope_registry
+# （与实体层 comparison operator 同一来源：全面/综合/多维/全方位/整体
+# + 计划层专属复合 cue 财务与风险/财务和风险）。
+_FULL_COMPARISON_CUES = (
+    tuple(sorted(COMPARISON_FULL_SCOPE_WORDS)) + COMPARISON_FULL_COMPOSITE_CUES
+)
+_RISK_COMPARE_CUES = ("风险",)
+# v3.3.3 收口批次 D（方案 §3.6）：指标回答语义操作 cue
+_ASSESSMENT_CUES = ("正常吗", "正常么", "合理吗", "健康吗", "偏高", "偏低")
+
+
+def _detect_answer_operation(user_query: str) -> str:
+    """指标回答语义操作：assessment（需基准）/ value（只答数值）。
+
+    trend（多期间序列）暂未接入查询，诚实保留枚举（方案 §3.6），
+    命中「趋势/变化」问句时仍走 value 短答 + 诊断路由兜底。
+    """
+    query = user_query or ""
+    if any(cue in query for cue in _ASSESSMENT_CUES):
+        return "assessment"
+    return "value"
+
+
+def _detect_comparison_operation(user_query: str) -> str:
+    """双公司比较的数值运算方向（方案 §5.1 operation）。
+
+    "低多少/更低" → less_than（B-A）；"高多少/高出/更高" → greater_than
+    （A-B）；其余默认 difference（A-B，方向由符号决定）。
+    """
+    query = user_query or ""
+    if "低多少" in query or "更低" in query:
+        return "less_than"
+    if "高多少" in query or "高出" in query or "更高" in query:
+        return "greater_than"
+    return "difference"
+
+
+def _recent_executed_metric_ids(state: AgentState) -> list:
+    """取历史最近成功执行的指标（结构化，最近优先）。"""
+    memory_context = state.get("memory_context")
+    if memory_context is None:
+        return []
+    return list(getattr(memory_context, "recent_executed_metrics", None) or [])
 
 
 class _ChitchatResult(BaseModel):
@@ -361,15 +411,28 @@ def detect_company_fact(user_query: str) -> str | None:
 
 
 def detect_indicator(user_query: str) -> str | None:
-    """识别可确定性短答的基础财务指标（Phase D #3A）。"""
+    """识别可确定性短答的财务指标（Phase D #3A）。
+
+    v3.3.3 批次 A：本函数保留为兼容 wrapper，语义解析委托
+    indicator_semantics 服务（canonical ID、最长匹配、unsupported
+    同表竞争、环比/同比修饰）。原 2026-08-12 修订语义保持不变：
+    - "康美环比怎么样"（无指标）→ None，不误判指标短答；
+    - "营收环比" → operating_revenue_mom（query 层诚实 unsupported）；
+    - "营收同比" → operating_revenue_growth（严格同比）；
+    - 诊断 cue（风险/异常等）优先于指标识别 → None。
+    """
     query = user_query or ""
     if any(cue in query for cue in _INDICATOR_DIAGNOSIS_CUES):
         return None
-    if any(pattern in query for pattern in _UNSUPPORTED_INDICATOR_PATTERNS):
+    from app.application.services.indicator_semantics import (
+        resolve_indicator_semantics,
+    )
+
+    result = resolve_indicator_semantics(query)
+    if result.executable and result.metric_ids:
+        return result.metric_ids[0]
+    if result.reason in ("unsupported", "modifier_unsupported"):
         return "unsupported"
-    for pattern, indicator in _INDICATOR_PATTERNS:
-        if pattern in query:
-            return indicator
     return None
 
 
@@ -484,11 +547,258 @@ def plan_modules_node(state: AgentState) -> dict:
 
     company = state.get("company")
 
+    # 2026-08-12 四轮审查 P2-2：实体解析失败/候选截断为确定性错误——
+    # 直接产出 entity_error intent，不进入 chitchat LLM 检测
+    # （generate_answer 已按 state 字段给明确文案，无意义延迟与费用）。
+    if state.get("entity_resolution_error") or state.get("candidates_truncated"):
+        return {
+            "plan": ExecutionPlan(
+                intent="entity_error",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # v3.1 P0-3：relation 不可执行（reference/sequence/ambiguous）且身份
+    # 已确认 → relation_clarify（澄清主次/先后关系），不派生 company、
+    # 不进入 comparison_guide、不启动模块执行。身份未确认时先走候选确认。
+    resolution = state.get("entity_resolution_result")
+    # v3.3.2-R1 §8：复用已验证的 Interpreter plan_hint（避免同一 query
+    # 为主体调用一次、再为意图调用第二次语义 LLM）；不覆盖实体权威结果
+    plan_hint = ""
+    if (
+        resolution is not None
+        and getattr(resolution, "subject_interpreter_status", "not_needed")
+        == "completed"
+    ):
+        interp = getattr(resolution, "subject_interpretation", None)
+        if interp is not None:
+            plan_hint = getattr(interp, "plan_hint", "") or ""
+    if resolution is not None:
+        rel_intent = getattr(resolution, "intent", "")
+        rel_confirm = bool(getattr(resolution, "needs_confirmation", False))
+        if rel_intent in ("reference", "sequence", "ambiguous") and not rel_confirm:
+            return {
+                "plan": ExecutionPlan(
+                    intent="relation_clarify",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+
+    # v3.3.3 批次 C（方案 §2.2/§5.6）：同主体跨指标比较——
+    # 单主体（无 comparison_targets）+ 当前命中可执行指标 +
+    # 历史最近成功指标（不同 ID）+ 比较词 → 结构化轻量比较计划。
+    # 插在 comparison_guide 之前：此类问题 Resolver 已排除公司比较语义
+    # （"增速"等排除词），不得落入单指标短答或关系澄清。
+    comparison_targets = state.get("comparison_targets") or []
+    if company is not None and not comparison_targets:
+        current_indicator = detect_indicator(user_query)
+        if (
+            current_indicator
+            and current_indicator != "unsupported"
+            and any(cue in user_query for cue in _SAME_COMPANY_COMPARE_CUES)
+        ):
+            hist_metrics = _recent_executed_metric_ids(state)
+            hist_id = ""
+            for item in hist_metrics:
+                metric_id = getattr(item, "metric_id", "")
+                status = getattr(item, "status", "ok")
+                # 收口批次 B（方案 §3.4）：历史指标必须属于当前公司，
+                # 无归属的旧记录不得用于跨指标比较（防切换公司后串用）
+                item_code = getattr(item, "company_code", "")
+                if (
+                    metric_id
+                    and metric_id != current_indicator
+                    and status == "ok"
+                    and item_code
+                    and item_code == company.wind_code
+                ):
+                    hist_id = metric_id
+                    break
+            if hist_id:
+                spec = ComparisonSpec(
+                    scope="same_company_cross_indicator",
+                    mode="indicator",
+                    metric_ids=[hist_id, current_indicator],
+                    operation="difference",
+                    period_policy=(
+                        "explicit_period"
+                        if as_of_kind == "report_period"
+                        else "latest_common_period"
+                    ),
+                )
+                # 收口批次 B（方案 §3.2）：plan 后校验一次，非法回退单指标短答
+                if validate_comparison_spec(spec, [company.wind_code]):
+                    pass  # 不合法 → 落到下方 indicator 短答
+                else:
+                    return {
+                        "plan": ExecutionPlan(
+                            intent="light_comparison",
+                            requested_modules=[],
+                            cross_checks=[],
+                            as_of=as_of,
+                            as_of_kind=as_of_kind,
+                            requested_period_text=period_text,
+                            comparison=spec,
+                        )
+                    }
+
+    # v3.3.3 批次 D（方案 §2.4/§5.6）+ v3.3.4 Preview First（方案 §4.1）：
+    # 双公司轻量比较路由。优先级：明确单指标 → 公司事实 → 全面 → 风险 →
+    # 行业 → 普通概览。注意「全面」cue 优先于「风险」cue：_FULL_COMPARISON_CUES
+    # 含「财务与风险/财务和风险」，其中「风险」是子串，全面语义更具体
+    # （§4.1 规则 6 覆盖普通/全面/行业请求）。
+    # 全面/行业在恰好两家 finalized 时先出基础指标预览并保留 requested_scope
+    # （mode=overview），不再直接跳页面（§2.1/§4.1 规则 6）；
+    # 三家及以上 → comparison_guide 不截断（结构化保底 next_steps 由
+    # generate_answer 生成，§2.4）；不足两家 → 下方 relation_clarify。
+    comparison_requested = state.get("comparison_requested")
+    distinct_codes = {str(t.wind_code) for t in comparison_targets if t}
+    if comparison_requested and len(distinct_codes) >= 2:
+        # 收口批次 B（方案 §2.4）：三家及以上 → 全面比较页面，
+        # 轻量比较一期只支持恰好两家（不静默截取前两家）
+        if len(distinct_codes) > 2:
+            return {
+                "plan": ExecutionPlan(
+                    intent="comparison_guide",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+        indicator = detect_indicator(user_query)
+        if indicator and indicator != "unsupported":
+            spec = ComparisonSpec(
+                scope="cross_company",
+                mode="indicator",
+                requested_scope="indicator",
+                metric_ids=[indicator],
+                operation=_detect_comparison_operation(user_query),
+                period_policy=(
+                    "explicit_period"
+                    if as_of_kind == "report_period"
+                    else "latest_common_period"
+                ),
+            )
+            if validate_comparison_spec(spec, sorted(distinct_codes)):
+                pass  # 防御：不合法落到 comparison_guide
+            else:
+                return {
+                    "plan": ExecutionPlan(
+                        intent="light_comparison",
+                        requested_modules=[],
+                        cross_checks=[],
+                        as_of=as_of,
+                        as_of_kind=as_of_kind,
+                        requested_period_text=period_text,
+                        comparison=spec,
+                    )
+                }
+        fact_key = detect_company_fact(user_query)
+        if fact_key:
+            return {
+                "plan": ExecutionPlan(
+                    intent="light_comparison",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    comparison=ComparisonSpec(
+                        scope="cross_company",
+                        mode="company_fact",
+                        requested_scope="company_fact",
+                        fact_key=fact_key,
+                        operation=(
+                            "earlier_than"
+                            if any(w in user_query for w in ("早", "晚"))
+                            else "difference"
+                        ),
+                        period_policy="not_applicable",
+                    ),
+                )
+            }
+        # 全面/行业/普通/风险 → 请求范围分类（§4.1 规则 5/6）。
+        # 全面 cue 先于风险 cue（「财务与风险」属于全面请求）。
+        if any(cue in user_query for cue in _FULL_COMPARISON_CUES):
+            requested_scope = "full"
+        elif "行业" in user_query:
+            requested_scope = "industry"
+        elif any(cue in user_query for cue in _RISK_COMPARE_CUES):
+            return {
+                "plan": ExecutionPlan(
+                    intent="light_comparison",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    comparison=ComparisonSpec(
+                        scope="cross_company",
+                        mode="risk",
+                        requested_scope="risk",
+                    ),
+                )
+            }
+        else:
+            requested_scope = "overview"
+        # v3.3.4（方案 §4.1 规则 6）：普通「对比一下」/全面/行业 → overview
+        # 轻量概览（服务端固定 profile），requested_scope 保留原始范围，
+        # 不再只追问指标或直接跳页面。
+        overview_spec = ComparisonSpec(
+            scope="cross_company",
+            mode="overview",
+            requested_scope=requested_scope,
+            period_policy=(
+                "explicit_period"
+                if as_of_kind == "report_period"
+                else "latest_common_period"
+            ),
+        )
+        if validate_comparison_spec(overview_spec, sorted(distinct_codes)):
+            pass  # 防御：不合法落到 comparison_guide
+        else:
+            return {
+                "plan": ExecutionPlan(
+                    intent="light_comparison",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    comparison=overview_spec,
+                )
+            }
+
     # P2-2：多公司比较引导——comparison_requested 标志恒 True 时即进入
     # comparison_guide（0/1/≥2 家候选都算），不复用 company_disambiguation 的
     # "请选择一家"文案；文案差异由 generate_answer 按候选数处理。
-    comparison_targets = state.get("comparison_targets") or []
+    # 最终续审 §4 A5：comparison_requested=True 但目标少于两家 →
+    # relation_clarify，不得靠 generate_answer 的 0/1 家 fallback 文案
+    # 掩盖 Resolver 非法状态（单主体 comparison 已被 Resolver 降级
+    # ambiguous，这里兜住旧扁平字段路径）。
     if state.get("comparison_requested") or len(comparison_targets) >= 2:
+        target_codes = {str(t.wind_code) for t in comparison_targets if t}
+        if state.get("comparison_requested") and len(target_codes) < 2:
+            return {
+                "plan": ExecutionPlan(
+                    intent="relation_clarify",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
         return {
             "plan": ExecutionPlan(
                 intent="comparison_guide",
@@ -503,6 +813,24 @@ def plan_modules_node(state: AgentState) -> dict:
     # R9：公司事实轻量查询——只匹配明确模板（属于什么行业/上市日期等），
     # 直接进 generate_answer，不执行 finance/equity/events/risk。
     if company is not None:
+        # v3.3.3 批次 D（方案 §2.4 行业对比行）+ v3.3.4（方案 §2.1/§4.1）：
+        # 单主体行业/全面对比引导页面（industry_benchmark_service 在 REST
+        # 页面提供行业分位，对话内不执行、不伪造成双公司比较；只有一家
+        # finalized 主体不进入 overview，不伪造第二主体）
+        if any(cue in user_query for cue in ("对比", "比较")) and (
+            "行业" in user_query
+            or any(cue in user_query for cue in _FULL_COMPARISON_CUES)
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="comparison_guide",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
         indicator = detect_indicator(user_query)
         if indicator:
             return {
@@ -514,6 +842,9 @@ def plan_modules_node(state: AgentState) -> dict:
                     as_of=as_of,
                     as_of_kind=as_of_kind,
                     requested_period_text=period_text,
+                    # v3.3.3 收口批次 D（方案 §3.6）：「正常吗」类问句
+                    # 需要基准判断，不能只答数值
+                    answer_operation=_detect_answer_operation(user_query),
                 )
             }
 
@@ -545,14 +876,31 @@ def plan_modules_node(state: AgentState) -> dict:
             }
         # 短而明确的寒暄/引导走快速路径；口语化和边界表达交给 LLM。
         # LLM 失败后再用同一高置信规则兜底，绝不阻塞正常查询。
-        detected = detect_chitchat_intent(user_query)
-        if detected is None:
-            detected = _detect_chitchat_with_llm(user_query)
-        if detected is None:
-            detected = _fallback_no_company_intent(user_query)
-        if detected == "analysis":
-            # 已确认是公司分析诉求但实体缺失，转为可执行引导。
-            detected = "guide"
+        # v3.3.2-R1 §8：已验证 plan_hint 优先（research/chitchat/
+        # unsupported 复用现有 intent；公司分析类但实体缺失 → guide）
+        if plan_hint == "research":
+            detected = "research"
+        elif plan_hint == "chitchat":
+            detected = "chitchat"
+        elif plan_hint == "unsupported":
+            detected = "unsupported"
+        elif plan_hint in (
+            "indicator",
+            "diagnostic",
+            "summary",
+            "analysis",
+            "comparison",
+        ):
+            detected = "guide"  # 公司分析诉求但实体缺失，转为可执行引导
+        else:
+            detected = detect_chitchat_intent(user_query)
+            if detected is None:
+                detected = _detect_chitchat_with_llm(user_query)
+            if detected is None:
+                detected = _fallback_no_company_intent(user_query)
+            if detected == "analysis":
+                # 已确认是公司分析诉求但实体缺失，转为可执行引导。
+                detected = "guide"
         return {
             "plan": ExecutionPlan(
                 intent=detected or "simple_query",
@@ -575,13 +923,23 @@ def plan_modules_node(state: AgentState) -> dict:
     if any(kw in ql for kw in _DIAGNOSIS_KW):
         need_finance = need_equity = need_events = True
 
-    # 关键词未命中 → LLM 语义识别兜底（口语化/同义表达）
+    # 关键词未命中 → LLM 语义识别兜底（口语化/同义表达）。
+    # v3.3.2-R1 §8：已验证 plan_hint 为 indicator/diagnostic/summary/
+    # analysis/comparison 时不再为此调用第二次语义 LLM，走下方默认
+    # 全模块兜底；other/uncertain 保持现有 LLM fallback
     if not need_finance and not need_equity and not need_events:
-        intent = _llm_intent_fallback(user_query)
-        if intent is not None:
-            need_finance = intent.finance
-            need_equity = intent.equity
-            need_events = intent.events
+        if plan_hint not in (
+            "indicator",
+            "diagnostic",
+            "summary",
+            "analysis",
+            "comparison",
+        ):
+            intent = _llm_intent_fallback(user_query)
+            if intent is not None:
+                need_finance = intent.finance
+                need_equity = intent.equity
+                need_events = intent.events
         # intent 为 None（LLM 失败）或全 False → 走下方全模块兜底
 
     # 宽泛问题/LLM 未识别 → 默认全模块

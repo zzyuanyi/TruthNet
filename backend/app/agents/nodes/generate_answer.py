@@ -27,12 +27,19 @@ import re
 
 from app.agents.delta_sink import get_sink
 from app.agents.llm_sync import run_llm_chat
-from app.agents.state import AgentState, Claim, EvidenceRef, FinalResponse
+from app.agents.state import (
+    MAX_MULTI_COMPARISON_PARTICIPANTS,
+    AgentState,
+    Claim,
+    EvidenceRef,
+    FinalResponse,
+)
 from app.core.config import settings
 from app.domain.finance.parent_scope import (
     NO_SIGNAL_IN_SCOPE,
     RISK_SIGNAL_IN_SCOPE,
 )
+from app.domain.finance.statement_type import PARENT_STATEMENT_TYPE
 from app.domain.provenance.id_factory import (
     NS_COMPANY_REGISTRY,
     NS_FINANCE,
@@ -839,9 +846,60 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
     }
 
 
+def _evidence_for_observations(
+    state: AgentState, company, observations: list
+) -> list[EvidenceRef]:
+    """逐 observation 生成 EvidenceRef（双期间契约，v3.3.3 批次 C 提取）。
+
+    指标短答与轻量比较共用；每条 observation 用自己的 period 生成
+    source_record_id/evidence_id。
+    """
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    evidence: list[EvidenceRef] = []
+    for observation in observations:
+        obs_period = getattr(observation, "period", "") or ""
+        field_path = getattr(observation, "field_path", "")
+        source_table = getattr(observation, "source_table", "")
+        value = getattr(observation, "value", "")
+        source_record_id = f"{company.wind_code}|{obs_period}|{PARENT_STATEMENT_TYPE}"
+        evidence_id = make_evidence_id(
+            source_namespace=NS_FINANCE,
+            source_type="financial_statement",
+            source_record_id=source_record_id,
+            field_path=field_path,
+            period=obs_period,
+            dataset_version=settings.DATASET_VERSION,
+            company_code=company.wind_code,
+        )
+        evidence.append(
+            EvidenceRef(
+                evidence_id=evidence_id,
+                source_type="financial_statement",
+                source_record_id=source_record_id,
+                source_table=source_table,
+                field_path=field_path,
+                period=obs_period,
+                value=str(value),
+                unit="CNY",
+                source_title=f"{company.sec_name} · 母公司报表",
+                statement_scope="parent_company",
+                module="finance",
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=company.wind_code,
+                dataset_version=settings.DATASET_VERSION,
+            )
+        )
+    return evidence
+
+
 def _format_indicator_value(value: float, unit: str) -> str:
     if unit == "percent":
         return f"{value:.2f}%"
+    if unit == "days":
+        return f"{value:.2f}天"
     absolute = abs(value)
     if absolute >= 100_000_000:
         return f"{value / 100_000_000:.2f}亿元"
@@ -850,11 +908,24 @@ def _format_indicator_value(value: float, unit: str) -> str:
     return f"{value:,.2f}元"
 
 
+def _format_growth(growth: float) -> str:
+    """同比增速正负文案（2026-08-12 三轮审查修订）。
+
+    -8.50 → "同比下降 8.50%"；+8.50 → "同比增长 8.50%"；≈0 → "同比持平"。
+    """
+    if abs(growth) < 0.005:
+        return "同比持平"
+    if growth > 0:
+        return f"同比增长 {growth:.2f}%"
+    return f"同比下降 {abs(growth):.2f}%"
+
+
 def _answer_indicator(state: AgentState, indicator: str) -> dict:
     """Phase D #3A：基础财务指标确定性短答与可回查证据。"""
     company = state.get("company")
     if company is None:
         return {}
+    # 裸 unsupported（无法识别基础指标，如周转率）走兜底文案
     if indicator == "unsupported":
         answer = "该指标暂未覆盖。当前可查询基础报表指标与资产负债率。"
         _emit_segment(state, answer)
@@ -867,15 +938,26 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
     plan = state.get("plan")
     as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
     require_exact = bool(plan and plan.as_of_kind == "report_period")
-    from app.application.services.indicator_query_service import query_indicator
+    # v3.3.3 批次 B：统一入口——registry 指标（r4/r5）与基础指标同构返回
+    from app.application.services.indicator_query_service import query_metric
 
-    result = query_indicator(
+    result = query_metric(
         company.wind_code,
         indicator,
         as_of=as_of,
         require_exact_period=require_exact,
     )
     name_code = f"{company.sec_name}（{company.wind_code}）"
+    # 2026-08-12 三轮审查修订：带 label 的 unsupported（环比/双字段增速）
+    # 与 insufficient_data 分开，不再一律答"数据不足"
+    if result.status == "unsupported":
+        answer = f"{name_code}的{result.label}：暂不支持该指标的同比/环比计算。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
     if result.status != "ok" or result.value is None:
         answer = f"{name_code}的{result.label}：数据不足，无法按母公司口径计算。"
         _emit_segment(state, answer)
@@ -885,54 +967,53 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
             "final_response": FinalResponse(answer=answer, risk_level="unknown"),
         }
 
+    # v3.3.3 收口批次 D（方案 §3.6）：「正常吗」类问句走 assessment，
+    # 只答数值时不得用泛化话术冒充判断
+    plan = state.get("plan")
+    answer_operation = getattr(plan, "answer_operation", "") if plan else ""
+    if answer_operation == "assessment":
+        return _answer_indicator_assessment(state, company, result)
+
     runtime = state.get("runtime")
     turn_id = getattr(runtime, "turn_id", "") if runtime else ""
     trace_id = getattr(runtime, "trace_id", "") if runtime else ""
     value_text = _format_indicator_value(result.value, result.unit)
     period_text = f"{result.period[:4]}-{result.period[4:6]}-{result.period[6:]}"
-    answer = (
-        f"{name_code}的{result.label}为 {value_text}" f"（{period_text}，母公司口径）。"
+    # 同比增速答案：正负文案 + 对比基准期（2026-08-12 修订）
+    if indicator.endswith("_growth"):
+        comparison_text = (
+            f"{result.comparison_period[:4]}-{result.comparison_period[4:6]}"
+            f"-{result.comparison_period[6:]}"
+        )
+        answer = (
+            f"{name_code}的{result.label}为 {_format_growth(result.value)}"
+            f"（{period_text} 较 {comparison_text}，母公司口径）。"
+        )
+        claim_value_text = _format_growth(result.value)
+    else:
+        answer = (
+            f"{name_code}的{result.label}为 {value_text}"
+            f"（{period_text}，母公司口径）。"
+        )
+        claim_value_text = value_text
+
+    # 双期间契约（2026-08-12 修订）：逐 observation 用自己的 period 生成
+    # source_record_id/evidence_id——同比查询含当前期与去年同期两条证据，
+    # 不再共用 result.period 导致两条 evidence_id 相同。
+    # v3.3.3 批次 C：构造逻辑提取为 _evidence_for_observations，供指标短答
+    # 与轻量比较共用。
+    evidence: list[EvidenceRef] = _evidence_for_observations(
+        state, company, result.observations
     )
-    evidence: list[EvidenceRef] = []
-    source_record_id = f"{company.wind_code}|{result.period}|408006000"
-    for observation in result.observations:
-        evidence_id = make_evidence_id(
-            source_namespace=NS_FINANCE,
-            source_type="financial_statement",
-            source_record_id=source_record_id,
-            field_path=observation.field_path,
-            period=result.period,
-            dataset_version=settings.DATASET_VERSION,
-            company_code=company.wind_code,
-        )
-        evidence.append(
-            EvidenceRef(
-                evidence_id=evidence_id,
-                source_type="financial_statement",
-                source_record_id=source_record_id,
-                source_table=observation.source_table,
-                field_path=observation.field_path,
-                period=result.period,
-                value=str(observation.value),
-                unit="CNY",
-                source_title=f"{company.sec_name} · 母公司报表",
-                statement_scope="parent_company",
-                module="finance",
-                turn_id=turn_id,
-                trace_id=trace_id,
-                company_code=company.wind_code,
-                dataset_version=settings.DATASET_VERSION,
-            )
-        )
     evidence_ids = [item.evidence_id for item in evidence]
     claim = Claim(
         claim_id=make_claim_id(
             turn_id=turn_id,
             company_code=company.wind_code,
             claim_type="indicator",
-            claim_text=f"{result.label}：{value_text}",
+            claim_text=f"{result.label}：{claim_value_text}",
         ),
-        text=f"{result.label}为 {value_text}",
+        text=f"{result.label}为 {claim_value_text}",
         claim_type="indicator",
         severity="unknown",
         evidence_ids=evidence_ids,
@@ -947,6 +1028,17 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
     return {
         "claims": [claim],
         "evidence": evidence,
+        # v3.3.3 批次 B（方案 §5.4）：成功执行的规范指标写入 state，
+        # persist_turn 落 response_meta.executed_metrics；失败/unsupported
+        # 轮不返回本字段（不得覆盖最近成功指标）
+        "executed_metric": {
+            "metric_id": indicator,
+            "period": result.period,
+            "unit": result.unit,
+            "status": "ok",
+            # v3.3.3 收口批次 B（方案 §3.4）：指标所属公司，防跨主体串用
+            "company_code": company.wind_code,
+        },
         "final_response": FinalResponse(
             answer=answer,
             risk_level="unknown",
@@ -954,6 +1046,774 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
             evidence=evidence,
         ),
     }
+
+
+def _answer_indicator_assessment(state, company, result) -> dict:
+    """v3.3.3 收口批次 D（方案 §3.6）：「正常吗」类 assessment。
+
+    输出：当前值 + 报告期 + 行业基准分位/中位数 + 样本数 + 偏离结论；
+    无可靠行业基准 → 明确「已查到当前值，但缺少可比较基准，无法判断
+    正常性」，不得用泛化风险话术冒充判断。值本身照常生成 claim/evidence。
+    """
+    from app.application.services.indicator_query_service import (
+        query_industry_benchmark,
+    )
+    from app.domain.benchmarks.calculator import MIN_PEER_SAMPLE
+
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+    value_text = _format_indicator_value(result.value, result.unit)
+    period_text = f"{result.period[:4]}-{result.period[4:6]}-{result.period[6:]}"
+    base_answer = (
+        f"{name_code}的{result.label}为 {value_text}" f"（{period_text}，母公司口径）。"
+    )
+    industry = getattr(company, "industry_l1", "") or ""
+    bench = query_industry_benchmark(industry, result.indicator, result.period)
+    sample_count = (bench or {}).get("sample_count") or 0
+    if bench is None or sample_count < MIN_PEER_SAMPLE:
+        answer = base_answer + "当前数据缺少可比较的行业基准，无法判断是否「正常」。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(
+                answer=answer, risk_level="unknown", claims=[], evidence=[]
+            ),
+        }
+
+    # 基准表存 registry 原始口径（ratio 小数/days/pp），展示前换算
+    def _bench_display(raw) -> str:
+        if raw is None:
+            return "—"
+        if result.unit == "percent":
+            return f"{float(raw) * 100:.2f}%"
+        return f"{float(raw):.2f}"
+
+    value_raw = result.value / 100 if result.unit == "percent" else result.value
+    p50 = bench.get("p50")
+    p75 = bench.get("p75")
+    if p50 is None or p75 is None:
+        answer = base_answer + "行业基准分位缺失，无法判断是否「正常」。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(
+                answer=answer, risk_level="unknown", claims=[], evidence=[]
+            ),
+        }
+
+    if value_raw <= p50:
+        band = (
+            f"不高于行业中位数（中位数 {_bench_display(p50)}，"
+            f"{sample_count} 家可比公司），处于行业较低水平"
+        )
+    elif value_raw <= p75:
+        band = (
+            f"位于行业中位数与 75 分位之间（p75 {_bench_display(p75)}，"
+            f"{sample_count} 家可比公司），处于行业中等水平"
+        )
+    else:
+        band = (
+            f"高于行业 75 分位（p75 {_bench_display(p75)}，"
+            f"{sample_count} 家可比公司），处于行业较高水平"
+        )
+    answer = base_answer + f"{result.label}相对行业：{band}。"
+
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    evidence: list[EvidenceRef] = _evidence_for_observations(
+        state, company, result.observations
+    )
+    evidence_ids = [item.evidence_id for item in evidence]
+    claim = Claim(
+        claim_id=make_claim_id(
+            turn_id=turn_id,
+            company_code=company.wind_code,
+            claim_type="indicator",
+            claim_text=f"{result.label}：{value_text}",
+        ),
+        text=f"{result.label}为 {value_text}",
+        claim_type="indicator",
+        severity="unknown",
+        evidence_ids=evidence_ids,
+        verification_status="verified",
+        limitations=["母公司报表口径", "行业基准判断"],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=company.wind_code,
+        module="finance",
+    )
+    _emit_segment(state, answer)
+    return {
+        "claims": [claim],
+        "evidence": evidence,
+        "executed_metric": {
+            "metric_id": result.indicator,
+            "period": result.period,
+            "unit": result.unit,
+            "status": "ok",
+            "company_code": company.wind_code,
+        },
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=[claim],
+            evidence=evidence,
+        ),
+    }
+
+
+def _answer_light_comparison(state: AgentState) -> dict:
+    """v3.3.3 批次 C/D（方案 §5.6）：消费 ComparisonSpec 的轻量比较回答。
+
+    查询与算术在 light_comparison_service，本函数只渲染结构化结果并
+    组装 claim/evidence；missing_dimension/full 不得启动数值查询。
+    """
+    plan = state.get("plan")
+    spec = getattr(plan, "comparison", None) if plan is not None else None
+    company = state.get("company")
+    if spec is None:
+        return {}
+    if spec.scope == "same_company_cross_indicator" and spec.mode == "indicator":
+        if company is None:
+            return {}
+        return _answer_same_company_comparison(state, company, spec)
+    if spec.scope == "cross_company":
+        return _answer_cross_company_comparison(state, spec)
+    return {}
+
+
+def _answer_same_company_comparison(state: AgentState, company, spec) -> dict:
+    """同主体两指标轻量比较：共同期间 + 单位校验 + 程序差值（批次 C）。"""
+    from app.application.services.light_comparison_service import (
+        compare_same_company_indicators,
+    )
+
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    result = compare_same_company_indicators(
+        company.wind_code, company.sec_name, spec, as_of=as_of
+    )
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+
+    def _finish(answer: str, claims: list, evidence: list, executed: list) -> dict:
+        _emit_segment(state, answer)
+        return {
+            "claims": claims,
+            "evidence": evidence,
+            "executed_metrics": executed,
+            "final_response": FinalResponse(
+                answer=answer,
+                risk_level="unknown",
+                claims=claims,
+                evidence=evidence,
+            ),
+        }
+
+    if result.status == "ok":
+        runtime = state.get("runtime")
+        turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+        trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+        evidence: list[EvidenceRef] = []
+        for participant in result.participants:
+            evidence.extend(
+                _evidence_for_observations(state, company, participant.observations)
+            )
+        evidence_ids = [item.evidence_id for item in evidence]
+        claim = Claim(
+            claim_id=make_claim_id(
+                turn_id=turn_id,
+                company_code=company.wind_code,
+                claim_type="indicator_comparison",
+                claim_text=result.conclusion,
+            ),
+            text=result.conclusion,
+            claim_type="indicator_comparison",
+            severity="unknown",
+            evidence_ids=evidence_ids,
+            verification_status="verified",
+            limitations=["母公司报表口径", "共同期间"],
+            turn_id=turn_id,
+            trace_id=trace_id,
+            company_code=company.wind_code,
+            module="finance",
+        )
+        executed = [
+            {
+                "metric_id": p.metric_id,
+                "period": p.period,
+                "unit": p.unit,
+                "status": "ok",
+                "company_code": p.company_code,
+            }
+            for p in result.participants
+        ]
+        return _finish(result.conclusion, [claim], evidence, executed)
+
+    if result.status == "partial":
+        parts = []
+        for p in result.participants:
+            parts.append(f"{p.metric_label}为 {p.value:.2f}（期间 {p.period}）")
+        answer = (
+            f"{name_code}仅有一侧指标可用：{'；'.join(parts)}。"
+            "另一侧指标数据不可用，无法比较高低（母公司口径）。"
+        )
+        return _finish(answer, [], [], [])
+
+    if result.status == "unsupported":
+        answer = (
+            f"{name_code}的两项指标单位不兼容，无法直接相减"
+            f"（{'；'.join(result.warnings)}）。请指定同一量纲的指标对比。"
+        )
+        return _finish(answer, [], [], [])
+
+    # insufficient_data：无共同期间/两侧无数据，不得输出高低结论
+    answer = (
+        f"{name_code}：{'；'.join(result.warnings) or '数据不足'}，"
+        "无法完成两项指标的比较（母公司口径）。"
+    )
+    return _finish(answer, [], [], [])
+
+
+def _light_comparison_payload(
+    spec,
+    targets,
+    *,
+    comparison_mode: str,
+    overview_rows: list | None = None,
+) -> dict:
+    """v3.3.4 方案 §3.3/§6.1：已执行比较的 light_comparison 载荷。
+
+    next_steps 由程序按 requested_scope 生成（只提供导航动作，不改变任何
+    数值、主体、证据或结论）；主体代码直接取已校验的 finalized targets
+    （去重保序），禁止掺入未经校验的主体。
+    """
+    from app.application.services.light_comparison_service import (
+        build_preview_next_steps,
+    )
+
+    codes: list[str] = []
+    for t in targets or []:
+        code = str(getattr(t, "wind_code", "") or "")
+        if code and code not in codes:
+            codes.append(code)
+    scope = getattr(spec, "requested_scope", "indicator") or "indicator"
+    return {
+        "comparison_mode": comparison_mode,
+        "overview_rows": list(overview_rows or []),
+        "requested_scope": scope,
+        "next_steps": [s.model_dump() for s in build_preview_next_steps(scope, codes)],
+    }
+
+
+def _answer_cross_company_comparison(state: AgentState, spec) -> dict:
+    """v3.3.3 批次 D：双公司轻量比较渲染（方案 §2.4/§5.6）。"""
+    targets = state.get("comparison_targets") or []
+
+    def _plain(answer: str) -> dict:
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(
+                answer=answer, risk_level="unknown", claims=[], evidence=[]
+            ),
+        }
+
+    if spec.mode == "missing_dimension":
+        return _plain(
+            "请指定要比较的维度（例如毛利率、存货周转天数或风险等级），"
+            "我会给出双方数值与差异。"
+        )
+    if spec.mode == "risk":
+        return _answer_cross_company_risk(state, targets, spec)
+    if spec.mode == "indicator":
+        return _answer_cross_company_indicator(state, targets, spec)
+    if spec.mode == "overview":
+        return _answer_cross_company_overview(state, targets, spec)
+    if spec.mode == "company_fact":
+        return _answer_cross_company_fact(state, targets, spec)
+    return {}
+
+
+def _answer_cross_company_overview(state, targets, spec) -> dict:
+    """双公司轻量整体概览（v3.3.4 方案 §3/§5/§6）。
+
+    服务端固定维度 profile 逐指标比较；claims/evidence 只引用成功行
+    （缺失行不伪造事实）；不生成综合评分与整体优劣结论；
+    requested_scope=full/industry 时明确声明有限预览，结构化 next_steps
+    按请求范围由程序生成。
+    """
+    from app.application.services.light_comparison_service import (
+        compare_cross_company_overview,
+    )
+
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    result = compare_cross_company_overview(targets, spec, as_of=as_of)
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    company_by_code = {str(t.wind_code): t for t in targets}
+
+    def _fmt(value, unit: str) -> str:
+        if unit in ("percent", "ratio", "pp"):
+            return f"{value:.2f}%"
+        if unit == "days":
+            return f"{value:.2f}天"
+        return f"{value:,.2f}元"
+
+    ok_rows = [r for r in result.overview_rows if r.status == "ok"]
+    claims: list[Claim] = []
+    evidence: list[EvidenceRef] = []
+    executed: list[dict] = []
+    for row in ok_rows:
+        if len(row.values) != 2:
+            continue  # 防御：ok 行必须携带双方值，否则不为其生成事实 claim
+        row_evidence: list[EvidenceRef] = []
+        for participant in row.values:
+            ref = company_by_code.get(participant.company_code)
+            if ref is None:
+                continue
+            row_evidence.extend(
+                _evidence_for_observations(state, ref, participant.observations)
+            )
+        evidence.extend(row_evidence)
+        first, second = row.values
+        text = (
+            f"{row.metric_label}：{first.sec_name}"
+            f"{_fmt(first.value, row.unit)}；{second.sec_name}"
+            f"{_fmt(second.value, row.unit)}；{row.conclusion}"
+            f"（共同期间 {row.period}，母公司口径）"
+        )
+        primary_code = str(targets[0].wind_code) if targets else ""
+        claims.append(
+            Claim(
+                claim_id=make_claim_id(
+                    turn_id=turn_id,
+                    company_code=primary_code,
+                    claim_type="overview_comparison",
+                    claim_text=text,
+                ),
+                text=text,
+                claim_type="overview_comparison",
+                severity="unknown",
+                evidence_ids=[ev.evidence_id for ev in row_evidence],
+                verification_status="verified",
+                limitations=["母公司报表口径", "共同期间", "轻量概览"],
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=primary_code,
+                module="finance",
+            )
+        )
+        executed.extend(
+            {
+                "metric_id": v.metric_id,
+                "period": v.period,
+                "unit": v.unit,
+                "status": "ok",
+                "company_code": v.company_code,
+            }
+            for v in row.values
+        )
+
+    names = "、".join(str(getattr(t, "sec_name", "") or "") for t in targets[:2])
+    if result.conclusion:
+        answer = f"{names}概览\n\n{result.conclusion}"
+    else:
+        answer = (
+            f"{names}概览：{'；'.join(result.warnings) or '数据不足'}，"
+            "无法完成概览比较（母公司口径）。"
+        )
+    # v3.3.4 方案 §6.1：requested_scope 感知的预览声明——
+    # 全面/行业请求必须明确当前结果是有限预览而非完整结论/行业分位。
+    if spec.requested_scope == "industry":
+        answer += (
+            "\n\n当前对话仅展示基础财务预览，未执行行业分位或行业基准计算；"
+            "行业对比请点击「查看行业对比」。"
+        )
+    elif spec.requested_scope == "full":
+        answer += (
+            "\n\n以上为有限预览，不代表完整画像；风险、股权、行业等更多维度"
+            "请点击「查看完整对比」。"
+        )
+    else:
+        answer += (
+            "\n\n这是基础指标预览，不代表完整画像；可继续指定「毛利率」"
+            "「存货周转」或「风险等级」进行单项比较，完整对比请点击"
+            "「查看完整对比」。"
+        )
+    _emit_segment(state, answer)
+    return {
+        "claims": claims,
+        "evidence": evidence,
+        "executed_metrics": executed,
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=claims,
+            evidence=evidence,
+        ),
+        # v3.3.4 方案 §3.3/§6.1：结构化概览载荷（REST/WS 只读追加，向后兼容）。
+        # overview_rows 用 mode="json" 序列化（Decimal → float/str），
+        # WS _ws_sender 的 json.dumps 不接受 Decimal。
+        "light_comparison": _light_comparison_payload(
+            spec,
+            targets,
+            comparison_mode=result.comparison_mode,
+            overview_rows=[r.model_dump(mode="json") for r in result.overview_rows],
+        ),
+    }
+
+
+def _answer_cross_company_risk(state, targets, spec) -> dict:
+    """两家公司窄风险比较（收口批次 D，方案 §3.7）。
+
+    按既有评估等级排序回答；任一侧无记录/口径不一致 → partial 诚实
+    说明；显式历史截止期（as_of）→ unsupported（方案 §5 D2：当前仅
+    支持最新风险评估，不静默取未来记录）。触发信号详情继续页面
+    （不在此伪造）。等级比较不生成数值 claim（避免无证据数值结论），
+    页面承载详情。
+    """
+    from app.application.services.light_comparison_service import (
+        compare_cross_company_risk,
+    )
+
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    result = compare_cross_company_risk(targets, spec, as_of=as_of)
+    if result.status == "ok":
+        answer = result.conclusion
+    elif result.status == "partial":
+        answer = (
+            f"风险比较：{'；'.join(result.warnings)}。"
+            "全面风险画像请使用页面跨公司对比。"
+        )
+    else:
+        answer = f"风险比较：{'；'.join(result.warnings) or '数据不足'}。"
+    _emit_segment(state, answer)
+    return {
+        "claims": [],
+        "evidence": [],
+        "final_response": FinalResponse(
+            answer=answer, risk_level="unknown", claims=[], evidence=[]
+        ),
+        # v3.3.4 方案 §2.1/§6.1：风险比较附带完整对比页下一步
+        "light_comparison": _light_comparison_payload(
+            spec, targets, comparison_mode="risk"
+        ),
+    }
+
+
+def _answer_cross_company_indicator(state, targets, spec) -> dict:
+    """双公司单指标：共同期间 + 程序差值 + 双方原始值（批次 D）。"""
+    from app.application.services.light_comparison_service import (
+        compare_cross_company_indicators,
+    )
+
+    plan = state.get("plan")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    result = compare_cross_company_indicators(targets, spec, as_of=as_of)
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+
+    def _finish(answer: str, claims: list, evidence: list, executed: list) -> dict:
+        _emit_segment(state, answer)
+        return {
+            "claims": claims,
+            "evidence": evidence,
+            "executed_metrics": executed,
+            "final_response": FinalResponse(
+                answer=answer,
+                risk_level="unknown",
+                claims=claims,
+                evidence=evidence,
+            ),
+            # v3.3.4 方案 §2.1/§6.1：单指标比较附带完整对比页下一步
+            "light_comparison": _light_comparison_payload(
+                spec, targets, comparison_mode="indicator"
+            ),
+        }
+
+    if result.status == "ok":
+        company_by_code = {str(t.wind_code): t for t in targets}
+        evidence: list[EvidenceRef] = []
+        for participant in result.participants:
+            ref = company_by_code.get(participant.company_code)
+            if ref is None:
+                continue
+            evidence.extend(
+                _evidence_for_observations(state, ref, participant.observations)
+            )
+        evidence_ids = [item.evidence_id for item in evidence]
+        primary_code = str(targets[0].wind_code) if targets else ""
+        claim = Claim(
+            claim_id=make_claim_id(
+                turn_id=turn_id,
+                company_code=primary_code,
+                claim_type="indicator_comparison",
+                claim_text=result.conclusion,
+            ),
+            text=result.conclusion,
+            claim_type="indicator_comparison",
+            severity="unknown",
+            evidence_ids=evidence_ids,
+            verification_status="verified",
+            limitations=["母公司报表口径", "共同期间"],
+            turn_id=turn_id,
+            trace_id=trace_id,
+            company_code=primary_code,
+            module="finance",
+        )
+        executed = [
+            {
+                "metric_id": p.metric_id,
+                "period": p.period,
+                "unit": p.unit,
+                "status": "ok",
+                "company_code": p.company_code,
+            }
+            for p in result.participants
+        ]
+        return _finish(
+            result.conclusion
+            + "\n\n更多维度的对比请点击「查看完整对比」进入跨公司对比页面。",
+            [claim],
+            evidence,
+            executed,
+        )
+
+    if result.status == "partial":
+        names = "、".join(p.sec_name for p in result.participants)
+        return _finish(
+            f"仅{names}的该指标数据可用，另一侧不可用，无法比较高低（母公司口径）。",
+            [],
+            [],
+            [],
+        )
+
+    if result.status == "unsupported":
+        return _finish(f"该比较暂不支持：{'；'.join(result.warnings)}。", [], [], [])
+
+    return _finish(
+        f"双方数据不足或无共同期间：{'；'.join(result.warnings)}，"
+        "无法比较（母公司口径）。",
+        [],
+        [],
+        [],
+    )
+
+
+def _answer_cross_company_fact(state, targets, spec) -> dict:
+    """双公司公司事实比较（批次 D 仅 listing_date）。"""
+    from app.application.services.light_comparison_service import (
+        compare_cross_company_facts,
+    )
+
+    result = compare_cross_company_facts(targets, spec)
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+
+    def _finish(answer: str, claims: list, evidence: list) -> dict:
+        _emit_segment(state, answer)
+        return {
+            "claims": claims,
+            "evidence": evidence,
+            "final_response": FinalResponse(
+                answer=answer,
+                risk_level="unknown",
+                claims=claims,
+                evidence=evidence,
+            ),
+            # v3.3.4 方案 §2.1/§6.1：公司事实比较附带完整对比页下一步
+            "light_comparison": _light_comparison_payload(
+                spec, targets, comparison_mode="company_fact"
+            ),
+        }
+
+    if result.status != "ok":
+        return _finish(
+            f"上市日期比较：{'；'.join(result.warnings) or '数据不足'}。",
+            [],
+            [],
+        )
+
+    evidence: list[EvidenceRef] = []
+    for target in targets:
+        date_value = str(getattr(target, "listing_date", "") or "")
+        if not date_value:
+            continue
+        evidence.append(
+            EvidenceRef(
+                evidence_id=make_evidence_id(
+                    source_namespace=NS_COMPANY_REGISTRY,
+                    source_type="company_registry",
+                    source_record_id=str(target.wind_code),
+                    field_path="listing_date",
+                    company_code=str(target.wind_code),
+                ),
+                source_type="company_registry",
+                source_record_id=str(target.wind_code),
+                field_path="listing_date",
+                value=date_value,
+                source_title=f"{target.sec_name} · 公司注册信息",
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=str(target.wind_code),
+                module="company_fact",
+            )
+        )
+    evidence_ids = [item.evidence_id for item in evidence]
+    primary_code = str(targets[0].wind_code) if targets else ""
+    claim = Claim(
+        claim_id=make_claim_id(
+            turn_id=turn_id,
+            company_code=primary_code,
+            claim_type="company_fact_comparison",
+            claim_text=result.conclusion,
+        ),
+        text=result.conclusion,
+        claim_type="company_fact_comparison",
+        severity="unknown",
+        evidence_ids=evidence_ids,
+        verification_status="verified",
+        limitations=["公司注册信息（证券主表）"],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=primary_code,
+        module="company_fact",
+    )
+    return _finish(result.conclusion, [claim], evidence)
+
+
+def _answer_comparison_guide(state: AgentState) -> dict:
+    """比较意图页面引导（P2-2 + v3.3.3 批次 D + v3.3.4 §2.4/§6.1）。
+
+    按 0/1/≥2 家候选区分文案，绝不静默退化为单公司分析；
+    批次 D 起聊天内已支持双公司单指标/公司事实轻量比较。
+    三家及以上（v3.3.4）：不查询指标、不静默截断——
+    - 3..MAX 家 → 结构化保底 next_steps（多主体页面可用 →
+      open_multi_company_comparison 全代码；否则 choose_comparison_pair）；
+    - 超过 MAX → 纯文案要求缩小范围，next_steps 为空、不携带任何代码。
+    """
+    from app.agents.nodes.plan_modules import _FULL_COMPARISON_CUES
+    from app.application.services.light_comparison_service import (
+        build_multi_company_next_steps,
+    )
+
+    user_query = state.get("user_query", "")
+    targets = state.get("comparison_targets", [])
+    company = state.get("company")
+
+    def _finish(answer: str, payload: dict | None = None) -> dict:
+        _emit_segment(state, answer)
+        out: dict = {
+            "final_response": FinalResponse(
+                answer=answer, risk_level="unknown", claims=[], evidence=[]
+            )
+        }
+        if payload is not None:
+            out["light_comparison"] = payload
+        return out
+
+    def _requested_scope_from_query() -> str:
+        if any(cue in user_query for cue in _FULL_COMPARISON_CUES):
+            return "full"
+        if "行业" in user_query:
+            return "industry"
+        return "overview"
+
+    # v3.3.3 批次 D + v3.3.4：单主体行业/全面对比（company 已识别、targets 为空）
+    if not targets and company is not None:
+        if any(cue in user_query for cue in _FULL_COMPARISON_CUES):
+            return _finish(
+                f"{company.sec_name}（{company.wind_code}）目前只有一家公司，"
+                "无法进行跨公司对比。请补充另一家公司的名称或代码；"
+                "完整对比请使用页面「跨公司对比」功能。"
+            )
+        return _finish(
+            f"{company.sec_name}（{company.wind_code}）的行业分位对比请使用"
+            "页面「行业对标」功能（企业画像页/跨公司对比页提供行业基准与"
+            "分位），对话内暂不执行行业分位计算。"
+        )
+
+    if len(targets) >= 2:
+        names = "、".join(f"{item.sec_name}（{item.wind_code}）" for item in targets)
+        codes: list[str] = []
+        for item in targets:
+            code = str(getattr(item, "wind_code", "") or "")
+            if code and code not in codes:
+                codes.append(code)
+
+        # v3.3.4 §2.4：三家及以上保底——不查询、不截断、不默认取前两家
+        if len(codes) >= 3:
+            next_steps = build_multi_company_next_steps(
+                codes,
+                multi_page_enabled=settings.COMPARISON_MULTI_PAGE_ENABLED,
+            )
+            if len(codes) > MAX_MULTI_COMPARISON_PARTICIPANTS:
+                answer = (
+                    f"你提到了 {names} 共 {len(codes)} 家公司，超过一次对比的"
+                    f"上限 {MAX_MULTI_COMPARISON_PARTICIPANTS} 家。请缩小到"
+                    f" {MAX_MULTI_COMPARISON_PARTICIPANTS} 家以内再发起对比；"
+                    "本次未执行任何指标查询，也没有默认选择其中几家。"
+                )
+            elif settings.COMPARISON_MULTI_PAGE_ENABLED:
+                answer = (
+                    f"已识别 {names} 共 {len(codes)} 家公司，尚未执行数值比较。"
+                    "多主体对比页已支持一次对比全部公司，请点击「多公司对比」"
+                    "；或指定其中两家与具体指标（如毛利率）在对话内比较。"
+                )
+            else:
+                answer = (
+                    f"已识别 {names} 共 {len(codes)} 家公司，尚未执行数值比较。"
+                    "一期对话预览仅支持两家，请点击「选择两家对比」或直接"
+                    "指定其中两家与具体指标（如毛利率）在对话内比较。"
+                )
+            return _finish(
+                answer,
+                {
+                    "comparison_mode": "",
+                    "overview_rows": [],
+                    "requested_scope": _requested_scope_from_query(),
+                    "next_steps": [s.model_dump() for s in next_steps],
+                },
+            )
+
+        # 恰好两家（防御性兜底：正常路径已在 plan 层进入 overview/轻量比较）
+        if "行业" in user_query:
+            return _finish(
+                f"行业分位对比请使用页面「行业对标/跨公司对比」功能"
+                f"（{names} 的指标行业分位在页面展示）。"
+                "对话内可回答两家公司同一指标或同一公司事实的数值比较。"
+            )
+        return _finish(
+            f"你提到了 {names}。全面/多维度对比请使用"
+            "页面上方的「跨公司对比」功能；单个指标（如毛利率、"
+            "存货周转天数）或公司事实（如上市日期）的两两比较"
+            "可直接在对话中提问。"
+        )
+    if len(targets) == 1:
+        t0 = targets[0]
+        if "行业" in user_query:
+            return _finish(
+                f"{t0.sec_name}（{t0.wind_code}）的行业分位对比请使用"
+                "页面「行业对标」功能（企业画像页/跨公司对比页提供"
+                "行业基准与分位），对话内暂不执行行业分位计算。"
+            )
+        return _finish(
+            f"已识别 {t0.sec_name}（{t0.wind_code}），另一家公司未匹配到"
+            "数据。请补充另一家公司的名称或代码；跨公司对比请使用页面"
+            "上方的「跨公司对比」功能。"
+        )
+    return _finish(
+        "请提供两家公司的名称或代码（例如「康美药业和金牌家居的"
+        "差距」），以便进行跨公司对比。"
+    )
 
 
 def _answer_risk_level(state: AgentState) -> dict:
@@ -1055,31 +1915,11 @@ def generate_answer_node(state: AgentState) -> dict:
         plan = state.get("plan")
         intent = getattr(plan, "intent", "") if plan else ""
 
-        if intent == "comparison_guide":
-            # P2-2: 比较意图独立引导（不复用 company_disambiguation 文案）；
-            # 按 0/1/≥2 家候选区分文案，绝不静默退化为单公司分析。
-            targets = state.get("comparison_targets", [])
-            if len(targets) >= 2:
-                names = "、".join(
-                    f"{item.sec_name}（{item.wind_code}）" for item in targets[:5]
-                )
-                answer = (
-                    f"你提到了 {names} 等多家公司。聊天内暂不支持跨公司对比，"
-                    "请使用页面上方的「跨公司对比」功能查看各家公司的风险规则、"
-                    "指标数值与行业分位差异。"
-                )
-            elif len(targets) == 1:
-                t0 = targets[0]
-                answer = (
-                    f"已识别 {t0.sec_name}（{t0.wind_code}），另一家公司未匹配到"
-                    "数据。请补充另一家公司的名称或代码；跨公司对比请使用页面"
-                    "上方的「跨公司对比」功能。"
-                )
-            else:
-                answer = (
-                    "请提供两家公司的名称或代码（例如「康美药业和金牌家居的"
-                    "差距」），以便进行跨公司对比。"
-                )
+        # 2026-08-12 批 1.5 补做：实体解析失败/候选截断明确告知，
+        # 替代通用引导（"请提供公司名称或股票代码"）——用户能知道
+        # 系统"看到了"疑似公司但库内无匹配。
+        if state.get("candidates_truncated"):
+            answer = "候选公司过多（已截断展示）。请补充更完整的公司名称或代码后重试。"
             _emit_segment(state, answer)
             return {
                 "final_response": FinalResponse(
@@ -1089,6 +1929,61 @@ def generate_answer_node(state: AgentState) -> dict:
                     evidence=[],
                 )
             }
+        if state.get("entity_resolution_error") == "company_not_found":
+            frags = state.get("unresolved_fragments") or []
+            frag_text = "「" + "」「".join(frags[:3]) + "」" if frags else ""
+            answer = (
+                f"检测到疑似公司{frag_text}但未能识别，请提供完整名称或股票代码。"
+                if frags
+                else "未能识别到公司，请提供完整名称或股票代码。"
+            )
+            _emit_segment(state, answer)
+            return {
+                "final_response": FinalResponse(
+                    answer=answer,
+                    risk_level="unknown",
+                    claims=[],
+                    evidence=[],
+                )
+            }
+
+        if intent == "relation_clarify":
+            # v3.1 P0-3：身份已确认但关系不可执行（reference/sequence/
+            # ambiguous）→ 澄清主次/先后，不启动模块执行、不进比较引导
+            resolution = state.get("entity_resolution_result")
+            names = ""
+            if resolution is not None and getattr(
+                resolution, "selected_companies", None
+            ):
+                names = "、".join(c.sec_name for c in resolution.selected_companies[:3])
+            answer = (
+                f"已识别 {names}，但你问题的表述中这些公司的主次或先后关系"
+                "不够明确（如'提到''先看''再看'）。请换一种表述，例如"
+                "「分析康美药业，顺带看下贵州茅台的公告」或「对比康美药业"
+                "和贵州茅台」，我会按明确的主次关系分析。"
+                if names
+                else "你提到了多家公司，但这些公司的主次或先后关系不够明确，"
+                "请换一种表述明确先后（如「先看A，再看B」）或主次（如"
+                "「分析A，顺带看B」），我会按明确的关系分析。"
+            )
+            _emit_segment(state, answer)
+            return {
+                "final_response": FinalResponse(
+                    answer=answer,
+                    risk_level="unknown",
+                    claims=[],
+                    evidence=[],
+                )
+            }
+
+        if intent == "comparison_guide":
+            return _answer_comparison_guide(state)
+
+        # v3.3.3 收口批次 F：comparison 场景 Resolver 派生 company=None
+        # （targets 承载两家公司），light_comparison 必须在无 company
+        # 分支也可达，否则官方双公司原题落通用 fallback
+        if intent == "light_comparison":
+            return _answer_light_comparison(state)
 
         if intent == "company_disambiguation":
             candidates = state.get("company_candidates", [])
@@ -1266,8 +2161,16 @@ def generate_answer_node(state: AgentState) -> dict:
     # R9：公司事实轻量回答（company_fact plan：requested_modules=[]，
     # 未执行 finance/equity/events/risk；诚实回答 + registry Evidence）
     plan = state.get("plan")
+    # v3.3.3 批次 D：company 已识别但比较维度走页面的场景（单主体行业
+    # 对比 → comparison_guide）——guide 分支在 company None 块内，
+    # 此处补 company 非 None 的调用
+    if getattr(plan, "intent", "") == "comparison_guide":
+        return _answer_comparison_guide(state)
     if getattr(plan, "intent", "") == "indicator":
         return _answer_indicator(state, getattr(plan, "indicator", "") or "")
+    # v3.3.3 批次 C：结构化轻量比较（同主体跨指标；批次 D 扩展跨公司）
+    if getattr(plan, "intent", "") == "light_comparison":
+        return _answer_light_comparison(state)
     if getattr(plan, "intent", "") == "company_fact":
         return _answer_company_fact(state, getattr(plan, "fact_key", "") or "")
     if getattr(plan, "answer_target", "") == "risk_level":

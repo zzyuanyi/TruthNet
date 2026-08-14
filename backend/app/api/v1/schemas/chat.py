@@ -184,6 +184,22 @@ class ChatDataV1(BaseModel):
     company_candidates: list[CompanyCandidateV1] = Field(
         default_factory=list, description="公司名称存在歧义时返回的候选列表"
     )
+    # v3.1 P1-5：REST 最小只读契约——mention 分组（多 mention 场景旧字段
+    # company_candidates 为空时，新字段提供完整分组；不提供 REST confirm）
+    company_mentions: list[dict] = Field(
+        default_factory=list, description="mention 分组（含各 mention 候选与状态）"
+    )
+    needs_confirmation: bool = Field(
+        default=False, description="存在待确认 mention（需使用支持确认的 WS 客户端）"
+    )
+    # v3.3.1 §8.2：只读追加字段（旧客户端忽略，不得删除既有字段）
+    segmentation_alternatives: list[dict] = Field(
+        default_factory=list, description="分段歧义方案（按父 mention 分组，审计用）"
+    )
+    entity_resolution_issues: list[dict] = Field(
+        default_factory=list,
+        description="实体解析流程 issue（预算耗尽/实体超限/分段歧义）",
+    )
     evidence: list[ChatEvidenceV1] = Field(default_factory=list, description="证据列表")
     graph: dict = Field(default_factory=dict, description="图谱数据")
     timeline: list[dict] = Field(default_factory=list, description="事件时间线")
@@ -233,5 +249,30 @@ class ChatDataV1(BaseModel):
         description=(
             "用户请求中的期次原文（如 2025年报）；与 meta.data_as_of"
             "（实际数据截止日）分离，避免把请求期次当作实际数据期"
+        ),
+    )
+    # v3.3.4 方案 §3.3/§6.1：轻量整体概览只读追加字段（旧客户端忽略）
+    comparison_mode: str = Field(
+        default="",
+        description="轻量比较模式：indicator/overview/risk/company_fact；空=非比较",
+    )
+    overview_rows: list[dict] = Field(
+        default_factory=list,
+        description="overview 模式的逐指标概览行（metric_id/label/status/unit/period/values/difference/conclusion/warnings）",
+    )
+    # v3.3.4 Preview First（方案 §3.3/§6.1）：请求范围与结构化下一步
+    requested_scope: str = Field(
+        default="",
+        description=(
+            "比较请求的用户原始范围：indicator/overview/risk/company_fact/"
+            "full/industry；空=非比较请求"
+        ),
+    )
+    next_steps: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "结构化下一步导航（kind/label/target/participant_codes/params），"
+            "如 open_full_comparison/open_industry_comparison/"
+            "open_multi_company_comparison/choose_comparison_pair"
         ),
     )

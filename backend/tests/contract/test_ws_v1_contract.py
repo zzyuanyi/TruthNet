@@ -64,6 +64,15 @@ async def test_ws_v1_event_envelope_format(ws_session_tracker):
                 assert "turn_id" in msg
                 assert "sequence" in msg
                 assert "payload" in msg
+                # 收口复核审查 P2b：turn.completed 必须携带轻量比较字段
+                if msg["event_type"] == "turn.completed":
+                    for key in (
+                        "comparison_mode",
+                        "overview_rows",
+                        "requested_scope",
+                        "next_steps",
+                    ):
+                        assert key in msg["payload"], f"turn.completed 缺 {key}"
 
         # 验证至少收到响应
         if any("event_type" in m for m in messages):
@@ -97,6 +106,44 @@ async def test_ws_v1_error_on_invalid_json():
             )
         except Exception:
             pass
+
+
+def test_ws_turn_completed_light_comparison_payload():
+    """收口复核审查 P2b：turn.completed 的比较字段由统一 helper 生成——
+    缺省为空、命中时完整透出，且 JSON 可序列化。"""
+    from app.application.services.ws_turn_runner import _light_comparison_payload
+
+    assert _light_comparison_payload({}) == {
+        "comparison_mode": "",
+        "overview_rows": [],
+        "requested_scope": "",
+        "next_steps": [],
+    }
+    payload = _light_comparison_payload(
+        {
+            "light_comparison": {
+                "comparison_mode": "overview",
+                "overview_rows": [
+                    {"metric_id": "r5_gross_margin", "difference": 16.14}
+                ],
+                "requested_scope": "full",
+                "next_steps": [
+                    {
+                        "kind": "open_full_comparison",
+                        "label": "查看完整对比",
+                        "target": "/compare",
+                        "participant_codes": ["600519.SH", "600518.SH"],
+                        "params": {},
+                    }
+                ],
+            }
+        }
+    )
+    assert payload["comparison_mode"] == "overview"
+    assert payload["requested_scope"] == "full"
+    assert payload["overview_rows"][0]["metric_id"] == "r5_gross_margin"
+    assert payload["next_steps"][0]["kind"] == "open_full_comparison"
+    json.dumps(payload)  # _emit_terminal_once → send_json 必须可序列化
 
 
 @pytest.mark.asyncio
