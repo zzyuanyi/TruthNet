@@ -10,6 +10,7 @@
 - 不允许读取其他 session 的事件
 """
 
+import json
 import time
 import uuid
 
@@ -41,7 +42,13 @@ def _collect(ws, timeout: float = 60.0, *, terminal_ack: bool = False) -> list[d
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            data = ws.receive_json()
+            # 复核 P2-3：receive_json() 无单次超时会永久阻塞——
+            # 改用内部队列 + 剩余 deadline 读取，终态缺失时超时失败而非挂起。
+            message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+            if isinstance(message, BaseException):
+                raise message
+            ws._raise_on_close(message)
+            data = json.loads(message["text"])
             events.append(data)
             if terminal_ack and data["event_type"] in (
                 "stream.resume_ack",

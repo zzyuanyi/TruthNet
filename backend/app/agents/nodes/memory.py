@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import re
 
-from app.agents.state import AgentState, MemoryContext
+from app.agents.state import AgentState, ExecutedMetricRef, MemoryContext
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,7 @@ def _resolve_lite(
     current_company_name: str | None,
     recent_company_codes: list[str] | None = None,
     summary: dict | None = None,
+    recent_executed_metrics: list[dict] | None = None,
 ) -> MemoryContext:
     """Lite Profile 确定性指代消解。
 
@@ -153,6 +154,8 @@ def _resolve_lite(
     2. 从 messages 历史提取最近的公司实体（文本）
     3. 从近期轮次 company_code / 远期摘要 last_company_code 恢复（代码）
     4. 从 messages 历史提取最近提及的财务指标
+    5. v3.3.3 批次 B：结构化历史指标（load_context 注入的最近成功
+       executed_metrics）优先，文本关键词仅作旧数据兼容 fallback
 
     指代优先级：近期明确公司（文本）> 当前 state 公司 > 近期轮次代码
     > 摘要 last_company_code。
@@ -229,6 +232,33 @@ def _resolve_lite(
             unique_ind.append(i)
     referenced_indicators = unique_ind[:10]
 
+    # v3.3.2-R1 §5.1：结构化当前主体（会话状态，与 is_anaphora 无关）：
+    # recent_company_codes[0]（load_context 已按 active_company_code 优先）
+    # > 摘要 last_company_code > None
+    current_company_code: str | None = None
+    if prev_codes:
+        current_company_code = prev_codes[0]
+    elif summary_code:
+        current_company_code = summary_code
+
+    # v3.3.3 批次 B：结构化历史指标（最近成功、canonical ID/period/unit）
+    # 优先于文本关键词提取（referenced_indicators 仅旧数据兼容）；
+    # 收口批次 B（方案 §3.4）：带 company_code 归属
+    executed_metrics: list[ExecutedMetricRef] = []
+    for item in recent_executed_metrics or []:
+        metric_id = str(item.get("metric_id") or "").strip()
+        if not metric_id or item.get("status") != "ok":
+            continue
+        executed_metrics.append(
+            ExecutedMetricRef(
+                metric_id=metric_id,
+                period=str(item.get("period") or ""),
+                unit=str(item.get("unit") or ""),
+                status="ok",
+                company_code=str(item.get("company_code") or "").strip(),
+            )
+        )
+
     return MemoryContext(
         resolved_entity_name=resolved_entity_name,
         resolved_company_code=resolved_company_code,
@@ -236,6 +266,8 @@ def _resolve_lite(
         previous_companies=previous_companies[:10],
         previous_company_codes=prev_codes[:10],
         referenced_indicators=referenced_indicators,
+        current_company_code=current_company_code,
+        recent_executed_metrics=executed_metrics,
     )
 
 
@@ -255,7 +287,16 @@ def _build_context_message(context: MemoryContext) -> str | None:
     if context.previous_companies and not context.resolved_entity_name:
         parts.append(f"历史涉及公司: {', '.join(context.previous_companies[:5])}")
 
-    if context.referenced_indicators:
+    # v3.3.3 批次 B：结构化最近成功指标优先；文本提取仅旧数据 fallback
+    if context.recent_executed_metrics:
+        labels = [
+            f"{m.metric_id}({m.period})"
+            for m in context.recent_executed_metrics[:4]
+            if m.metric_id
+        ]
+        if labels:
+            parts.append(f"最近成功指标: {', '.join(labels)}")
+    elif context.referenced_indicators:
         parts.append(f"关注指标: {', '.join(context.referenced_indicators[:8])}")
 
     if not parts:
@@ -287,6 +328,7 @@ def memory_node(state: AgentState) -> dict:
         current_company_name,
         recent_company_codes=state.get("recent_company_codes") or [],
         summary=state.get("memory_summary"),
+        recent_executed_metrics=state.get("recent_executed_metrics") or [],
     )
 
     logger.info(

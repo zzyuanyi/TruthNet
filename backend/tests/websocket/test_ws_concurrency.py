@@ -12,6 +12,7 @@
   orphan_test_sessions = 0 / cross_session_claims = 0 / cross_session_evidence = 0
 """
 
+import json
 import time
 import uuid
 
@@ -36,7 +37,12 @@ def _collect(ws, timeout: float = 60.0) -> list[dict]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            data = ws.receive_json()
+            # 复核 P2-3：队列 + 剩余 deadline 读取，终态缺失时超时失败而非挂起。
+            message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+            if isinstance(message, BaseException):
+                raise message
+            ws._raise_on_close(message)
+            data = json.loads(message["text"])
             events.append(data)
             if data["event_type"] in (
                 "turn.completed",
@@ -47,6 +53,16 @@ def _collect(ws, timeout: float = 60.0) -> list[dict]:
         except Exception:  # noqa: BLE001
             break
     return events
+
+
+def _receive_one(ws, timeout: float = 15.0) -> dict:
+    """读取单个事件（deadline 兜底；复核 P2-3：禁止无限阻塞）。"""
+    deadline = time.monotonic() + timeout
+    message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+    if isinstance(message, BaseException):
+        raise message
+    ws._raise_on_close(message)
+    return json.loads(message["text"])
 
 
 @_NEED_MYSQL
@@ -261,7 +277,7 @@ def test_a_cancel_b_completes(ws_session_tracker):
                 "payload": {"text": "康美药业有造假风险吗", "session_id": sid_a},
             }
         )
-        first = ws_a.receive_json()
+        first = _receive_one(ws_a)
         assert first["event_type"] == "turn.accepted"
         turn_a = first["payload"]["turn_id"]
         ws_a.send_json({"event_type": "turn.cancel", "payload": {"turn_id": turn_a}})
@@ -299,7 +315,7 @@ def test_same_session_multiple_connections(ws_session_tracker):
         # 连接2 也 attach 到同一 session（URL query）→ 新连接替代旧连接成为主连接
         with client.websocket_connect(f"/api/v1/chat/ws?session_id={sid}") as ws2:
             ws2.send_json({"event_type": "ping", "payload": {}})
-            hb = ws2.receive_json()
+            hb = _receive_one(ws2)
             assert hb["event_type"] == "heartbeat"
             assert hb["session_id"] == sid, "连接2 应 attach 到同一会话"
             # 主连接（连接2）发起查询并收到完整事件流

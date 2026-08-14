@@ -8,6 +8,7 @@
 - 监管提示/证据 ID/Claim ID 不因流式被删除（由既有测试回归）
 """
 
+import json
 import time
 import uuid
 
@@ -32,7 +33,12 @@ def _collect(ws, timeout: float = 60.0) -> list[dict]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            data = ws.receive_json()
+            # 复核 P2-3：队列 + 剩余 deadline 读取，终态缺失时超时失败而非挂起。
+            message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+            if isinstance(message, BaseException):
+                raise message
+            ws._raise_on_close(message)
+            data = json.loads(message["text"])
             events.append(data)
             if data["event_type"] in ("turn.completed", "turn.failed"):
                 break

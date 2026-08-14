@@ -16,6 +16,29 @@ from app.application.services.memory_distillation import (
     build_summary_for_turns,
     load_context_with_memory,
 )
+from app.application.services.response_meta_utils import effective_active_code
+
+
+# ── 最终续审 §7 D1：effective active code 语义 ───────────────
+
+
+def test_effective_active_code_new_data_explicit_empty():
+    """新数据显式写了空 active subject → 返回空（跳过本轮继续回溯），
+    不得回退陈旧的顶层 company_code。"""
+    assert effective_active_code({"active_company_code": ""}, "600518.SH") == ""
+
+
+def test_effective_active_code_old_data_no_field():
+    """旧数据无 active_company_code 字段 → 回退顶层 company_code。"""
+    assert effective_active_code({}, "600518.SH") == "600518.SH"
+
+
+def test_effective_active_code_prefers_active():
+    """comparison/reference 轮：active 与顶层 code 不同时取 active。"""
+    assert (
+        effective_active_code({"active_company_code": "600519.SH"}, "600518.SH")
+        == "600519.SH"
+    )
 
 
 def _turns(n: int = 5):

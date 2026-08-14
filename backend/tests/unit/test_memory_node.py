@@ -201,6 +201,67 @@ def test_resolve_lite_indicators_tracking():
     assert "营收" in ctx.referenced_indicators or len(ctx.referenced_indicators) > 0
 
 
+def test_resolve_lite_structured_metrics_preferred():
+    """v3.3.3 批次 B：结构化 executed_metrics 进入 MemoryContext。"""
+    from app.agents.nodes.memory import _resolve_lite
+
+    ctx = _resolve_lite(
+        "和营业收入增速对比呢",
+        [],
+        "康美药业",
+        recent_executed_metrics=[
+            {
+                "metric_id": "accounts_receivable_growth",
+                "period": "20250331",
+                "unit": "percent",
+                "status": "ok",
+            }
+        ],
+    )
+    assert len(ctx.recent_executed_metrics) == 1
+    assert ctx.recent_executed_metrics[0].metric_id == "accounts_receivable_growth"
+    assert ctx.recent_executed_metrics[0].period == "20250331"
+    assert ctx.recent_executed_metrics[0].unit == "percent"
+
+
+def test_resolve_lite_skips_non_ok_structured_metrics():
+    """v3.3.3 批次 B：失败/unsupported 轮不得进入结构化历史指标。"""
+    from app.agents.nodes.memory import _resolve_lite
+
+    ctx = _resolve_lite(
+        "和营业收入增速对比呢",
+        [],
+        "康美药业",
+        recent_executed_metrics=[
+            {"metric_id": "r5_gross_margin", "status": "insufficient_data"},
+        ],
+    )
+    assert ctx.recent_executed_metrics == []
+
+
+def test_build_context_message_structured_metrics_first():
+    """v3.3.3 批次 B：结构化指标注入优先，文本关键词不重复列。"""
+    from app.agents.nodes.memory import _build_context_message
+    from app.agents.state import ExecutedMetricRef
+
+    ctx = MemoryContext(
+        resolved_entity_name="康美药业",
+        referenced_indicators=["营收"],
+        recent_executed_metrics=[
+            ExecutedMetricRef(
+                metric_id="accounts_receivable_growth",
+                period="20250331",
+                unit="percent",
+            )
+        ],
+    )
+    text = _build_context_message(ctx)
+    assert text is not None
+    assert "最近成功指标" in text
+    assert "accounts_receivable_growth(20250331)" in text
+    assert "关注指标" not in text
+
+
 # ── 上下文消息构建 ──────────────────────────────────────────
 
 

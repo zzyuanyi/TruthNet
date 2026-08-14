@@ -10,6 +10,7 @@
 - 取消后无半截 Claim/Evidence 断链
 """
 
+import json
 import time
 import uuid
 
@@ -38,9 +39,13 @@ def _receive(ws, timeout: float = 15.0) -> list[dict]:
     events: list[dict] = []
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        # TestClient websocket receive 是阻塞同步；用非阻塞轮询代替
+        # 复核 P2-3：队列 + 剩余 deadline 读取（阻塞 receive 改为非阻塞轮询）。
         try:
-            data = ws.receive_json()
+            message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+            if isinstance(message, BaseException):
+                raise message
+            ws._raise_on_close(message)
+            data = json.loads(message["text"])
             events.append(data)
             if data["event_type"] in (
                 "turn.completed",
@@ -54,6 +59,16 @@ def _receive(ws, timeout: float = 15.0) -> list[dict]:
     return events
 
 
+def _receive_one(ws, timeout: float = 15.0) -> dict:
+    """读取单个事件（deadline 兜底；复核 P2-3：禁止无限阻塞等待）。"""
+    deadline = time.monotonic() + timeout
+    message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+    if isinstance(message, BaseException):
+        raise message
+    ws._raise_on_close(message)
+    return json.loads(message["text"])
+
+
 def _open_ws(client: TestClient, sid: str):
     return client.websocket_connect("/api/v1/chat/ws")
 
@@ -65,8 +80,8 @@ def test_cancel_immediately_after_accepted(ws_session_tracker):
     sid = _unique_sid()
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         _send(ws, "chat.query", {"text": "康美药业有造假风险吗", "session_id": sid})
-        # 收 turn.accepted（首个事件）
-        first = ws.receive_json()
+        # 收 turn.accepted（首个事件，deadline 兜底）
+        first = _receive_one(ws)
         assert first["event_type"] == "turn.accepted"
         turn_id = first["payload"].get("turn_id")
         assert turn_id, "turn.accepted 应携带 turn_id"
@@ -105,7 +120,7 @@ def test_repeat_cancel_idempotent(ws_session_tracker):
     sid = _unique_sid()
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         _send(ws, "chat.query", {"text": "康美药业有造假风险吗", "session_id": sid})
-        first = ws.receive_json()
+        first = _receive_one(ws)
         assert first["event_type"] == "turn.accepted"
         turn_id = first["payload"]["turn_id"]
         _send(ws, "turn.cancel", {"turn_id": turn_id})
@@ -116,8 +131,15 @@ def test_repeat_cancel_idempotent(ws_session_tracker):
         _send(ws, "turn.cancel", {"turn_id": turn_id})
         _send(ws, "ping", {})
         after_repeat: list[dict] = []
+        hb_deadline = time.monotonic() + 15.0
         while True:
-            event = ws.receive_json()
+            message = ws._send_queue.get(
+                timeout=max(0.01, hb_deadline - time.monotonic())
+            )
+            if isinstance(message, BaseException):
+                raise message
+            ws._raise_on_close(message)
+            event = json.loads(message["text"])
             after_repeat.append(event)
             if event["event_type"] == "heartbeat":
                 break
@@ -143,7 +165,7 @@ def test_cancel_isolation_across_sessions(ws_session_tracker):
     events_b: list[dict] = []
     with client.websocket_connect("/api/v1/chat/ws") as ws_a:
         _send(ws_a, "chat.query", {"text": "康美药业有造假风险吗", "session_id": sid_a})
-        first = ws_a.receive_json()
+        first = _receive_one(ws_a)
         turn_a = first["payload"]["turn_id"]
         _send(ws_a, "turn.cancel", {"turn_id": turn_a})
         events_a = [first] + _receive(ws_a)
@@ -173,7 +195,7 @@ def test_cancel_no_dangling_data(ws_session_tracker):
     sid = _unique_sid()
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         _send(ws, "chat.query", {"text": "康美药业有造假风险吗", "session_id": sid})
-        first = ws.receive_json()
+        first = _receive_one(ws)
         turn_id = first["payload"]["turn_id"]
         _send(ws, "turn.cancel", {"turn_id": turn_id})
         events = [first] + _receive(ws)

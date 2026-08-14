@@ -392,6 +392,19 @@ def _build_response_meta(state: AgentState) -> dict:
     """Persist terminal metadata needed to restore a historical turn."""
     final_response = state.get("final_response")
     plan = state.get("plan")
+    active_code, active_source = _active_company_from_resolution(state)
+    # v3.3.3 批次 B（方案 §5.4）：只落 status=ok 的指标执行记录，
+    # 失败/澄清/unsupported 轮不得覆盖最近成功指标。
+    # 批次 C：轻量比较轮产出 executed_metrics（list，两指标），
+    # 单指标短答轮产出 executed_metric（单 dict），两者兼容。
+    executed = state.get("executed_metrics") or []
+    if not executed and state.get("executed_metric"):
+        executed = [state.get("executed_metric")]
+    executed_metrics: list[dict] = [
+        item
+        for item in executed
+        if isinstance(item, dict) and item.get("status") == "ok"
+    ]
     return {
         "intent": getattr(plan, "intent", "") if plan is not None else "",
         "follow_ups": (
@@ -403,7 +416,43 @@ def _build_response_meta(state: AgentState) -> dict:
         "requested_period_text": (
             getattr(plan, "requested_period_text", "") if plan is not None else ""
         ),
+        # v3.3.2-R1 §8.1：活跃主体独立于 state.company——comparison/
+        # reference 轮次的 primary 同样持久化，下一轮可恢复当前主体
+        "active_company_code": active_code,
+        "active_company_source": active_source,
+        "executed_metrics": executed_metrics,
     }
+
+
+def _active_company_from_resolution(state: AgentState) -> tuple[str, str]:
+    """v3.3.2-R1 §8.1：从权威实体解析结果派生当前轮活跃主体。
+
+    - single/switch/continuation 的唯一 primary；
+    - comparison/reference/sequence 中 role=primary 的已绑定公司；
+    - 无确定 primary、身份歧义或 not_found → 不写（""，""）。
+
+    中间验收 P1-3 终态守卫：未决轮（needs_confirmation 或任一
+    not_found/needs_refinement/needs_confirmation mention）不写，
+    避免局部锁定污染下一轮 current subject。
+    """
+    resolution = state.get("entity_resolution_result")
+    if resolution is None:
+        return "", ""
+    mentions = getattr(resolution, "mentions", [])
+    if getattr(resolution, "needs_confirmation", False):
+        return "", ""
+    pending_statuses = ("not_found", "needs_refinement", "needs_confirmation")
+    if any(getattr(m, "status", None) in pending_statuses for m in mentions):
+        return "", ""
+    primaries = [
+        m
+        for m in mentions
+        if getattr(m, "role", None) == "primary"
+        and getattr(m, "selected_wind_code", None)
+    ]
+    if len(primaries) != 1:
+        return "", ""
+    return str(primaries[0].selected_wind_code), "explicit_primary"
 
 
 def persist_turn_node(state: AgentState) -> dict:
