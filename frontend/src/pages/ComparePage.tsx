@@ -125,6 +125,94 @@ function CompanySelector({ onSelect }: { onSelect: (codes: string[]) => void }) 
   );
 }
 
+// v3.3.4 收口复核清单 §5.2-6：choose_comparison_pair 入口——
+// 打开选两家界面并预填全部已识别代码（不自动选前两家）
+function ChoosePair({ candidateCodes }: { candidateCodes: string[] }) {
+  const navigate = useNavigate();
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<string[]>([]);
+  const key = candidateCodes.join(',');
+
+  useEffect(() => {
+    let cancelled = false;
+    candidateCodes.forEach(code => {
+      truthnetAPI
+        .getCompanyProfile(code)
+        .then(res => {
+          if (!cancelled && res.data?.sec_name) {
+            setNames(prev => ({ ...prev, [code]: res.data!.sec_name! }));
+          }
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const toggle = (code: string) => {
+    // 收口复核审查 P2b：choose_comparison_pair 语义 = 恰好选择两家
+    // （已选 2 家时不得继续增加，与文案「选择两家对比」一致）
+    setSelected(prev =>
+      prev.includes(code)
+        ? prev.filter(c => c !== code)
+        : prev.length >= 2
+          ? prev
+          : [...prev, code],
+    );
+  };
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-6">
+      <div className="w-full max-w-xl">
+        <div className="text-center mb-6">
+          <Building2 className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+          <h2 className="text-lg font-medium">从已识别公司中选择两家对比</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            对话一次仅支持两家数值比较；以下为已识别的全部公司，请勾选其中两家
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 justify-center">
+          {candidateCodes.map(code => {
+            const isSelected = selected.includes(code);
+            const disabled = selected.length >= 2 && !isSelected;
+            return (
+              <button
+                key={code}
+                onClick={() => toggle(code)}
+                disabled={disabled}
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors',
+                  isSelected
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border hover:bg-muted/50',
+                  disabled && 'opacity-50 cursor-not-allowed',
+                )}
+              >
+                <span className="font-medium">{names[code] || code}</span>
+                <span className="text-xs text-muted-foreground">{code}</span>
+                <Badge variant={isSelected ? 'default' : 'outline'}>
+                  {isSelected ? '已选' : '选择'}
+                </Badge>
+              </button>
+            );
+          })}
+        </div>
+        <Button
+          className="mt-6 w-full"
+          disabled={selected.length < 2}
+          onClick={() => navigate(`/compare?codes=${selected.join(',')}`)}
+        >
+          {selected.length < 2
+            ? `请选择 2 家公司（已选 ${selected.length}）`
+            : `开始对比（${selected.length} 家）`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // 风险等级配置
 const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
   red: { label: '高危', color: 'bg-red-500 text-white' },
@@ -151,24 +239,57 @@ export default function ComparePage() {
   const [comparisonData, setComparisonData] = useState<ComparisonsResponseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [industryUnavailable, setIndustryUnavailable] = useState(false);
+
+  // v3.3.4 收口复核清单 §5.3：读取 codes + scope（默认 full）；
+  // choose_comparison_pair 入口用 candidates 参数（预填全部代码）
+  const codesParam = [
+    ...new Set(
+      (searchParams.get('codes') || '')
+        .split(',')
+        .map(c => c.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 5);
+  const scope = searchParams.get('scope') ?? 'full';
+  const candidateCodes = [
+    ...new Set(
+      (searchParams.get('candidates') || '')
+        .split(',')
+        .map(c => c.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 5);
 
   useEffect(() => {
     const loadCompanies = async () => {
       setLoading(true);
       setError(null);
+      setIndustryUnavailable(false);
+
+      // 选两家入口：不自动查询，等待用户在预填列表中勾选
+      if (candidateCodes.length > 0) {
+        setLoading(false);
+        return;
+      }
+
+      if (codesParam.length === 0) {
+        setError('请选择要对比的公司');
+        setLoading(false);
+        return;
+      }
+
+      // 行业分位数据源未接入（清单 §5.3）：诚实降级，不得把普通
+      // 对比结果伪装成行业对比
+      if (scope === 'industry') {
+        setIndustryUnavailable(true);
+        setLoading(false);
+        return;
+      }
 
       try {
-        // 获取对比公司代码
-        const codes = searchParams.get('codes')?.split(',').filter(Boolean) || [];
-
-        if (codes.length === 0) {
-          setError('请选择要对比的公司');
-          setLoading(false);
-          return;
-        }
-
         // 调用对比 API
-        const response = await truthnetAPI.compareCompanies(codes);
+        const response = await truthnetAPI.compareCompanies(codesParam);
         const data = response.data;
         if (!data) {
           setError('无对比数据');
@@ -185,6 +306,7 @@ export default function ComparePage() {
     };
 
     loadCompanies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   // 获取指标值
@@ -220,6 +342,55 @@ export default function ComparePage() {
         <div className="flex-1 p-6 space-y-4">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  // v3.3.4 收口复核清单 §5.2-6：choose_comparison_pair 选两家入口
+  if (candidateCodes.length > 0) {
+    return (
+      <div className="h-full flex flex-col bg-background">
+        <header className="border-b px-6 py-4 flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-lg font-medium">跨公司对比</h1>
+        </header>
+        <ChoosePair candidateCodes={candidateCodes} />
+      </div>
+    );
+  }
+
+  // v3.3.4 收口复核清单 §5.3：行业分位数据源未接入 → 诚实降级，
+  // 明确不可用，不把普通对比结果伪装成行业对比
+  if (industryUnavailable) {
+    return (
+      <div className="h-full flex flex-col bg-background">
+        <header className="border-b px-6 py-4 flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-lg font-medium">跨公司对比 · 行业对比</h1>
+        </header>
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center max-w-md">
+            <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h2 className="text-lg font-medium">行业分位暂未接入</h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              行业分位/行业基准数据源尚未接入，暂无法展示行业对比结果。
+              可先查看这些公司的普通完整对比。
+            </p>
+            <Button
+              className="mt-4"
+              onClick={() => navigate(`/compare?codes=${codesParam.join(',')}`)}
+            >
+              查看普通完整对比
+            </Button>
+            <Button variant="outline" className="mt-4 ml-2" onClick={() => navigate(-1)}>
+              返回
+            </Button>
+          </div>
         </div>
       </div>
     );

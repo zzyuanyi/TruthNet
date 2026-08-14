@@ -31,6 +31,7 @@ from app.application.services.ws_session_manager import (
     WsSession,
     session_manager,
 )
+from app.application.models.company_resolution import validate_finalized_relation_roles
 
 logger = logging.getLogger(__name__)
 
@@ -403,6 +404,70 @@ def _event_module(node_name: str) -> str:
     return node_name
 
 
+def _segmentation_clarification_required(resolution) -> bool:
+    """v3.3.1 §8.2：是否进入分段歧义澄清（无可确认候选但存在未解决
+    分段方案/segmentation_ambiguous issue）——此时不发空
+    company.candidates，改发 entity.clarification_required。"""
+    return bool(
+        getattr(resolution, "segmentation_alternatives", None)
+        or any(
+            i.code == "segmentation_ambiguous"
+            for i in (getattr(resolution, "resolution_issues", None) or [])
+        )
+    )
+
+
+def _build_entity_pending(turn: ActiveTurn, resolution) -> dict:
+    """由权威解析结果构造新结构 pending（v3.1 P0-1/P0-2/P0-3）。
+
+    生命周期 collecting → ready_to_resume → resuming → consumed；
+    保存全部 mention（含已锁定），remaining 只计 needs_confirmation。
+    v3.3.1 §8.2：grouped alternatives 从权威结果复制，不再硬编码空数组；
+    单值 selected_alternative_id 从权威映射派生（仅恰好一个 parent 时）。
+    """
+    from app.application.models.company_resolution import make_query_fingerprint
+
+    relation = resolution.intent
+    executable = relation in ("single", "continuation", "switch", "comparison")
+    finalized = executable and validate_finalized_relation_roles(
+        relation, resolution.mentions
+    )
+    relation_waiting_for_identity = (
+        relation == "comparison"
+        and not finalized
+        and any(m.status == "needs_confirmation" for m in resolution.mentions)
+        and not any(
+            m.status in ("not_found", "needs_refinement") for m in resolution.mentions
+        )
+    )
+    alt_items = getattr(resolution, "segmentation_alternatives", None) or []
+    selected_ids = getattr(resolution, "selected_alternative_ids", None) or {}
+    return {
+        "origin_turn_id": turn.turn_id,
+        "revision": 0,
+        "lifecycle_status": "collecting",
+        "resolution_version": 1,
+        "question": turn.question,
+        "query_fingerprint": make_query_fingerprint(turn.question),
+        "relation": relation,
+        "relation_waiting_for_identity": relation_waiting_for_identity,
+        # single/continuation/switch are executable while identity selection
+        # is pending. Comparison needs a separate intermediate marker because
+        # it must wait for all participants before becoming finalized.
+        "relation_status": (
+            "resolved"
+            if finalized or relation in ("single", "continuation", "switch")
+            else "needs_clarification"
+        ),
+        "segmentation_alternatives": [a.model_dump() for a in alt_items],
+        "selected_alternative_id": (
+            next(iter(selected_ids.values())) if len(selected_ids) == 1 else None
+        ),
+        "mentions": {m.mention_id: m.model_dump() for m in resolution.mentions},
+        "resumed_turn_id": None,
+    }
+
+
 async def _finalize_turn(
     *,
     session: WsSession,
@@ -428,7 +493,53 @@ async def _finalize_turn(
     plan = state.get("plan")
     intent = getattr(plan, "intent", "") if plan is not None else ""
     candidates = state.get("company_candidates", []) or []
-    if candidates:
+    # v3.1：实体解析权威结果 → mention 分组确认（P0-1/P0-2/P0-3）
+    resolution = state.get("entity_resolution_result")
+    confirmable = []
+    if resolution is not None:
+        confirmable = [
+            m for m in resolution.mentions if m.status == "needs_confirmation"
+        ]
+    if confirmable:
+        pending = _build_entity_pending(turn, resolution)
+        session_manager.set_pending_disambiguation(session, pending)
+        mention_items = [m.model_dump() for m in resolution.mentions]
+        # P0-5：恰好一个未确认 mention → 旧扁平候选兼容；多 → 空
+        legacy_items: list[dict] = []
+        if len(confirmable) == 1 and confirmable[0].candidates:
+            legacy_items = [
+                c.company.model_dump()
+                if hasattr(c.company, "model_dump")
+                else dict(c.company)
+                for c in confirmable[0].candidates
+            ]
+        await emit(
+            "company.candidates",
+            {
+                "turn_id": turn.turn_id,
+                "revision": 0,
+                "mentions": mention_items,
+                "candidates": legacy_items,
+            },
+        )
+    elif resolution is not None and _segmentation_clarification_required(resolution):
+        # v3.3.1 §8.2：只有分段歧义、无可确认候选 → 不发空
+        # company.candidates，改发追加型 entity.clarification_required
+        # （issues/mentions/grouped alternatives；用户重述问题澄清）
+        await emit(
+            "entity.clarification_required",
+            {
+                "turn_id": turn.turn_id,
+                "issues": [i.model_dump() for i in resolution.resolution_issues],
+                "mentions": [m.model_dump() for m in resolution.mentions],
+                "segmentation_alternatives": [
+                    a.model_dump()
+                    for a in getattr(resolution, "segmentation_alternatives", None)
+                    or []
+                ],
+            },
+        )
+    elif candidates:
         candidate_items = [
             item.model_dump() if hasattr(item, "model_dump") else dict(item)
             for item in candidates
@@ -612,10 +723,44 @@ async def _finalize_turn(
                 item.model_dump() if hasattr(item, "model_dump") else dict(item)
                 for item in candidates
             ],
+            # v3.3.1 §8.2：只读实体解析摘要（断线补发与旧前端降级展示）
+            "entity_resolution": (
+                {
+                    "needs_confirmation": resolution.needs_confirmation,
+                    "resolution_issues": [
+                        i.model_dump() for i in resolution.resolution_issues
+                    ],
+                    "segmentation_alternatives": [
+                        a.model_dump()
+                        for a in getattr(resolution, "segmentation_alternatives", None)
+                        or []
+                    ],
+                }
+                if resolution is not None
+                else {}
+            ),
+            # v3.3.4 方案 §3.3/§6.1：轻量概览结构化载荷（只读追加，旧客户端忽略）
+            **_light_comparison_payload(state),
         },
         emit,
     )
     return TurnResult("completed", turn.turn_id, session.sequence)
+
+
+def _light_comparison_payload(state: dict) -> dict:
+    """v3.3.4 方案 §3.3/§6.1：turn.completed 轻量比较只读载荷。
+
+    收口复核审查 P2b：统一 helper 供 turn.completed 组装与契约测试
+    共用；缺省为空值，命中时完整透出（overview_rows 已由回答层
+    model_dump(mode="json") 保证 JSON 可序列化）。
+    """
+    lc = state.get("light_comparison") or {}
+    return {
+        "comparison_mode": lc.get("comparison_mode", ""),
+        "overview_rows": lc.get("overview_rows", []),
+        "requested_scope": lc.get("requested_scope", ""),
+        "next_steps": lc.get("next_steps", []),
+    }
 
 
 def _extract_equity_chains(state: dict) -> list[dict]:

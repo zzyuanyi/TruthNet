@@ -708,13 +708,13 @@ def test_answer_company_fact_honest_and_traceable():
 
 
 def test_comparison_guide_detection(monkeypatch):
-    """R13：多公司比较 → comparison_guide，不静默选一家。"""
-    from app.agents.nodes.resolve_entity import _looks_like_comparison
+    """R13 平移：多公司比较检测（Resolver._detect_comparison）。"""
+    from app.application.services.company_entity_resolver import _detect_comparison
 
-    assert _looks_like_comparison("中芯国际和台积电的差距")
-    assert _looks_like_comparison("康美药业对比金牌家居")
-    assert not _looks_like_comparison("分析康美药业")
-    assert not _looks_like_comparison("康美药业有风险吗")
+    assert _detect_comparison("中芯国际和台积电的差距", ["中芯国际"])
+    assert _detect_comparison("康美药业对比金牌家居", ["康美药业", "金牌家居"])
+    assert not _detect_comparison("分析康美药业", ["康美药业"])
+    assert not _detect_comparison("康美药业有风险吗", ["康美药业"])
 
 
 def test_company_type_labels():
@@ -734,32 +734,13 @@ def test_company_type_labels():
     assert company_type_from_code(4) == "financial"
 
 
-def test_comparison_requested_zero_candidates(monkeypatch):
-    """P2-2：比较意图 0 家候选 → comparison_guide（不退化单公司分析）。"""
-    from app.agents.nodes import plan_modules as pm
-    from app.agents.nodes.resolve_entity import resolve_entity_node
-    from app.agents.state import MemoryContext
+def test_comparison_guide_detection_zero_hits():
+    """P2-2 平移：强比较词 + 0 家候选（库外公司）→ 判比较（引导）。"""
+    from app.application.services.company_entity_resolver import _detect_comparison
 
-    monkeypatch.setattr(
-        "app.agents.nodes.resolve_entity._find_company_candidates",
-        lambda q, limit=5: [],
-    )
-    monkeypatch.setattr(
-        "app.agents.nodes.resolve_entity._find_company",
-        lambda q: None,
-    )
-    state = {
-        "user_query": "甲公司和乙公司的差距",
-        "memory_context": MemoryContext(),
-        "runtime": type("R", (), {"session_id": "s", "trace_id": "t"})(),
-    }
-    result = resolve_entity_node(state)
-    assert result.get("comparison_requested") is True
-    assert result.get("comparison_targets") == []
-
-    plan = pm.plan_modules_node({**result, "user_query": "甲公司和乙公司的差距"})
-    assert plan["plan"].intent == "comparison_guide"
-    assert plan["plan"].requested_modules == []
+    assert _detect_comparison("甲公司和乙公司的差距", [])
+    # 排除词语境不判比较
+    assert not _detect_comparison("白酒行业比较", [])
 
 
 def test_fact_value_persist_shape():

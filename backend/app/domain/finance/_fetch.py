@@ -76,26 +76,47 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def _engine_profile_key(settings) -> str:
+    """连接 profile 完整身份 key（审查 P2，与 company_resolver._profile_key
+    同契约：mysql = backend/user/host/port/database，sqlite 含路径）。"""
+    backend = settings.SQL_BACKEND
+    if backend == "mysql":
+        return (
+            f"mysql:{settings.MYSQL_USER}:{settings.MYSQL_HOST}:"
+            f"{settings.MYSQL_PORT}:{settings.MYSQL_DATABASE}"
+        )
+    return f"sqlite:{settings.SQLITE_PATH or 'data/truthnet.db'}"
+
+
 def _get_engine():
     from app.core.config import settings
 
-    backend = settings.SQL_BACKEND
-    if backend in _ENGINES:
-        return _ENGINES[backend]
+    key = _engine_profile_key(settings)
+    if key in _ENGINES:
+        return _ENGINES[key]
+    # 审查 P2：新 profile 建立时 dispose 其他 profile 的旧 Engine，
+    # 避免动态切库后连接池滞留、旧库连接被新 profile 复用（懒重建）。
+    for other, engine in list(_ENGINES.items()):
+        if other == key:
+            continue
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001 — dispose 失败不阻断取数
+            pass
 
-    if backend == "mysql":
+    if key.startswith("mysql:"):
         url = (
             f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
             f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
             "?charset=utf8mb4"
         )
-        _ENGINES[backend] = create_engine(url, pool_pre_ping=True)
+        _ENGINES[key] = create_engine(url, pool_pre_ping=True)
     else:  # sqlite（lite profile）
         path = Path(settings.SQLITE_PATH)
         if not path.is_absolute():
             path = _repo_root() / path
-        _ENGINES[backend] = create_engine(f"sqlite:///{path.as_posix()}")
-    return _ENGINES[backend]
+        _ENGINES[key] = create_engine(f"sqlite:///{path.as_posix()}")
+    return _ENGINES[key]
 
 
 def fetch_series(

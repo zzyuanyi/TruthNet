@@ -3,16 +3,27 @@
 // Phase 1: 对接真实 API
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { SessionSidebar } from '@/components/truthnet/SessionSidebar';
 import { ChatInterface } from '@/components/truthnet/ChatInterface';
 import { AnalysisPanel } from '@/components/truthnet/AnalysisPanel';
 import { apiClient, wsClient } from '@/lib/api-client';
-import type { Session, Message, PanelData, PanelState, ChatDataV1, RiskLevel } from '@/types/truthnet';
+import { comparisonStepToUrl } from '@/lib/comparison-steps';
+import type {
+  Session,
+  Message,
+  PanelData,
+  PanelState,
+  ChatDataV1,
+  RiskLevel,
+  ComparisonNextStep,
+} from '@/types/truthnet';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export default function ChatPage() {
+  const navigate = useNavigate();
   // 状态管理
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
@@ -283,6 +294,11 @@ export default function ChatPage() {
           intent?: string;
           trace_id?: string;
           risk_level?: string;
+          // v3.3.4 收口复核清单 §5：轻量比较结构化载荷（只读透出）
+          comparison_mode?: string;
+          overview_rows?: Array<Record<string, unknown>>;
+          requested_scope?: string;
+          next_steps?: ComparisonNextStep[];
           finance?: {
             rule_statuses?: Record<string, string>;
             triggered_rules?: Array<{
@@ -331,6 +347,8 @@ export default function ChatPage() {
                 ? triggeredRules
                 : prev?.triggered_rules,
             follow_ups: result.follow_ups ?? prev?.follow_ups,
+            // v3.3.4：结构化比较下一步优先于旧追问（AnalysisPanel 渲染）
+            next_steps: result.next_steps ?? prev?.next_steps,
           }));
         } else {
           setPanelData(null);
@@ -360,6 +378,7 @@ export default function ChatPage() {
               evidence_ids: result?.evidence_ids || [],
               sources: result?.sources || [],
               follow_ups: result?.follow_ups || [],
+              next_steps: result?.next_steps || [],
               show_evidence_status: showEvidenceStatus,
               is_streaming: false,
             };
@@ -372,6 +391,7 @@ export default function ChatPage() {
               evidence_ids: result?.evidence_ids || [],
               sources: result?.sources || [],
               follow_ups: result?.follow_ups || [],
+              next_steps: result?.next_steps || [],
               show_evidence_status: showEvidenceStatus,
               created_at: new Date().toISOString(),
             });
@@ -476,6 +496,17 @@ export default function ChatPage() {
     wsRef.current?.confirmCompany(turnId, windCode);
   }, []);
 
+  // v3.3.4 收口复核清单 §5.2：结构化比较下一步 → 页面 URL（白名单/
+  // 去重/URLSearchParams 编码由纯函数保证；非法 target 不导航）
+  const handleNavigateStep = useCallback(
+    (step: ComparisonNextStep) => {
+      const url = comparisonStepToUrl(step);
+      if (!url) return;
+      navigate(url);
+    },
+    [navigate],
+  );
+
   // Task 7: 面板联动 - 点击规则（对齐审计 P1-3：筛选证据而非仅滚动）
   const handleRuleClick = useCallback((ruleId: string) => {
     // 再次点击已激活规则 → 取消筛选
@@ -539,6 +570,7 @@ export default function ChatPage() {
           }}
           pendingCandidates={pendingCandidates}
           onConfirmCompany={handleConfirmCompany}
+          onNavigateStep={handleNavigateStep}
         />
       </div>
 
@@ -557,6 +589,7 @@ export default function ChatPage() {
             activeRuleId={activeRuleId}
             onFollowUp={handleFollowUp}
             onRuleClick={handleRuleClick}
+            onNavigateStep={handleNavigateStep}
           />
         )}
         <Button

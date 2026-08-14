@@ -38,10 +38,69 @@ def evidence_coverage(claims: list[dict]) -> float:
 
 def entity_retention_rate(
     turns: list[dict],
-    expected_entity: str,
+    expected_entity: str | list[str] | dict,
     field: str = "company_code",
+    id_key: str = "turn_id",
 ) -> float:
-    """多轮对话中系统正确记住当前主体的比例."""
+    """多轮对话中系统正确记住当前主体的比例.
+
+    expected_entity 三种形态（2026-08-12 六轮审查 P2-2 修订）：
+      - str：全局预期（兼容既有调用），分母为 turns 数；
+      - list：按轮位置对齐，**长度必须与 turns 一致**（先检查长度、
+        再处理空输入——turns=[] 而 expected=["A"] 必须抛错），
+        不猜测缺失位置；
+      - dict：按 id_key（默认 turn_id）关联，{turn_id: 预期公司}——
+        键与实际 id_key 强制非空字符串；预期轮次作分母、缺失预期
+        ID 计错；**额外实际轮次（不在预期中的 ID）报输入错误**；
+        重复实际 ID 报输入错误。
+    """
+    if isinstance(expected_entity, (list, tuple)):
+        if len(expected_entity) != len(turns):
+            raise ValueError(
+                f"expected_entity 长度 {len(expected_entity)} 与 turns 长度 "
+                f"{len(turns)} 不一致：拒绝按位置对齐（无法判断缺失位置），"
+                "请使用 dict 按 turn_id 关联"
+            )
+        if not turns:
+            return 0.0  # 长度一致且为空 → 无数据
+        correct = sum(
+            1 for t, exp in zip(turns, expected_entity) if t.get(field) == exp
+        )
+        return correct / len(turns)
+    if isinstance(expected_entity, dict):
+        # 先规范化所有预期键，构造字典前检查规范化键重复
+        # （{1: "A", "1": "B"} → 规范化后 "1" 重复 → 报错，不静默覆盖）
+        expected_norm: dict[str, object] = {}
+        for k, v in expected_entity.items():
+            nk = str(k).strip()
+            if not nk:
+                raise ValueError("expected_entity dict 键不得为空字符串")
+            if nk in expected_norm:
+                raise ValueError(f"预期键重复（规范化后）: {nk!r}")
+            expected_norm[nk] = v
+        if not expected_norm:
+            if not turns:
+                return 0.0  # 预期与实际都为空
+            raise ValueError("空预期 + 非空实际：实际轮次全部超出预期")
+        if not turns:
+            return 0.0  # 预期非空、实际全缺失 → 0.0
+        seen_ids: set[str] = set()
+        actual_by_id: dict[str, object] = {}
+        for t in turns:
+            tid = str(t.get(id_key) or "").strip()
+            if not tid:
+                raise ValueError(f"turns 缺少非空 {id_key}，无法按 ID 对齐")
+            if tid in seen_ids:
+                raise ValueError(f"重复 {id_key}: {tid!r}，无法对齐")
+            seen_ids.add(tid)
+            actual_by_id[tid] = t.get(field)
+        extra = sorted(set(actual_by_id) - set(expected_norm))
+        if extra:
+            raise ValueError(f"实际轮次超出预期: {extra}（缺失预期计错、额外实际报错）")
+        correct = sum(
+            1 for tid, exp in expected_norm.items() if actual_by_id.get(tid) == exp
+        )
+        return correct / len(expected_norm)
     if not turns:
         return 0.0
     correct = sum(1 for t in turns if t.get(field) == expected_entity)
@@ -215,7 +274,7 @@ def evaluate_all(
     turns: list[dict],
     module_statuses: list[dict],
     modules: list[dict],
-    expected_entity: str = "",
+    expected_entity: str | list[str] | dict[str, str] = "",
 ) -> dict[str, Any]:
     """一站式评测：计算全部 9 项指标并返回报告."""
     return {

@@ -17,7 +17,7 @@ import {
   CheckCircle2,
   Info,
 } from 'lucide-react';
-import type { PanelData, PanelState, RiskLevel } from '@/types/truthnet';
+import type { PanelData, PanelState, RiskLevel, ComparisonNextStep } from '@/types/truthnet';
 
 interface AnalysisPanelProps {
   state: PanelState;
@@ -28,6 +28,8 @@ interface AnalysisPanelProps {
   onRuleClick?: (ruleId: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
   activeRuleId?: string | null; // 规则筛选高亮（对齐审计 P1-3）
+  // v3.3.4 收口复核清单 §5：结构化比较下一步导航
+  onNavigateStep?: (step: ComparisonNextStep) => void;
 }
 
 // 风险等级配置
@@ -49,6 +51,7 @@ export function AnalysisPanel({
   onRuleClick,
   onMetricClick,
   activeRuleId,
+  onNavigateStep,
 }: AnalysisPanelProps) {
   return (
     <div className="h-full flex flex-col bg-background">
@@ -77,6 +80,7 @@ export function AnalysisPanel({
               onRuleClick={onRuleClick}
               onMetricClick={onMetricClick}
               activeRuleId={activeRuleId}
+              onNavigateStep={onNavigateStep}
             />
           )}
           {state === 'done' && !data && <EmptyState />}
@@ -210,6 +214,7 @@ function DoneState({
   onRuleClick,
   onMetricClick,
   activeRuleId,
+  onNavigateStep,
 }: {
   data: PanelData;
   onFollowUp?: (suggestion: string) => void;
@@ -217,6 +222,7 @@ function DoneState({
   onRuleClick?: (rule: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
   activeRuleId?: string | null;
+  onNavigateStep?: (step: ComparisonNextStep) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -231,7 +237,27 @@ function DoneState({
         activeRuleId={activeRuleId}
       />
 
-      {/* 追问建议 */}
+      {/* v3.3.4 收口复核清单 §5.2-4：结构化比较下一步优先于旧追问 */}
+      {data.next_steps && data.next_steps.length > 0 && (
+        <>
+          <Separator />
+          <div className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground">比较下一步</h4>
+            <div className="flex flex-wrap gap-2">
+              {data.next_steps.map((step, index) => (
+                <Button
+                  key={`${step.kind}-${index}`}
+                  size="sm"
+                  className="text-xs h-auto py-1.5"
+                  onClick={() => onNavigateStep?.(step)}
+                >
+                  {step.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* 追问建议 */}
       {data.follow_ups && data.follow_ups.length > 0 && (

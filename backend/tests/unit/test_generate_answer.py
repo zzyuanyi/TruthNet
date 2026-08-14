@@ -577,3 +577,460 @@ def test_claims_and_evidence_passthrough():
     ]
     assert result.claims == claims
     assert result.evidence == []
+
+
+# ── 2026-08-12 批 1.5：实体解析失败/候选截断文案 ─────────────
+
+
+def test_entity_resolution_error_message():
+    """疑似公司未识别 → 明确文案（非通用引导）。"""
+    state = _make_state(company=None)
+    state["entity_resolution_error"] = "company_not_found"
+    state["unresolved_fragments"] = ["台积电"]
+    result = generate_answer_node(state)
+    answer = result["final_response"].answer
+    assert "台积电" in answer
+    assert "未能识别" in answer
+
+
+def test_candidates_truncated_message():
+    """候选过多截断 → 明确文案。"""
+    state = _make_state(company=None)
+    state["candidates_truncated"] = True
+    result = generate_answer_node(state)
+    assert "候选公司过多" in result["final_response"].answer
+
+
+# ── v3.3.3 批次 C：轻量比较渲染（方案 §8.2）──────────────────
+
+
+def _light_compare_state():
+    from app.agents.state import ComparisonSpec
+
+    return {
+        "company": _company(),
+        "plan": ExecutionPlan(
+            intent="light_comparison",
+            comparison=ComparisonSpec(
+                scope="same_company_cross_indicator",
+                mode="indicator",
+                metric_ids=[
+                    "accounts_receivable_growth",
+                    "operating_revenue_growth",
+                ],
+                operation="difference",
+            ),
+        ),
+        "runtime": RuntimeState(turn_id="turn-1", trace_id="trace-1"),
+    }
+
+
+def test_answer_light_comparison_ok(monkeypatch):
+    """批次 C：ok 结果渲染结论 + indicator_comparison claim + 证据。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.application.services.light_comparison_service import (
+        ComparisonValue,
+        LightComparisonResult,
+    )
+
+    conclusion = (
+        "应收账款同比增速（12.50%）比营业收入同比增速（8.00%）"
+        "高 4.50个百分点（共同期间 20250331，母公司口径）"
+    )
+    monkeypatch.setattr(
+        "app.application.services.light_comparison_service."
+        "compare_same_company_indicators",
+        lambda *a, **k: LightComparisonResult(
+            status="ok",
+            scope="same_company_cross_indicator",
+            operation="difference",
+            participants=[
+                ComparisonValue(
+                    company_code="600518.SH",
+                    sec_name="康美药业",
+                    metric_id="accounts_receivable_growth",
+                    metric_label="应收账款同比增速",
+                    period="20250331",
+                    value=12.5,
+                    unit="percent",
+                ),
+                ComparisonValue(
+                    company_code="600518.SH",
+                    sec_name="康美药业",
+                    metric_id="operating_revenue_growth",
+                    metric_label="营业收入同比增速",
+                    period="20250331",
+                    value=8.0,
+                    unit="percent",
+                ),
+            ],
+            period="20250331",
+            conclusion=conclusion,
+        ),
+    )
+    out = _answer_light_comparison(_light_compare_state())
+    assert "高 4.50个百分点" in out["final_response"].answer
+    assert out["claims"][0].claim_type == "indicator_comparison"
+    assert out["claims"][0].verification_status == "verified"
+    assert out["executed_metrics"] == [
+        {
+            "metric_id": "accounts_receivable_growth",
+            "period": "20250331",
+            "unit": "percent",
+            "status": "ok",
+            "company_code": "600518.SH",
+        },
+        {
+            "metric_id": "operating_revenue_growth",
+            "period": "20250331",
+            "unit": "percent",
+            "status": "ok",
+            "company_code": "600518.SH",
+        },
+    ]
+
+
+def test_answer_light_comparison_partial_no_winner(monkeypatch):
+    """方案 §4.6：partial 只列可得一侧，不输出高低结论。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.application.services.light_comparison_service import (
+        LightComparisonResult,
+    )
+
+    monkeypatch.setattr(
+        "app.application.services.light_comparison_service."
+        "compare_same_company_indicators",
+        lambda *a, **k: LightComparisonResult(
+            status="partial",
+            scope="same_company_cross_indicator",
+            operation="difference",
+            warnings=["一侧指标数据不可用，仅列可得一侧，不比较高低"],
+        ),
+    )
+    out = _answer_light_comparison(_light_compare_state())
+    answer = out["final_response"].answer
+    assert "无法比较高低" in answer
+    assert out["claims"] == []
+    assert out["executed_metrics"] == []  # 非 ok 轮不产出执行记录
+
+
+def test_answer_light_comparison_unit_mismatch_clarifies(monkeypatch):
+    """方案 §4.5：单位不兼容 → 澄清文案，不硬算。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.application.services.light_comparison_service import (
+        LightComparisonResult,
+    )
+
+    monkeypatch.setattr(
+        "app.application.services.light_comparison_service."
+        "compare_same_company_indicators",
+        lambda *a, **k: LightComparisonResult(
+            status="unsupported",
+            scope="same_company_cross_indicator",
+            operation="difference",
+            warnings=["单位不兼容（CNY vs percent），不得直接相减"],
+        ),
+    )
+    out = _answer_light_comparison(_light_compare_state())
+    assert "单位不兼容" in out["final_response"].answer
+    assert out["claims"] == []
+
+
+def test_answer_light_comparison_insufficient_data_no_conclusion(monkeypatch):
+    """方案 §4.4：无共同期间 → 诚实说明，不输出数值结论。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.application.services.light_comparison_service import (
+        LightComparisonResult,
+    )
+
+    monkeypatch.setattr(
+        "app.application.services.light_comparison_service."
+        "compare_same_company_indicators",
+        lambda *a, **k: LightComparisonResult(
+            status="insufficient_data",
+            scope="same_company_cross_indicator",
+            operation="difference",
+            warnings=["无共同期间，不得跨期相减"],
+        ),
+    )
+    out = _answer_light_comparison(_light_compare_state())
+    answer = out["final_response"].answer
+    assert "无共同期间" in answer
+    assert "无法完成" in answer
+    assert out["claims"] == []
+
+
+# ── v3.3.3 批次 D：跨公司轻量比较渲染（方案 §8.3）────────────────
+
+
+def _cross_compare_state():
+    from app.agents.state import ComparisonSpec
+
+    return {
+        "company": _company("伊利股份", "600887.SH"),
+        "comparison_targets": [
+            _company("伊利股份", "600887.SH"),
+            _company("双汇发展", "000895.SZ"),
+        ],
+        "plan": ExecutionPlan(
+            intent="light_comparison",
+            comparison=ComparisonSpec(
+                scope="cross_company",
+                mode="indicator",
+                metric_ids=["r4_turnover_days"],
+                operation="less_than",
+            ),
+        ),
+        "runtime": RuntimeState(turn_id="turn-1", trace_id="trace-1"),
+    }
+
+
+def test_answer_cross_company_indicator_ok(monkeypatch):
+    """官方原题渲染：双方原始值 + 共同期间 + 程序差值。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.application.services.light_comparison_service import (
+        ComparisonValue,
+        LightComparisonResult,
+    )
+
+    conclusion = (
+        "伊利股份（600887.SH）存货周转天数为100.00天；"
+        "双汇发展（000895.SZ）为110.00天。"
+        "存货周转天数：伊利股份比双汇发展低 10.00天"
+        "（共同期间 20241231，母公司口径）"
+    )
+    monkeypatch.setattr(
+        "app.application.services.light_comparison_service."
+        "compare_cross_company_indicators",
+        lambda *a, **k: LightComparisonResult(
+            status="ok",
+            scope="cross_company",
+            operation="less_than",
+            participants=[
+                ComparisonValue(
+                    company_code="600887.SH",
+                    sec_name="伊利股份",
+                    metric_id="r4_turnover_days",
+                    metric_label="存货周转天数",
+                    period="20241231",
+                    value=100.0,
+                    unit="days",
+                ),
+                ComparisonValue(
+                    company_code="000895.SZ",
+                    sec_name="双汇发展",
+                    metric_id="r4_turnover_days",
+                    metric_label="存货周转天数",
+                    period="20241231",
+                    value=110.0,
+                    unit="days",
+                ),
+            ],
+            period="20241231",
+            conclusion=conclusion,
+        ),
+    )
+    out = _answer_light_comparison(_cross_compare_state())
+    answer = out["final_response"].answer
+    assert "低 10.00天" in answer
+    assert out["claims"][0].claim_type == "indicator_comparison"
+    assert out["executed_metrics"] == [
+        {
+            "metric_id": "r4_turnover_days",
+            "period": "20241231",
+            "unit": "days",
+            "status": "ok",
+            "company_code": "600887.SH",
+        },
+        {
+            "metric_id": "r4_turnover_days",
+            "period": "20241231",
+            "unit": "days",
+            "status": "ok",
+            "company_code": "000895.SZ",
+        },
+    ]
+
+
+def test_answer_cross_company_missing_dimension(monkeypatch):
+    """「那茅台呢，对比一下」→ 追问维度，不启动数值查询。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.agents.state import ComparisonSpec
+
+    state = _cross_compare_state()
+    state["plan"] = ExecutionPlan(
+        intent="light_comparison",
+        comparison=ComparisonSpec(scope="cross_company", mode="missing_dimension"),
+    )
+    out = _answer_light_comparison(state)
+    assert "请指定要比较的维度" in out["final_response"].answer
+    assert out["claims"] == []
+
+
+def test_answer_cross_company_risk_page_guide():
+    """批次 D 诚实路由：风险维度 → 页面引导文案。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.agents.state import ComparisonSpec
+
+    state = _cross_compare_state()
+    state["plan"] = ExecutionPlan(
+        intent="light_comparison",
+        comparison=ComparisonSpec(scope="cross_company", mode="risk"),
+    )
+    out = _answer_light_comparison(state)
+    assert "跨公司对比" in out["final_response"].answer
+    assert out["claims"] == []
+
+
+def test_answer_cross_company_fact_listing_date(monkeypatch):
+    """官方原题渲染：上市日期早晚（年差由服务计算）。"""
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.agents.state import ComparisonSpec
+    from app.application.services.light_comparison_service import (
+        LightComparisonResult,
+    )
+
+    conclusion = (
+        "中国石化（600028.SH）上市日期为2001-08-08；"
+        "中国石油（601857.SH）为2007-11-05。中国石化比中国石油早约 6.3 年上市。"
+    )
+    monkeypatch.setattr(
+        "app.application.services.light_comparison_service."
+        "compare_cross_company_facts",
+        lambda *a, **k: LightComparisonResult(
+            status="ok",
+            scope="cross_company",
+            operation="earlier_than",
+            conclusion=conclusion,
+        ),
+    )
+    state = {
+        "company": _company("中国石化", "600028.SH"),
+        "comparison_targets": [
+            CompanyRefWithDate("中国石化", "600028.SH", "2001-08-08"),
+            CompanyRefWithDate("中国石油", "601857.SH", "2007-11-05"),
+        ],
+        "plan": ExecutionPlan(
+            intent="light_comparison",
+            comparison=ComparisonSpec(
+                scope="cross_company",
+                mode="company_fact",
+                fact_key="listing_date",
+                operation="earlier_than",
+                period_policy="not_applicable",
+            ),
+        ),
+        "runtime": RuntimeState(turn_id="turn-1", trace_id="trace-1"),
+    }
+    out = _answer_light_comparison(state)
+    answer = out["final_response"].answer
+    assert "早约 6.3 年" in answer
+    assert out["claims"][0].claim_type == "company_fact_comparison"
+    assert len(out["evidence"]) == 2
+
+
+def CompanyRefWithDate(name: str, code: str, listing: str) -> CompanyRef:
+    return CompanyRef(
+        entity_id=f"company_{code.replace('.', '_')}",
+        wind_code=code,
+        sec_name=name,
+        exchange="XSHG",
+        listing_date=listing,
+    )
+
+
+# ── v3.3.4 Preview First：三家及以上保底（方案 §2.4/§6.1）────────────────
+
+
+def _guide_state(query: str, codes_names: list[tuple[str, str]]) -> dict:
+    return {
+        "user_query": query,
+        "company": None,
+        "comparison_targets": [_company(name, code) for code, name in codes_names],
+        "plan": ExecutionPlan(intent="comparison_guide"),
+        "runtime": RuntimeState(turn_id="turn-1", trace_id="trace-1"),
+    }
+
+
+def test_answer_comparison_guide_three_companies_choose_pair():
+    """方案 §2.4/§7.1-22：三家 finalized + 页面不支持多主体 →
+    choose_comparison_pair（全部去重代码），不查询、不截断、overview_rows 空。"""
+    from app.agents.nodes.generate_answer import _answer_comparison_guide
+
+    state = _guide_state(
+        "康美、茅台、五粮液对比一下",
+        [("600518.SH", "康美药业"), ("600519.SH", "贵州茅台"), ("000858.SZ", "五粮液")],
+    )
+    out = _answer_comparison_guide(state)
+    payload = out["light_comparison"]
+    assert payload["comparison_mode"] == ""
+    assert payload["overview_rows"] == []
+    assert payload["requested_scope"] == "overview"
+    assert payload["next_steps"][0]["kind"] == "choose_comparison_pair"
+    assert payload["next_steps"][0]["participant_codes"] == [
+        "600518.SH",
+        "600519.SH",
+        "000858.SZ",
+    ]
+    assert "尚未执行数值比较" in out["final_response"].answer
+    assert out["final_response"].claims == []
+
+
+def test_answer_comparison_guide_multi_page_enabled_open_multi(monkeypatch):
+    """方案 §2.4/§7.1-21：页面支持多主体 → open_multi_company_comparison。"""
+    from app.agents.nodes.generate_answer import _answer_comparison_guide
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "COMPARISON_MULTI_PAGE_ENABLED", True)
+    state = _guide_state(
+        "全面对比康美、茅台和五粮液",
+        [("600518.SH", "康美药业"), ("600519.SH", "贵州茅台"), ("000858.SZ", "五粮液")],
+    )
+    out = _answer_comparison_guide(state)
+    payload = out["light_comparison"]
+    assert payload["requested_scope"] == "full"
+    assert payload["next_steps"][0]["kind"] == "open_multi_company_comparison"
+    assert len(payload["next_steps"][0]["participant_codes"]) == 3
+    assert "尚未执行数值比较" in out["final_response"].answer
+
+
+def test_answer_comparison_guide_over_five_requires_narrowing():
+    """方案 §2.4/§7.1-23：超过上限 5 家 → next_steps 为空、纯文案缩小范围，
+    不传入部分主体、不默认选择、不查询。"""
+    from app.agents.nodes.generate_answer import _answer_comparison_guide
+
+    state = _guide_state(
+        "这六家公司对比一下",
+        [
+            ("600518.SH", "康美药业"),
+            ("600519.SH", "贵州茅台"),
+            ("000858.SZ", "五粮液"),
+            ("600887.SH", "伊利股份"),
+            ("000895.SZ", "双汇发展"),
+            ("601857.SH", "中国石油"),
+        ],
+    )
+    out = _answer_comparison_guide(state)
+    payload = out["light_comparison"]
+    assert payload["next_steps"] == []
+    assert payload["overview_rows"] == []
+    answer = out["final_response"].answer
+    assert "超过一次对比的上限 5 家" in answer
+    assert "未执行任何指标查询" in answer
+
+
+def test_answer_comparison_guide_single_company_full_no_preview():
+    """方案 §2.1/§7.1-5：只有一家主体 + 全面对比 → 澄清文案，不生成伪造
+    预览、不携带错误主体的跳转参数。"""
+    from app.agents.nodes.generate_answer import _answer_comparison_guide
+
+    state = {
+        "user_query": "康美药业全面对比",
+        "company": _company("康美药业", "600518.SH"),
+        "comparison_targets": [],
+        "plan": ExecutionPlan(intent="comparison_guide"),
+        "runtime": RuntimeState(turn_id="turn-1", trace_id="trace-1"),
+    }
+    out = _answer_comparison_guide(state)
+    assert "light_comparison" not in out
+    assert "只有一家公司" in out["final_response"].answer

@@ -65,7 +65,9 @@ logs/
 *.pt
 *.h5
 *.onnx
-models/
+# 仅排除仓库根模型权重目录（v3.2.1 批次 1：锚定根目录，避免误伤
+# backend/app/application/models/ 应用 DTO 包）
+/models/
 
 # Jupyter
 .ipynb_checkpoints/

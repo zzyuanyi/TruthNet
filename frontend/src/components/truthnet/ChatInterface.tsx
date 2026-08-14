@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText } from 'lucide-react';
-import type { Message, RiskLevel } from '@/types/truthnet';
+import type { Message, RiskLevel, ComparisonNextStep } from '@/types/truthnet';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 
 interface CompanyCandidate {
@@ -26,6 +26,8 @@ interface ChatInterfaceProps {
   // 8.11：公司歧义候选确认（后端 company.candidates → 点选 → company.confirm 重跑）
   pendingCandidates?: { turn_id: string; candidates: CompanyCandidate[] } | null;
   onConfirmCompany?: (turnId: string, windCode: string) => void;
+  // v3.3.4 收口复核清单 §5：结构化比较下一步导航
+  onNavigateStep?: (step: ComparisonNextStep) => void;
 }
 
 // 风险等级颜色
@@ -47,6 +49,7 @@ export function ChatInterface({
   onClearEvidenceHighlight,
   pendingCandidates,
   onConfirmCompany,
+  onNavigateStep,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
   const [confirmingCode, setConfirmingCode] = useState<string | null>(null);
@@ -145,6 +148,7 @@ export function ChatInterface({
                 message={message}
                 evidenceHighlighted={isEvidenceMatch}
                 onFollowUp={onSendMessage}
+                onNavigateStep={onNavigateStep}
               />
             );
           })}
@@ -226,10 +230,12 @@ function MessageBubble({
   message,
   evidenceHighlighted = false,
   onFollowUp,
+  onNavigateStep,
 }: {
   message: Message;
   evidenceHighlighted?: boolean;
   onFollowUp?: (suggestion: string) => void;
+  onNavigateStep?: (step: ComparisonNextStep) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -271,6 +277,23 @@ function MessageBubble({
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none">
             <MarkdownRenderer content={message.content} />
+          </div>
+        )}
+
+        {/* v3.3.4 收口复核清单 §5.2-4：结构化比较下一步优先于旧追问 */}
+        {!isUser && message.next_steps && message.next_steps.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border/50">
+            {message.next_steps.map((step, i) => (
+              <Button
+                key={`${step.kind}-${i}`}
+                variant="default"
+                size="sm"
+                className="h-auto py-1.5 text-xs"
+                onClick={() => onNavigateStep?.(step)}
+              >
+                {step.label}
+              </Button>
+            ))}
           </div>
         )}
 

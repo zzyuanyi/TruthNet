@@ -143,7 +143,285 @@ def test_session_not_exist(monkeypatch, sqlite_engine):
     assert result["messages"] == []
 
 
+# ── 中间验收批次 A4：response_meta 双形态读取（P1-4）────────────
+
+
+def test_parse_json_meta_dict():
+    """dict 形态直返（ORM JSON 列反序列化结果）。"""
+    assert lc._parse_json_meta({"active_company_code": "600519.SH"}) == {
+        "active_company_code": "600519.SH"
+    }
+
+
+def test_parse_json_meta_json_string():
+    """JSON 字符串形态解析。"""
+    assert lc._parse_json_meta('{"active_company_code": "600518.SH"}') == {
+        "active_company_code": "600518.SH"
+    }
+
+
+def test_parse_json_meta_bad_json_returns_empty():
+    """坏 JSON（如 str(dict) 单引号产物）回退空 dict。"""
+    assert lc._parse_json_meta("{'active_company_code': '600519.SH'}") == {}
+
+
+def test_parse_json_meta_none_returns_empty():
+    assert lc._parse_json_meta(None) == {}
+    assert lc._parse_json_meta("") == {}
+
+
+def _seed_turn_with_meta(engine, session_id, turn_idx, q, a, company_code, meta):
+    """预置带 company_code/response_meta 的单轮。"""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_sessions "
+                "(session_id, title, status, created_at, updated_at) "
+                "VALUES (:sid, :title, 'active', CURRENT_TIMESTAMP, "
+                "CURRENT_TIMESTAMP)"
+            ),
+            {"sid": session_id, "title": "历史会话"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, answer, "
+                "company_code, response_meta, created_at) "
+                "VALUES (:tid, :sid, :idx, :q, :a, :cc, :meta, "
+                "CURRENT_TIMESTAMP)"
+            ),
+            {
+                "tid": f"turn_{turn_idx:02d}",
+                "sid": session_id,
+                "idx": turn_idx,
+                "q": q,
+                "a": a,
+                "cc": company_code,
+                "meta": meta,
+            },
+        )
+
+
+def test_load_context_reads_response_meta_json_string(monkeypatch, sqlite_engine):
+    """P1-4：response_meta JSON 字符串形态 → active_company_code 优先。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    _seed_turn_with_meta(
+        sqlite_engine,
+        "ses_test",
+        1,
+        "茅台和五粮液对比",
+        "回答",
+        "600519.SH",
+        json.dumps({"active_company_code": "000858.SZ"}),
+    )
+    result = lc.load_context_node(_make_state())
+    assert result["recent_company_codes"] == ["000858.SZ"]
+
+
+def test_load_context_bad_meta_falls_back_to_company_code(monkeypatch, sqlite_engine):
+    """P1-4：坏 JSON → 回退 company_code（不丢主体）。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    _seed_turn_with_meta(
+        sqlite_engine,
+        "ses_test",
+        1,
+        "问题",
+        "回答",
+        "600518.SH",
+        "{'not': 'valid json'",
+    )
+    result = lc.load_context_node(_make_state())
+    assert result["recent_company_codes"] == ["600518.SH"]
+
+
+def test_load_context_none_meta_falls_back_to_company_code(monkeypatch, sqlite_engine):
+    """P1-4：response_meta NULL → 回退 company_code。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    _seed_turn_with_meta(
+        sqlite_engine, "ses_test", 1, "问题", "回答", "600518.SH", None
+    )
+    result = lc.load_context_node(_make_state())
+    assert result["recent_company_codes"] == ["600518.SH"]
+
+
+def test_load_context_recovers_recent_executed_metrics(monkeypatch, sqlite_engine):
+    """v3.3.3 批次 B（方案 §5.4）：从 response_meta 恢复最近成功指标。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    _seed_turn_with_meta(
+        sqlite_engine,
+        "ses_test",
+        1,
+        "它的应收账款增速是多少",
+        "增速 12.00%",
+        "600518.SH",
+        json.dumps(
+            {
+                "executed_metrics": [
+                    {
+                        "metric_id": "accounts_receivable_growth",
+                        "period": "20250331",
+                        "unit": "percent",
+                        "status": "ok",
+                    }
+                ]
+            }
+        ),
+    )
+    result = lc.load_context_node(_make_state())
+    assert result["recent_executed_metrics"] == [
+        {
+            "metric_id": "accounts_receivable_growth",
+            "period": "20250331",
+            "unit": "percent",
+            "status": "ok",
+            "company_code": "600518.SH",
+        }
+    ]
+
+
+def test_load_context_skips_non_ok_metrics_and_dedups(monkeypatch, sqlite_engine):
+    """v3.3.3 批次 B 完成标准：非 ok 轮跳过；同 metric_id 最近优先去重。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    # 较旧轮（turn_index=1）：一次 ok + 一次失败（失败不得污染）
+    _seed_turn_with_meta(
+        sqlite_engine,
+        "ses_test",
+        1,
+        "和营业收入增速对比呢",
+        "答",
+        "600518.SH",
+        json.dumps(
+            {
+                "executed_metrics": [
+                    {
+                        "metric_id": "accounts_receivable_growth",
+                        "period": "20241231",
+                        "unit": "percent",
+                        "status": "ok",
+                    },
+                    {
+                        "metric_id": "r5_gross_margin",
+                        "status": "insufficient_data",
+                    },
+                ]
+            }
+        ),
+    )
+    # 最新轮（turn_index=2）：同指标更新期次（去重后保留最近）
+    with sqlite_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, answer, "
+                "company_code, response_meta, created_at) "
+                "VALUES (:tid, :sid, :idx, :q, :a, :cc, :meta, "
+                "CURRENT_TIMESTAMP)"
+            ),
+            {
+                "tid": "turn_02",
+                "sid": "ses_test",
+                "idx": 2,
+                "q": "它的应收账款增速是多少",
+                "a": "答",
+                "cc": "600518.SH",
+                "meta": json.dumps(
+                    {
+                        "executed_metrics": [
+                            {
+                                "metric_id": "accounts_receivable_growth",
+                                "period": "20250331",
+                                "unit": "percent",
+                                "status": "ok",
+                            }
+                        ]
+                    }
+                ),
+            },
+        )
+    result = lc.load_context_node(_make_state())
+    assert result["recent_executed_metrics"] == [
+        {
+            "metric_id": "accounts_receivable_growth",
+            "period": "20250331",
+            "unit": "percent",
+            "status": "ok",
+            "company_code": "600518.SH",
+        }
+    ]
+
+
 # ── 异常容错 ────────────────────────────────────────────────
+
+
+def test_load_context_same_metric_other_company_kept_separately(
+    monkeypatch, sqlite_engine
+):
+    """收口批次 B（方案 §3.4）：不同公司同 metric_id 不去重覆盖。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    _seed_turn_with_meta(
+        sqlite_engine,
+        "ses_test",
+        1,
+        "康美的应收账款增速",
+        "答",
+        "600518.SH",
+        json.dumps(
+            {
+                "executed_metrics": [
+                    {
+                        "metric_id": "accounts_receivable_growth",
+                        "period": "20250331",
+                        "unit": "percent",
+                        "status": "ok",
+                        "company_code": "600518.SH",
+                    }
+                ]
+            }
+        ),
+    )
+    with sqlite_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO conversation_turns "
+                "(turn_id, session_id, turn_index, question, answer, "
+                "company_code, response_meta, created_at) "
+                "VALUES (:tid, :sid, :idx, :q, :a, :cc, :meta, "
+                "CURRENT_TIMESTAMP)"
+            ),
+            {
+                "tid": "turn_02",
+                "sid": "ses_test",
+                "idx": 2,
+                "q": "茅台的应收账款增速",
+                "a": "答",
+                "cc": "600519.SH",
+                "meta": json.dumps(
+                    {
+                        "executed_metrics": [
+                            {
+                                "metric_id": "accounts_receivable_growth",
+                                "period": "20240930",
+                                "unit": "percent",
+                                "status": "ok",
+                                "company_code": "600519.SH",
+                            }
+                        ]
+                    }
+                ),
+            },
+        )
+    result = lc.load_context_node(_make_state())
+    codes = {m["company_code"] for m in result["recent_executed_metrics"]}
+    assert codes == {"600518.SH", "600519.SH"}
+    assert len(result["recent_executed_metrics"]) == 2
 
 
 def test_db_error_swallowed(monkeypatch):

@@ -123,6 +123,235 @@ def _resolve_data_as_of(result: dict) -> str:
     return latest.strftime("%Y-%m-%d") if latest else ""
 
 
+def _pending_remaining_ids(snapshot: dict) -> list[str]:
+    """pending 快照中仍待确认的 mention_id 列表（P0-1：仅 needs_confirmation）。"""
+    return [
+        mid
+        for mid, m in snapshot.get("mentions", {}).items()
+        if m.get("status") == "needs_confirmation"
+    ]
+
+
+# v3.3 批次 A（P0-1）：resume 启动的结构化结果——停止传播魔法字符串，
+# 路由据此分流且不得再发第二个通用失败事件
+_RESUME_STARTED = "started"
+_RESUME_WAITING_ORIGIN = "waiting_origin"
+_RESUME_TURN_IN_PROGRESS = "turn_in_progress"
+_RESUME_RESUME_IN_PROGRESS = "resume_in_progress"
+_RESUME_ALREADY_RESUMED = "already_resumed"
+_RESUME_FAILED_BEFORE_ACCEPT = "start_failed_before_accept"
+_RESUME_FAILED_TERMINAL = "start_failed_terminal_emitted"
+_RESUME_STATE_CONFLICT = "state_conflict"
+
+
+async def _claim_and_start_resume(
+    *,
+    session,
+    sid: str,
+    pending: dict,
+    snapshot: dict,
+    _envelope,
+    _emit,
+    _run_ws_turn,
+    turn_tasks: set,
+) -> str:
+    """确认完成后的原子领取与 T+1 启动（v3.1 P0-1 + v3.2.1 批次 5 +
+    v3.3 批次 A exactly-once 终态 + v3.3.1 §7.2/7.3）。
+
+    1. 等待来源 turn 的 task 结束（TimeoutError 吞掉并继续 claim；
+       CancelledError 必须向上抛出——连接关闭后不得继续启动 T+1）；
+    2. claim_pending_resume 原子领取（返回一次性 claim token）；
+    3. 成功 → accepted 两阶段发送（先同步提交 journal 再投递连接队列，
+       取消窗口按"已提交"处理）→ create_task → 锁内原子
+       attach_and_consume_pending_resume（claim 三件套校验）；
+    4. 任一失败：定向取消新 task、按 claim token abort 回滚 pending；
+       已写 accepted 的 turn 经 claim_terminal_event 抢占发送唯一
+       RESUME_START_FAILED；未写 accepted 的失败不伪造 turn 终态；
+    5. attach 成功后 task 进入连接级 turn_tasks registry（§7.3：
+       断线取消与普通 turn 同一生命周期）。
+
+    Returns:
+        结构化结果（模块级 _RESUME_* 常量），路由据此分流。
+        仅 CancelledError 在完成回滚后继续抛出。
+    """
+    origin_turn_id = pending["origin_turn_id"]
+    origin = session_manager.get_turn(session, origin_turn_id)
+    if origin is not None and origin.task is not None:
+        try:
+            await asyncio.wait_for(asyncio.shield(origin.task), timeout=60)
+        except TimeoutError:
+            pass  # 来源 turn 未结束：继续 claim，由其返回 ORIGIN_TURN_ACTIVE
+    new_turn_id = str(uuid.uuid4())
+    status, resume = session_manager.claim_pending_resume(
+        session, origin_turn_id, snapshot["revision"], new_turn_id
+    )
+    logger.info("chat: claim_pending_resume -> %s (new_turn=%s)", status, new_turn_id)
+    if status == "ORIGIN_TURN_ACTIVE":
+        return _RESUME_WAITING_ORIGIN
+    if status == "TURN_IN_PROGRESS":
+        return _RESUME_TURN_IN_PROGRESS
+    if status == "RESUME_IN_PROGRESS":
+        return _RESUME_RESUME_IN_PROGRESS
+    if status == "ALREADY_RESUMED":
+        return _RESUME_ALREADY_RESUMED
+    if status != "OK":
+        return _RESUME_STATE_CONFLICT
+
+    # v3.3.1 §7.2：一次性 claim token（attach/abort 三件套校验）
+    claim_id = str(resume.get("claim_id") or "")
+    task = None
+    accepted_journaled = False
+    trace_id = ""
+
+    def _abort_resume() -> None:
+        """按 claim token abort：返回值必须处理并记录（§7.2 不得忽略）。"""
+        outcome = session_manager.abort_claimed_resume(
+            session, origin_turn_id, new_turn_id, claim_id
+        )
+        if outcome.turn_present:
+            session_manager.remove_turn(session, new_turn_id)
+        logger.warning(
+            "chat: abort_claimed_resume owned=%s restored=%s turn=%s terminal=%s",
+            outcome.owned,
+            outcome.pending_restored,
+            outcome.turn_present,
+            outcome.terminal_claimed,
+        )
+
+    try:
+        from app.agents.state import RequestContext
+        from app.application.models.company_resolution import EntityResolutionOverride
+
+        override = EntityResolutionOverride(**resume["override"])
+        request_context = RequestContext(entity_overrides=override)
+        trace_id = str(uuid.uuid4())
+        accepted_event = _envelope(
+            "turn.accepted",
+            {
+                "message": f"已收到确认，正在重跑: {str(resume['question'] or '')[:50]}...",
+                "turn_id": new_turn_id,
+            },
+            sid=sid,
+            trace_id=trace_id,
+            turn_id=new_turn_id,
+        )
+        # 两阶段发送（v3.3 批次 A）：先同步提交 journal（无取消点）并
+        # 记录标志，再 await 连接队列——取消发生在两步之间时按"已提交"
+        # 处理终态（已写 journal 的 turn 必须恰好一个终态）
+        session_obj = session_manager.get_session(sid)
+        if session_obj is not None:
+            session_obj.journal.append(accepted_event)
+            accepted_journaled = True
+        primary = session_manager.primary_connection(sid)
+        q = _active_connections.get(primary)
+        if q is not None:
+            await q.put(accepted_event)
+        accepted_at = time.perf_counter()
+        task = asyncio.create_task(
+            _run_ws_turn(
+                session_id=sid,
+                turn_id=new_turn_id,
+                question=str(resume["question"] or ""),
+                trace_id=trace_id,
+                request_context=request_context,
+                accepted_at=accepted_at,
+                _envelope=_envelope,
+                _emit=_emit,
+            )
+        )
+        # create_task 后到原子操作之间不得出现 await（新 task 尚未获得
+        # 运行机会）；attach + consume 锁内原子完成（claim 三件套）
+        if not session_manager.attach_and_consume_pending_resume(
+            session, origin_turn_id, new_turn_id, task, claim_id
+        ):
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 — 吸收 CancelledError/任务异常
+                pass
+            # 先抢占终态（turn 仍在 session.turns），再 abort——保证已写
+            # accepted 的 turn 恰好一个终态事件
+            if accepted_journaled:
+                await _emit_resume_start_failed(
+                    session, sid, new_turn_id, trace_id, _envelope
+                )
+            _abort_resume()
+            logger.warning("chat: attach_and_consume 失败（state conflict），已回滚")
+            return _RESUME_STATE_CONFLICT
+        # v3.3.1 §7.3：T+1 task 进入连接级 registry，断线取消与普通
+        # turn 同一生命周期
+        turn_tasks.add(task)
+        task.add_done_callback(turn_tasks.discard)
+        return _RESUME_STARTED
+    except asyncio.CancelledError:
+        # 完成终态与回滚后继续抛出（连接关闭/服务取消：绝不吞掉）
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001
+                pass
+        if accepted_journaled:
+            try:
+                await _emit_resume_start_failed(
+                    session, sid, new_turn_id, trace_id, _envelope
+                )
+            except Exception:  # noqa: BLE001 — 连接已断，仅保留服务端状态
+                logger.warning("chat: 取消窗口内终态发送失败", exc_info=True)
+        _abort_resume()
+        raise
+    except Exception:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001
+                pass
+        if accepted_journaled:
+            await _emit_resume_start_failed(
+                session, sid, new_turn_id, trace_id, _envelope
+            )
+            _abort_resume()
+            logger.warning("chat: resume 启动失败（已发终态）", exc_info=True)
+            return _RESUME_FAILED_TERMINAL
+        _abort_resume()
+        logger.warning("chat: resume 启动失败（accepted 前）", exc_info=True)
+        return _RESUME_FAILED_BEFORE_ACCEPT
+
+
+async def _emit_resume_start_failed(
+    session, sid: str, turn_id: str, trace_id: str, _envelope
+) -> bool:
+    """v3.3 批次 A：已写 accepted 的 resume 启动失败终态——经
+    claim_terminal_event 原子抢占，保证该 turn 恰好一个终态事件。
+
+    事件写入走与 accepted 相同的两阶段（先同步 journal 再连接队列），
+    不依赖路由闭包内的 _emit（本函数为模块级）。
+    """
+    if not session_manager.claim_terminal_event(session, turn_id):
+        return False
+    try:
+        event = _envelope(
+            "turn.failed",
+            {
+                "error_code": "RESUME_START_FAILED",
+                "message": "确认已保存，但自动重跑启动失败，可安全重试",
+                "recoverable": True,
+            },
+            sid=sid,
+            trace_id=trace_id,
+            turn_id=turn_id,
+        )
+        session.journal.append(event)
+        primary = session_manager.primary_connection(sid)
+        q = _active_connections.get(primary)
+        if q is not None:
+            await q.put(event)
+    except Exception:  # noqa: BLE001 — 连接异常时仅能保留服务端状态
+        logger.warning("chat: resume 启动失败终态发送失败", exc_info=True)
+    return True
+
+
 def _build_request_context(
     *, company_code: str = "", as_of: str = "", fiscal_year: int | None = None
 ):
@@ -287,16 +516,51 @@ def _build_chat_response(
         getattr(plan, "requested_period_text", "") if plan is not None else ""
     )
     intent = getattr(plan, "intent", "") if plan is not None else ""
+    # v3.3.4 方案 §3.3/§6.1：轻量概览结构化载荷（只读追加，向后兼容）
+    light_comparison = result.get("light_comparison") or {}
+    comparison_mode = light_comparison.get("comparison_mode", "") or ""
+    overview_rows = light_comparison.get("overview_rows", []) or []
+    requested_scope = light_comparison.get("requested_scope", "") or ""
+    next_steps = light_comparison.get("next_steps", []) or []
     company_candidates = [
         CompanyCandidateV1.from_company(item)
         for item in (result.get("company_candidates") or [])
     ]
+    # v3.1 P1-5：REST 最小只读 mention 分组（多 mention 时旧字段为空，
+    # 新字段提供完整分组；不提供 REST confirm endpoint）
+    # v3.3.1 §8.2：追加 grouped alternatives / issues 只读字段
+    resolution = result.get("entity_resolution_result")
+    company_mentions: list[dict] = []
+    segmentation_alternatives: list[dict] = []
+    entity_resolution_issues: list[dict] = []
+    needs_confirmation = False
+    if resolution is not None:
+        company_mentions = [m.model_dump() for m in getattr(resolution, "mentions", [])]
+        segmentation_alternatives = [
+            a.model_dump()
+            for a in (getattr(resolution, "segmentation_alternatives", None) or [])
+        ]
+        entity_resolution_issues = [
+            i.model_dump()
+            for i in (getattr(resolution, "resolution_issues", None) or [])
+        ]
+        needs_confirmation = bool(getattr(resolution, "needs_confirmation", False))
+        if needs_confirmation:
+            follow_ups = list(follow_ups)
+            follow_ups.append(
+                "存在多个候选公司，请补充完整公司名称，或使用支持候选确认的"
+                "聊天窗口继续。"
+            )
 
     return V12Response(
         data=ChatDataV1(
             answer=answer or "分析完成，未生成结构化答案。",
             session_id=session_id,
             company_candidates=company_candidates,
+            company_mentions=company_mentions,
+            segmentation_alternatives=segmentation_alternatives,
+            entity_resolution_issues=entity_resolution_issues,
+            needs_confirmation=needs_confirmation,
             evidence=evidence_items,
             graph=graph_data,
             timeline=timeline,
@@ -313,6 +577,10 @@ def _build_chat_response(
             supporting_evidence=supporting_evidence_items,
             requested_period_text=requested_period_text,
             intent=intent,
+            comparison_mode=comparison_mode,
+            overview_rows=overview_rows,
+            requested_scope=requested_scope,
+            next_steps=next_steps,
         ),
         meta=ApiMeta(
             request_id=trace_id,
@@ -652,8 +920,13 @@ async def websocket_chat_v1(ws: WebSocket):
                     )
                     continue
                 pending = session_manager.get_pending_disambiguation(session)
+                pending_turn = (
+                    pending.get("origin_turn_id", pending.get("turn_id"))
+                    if pending
+                    else None
+                )
                 if pending is None or (
-                    confirm.turn_id and confirm.turn_id != pending.get("turn_id")
+                    confirm.turn_id and confirm.turn_id != pending_turn
                 ):
                     await _emit(
                         sid,
@@ -669,33 +942,430 @@ async def websocket_chat_v1(ws: WebSocket):
                     )
                     continue
                 company_code = confirm.company_code
-                allowed_codes = {
-                    str(item.get("wind_code") or "")
-                    for item in pending.get("candidates", [])
-                }
-                if company_code not in allowed_codes:
+
+                # ── 新协议（mention 分组：mention_id + revision 成对）──
+                if confirm.is_mention_protocol:
+                    if confirm.mention_id is None or confirm.revision is None:
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "turn.failed",
+                                {
+                                    "error_code": "INVALID_COMPANY_CONFIRM",
+                                    "message": "mention 协议必须同时提供 mention_id 与 revision",
+                                    "recoverable": True,
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    status, snapshot = session_manager.confirm_pending_mention(
+                        session,
+                        pending_turn,
+                        confirm.mention_id,
+                        company_code,
+                        confirm.revision,
+                    )
+                    if status in (
+                        "NO_PENDING",
+                        "REVISION_MISMATCH",
+                        "INVALID_MENTION",
+                        "INVALID_CODE",
+                        "NOT_ACCEPTING",
+                    ):
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "turn.failed",
+                                {
+                                    "error_code": "INVALID_COMPANY_CONFIRM",
+                                    "message": f"公司确认被拒绝（{status}）",
+                                    "recoverable": True,
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    remaining = _pending_remaining_ids(snapshot)
+                    if status == "ALREADY_RESUMED":
+                        # v3.2.1 批次 5：consumed 同值重放 → 幂等完成 ack
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": [],
+                                    "resolved": True,
+                                    "revision": snapshot["revision"],
+                                    "resume_status": "completed",
+                                    "message": "确认已生效",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    if status == "RESUME_IN_PROGRESS":
+                        # v3.2.1 批次 5：resuming 同值重放 → 进行中 ack
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": [],
+                                    "resolved": True,
+                                    "revision": snapshot["revision"],
+                                    "resume_status": "in_progress",
+                                    "message": "确认已生效，重跑进行中",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    if status == "WAITING":
+                        # 部分确认：只 ACK，不启动新 turn（P0-1）
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": remaining,
+                                    "resolved": False,
+                                    "revision": snapshot["revision"],
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    if status == "RELATION_BLOCKED":
+                        # P0-3：身份确认但关系未解析 → 澄清，不启动 T+1
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": remaining,
+                                    "resolved": False,
+                                    "revision": snapshot["revision"],
+                                    "relation_status": "needs_clarification",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    if status == "IDENTITY_BLOCKED":
+                        # v3.3 P0-2：身份集不完整（not_found/refinement/
+                        # 重复代码/role 缺失）→ 可诊断阻断，不启动 T+1
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": remaining,
+                                    "resolved": False,
+                                    "revision": snapshot["revision"],
+                                    "resume_status": "identity_blocked",
+                                    "message": "公司身份集合不完整，请补充完整公司名称或重新提问",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    # RESUME_READY：ACK(resolved) → 等待来源 turn → claim → T+1
                     await _emit(
                         sid,
                         _envelope(
-                            "turn.failed",
+                            "company.confirm_ack",
                             {
-                                "error_code": "INVALID_COMPANY_CONFIRM",
-                                "message": "确认的公司不在候选列表中",
-                                "recoverable": True,
+                                "turn_id": pending_turn,
+                                "mention_id": confirm.mention_id,
+                                "wind_code": company_code,
+                                "remaining_mentions": [],
+                                "resolved": True,
+                                "revision": snapshot["revision"],
+                                "resume_status": "waiting",
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    try:
+                        claim_status = await _claim_and_start_resume(
+                            session=session,
+                            sid=sid,
+                            pending=pending,
+                            snapshot=snapshot,
+                            _envelope=_envelope,
+                            _emit=_emit,
+                            _run_ws_turn=_run_ws_turn,
+                            turn_tasks=turn_tasks,
+                        )
+                    except asyncio.CancelledError:
+                        raise  # helper 已完成回滚，继续传播
+                    # v3.3 批次 A：helper 内部处理失败并返回结构化结果，
+                    # 路由按 outcome 分流，不得再发送第二个通用失败事件
+                    if claim_status == _RESUME_STARTED:
+                        continue
+                    if claim_status == _RESUME_FAILED_TERMINAL:
+                        continue  # helper 已抢占发送唯一 RESUME_START_FAILED
+                    if claim_status in (
+                        _RESUME_WAITING_ORIGIN,
+                        _RESUME_TURN_IN_PROGRESS,
+                    ):
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": [],
+                                    "resolved": True,
+                                    "revision": snapshot["revision"],
+                                    "resume_status": "waiting",
+                                    "message": "确认已保存，正在等待自动重跑",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    if claim_status == _RESUME_RESUME_IN_PROGRESS:
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": [],
+                                    "resolved": True,
+                                    "revision": snapshot["revision"],
+                                    "resume_status": "in_progress",
+                                    "message": "确认已生效，重跑进行中",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    if claim_status == _RESUME_ALREADY_RESUMED:
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "company.confirm_ack",
+                                {
+                                    "turn_id": pending_turn,
+                                    "mention_id": confirm.mention_id,
+                                    "wind_code": company_code,
+                                    "remaining_mentions": [],
+                                    "resolved": True,
+                                    "revision": snapshot["revision"],
+                                    "resume_status": "completed",
+                                    "message": "确认已生效",
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    # failed_before_accept / state_conflict：pending 已回滚
+                    # ready_to_resume（未写 accepted 不伪造 turn 终态），
+                    # 发可诊断 ack，用户可重发同一确认恢复
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "company.confirm_ack",
+                            {
+                                "turn_id": pending_turn,
+                                "mention_id": confirm.mention_id,
+                                "wind_code": company_code,
+                                "remaining_mentions": [],
+                                "resolved": True,
+                                "revision": snapshot["revision"],
+                                "resume_status": "waiting",
+                                "message": "确认已保存，但自动重跑暂时失败，请重发确认或重新提问",
                             },
                             sid=sid,
                         ),
                     )
                     continue
-                question = str(pending.get("question") or "")
-                try:
-                    request_context = _build_request_context(
-                        company_code=company_code,
-                        as_of=str(pending.get("as_of") or ""),
+
+                # ── 旧协议兼容（无 mention_id/revision）──
+                mentions = pending.get("mentions", {})
+                if not mentions:
+                    # 旧结构 pending（无 mention 分组，8.11 既有形态）：
+                    # 保持原逻辑——候选校验 + 带选中代码重跑原问题
+                    # （落到下方 turn 启动段，不 continue）
+                    allowed_codes = {
+                        str(item.get("wind_code") or "")
+                        for item in pending.get("candidates", [])
+                    }
+                    if company_code not in allowed_codes:
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "turn.failed",
+                                {
+                                    "error_code": "INVALID_COMPANY_CONFIRM",
+                                    "message": "确认的公司不在候选列表中",
+                                    "recoverable": True,
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    question = str(pending.get("question") or "")
+                    try:
+                        request_context = _build_request_context(
+                            company_code=company_code,
+                            as_of=str(pending.get("as_of") or ""),
+                        )
+                    except ValueError:
+                        request_context = _build_request_context(
+                            company_code=company_code
+                        )
+                    session_manager.set_pending_disambiguation(session, None)
+                else:
+                    # 新结构 pending：仅恰好一个 needs_confirmation 且
+                    # revision 为初始值允许一次兼容确认（P0-2）
+                    remaining = [
+                        mid
+                        for mid, m in mentions.items()
+                        if m.get("status") == "needs_confirmation"
+                    ]
+                    if len(remaining) != 1 or pending.get("revision") != 0:
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "turn.failed",
+                                {
+                                    "error_code": "INVALID_COMPANY_CONFIRM",
+                                    "message": "存在多个待确认公司，请使用支持 mention 分组确认的客户端",
+                                    "recoverable": True,
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    allowed_codes = {
+                        str(c.get("wind_code") or "")
+                        for c in (mentions.get(remaining[0]) or {}).get(
+                            "candidates", []
+                        )
+                    }
+                    if company_code not in allowed_codes:
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "turn.failed",
+                                {
+                                    "error_code": "INVALID_COMPANY_CONFIRM",
+                                    "message": "确认的公司不在候选列表中",
+                                    "recoverable": True,
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    status, snapshot = session_manager.confirm_pending_mention(
+                        session,
+                        pending_turn,
+                        remaining[0],
+                        company_code,
+                        pending.get("revision", 0),
                     )
-                except ValueError:
-                    request_context = _build_request_context(company_code=company_code)
-                session_manager.set_pending_disambiguation(session, None)
+                    if status != "RESUME_READY":
+                        await _emit(
+                            sid,
+                            _envelope(
+                                "turn.failed",
+                                {
+                                    "error_code": "INVALID_COMPANY_CONFIRM",
+                                    "message": f"公司确认失败（{status}）",
+                                    "recoverable": True,
+                                },
+                                sid=sid,
+                            ),
+                        )
+                        continue
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "company.confirm_ack",
+                            {
+                                "turn_id": pending_turn,
+                                "mention_id": remaining[0],
+                                "wind_code": company_code,
+                                "remaining_mentions": [],
+                                "resolved": True,
+                                "revision": snapshot["revision"],
+                                "resume_status": "waiting",
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    try:
+                        claim_status = await _claim_and_start_resume(
+                            session=session,
+                            sid=sid,
+                            pending=pending,
+                            snapshot=snapshot,
+                            _envelope=_envelope,
+                            _emit=_emit,
+                            _run_ws_turn=_run_ws_turn,
+                            turn_tasks=turn_tasks,
+                        )
+                    except asyncio.CancelledError:
+                        raise  # helper 已完成回滚，继续传播
+                    # v3.3 批次 A：结构化 outcome 分流（旧协议兼容分支）
+                    if claim_status in (_RESUME_STARTED, _RESUME_FAILED_TERMINAL):
+                        continue
+                    resume_status = (
+                        "completed"
+                        if claim_status == _RESUME_ALREADY_RESUMED
+                        else (
+                            "in_progress"
+                            if claim_status == _RESUME_RESUME_IN_PROGRESS
+                            else "waiting"
+                        )
+                    )
+                    message = (
+                        "确认已保存，但自动重跑暂时失败，请重发确认或重新提问"
+                        if claim_status
+                        in (_RESUME_FAILED_BEFORE_ACCEPT, _RESUME_STATE_CONFLICT)
+                        else ""
+                    )
+                    await _emit(
+                        sid,
+                        _envelope(
+                            "company.confirm_ack",
+                            {
+                                "turn_id": pending_turn,
+                                "mention_id": remaining[0],
+                                "wind_code": company_code,
+                                "remaining_mentions": [],
+                                "resolved": True,
+                                "revision": snapshot["revision"],
+                                "resume_status": resume_status,
+                                **({"message": message} if message else {}),
+                            },
+                            sid=sid,
+                        ),
+                    )
+                    continue
             else:
                 raw_text = payload.get("text")
                 if not isinstance(raw_text, str) or not raw_text.strip():
@@ -803,9 +1473,16 @@ async def websocket_chat_v1(ws: WebSocket):
         _active_connections.pop(conn_id, None)
         session_manager.detach_connection(session_id, conn_id)
         # 若连接不再属于任何会话 → 会话无活跃连接时按 TTL 回收（不强制关闭）
-        for task in list(turn_tasks):
-            if not task.done():
-                task.cancel()
+        # v3.3.1 §7.3：普通 turn 与 T+1 同 registry、同生命周期——
+        # 不得只 cancel 不 await（否则 task 可能仍持有资源/写状态）；
+        # 每个已 accepted turn 的终态由 runner/取消路径经
+        # claim_terminal_event 抢占发送，此处不重复伪造
+        pending_tasks = [t for t in list(turn_tasks) if not t.done()]
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        # 最后再结束 sender（清理完成后残余事件仍可发送）
         try:
             await sender_task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001

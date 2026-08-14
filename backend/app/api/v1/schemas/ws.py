@@ -8,6 +8,13 @@
   - stream.resume.payload: {session_id, last_sequence}
   - turn.cancelled.payload:{turn_id, cancelled_at, message}
   - stream.resume_ack.payload: {session_id, last_sequence, replay_from, replay_count, gap}
+
+v3.3.1 §8.2 追加型服务端事件（payload 为 dict，随 journal 补发）：
+  - entity.clarification_required.payload:
+      {turn_id, issues[], mentions[], segmentation_alternatives[]}
+      ——只有分段歧义、无可确认候选时发送（不发送空 company.candidates）；
+  - turn.completed.payload 追加只读 entity_resolution:
+      {needs_confirmation, resolution_issues[], segmentation_alternatives[]}
 """
 
 from datetime import datetime, timezone
@@ -43,17 +50,31 @@ class ChatQueryPayload(BaseModel):
 
 
 class CompanyConfirmPayload(BaseModel):
+    """公司确认载荷（v3.1 P0-2：mention 分组协议追加 revision/mention_id）。
+
+    新协议：turn_id + mention_id + revision + company_ref 均必须提供；
+    旧客户端（无 mention_id/revision）：仅当恰好一个 needs_confirmation
+    且 pending revision 为初始值时才允许一次兼容确认。
+    """
+
     company_ref: CompanyCandidatePayload | str
     session_id: str | None = Field(
         default=None, max_length=64, pattern=_SESSION_ID_PATTERN
     )
     turn_id: str | None = Field(default=None, max_length=64)
+    mention_id: str | None = Field(default=None, max_length=64)
+    revision: int | None = Field(default=None, ge=0)
 
     @property
     def company_code(self) -> str:
         if isinstance(self.company_ref, str):
             return self.company_ref.strip()
         return self.company_ref.wind_code
+
+    @property
+    def is_mention_protocol(self) -> bool:
+        """是否使用新 mention 分组协议（mention_id 与 revision 成对）。"""
+        return self.mention_id is not None or self.revision is not None
 
 
 def _utcnow_iso() -> str:

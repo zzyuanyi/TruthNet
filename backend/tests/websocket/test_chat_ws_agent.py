@@ -6,6 +6,8 @@
 - chat.query + 旧格式兼容
 """
 
+import json
+import time
 import uuid
 
 import pytest
@@ -33,17 +35,33 @@ ENVELOPE_KEYS = {
 }
 
 
-def _collect(ws) -> list[dict]:
+def _collect(ws, timeout: float = 60.0) -> list[dict]:
     events = []
-    while True:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
-            data = ws.receive_json()
+            # 复核 P2-3：队列 + 剩余 deadline 读取，终态缺失时超时失败而非挂起。
+            message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+            if isinstance(message, BaseException):
+                raise message
+            ws._raise_on_close(message)
+            data = json.loads(message["text"])
             events.append(data)
             if data["event_type"] in ("turn.completed", "turn.failed"):
                 break
         except Exception:
             break
     return events
+
+
+def _receive_one(ws, timeout: float = 15.0) -> dict:
+    """读取单个事件（deadline 兜底；复核 P2-3：禁止无限阻塞）。"""
+    deadline = time.monotonic() + timeout
+    message = ws._send_queue.get(timeout=max(0.01, deadline - time.monotonic()))
+    if isinstance(message, BaseException):
+        raise message
+    ws._raise_on_close(message)
+    return json.loads(message["text"])
 
 
 def test_chat_query_v12_format(ws_session_tracker):
@@ -172,10 +190,23 @@ def test_panel_rule_evidence_ids_exist_in_db(ws_session_tracker):
         ws.send_json(
             {"event_type": "chat.query", "payload": {"text": "康美药业有造假风险吗"}}
         )
-        events = _collect(ws)
+        # v3.3.3 收口批次 F（方案 §5.1）：timeout 提升至 120s；
+        # turn.accepted 都未收到 → 环境/连接异常，允许 skip；
+        # turn 已启动后缺终态 → 必须 fail（不得用 timeout skip 掩盖回归）
+        events = _collect(ws, timeout=120.0)
     ws_session_tracker(events)
 
+    if not any(e["event_type"] == "turn.accepted" for e in events):
+        pytest.skip("未收到 turn.accepted（连接/环境异常，非终态缺失）")
+    if not any(
+        e["event_type"] in ("turn.completed", "turn.failed", "turn.cancelled")
+        for e in events
+    ):
+        pytest.fail("turn 已启动但 120s 内未收到终态事件（方案 §5.1 必须失败）")
+
     # 从事件信封拿到 session，REST 回读 panel_data
+    if not any(e.get("session_id") for e in events):
+        pytest.fail("turn.accepted 信封缺少 session_id（9 字段信封契约）")
     sid = next(e["session_id"] for e in events if e.get("session_id"))
     resp = client.get(f"/api/v1/sessions/{sid}")
     assert resp.status_code == 200
@@ -217,7 +248,7 @@ def test_ping():
     client = TestClient(app)
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         ws.send_json({"event_type": "ping", "payload": {}})
-        event = ws.receive_json()
+        event = _receive_one(ws)
 
     assert event["event_type"] == "heartbeat"
 
@@ -227,7 +258,7 @@ def test_invalid_json():
     client = TestClient(app)
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         ws.send_text("not json")
-        event = ws.receive_json()
+        event = _receive_one(ws)
 
     assert event["event_type"] == "turn.failed"
     assert event["payload"]["error_code"] == "INVALID_JSON"
@@ -238,7 +269,7 @@ def test_missing_text():
     client = TestClient(app)
     with client.websocket_connect("/api/v1/chat/ws") as ws:
         ws.send_json({"event_type": "chat.query", "payload": {}})
-        event = ws.receive_json()
+        event = _receive_one(ws)
 
     assert event["event_type"] == "turn.failed"
     assert event["payload"]["error_code"] == "MISSING_QUESTION"

@@ -260,6 +260,86 @@ def test_response_meta_persisted(monkeypatch, sqlite_engine):
     assert meta["supporting_evidence_ids"] == []
 
 
+def test_executed_metric_ok_persisted_in_response_meta(monkeypatch, sqlite_engine):
+    """v3.3.3 批次 B（方案 §5.4）：status=ok 的 executed_metric 落库。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    state = _make_state()
+    state["plan"] = ExecutionPlan(intent="indicator", indicator="r5_gross_margin")
+    state["final_response"] = FinalResponse(answer="毛利率为 62.00%")
+    state["executed_metric"] = {
+        "metric_id": "r5_gross_margin",
+        "period": "20250331",
+        "unit": "percent",
+        "status": "ok",
+    }
+    pt.persist_turn_node(state)
+    with sqlite_engine.connect() as conn:
+        raw = conn.execute(
+            text("SELECT response_meta FROM conversation_turns")
+        ).scalar_one()
+    meta = json.loads(raw) if isinstance(raw, str) else raw
+    assert meta["executed_metrics"] == [state["executed_metric"]]
+
+
+def test_failed_metric_turn_does_not_pollute_executed_metrics(
+    monkeypatch, sqlite_engine
+):
+    """v3.3.3 批次 B 完成标准：失败/unsupported 轮不写 executed_metrics。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    state = _make_state()
+    state["plan"] = ExecutionPlan(intent="indicator", indicator="r5_gross_margin")
+    state["final_response"] = FinalResponse(answer="该指标暂未覆盖。")
+    state["executed_metric"] = {
+        "metric_id": "r5_gross_margin",
+        "status": "insufficient_data",
+    }
+    pt.persist_turn_node(state)
+    with sqlite_engine.connect() as conn:
+        raw = conn.execute(
+            text("SELECT response_meta FROM conversation_turns")
+        ).scalar_one()
+    meta = json.loads(raw) if isinstance(raw, str) else raw
+    assert meta["executed_metrics"] == []
+
+
+def test_executed_metrics_list_persisted_for_comparison_turn(
+    monkeypatch, sqlite_engine
+):
+    """v3.3.3 批次 C：轻量比较轮产出 executed_metrics 列表（仅 ok 项）。"""
+    import json
+
+    _patch_mysql(monkeypatch, sqlite_engine)
+    state = _make_state()
+    state["plan"] = ExecutionPlan(intent="light_comparison")
+    state["final_response"] = FinalResponse(answer="高 4.50个百分点")
+    state["executed_metrics"] = [
+        {
+            "metric_id": "accounts_receivable_growth",
+            "period": "20250331",
+            "unit": "percent",
+            "status": "ok",
+        },
+        {
+            "metric_id": "operating_revenue_growth",
+            "period": "20250331",
+            "unit": "percent",
+            "status": "ok",
+        },
+        {"metric_id": "r5_gross_margin", "status": "insufficient_data"},
+    ]
+    pt.persist_turn_node(state)
+    with sqlite_engine.connect() as conn:
+        raw = conn.execute(
+            text("SELECT response_meta FROM conversation_turns")
+        ).scalar_one()
+    meta = json.loads(raw) if isinstance(raw, str) else raw
+    assert meta["executed_metrics"] == state["executed_metrics"][:2]
+
+
 def test_persist_with_company_code(monkeypatch, sqlite_engine):
     """company 存在时写入 wind_code。"""
     from app.agents.state import CompanyRef
@@ -279,6 +359,86 @@ def test_persist_with_company_code(monkeypatch, sqlite_engine):
             text("SELECT company_code FROM conversation_turns")
         ).scalar_one()
         assert code == "600518.SH"
+
+
+# ── 中间验收批次 A3：active_company 终态守卫（P1-3）──────────────
+
+
+def _resolution_with_mentions(intent, mentions, needs_confirmation=False):
+    from app.application.models.company_resolution import EntityResolutionResult
+
+    return EntityResolutionResult(
+        intent=intent,
+        mentions=mentions,
+        needs_confirmation=needs_confirmation,
+    )
+
+
+def _mention(code, status="auto_selected", role="primary"):
+    from app.application.models.company_resolution import EntityMention
+
+    return EntityMention(
+        mention_id=f"m_{code}",
+        text=code,
+        status=status,
+        selected_wind_code=code,
+        role=role,
+    )
+
+
+def test_pending_ambiguous_turn_does_not_persist_active_company():
+    """P1-3：歧义未决轮（一绑定一待确认）不得写 active_company_code。"""
+    resolution = _resolution_with_mentions(
+        intent="ambiguous",
+        mentions=[
+            _mention("600519.SH", status="auto_selected", role="primary"),
+            _mention("000001.SZ", status="needs_confirmation", role="comparison_peer"),
+        ],
+        needs_confirmation=True,
+    )
+    state = {"entity_resolution_result": resolution}
+    code, source = pt._active_company_from_resolution(state)
+    assert code == ""
+    assert source == ""
+
+
+def test_not_found_mention_does_not_persist_active_company():
+    """P1-3：存在 not_found mention 的轮次不得写活跃主体。"""
+    resolution = _resolution_with_mentions(
+        intent="single",
+        mentions=[
+            _mention("600519.SH", status="auto_selected", role="primary"),
+            _mention("", status="not_found", role="comparison_peer"),
+        ],
+    )
+    state = {"entity_resolution_result": resolution}
+    code, _ = pt._active_company_from_resolution(state)
+    assert code == ""
+
+
+def test_finalized_comparison_persists_primary_active_company():
+    """P1-3：完整终态 comparison 轮写 role=primary 的已绑定公司。"""
+    resolution = _resolution_with_mentions(
+        intent="comparison",
+        mentions=[
+            _mention("600519.SH", status="auto_selected", role="primary"),
+            _mention("000858.SZ", status="auto_selected", role="comparison_peer"),
+        ],
+        needs_confirmation=False,
+    )
+    state = {"entity_resolution_result": resolution}
+    code, source = pt._active_company_from_resolution(state)
+    assert code == "600519.SH"
+
+
+def test_finalized_single_persists_active_company():
+    """P1-3：正常 single 终态轮照常写活跃主体。"""
+    resolution = _resolution_with_mentions(
+        intent="single", mentions=[_mention("600518.SH", role="primary")]
+    )
+    state = {"entity_resolution_result": resolution}
+    code, _ = pt._active_company_from_resolution(state)
+    assert code == "600518.SH"
 
 
 def test_persist_second_turn_increments_index(monkeypatch, sqlite_engine):

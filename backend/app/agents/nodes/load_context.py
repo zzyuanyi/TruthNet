@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 # 回读最近轮次上限（10 轮：验收要求第 10 轮仍能恢复正确主体）
 _HISTORY_LIMIT = 10
 
+
+def _parse_json_meta(value) -> dict:
+    """response_meta 双形态解析（共享实现，最终续审 §7 D1）。
+
+    ORM JSON 列可能已反序列化为 dict，原生 SQL 查询返回 JSON 字符串；
+    坏 JSON/None 回退空 dict（调用方 fallback company_code）。
+    """
+    from app.application.services.response_meta_utils import parse_response_meta
+
+    return parse_response_meta(value)
+
+
 _engines: dict[str, Engine] = {}
 
 
@@ -86,6 +98,7 @@ def load_context_node(state: AgentState) -> dict:
             "messages": [],
             "memory_summary": None,
             "recent_company_codes": [],
+            "recent_executed_metrics": [],
             "runtime": runtime,
         }
 
@@ -122,7 +135,8 @@ def load_context_node(state: AgentState) -> dict:
             rows = (
                 conn.execute(
                     text(
-                        "SELECT question, answer, company_code FROM conversation_turns "
+                        "SELECT question, answer, company_code, response_meta "
+                        "FROM conversation_turns "
                         "WHERE session_id = :sid "
                         "ORDER BY turn_index DESC LIMIT :limit"
                     ),
@@ -137,6 +151,7 @@ def load_context_node(state: AgentState) -> dict:
             "messages": history,
             "memory_summary": summary.to_dict() if summary else None,
             "recent_company_codes": [],
+            "recent_executed_metrics": [],
             "runtime": runtime,
         }
 
@@ -151,10 +166,46 @@ def load_context_node(state: AgentState) -> dict:
 
     # recent_company_codes 单独遍历原始 rows（DESC = 最近优先，P1-1）：
     # 不能随 reversed() 收集——那会把顺序反成最旧在前。
+    # v3.3.2-R1 §8.1：优先该轮活跃主体（response_meta.active_company_code，
+    # comparison/reference 的 primary 也持久化于此），fallback company_code
+    # v3.3.3 批次 B：同样从 response_meta 收集最近成功 executed_metrics
+    # （仅 status=ok；收口批次 B 按 (company_code, metric_id) 去重保序，
+    # 最近优先——切换公司后同指标记录不互相覆盖）
+    recent_executed_metrics: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
     for row in rows:
         code = str(row["company_code"] or "").strip()
+        # 老数据/测试 fake rows 可能无 response_meta 列
+        meta = _parse_json_meta(
+            row["response_meta"] if "response_meta" in row else None
+        )
+        active = str(meta.get("active_company_code") or "").strip()
+        if active:
+            code = active
         if code and code not in recent_company_codes:
             recent_company_codes.append(code)
+        for item in meta.get("executed_metrics") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("status") != "ok":
+                continue
+            metric_id = str(item.get("metric_id") or "").strip()
+            # 收口批次 B（方案 §3.4）：记录公司归属；旧记录无 company_code
+            # 时以该轮活跃主体回填，仍无则保留空归属（不得用于跨指标比较）
+            item_code = str(item.get("company_code") or "").strip() or code
+            key = (item_code, metric_id)
+            if not metric_id or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            recent_executed_metrics.append(
+                {
+                    "metric_id": metric_id,
+                    "period": str(item.get("period") or ""),
+                    "unit": str(item.get("unit") or ""),
+                    "status": "ok",
+                    "company_code": item_code,
+                }
+            )
 
     if history:
         logger.info(
@@ -168,5 +219,6 @@ def load_context_node(state: AgentState) -> dict:
         "messages": history,
         "memory_summary": summary.to_dict() if summary else None,
         "recent_company_codes": recent_company_codes,
+        "recent_executed_metrics": recent_executed_metrics,
         "runtime": runtime,
     }

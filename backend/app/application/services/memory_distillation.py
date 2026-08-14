@@ -32,6 +32,10 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from app.application.services.response_meta_utils import (
+    effective_active_code,
+    parse_response_meta,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -181,7 +185,8 @@ def _read_turns(session_id: str, recent_turns: int) -> list[dict]:
         rows = (
             conn.execute(
                 text(
-                    "SELECT turn_id, turn_index, question, answer, company_code "
+                    "SELECT turn_id, turn_index, question, answer, "
+                    "company_code, response_meta "
                     "FROM conversation_turns WHERE session_id = :sid "
                     "ORDER BY turn_index ASC"
                 ),
@@ -205,17 +210,24 @@ def _read_turns(session_id: str, recent_turns: int) -> list[dict]:
     ev_by_turn: dict[str, list[str]] = {}
     for r in ev_rows:
         ev_by_turn.setdefault(r["turn_id"], []).append(r["evidence_id"])
-    return [
-        {
-            "turn_id": r["turn_id"],
-            "turn_index": int(r["turn_index"]),
-            "question": str(r["question"] or ""),
-            "answer": str(r["answer"] or ""),
-            "company_code": str(r["company_code"] or ""),
-            "evidence_ids": ev_by_turn.get(r["turn_id"], [])[:10],
-        }
-        for r in rows
-    ]
+    out: list[dict] = []
+    for r in rows:
+        # 最终续审 §7 D1：effective active code——新数据显式空值跳过
+        # 本轮（继续回溯），旧数据无字段才回退顶层 company_code
+        meta = parse_response_meta(r["response_meta"] if "response_meta" in r else None)
+        out.append(
+            {
+                "turn_id": r["turn_id"],
+                "turn_index": int(r["turn_index"]),
+                "question": str(r["question"] or ""),
+                "answer": str(r["answer"] or ""),
+                "company_code": effective_active_code(
+                    meta, str(r["company_code"] or "")
+                ),
+                "evidence_ids": ev_by_turn.get(r["turn_id"], [])[:10],
+            }
+        )
+    return out
 
 
 def build_summary_for_turns(

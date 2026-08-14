@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from app.domain.finance._fetch import prev_year_period
+
 # 字段 → 表映射（与 domain/finance/field_mapping.py 保持一致）
 _BALANCE = {
     "acct_rcv",
@@ -90,11 +92,23 @@ class MetricSpec:
     periods: int  # 需要的期数（升序序列长度；YoY 指标需 5）
     # 从 {field: [升序 values]} 计算单公司指标值（纯函数，可单测）
     compute_from_series: Callable[[dict[str, list]], float | None]
+    # v3.3.3 收口批次 A（方案 §3.1）：按报告期对齐的计算入口（可选）。
+    # 接收 {field: {period: value}} 窗口（各字段窗口末期为同一目标期），
+    # 优先于 compute_from_series；用于有报告期语义的公式（如 R4 单季成本）。
+    compute_from_aligned: (
+        Callable[[dict[str, dict[str, float | None]]], float | None] | None
+    ) = None
     # 语义方向（用于报告展示，不影响计算）
     higher_is_riskier: bool = True
 
 
 def _compute_r1_gap(series: dict[str, list]) -> float | None:
+    """[仅兼容旧纯函数/测试] 不按报告期对齐的位置式同比。
+
+    生产查询与 benchmark 均经 evaluate_metric_per_period →
+    compute_from_aligned（见 _compute_r1_gap_aligned）精确取去年同期；
+    本函数保留仅为历史纯函数兼容，禁止生产路径调用。
+    """
     ar = series.get("acct_rcv") or []
     orv = series.get("oper_rev") or []
     if len(ar) < 5 or len(orv) < 5:
@@ -129,6 +143,11 @@ def _compute_r3_debt_to_assets(series: dict[str, list]) -> float | None:
 
 
 def _compute_r4_growth_gap(series: dict[str, list]) -> float | None:
+    """[仅兼容旧纯函数/测试] 不按报告期对齐的位置式同比。
+
+    生产路径见 _compute_r4_growth_gap_aligned（精确去年同期）；
+    本函数保留仅为历史纯函数兼容。
+    """
     inv = series.get("inventories") or []
     orv = series.get("oper_rev") or []
     if len(inv) < 5 or len(orv) < 5:
@@ -138,6 +157,52 @@ def _compute_r4_growth_gap(series: dict[str, list]) -> float | None:
     if inv_yoy is None or or_yoy is None:
         return None
     return round((inv_yoy - or_yoy) * 100, 4)
+
+
+def _compute_yoy_gap_aligned(
+    series_by_period: dict[str, dict[str, float | None]],
+    field_a: str,
+    field_b: str,
+) -> float | None:
+    """精确去年同期 YoY 差（v3.3.3 收口批次 A，方案 §3.1）。
+
+    各字段窗口末期为共同目标期 t；同比基期必须是该字段自己数据中的
+    精确 t-1 年同 MMDD 期（prev_year_period）。任一字段缺目标期、缺
+    精确基期或值为 None → None（insufficient_data）。
+    禁止按列表位置 [-5] 推断：各字段期次错位时 [-5] 会取到不同基期。
+    """
+    wa = series_by_period.get(field_a) or {}
+    wb = series_by_period.get(field_b) or {}
+    a_periods = sorted(wa)
+    b_periods = sorted(wb)
+    if not a_periods or not b_periods:
+        return None
+    target = a_periods[-1]
+    if b_periods[-1] != target:  # evaluator 保证窗口同终；双保险
+        return None
+    a_base = prev_year_period(target, a_periods)
+    b_base = prev_year_period(target, b_periods)
+    if a_base is None or b_base is None:
+        return None
+    a_yoy = _yoy(wa.get(target), wa.get(a_base))
+    b_yoy = _yoy(wb.get(target), wb.get(b_base))
+    if a_yoy is None or b_yoy is None:
+        return None
+    return round((a_yoy - b_yoy) * 100, 4)
+
+
+def _compute_r1_gap_aligned(
+    series_by_period: dict[str, dict[str, float | None]],
+) -> float | None:
+    """r1_gap 精确同比（应收 YoY - 营收 YoY，各字段精确去年同期）。"""
+    return _compute_yoy_gap_aligned(series_by_period, "acct_rcv", "oper_rev")
+
+
+def _compute_r4_growth_gap_aligned(
+    series_by_period: dict[str, dict[str, float | None]],
+) -> float | None:
+    """r4_growth_gap 精确同比（存货 YoY - 营收 YoY，各字段精确去年同期）。"""
+    return _compute_yoy_gap_aligned(series_by_period, "inventories", "oper_rev")
 
 
 def _compute_r4_turnover_days(series: dict[str, list]) -> float | None:
@@ -157,6 +222,73 @@ def _compute_r4_turnover_days(series: dict[str, list]) -> float | None:
     if single_q_cost is None or single_q_cost <= 0:
         return None
     avg_inv = (inv_t + inv_t1) / 2
+    annualized = single_q_cost * 4
+    return round(avg_inv / annualized * 365, 4)
+
+
+def _previous_quarter_period(period: str) -> str | None:
+    """同年度上一季度报告期；Q1(0331) 无前驱返回 None（方案 §3.1）。
+
+    累计值语义：Q2=当期-同年度Q1；Q3=当期-同年度Q2；Q4=当期-同年度Q3；
+    不得把上一年年报当作本年 Q1 的上一期做减法。
+    """
+    year = period[:4]
+    mmdd = period[4:]
+    if mmdd == "0630":
+        return f"{year}0331"
+    if mmdd == "0930":
+        return f"{year}0630"
+    if mmdd == "1231":
+        return f"{year}0930"
+    return None
+
+
+def _compute_r4_turnover_days_aligned(
+    series_by_period: dict[str, dict[str, float | None]],
+) -> float | None:
+    """存货周转天数（v3.3.3 收口批次 A §3.1/§3.2 相邻季度双重校验）。
+
+    单季成本：
+      - Q1(0331)：当期累计成本；
+      - Q2/Q3/Q4：当期累计 - 同年度上一季度累计（cost[prev] 必须存在）；
+      - 缺成本相邻季度、单季成本 <= 0 → None（insufficient_data）。
+    平均库存：
+      - Q2/Q3/Q4：inventory[prev] 必须精确存在（不得用「排序后上一条」
+        替代同年度上一季度——库存缺 20250331 时不得拿 20241231 与
+        20250630 做平均）；
+      - Q1：无同年度前驱，用上一可用报告期（排序后上一条），必须存在。
+    """
+    inv = series_by_period.get("inventories") or {}
+    cost = series_by_period.get("less_oper_cost") or {}
+    inv_periods = sorted(inv)
+    if not inv_periods:
+        return None
+    target = inv_periods[-1]
+    inv_target = inv.get(target)
+    cost_target = cost.get(target)
+    if inv_target is None or cost_target is None:
+        return None
+    prev = _previous_quarter_period(target)
+    if prev is None:
+        # Q1：单季成本 = 当期累计；库存用上一可用报告期（须存在）
+        single_q_cost = cost_target
+        idx = inv_periods.index(target)
+        if idx == 0:
+            return None
+        inv_prev = inv[inv_periods[idx - 1]]
+    else:
+        cost_prev = cost.get(prev)
+        if cost_prev is None:
+            return None  # 缺同年度相邻季度成本
+        single_q_cost = cost_target - cost_prev
+        inv_prev = inv.get(prev)
+        if inv_prev is None:
+            return None  # 缺同年度相邻季度库存（方案 §3.2 反例）
+    if single_q_cost is None or single_q_cost <= 0:
+        return None
+    if inv_prev is None:
+        return None
+    avg_inv = (inv_target + inv_prev) / 2
     annualized = single_q_cost * 4
     return round(avg_inv / annualized * 365, 4)
 
@@ -205,6 +337,7 @@ _register(
         fields=("acct_rcv", "oper_rev"),
         periods=5,
         compute_from_series=_compute_r1_gap,
+        compute_from_aligned=_compute_r1_gap_aligned,
     )
 )
 _register(
@@ -259,6 +392,7 @@ _register(
         fields=("inventories", "oper_rev"),
         periods=5,
         compute_from_series=_compute_r4_growth_gap,
+        compute_from_aligned=_compute_r4_growth_gap_aligned,
     )
 )
 _register(
@@ -271,6 +405,7 @@ _register(
         fields=("inventories", "less_oper_cost"),
         periods=2,
         compute_from_series=_compute_r4_turnover_days,
+        compute_from_aligned=_compute_r4_turnover_days_aligned,
     )
 )
 _register(

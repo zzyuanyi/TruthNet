@@ -332,3 +332,53 @@ def test_risk_level_unknown_when_none():
         "tr",
     ).data
     assert data.risk_level == "unknown"
+
+
+# ── 7. v3.3.4 轻量比较载荷透出（收口复核审查 P2b）────────────
+
+
+def test_build_chat_response_exposes_light_comparison_fields():
+    """审查 P2b：REST 必须完整透出 comparison_mode/overview_rows/
+    requested_scope/next_steps（只读，向后兼容默认空）。"""
+    result = _stub_result()
+    result["light_comparison"] = {
+        "comparison_mode": "overview",
+        "overview_rows": [
+            {
+                "metric_id": "r5_gross_margin",
+                "metric_label": "毛利率",
+                "status": "ok",
+                "unit": "percent",
+                "period": "20251231",
+                "values": [],
+                "difference": 16.14,
+                "difference_unit": "个百分点",
+                "conclusion": "A 比 B 高",
+                "warnings": [],
+            }
+        ],
+        "requested_scope": "full",
+        "next_steps": [
+            {
+                "kind": "open_full_comparison",
+                "label": "查看完整对比",
+                "target": "/compare",
+                "participant_codes": ["600519.SH", "600518.SH"],
+                "params": {},
+            }
+        ],
+    }
+    data = _build_chat_response(result, "tr_lc").data
+    assert data.comparison_mode == "overview"
+    assert data.requested_scope == "full"
+    assert len(data.overview_rows) == 1
+    assert data.overview_rows[0]["metric_id"] == "r5_gross_margin"
+    assert data.next_steps[0]["kind"] == "open_full_comparison"
+    assert data.next_steps[0]["target"] == "/compare"
+    assert data.next_steps[0]["participant_codes"] == ["600519.SH", "600518.SH"]
+    # 缺省为空（非比较请求，向后兼容）
+    plain = _build_chat_response(_stub_result(), "tr_none").data
+    assert plain.comparison_mode == ""
+    assert plain.overview_rows == []
+    assert plain.requested_scope == ""
+    assert plain.next_steps == []

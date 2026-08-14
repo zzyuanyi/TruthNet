@@ -116,6 +116,106 @@ def test_router_emits_single_failed_without_claim(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_resume_start_failure_after_accepted_emits_terminal_and_rolls_back(
+    monkeypatch,
+):
+    """确认重跑已 accepted 后启动失败：必须 failed 终态并恢复可重试状态。"""
+
+    async def scenario():
+        import app.api.v1.routers.chat as chat_mod
+        from app.application.services.ws_session_manager import session_manager
+
+        sid = _test_session_id()
+        origin_turn_id = f"origin_{sid}"
+        session = session_manager.get_or_create_session(sid)
+        session.pending_disambiguation = {
+            "origin_turn_id": origin_turn_id,
+            "revision": 1,
+            "lifecycle_status": "ready_to_resume",
+            "resolution_version": 1,
+            "question": "分析平安",
+            "query_fingerprint": "fingerprint",
+            "relation": "single",
+            "relation_status": "resolved",
+            "selected_alternative_id": None,
+            "mentions": {
+                "m1": {
+                    "mention_id": "m1",
+                    "text": "平安",
+                    "start": 2,
+                    "end": 4,
+                    "status": "user_confirmed",
+                    "selected_wind_code": "000001.SZ",
+                    "role": "primary",
+                    "candidates": [
+                        {
+                            "company": {
+                                "wind_code": "000001.SZ",
+                                "sec_name": "平安银行",
+                            }
+                        }
+                    ],
+                }
+            },
+            "resumed_turn_id": None,
+        }
+        emitted: list[dict] = []
+
+        def envelope(event_type, payload, *, sid, trace_id="", turn_id=""):
+            return {
+                "event_type": event_type,
+                "payload": payload,
+                "session_id": sid,
+                "trace_id": trace_id,
+                "turn_id": turn_id,
+            }
+
+        async def emit(_sid: str, event: dict) -> None:
+            emitted.append(event)
+
+        # v3.3 批次 A：accepted/终态事件走 journal + _active_connections
+        # 两阶段投递——注册收集队列（session 需先 attach 连接）
+        collect_q: asyncio.Queue = asyncio.Queue()
+        session_manager.attach_connection(sid, f"conn_{sid}")
+        chat_mod._active_connections[f"conn_{sid}"] = collect_q
+
+        def fail_create_task(_coroutine):
+            _coroutine.close()
+            raise RuntimeError("simulated create_task failure")
+
+        monkeypatch.setattr(chat_mod.asyncio, "create_task", fail_create_task)
+        try:
+            # v3.3 批次 A：普通启动失败不再向外抛异常——helper 内部完成
+            # 回滚并返回结构化 outcome（已发 accepted 终态 → terminal_emitted）
+            outcome = await chat_mod._claim_and_start_resume(
+                session=session,
+                sid=sid,
+                pending=dict(session.pending_disambiguation),
+                snapshot=dict(session.pending_disambiguation),
+                _envelope=envelope,
+                _emit=emit,
+                _run_ws_turn=chat_mod._run_ws_turn,
+                turn_tasks=set(),
+            )
+        finally:
+            chat_mod._active_connections.pop(f"conn_{sid}", None)
+        assert outcome == chat_mod._RESUME_FAILED_TERMINAL
+
+        while not collect_q.empty():
+            emitted.append(collect_q.get_nowait())
+        assert [event["event_type"] for event in emitted] == [
+            "turn.accepted",
+            "turn.failed",
+        ]
+        assert emitted[-1]["payload"]["error_code"] == "RESUME_START_FAILED"
+        assert session.pending_disambiguation["lifecycle_status"] == "ready_to_resume"
+        assert session.pending_disambiguation["resumed_turn_id"] is None
+        assert session.turns == {}
+        session_manager.close_session(sid)
+
+    asyncio.run(scenario())
+
+
 def test_same_session_rejects_second_active_turn():
     from app.application.services.ws_session_manager import WsSessionManager
 
