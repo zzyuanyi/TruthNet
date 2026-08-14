@@ -6,7 +6,10 @@
 
 import pytest
 
-from app.application.services.company_resolver import CompanyResolver
+from app.application.services.company_resolver import (
+    CompanyResolver,
+    get_company_repository,
+)
 from app.infrastructure.persistence.sqlite.company_repository import (
     SQLiteCompanyRepository,
 )
@@ -15,6 +18,32 @@ from app.infrastructure.persistence.sqlite.company_repository import (
 @pytest.fixture
 def resolver():
     return CompanyResolver(repo=SQLiteCompanyRepository())
+
+
+def test_factory_caches_repository_by_backend(monkeypatch):
+    """中间验收 P2-1：同一 backend 重复调用返回同一实例（Engine 复用，
+    长对话不再每轮新建连接池）。"""
+    from app.application.services import company_resolver as cr
+
+    monkeypatch.setattr(cr.settings, "SQL_BACKEND", "sqlite")
+    cr._repo_cache.clear()
+    r1 = get_company_repository()
+    r2 = get_company_repository()
+    assert r1 is r2
+
+
+def test_factory_cache_separated_by_backend(monkeypatch):
+    """中间验收 P2-1：backend 切换后使用独立缓存实例。"""
+    from app.application.services import company_resolver as cr
+
+    monkeypatch.setattr(cr.settings, "SQL_BACKEND", "sqlite")
+    cr._repo_cache.clear()
+    r_sqlite = get_company_repository()
+    monkeypatch.setattr(cr.settings, "SQL_BACKEND", "mysql")
+    r_mysql = get_company_repository()
+    assert r_sqlite is not r_mysql
+    assert type(r_mysql).__name__ == "MySQLCompanyRepository"
+    cr._repo_cache.clear()
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """应用配置（基于 pydantic-settings）· V12 baseline."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 
@@ -82,6 +83,30 @@ class Settings(BaseSettings):
     )
     LLM_MAX_CONCURRENCY: int = 4
     LLM_QUEUE_TIMEOUT_SECONDS: float = 5.0
+
+    # ===== 实体解析（v3.1 冻结方案）=====
+    # 唯一命中自动锁定策略：exact_only | safe_reverse_contains | confirm_all_heuristic
+    ENTITY_UNIQUE_MATCH_POLICY: str = "safe_reverse_contains"
+    # 语义选择发布模式：off（确定性）| suggest（离线影子评测专用，生产禁止）| auto（自动绑定）
+    # v3.3.1 §9.1：Literal 校验 + lifespan 拒绝非 off（suggest/auto 均不得
+    # 全局启动；单元测试与离线 runner 显式构造 selector/classifier）
+    ENTITY_SEMANTIC_SELECTION_MODE: Literal["off", "suggest", "auto"] = "off"
+    # v3.3 批次 C：首次裁决 + repair 重试共享的总墙钟预算（离线 suggest/
+    # auto 评测；生产在线 auto 必须另行按 P95 设置，不直接复用）。
+    # v3.3.1 §9.4：单次调用不再被 5s 默认截断——timeout 直接取剩余预算
+    ENTITY_SEMANTIC_SELECTION_TOTAL_BUDGET_SECONDS: float = 20.0
+    ENTITY_SEMANTIC_SELECTION_MAX_SEMANTIC_ATTEMPTS: int = 2
+    # v3.3.2-R1 §7.4：低置信 query 主体语义解析发布模式
+    # off=零调用（生产默认）| shadow=调用并记录权威不变 | fallback=应用
+    ENTITY_QUERY_INTERPRETER_MODE: Literal["off", "shadow", "fallback"] = "off"
+    # 单次硬预算（§7.4：不 repair、不重试；禁止为真机通过放宽到 20s）
+    ENTITY_QUERY_INTERPRETER_BUDGET_SECONDS: float = 5.0
+
+    # ===== 轻量比较（v3.3.4 Preview First，方案 §2.4）=====
+    # 前端多主体对比页是否可用：False（默认，前端尚未集成）→ 三家及以上
+    # 只发 choose_comparison_pair（选两家）；前端实现多主体页后置 True，
+    # 改为发 open_multi_company_comparison（携带全部去重代码）。
+    COMPARISON_MULTI_PAGE_ENABLED: bool = False
 
     # ===== 嵌入模型（兼容旧字段）=====
     LLM_API_KEY: str = ""

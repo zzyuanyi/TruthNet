@@ -106,10 +106,12 @@ def fetch_company_series(
     wind_codes: list[str],
     metric: MetricSpec,
     as_of: str,
-) -> dict[str, dict[str, list]]:
+) -> dict[str, dict[str, list[tuple[str, float | None]]]]:
     """按公司批量取所需财务字段的最近 periods 期（升序，缺失为 None）。
 
-    固定母公司报表口径。返回 {wind_code: {field: [升序 values]}}。
+    固定母公司报表口径。v3.3.3 收口批次 A：返回
+    {wind_code: {field: [(report_period, value)]}}（保留报告期信息），
+    由 metric_evaluator 按报告期对齐计算——禁止裸列表下标拼接。
     """
     if not wind_codes:
         return {}
@@ -118,7 +120,7 @@ def fetch_company_series(
     for f in metric.fields:
         tables.setdefault(field_table(f), []).append(f)
 
-    result: dict[str, dict[str, list]] = {
+    result: dict[str, dict[str, list[tuple[str, float | None]]]] = {
         wc: {f: [] for f in metric.fields} for wc in wind_codes
     }
     placeholders = ",".join(f":wc{i}" for i in range(len(wind_codes)))
@@ -134,11 +136,8 @@ def fetch_company_series(
                 col_rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
                 existing_cols = {c[1] for c in col_rows}
             available = [f for f in fields if f in existing_cols]
-            missing = [f for f in fields if f not in existing_cols]
-            for wc in wind_codes:
-                for f in missing:
-                    result[wc][f] = [None] * metric.periods
             if not available:
+                # 列缺失：该字段无任何可计算期（保持空序列，不再伪造 None 位）
                 continue
 
             cols = ", ".join(available)
@@ -152,21 +151,21 @@ def fetch_company_series(
                 sql, {**params, "stmt": PARENT_STATEMENT_TYPE, "as_of": as_of}
             ).fetchall()
             # 每公司保留最近 periods 期（每个 report_period 一行，最后出现者覆盖）
-            per_company: dict[str, dict[str, list]] = {
+            per_company: dict[str, dict[str, list[tuple[str, float | None]]]] = {
                 wc: {f: [] for f in available} for wc in wind_codes
             }
             for row in rows:
                 wc = row[0]
                 if wc not in per_company:
                     continue
+                period = str(row[1])
                 bucket = per_company[wc]
                 for idx, f in enumerate(available):
                     val = row[2 + idx]
-                    bucket[f].append(float(val) if val is not None else None)
+                    bucket[f].append((period, float(val) if val is not None else None))
             for wc in wind_codes:
                 for f in available:
-                    seq = per_company[wc][f][-metric.periods :]
-                    result[wc][f] = seq
+                    result[wc][f] = per_company[wc][f][-metric.periods :]
     return result
 
 
@@ -188,10 +187,17 @@ def compute_metric_values(
     companies = eligible_companies(engine, industry_l1)
     if not companies:
         return []
+    # v3.3.3 收口批次 A：经 metric_evaluator 按报告期对齐计算
+    # （与生产短答同一 evaluator，消除口径漂移）
+    from app.domain.benchmarks.metric_evaluator import evaluate_metric_per_period
+
     series_map = fetch_company_series(engine, companies, metric, as_of)
     out: list[tuple[str, float]] = []
     for wc in companies:
-        value = metric.compute_from_series(series_map.get(wc, {}))
+        evaluable = evaluate_metric_per_period(metric, series_map.get(wc, {}))
+        if not evaluable:
+            continue
+        _, value = max(evaluable)  # 最新可计算期
         if value is not None and math.isfinite(value):
             out.append((wc, value))
     # 确定性顺序

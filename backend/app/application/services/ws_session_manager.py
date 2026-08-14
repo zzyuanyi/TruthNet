@@ -17,12 +17,154 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 
+from app.application.models.company_resolution import (
+    EntityMention,
+    validate_finalized_relation_roles,
+)
 from app.application.services.ws_event_journal import WsEventJournal
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _deepcopy_dict(value: dict) -> dict:
+    """不可变快照：返回深拷贝，调用方修改不影响锁内状态。"""
+    return deepcopy(value)
+
+
+# v3.3 批次 A（P0-2）：可恢复重跑的严格终态校验（纯函数）
+_EXECUTABLE_RELATION_SET = frozenset({"single", "continuation", "switch", "comparison"})
+
+
+def _entity_mentions_from_pending(pending: dict) -> list[EntityMention]:
+    """Materialize pending mentions for the final relation verifier."""
+    return [
+        EntityMention(
+            mention_id=str(m.get("mention_id") or mid),
+            text=str(m.get("text") or ""),
+            start=int(m.get("start") or 0),
+            end=int(m.get("end") or 0),
+            status=str(m.get("status") or "needs_confirmation"),
+            selected_wind_code=str(m.get("selected_wind_code") or "") or None,
+            role=m.get("role"),
+        )
+        for mid, m in (pending.get("mentions") or {}).items()
+    ]
+
+
+def validate_pending_resume_state(pending: dict) -> tuple[bool, str]:
+    """在最后一个确认写入后、置 ready_to_resume 前执行（v3.3.1 §7.1）。
+
+    不再手写"role 非空"检查：将 pending mentions 解析为 EntityMention
+    后复用 validate_finalized_relation_roles()（override 终态闸门），
+    保证 T+1 前与 override 重跑前同一套严格校验，杜绝"确认通过但
+    T+1 被 override 拒绝"的循环：
+
+    - mentions 非空，每个 mention 都有 selected_wind_code；
+    - 不存在 not_found / needs_refinement / needs_confirmation；
+    - relation 可执行且 relation_status == resolved；
+    - 角色结构严格（single/continuation/switch 唯一 primary；
+      comparison 全绑定 + 至少两个不同 code + 恰好一个 primary +
+      其余全 peer）——由 validate_finalized_relation_roles 保证。
+
+    Returns:
+        (True, "") 或 (False, 失败原因)
+    """
+    mentions = pending.get("mentions") or {}
+    if not mentions:
+        return False, "mentions 为空"
+    entity_mentions: list[EntityMention] = []
+    for mid, m in mentions.items():
+        status = m.get("status")
+        if status in ("not_found", "needs_refinement", "needs_confirmation"):
+            return False, f"mention {mid} 状态为 {status}"
+        code = str(m.get("selected_wind_code") or "").strip()
+        if not code:
+            return False, f"mention {mid} 缺少 selected_wind_code"
+        if not m.get("role"):
+            return False, f"mention {mid} 缺少 role"
+        entity_mentions.append(
+            EntityMention(
+                mention_id=mid,
+                text=str(m.get("text") or ""),
+                start=int(m.get("start") or 0),
+                end=int(m.get("end") or 0),
+                status=str(status),
+                selected_wind_code=code,
+                role=m.get("role"),
+            )
+        )
+    relation = pending.get("relation")
+    if relation not in _EXECUTABLE_RELATION_SET:
+        return False, f"relation {relation} 不可执行"
+    if pending.get("relation_status") != "resolved":
+        return False, f"relation_status={pending.get('relation_status')}"
+    if not validate_finalized_relation_roles(str(relation), entity_mentions):
+        return False, f"relation={relation} 的角色/身份结构不满足严格终态要求"
+    return True, ""
+
+
+def build_and_validate_override_decisions(
+    pending: dict,
+) -> tuple[list[dict] | None, str]:
+    """v3.3.1 §7.1：从 pending 最终 mentions 构造 override decisions 并
+    严格校验（claim_pending_resume 在注册 T+1 之前唯一调用）。
+
+    校验：
+      1. mentions 非空且 ID 无重复；
+      2. 每条 decision 的 mention_id/text/start/end/wind_code/role 完整；
+      3. decisions 的 ID 集与 pending 最终 mention ID 集完全相等；
+      4. validate_finalized_relation_roles 通过（与 T+1 override 重跑
+         同一套终态闸门）。
+
+    Returns:
+        (decisions|None, 错误原因)
+    """
+    mentions = pending.get("mentions") or {}
+    if not mentions:
+        return None, "pending mentions 为空"
+    decisions: list[dict] = []
+    for mid, m in mentions.items():
+        code = str(m.get("selected_wind_code") or "").strip()
+        if not code:
+            return None, f"mention {mid} 缺少 selected_wind_code"
+        if not m.get("role"):
+            return None, f"mention {mid} 缺少 role"
+        decisions.append(
+            {
+                "mention_id": mid,
+                "text": str(m.get("text") or ""),
+                "start": int(m.get("start") or 0),
+                "end": int(m.get("end") or 0),
+                "wind_code": code,
+                "role": m.get("role"),
+            }
+        )
+    ids = [d["mention_id"] for d in decisions]
+    if len(ids) != len(set(ids)):
+        return None, "mention_id 重复"
+    if set(ids) != set(mentions.keys()):
+        return None, "decisions 未完整覆盖最终 mention 集"
+    relation = pending.get("relation")
+    entity_mentions = [
+        EntityMention(
+            mention_id=str(m.get("mention_id") or mid),
+            text=str(m.get("text") or ""),
+            start=int(m.get("start") or 0),
+            end=int(m.get("end") or 0),
+            status=str(m.get("status") or "user_confirmed"),
+            selected_wind_code=str(m.get("selected_wind_code") or ""),
+            role=m.get("role"),
+        )
+        for mid, m in mentions.items()
+    ]
+    if not validate_finalized_relation_roles(str(relation), entity_mentions):
+        return None, f"relation={relation} 的角色/身份结构不满足严格终态要求"
+    return decisions, ""
 
 
 class CancelToken:
@@ -82,6 +224,25 @@ class ActiveTurn:
     task: asyncio.Task | None = None
     terminal_event_sent: bool = False
     last_sequence_sent: int = 0
+    # v3.3.1 §7.2：T+1 一次性 claim 所有权（attach/abort 三件套校验）
+    resume_claim_id: str | None = None
+
+
+@dataclass
+class ResumeAbortOutcome:
+    """v3.3.1 §7.2：claim token 收敛后的 abort 结构化结果。
+
+    - owned：本 claim 拥有该 turn（origin/resumed/claim 三件套通过）；
+    - terminal_claimed：锁内已抢占精确新 turn 的终态发送权（caller 必须
+      按 accepted 是否已写决定是否发送终态）；
+    - pending_restored：pending 已恢复 ready_to_resume 并清 claim 字段；
+    - turn_present：abort 时 turn 是否仍在 session.turns（caller 定向移除）。
+    """
+
+    owned: bool
+    terminal_claimed: bool = False
+    pending_restored: bool = False
+    turn_present: bool = False
 
 
 @dataclass
@@ -298,6 +459,328 @@ class WsSessionManager:
     def remove_turn(self, session: WsSession, turn_id: str) -> None:
         with self._lock:
             session.turns.pop(turn_id, None)
+
+    # ── 实体确认原子状态机（v3.1 冻结方案 P0-1/P0-2/P0-3）────────
+
+    @staticmethod
+    def _mention_candidate_codes(mention: dict) -> set[str]:
+        """取 mention 候选 wind_code 集合（CandidateMatch 或 CompanyRef 两种 dict 形态）。"""
+        codes: set[str] = set()
+        for c in mention.get("candidates", []) or []:
+            if (
+                isinstance(c, dict)
+                and "company" in c
+                and isinstance(c["company"], dict)
+            ):
+                codes.add(str(c["company"].get("wind_code") or ""))
+            elif isinstance(c, dict) and c.get("wind_code"):
+                codes.add(str(c["wind_code"]))
+        return {c for c in codes if c}
+
+    def confirm_pending_mention(
+        self,
+        session: WsSession,
+        pending_turn_id: str,
+        mention_id: str,
+        wind_code: str,
+        expected_revision: int,
+    ) -> tuple[str, dict]:
+        """原子确认单个 mention（v3.1 P0-1/P0-2/P0-3 + v3.2.1 幂等重放）。
+
+        v3.2.1 批次 5：先判"同值重放"（mention 已 user_confirmed 且
+        wind_code 一致）再判首次 revision——重放不产生写入、不增 revision、
+        可忽略旧 expected revision；首次写入仍严格校验 revision。
+        最后一个确认**不直接清空** pending：生命周期改为 ready_to_resume，
+        由 claim_pending_resume 原子领取启动 T+1。
+
+        Returns:
+            (状态码, 不可变快照 dict)
+            NO_PENDING / TURN_MISMATCH / REVISION_MISMATCH /
+            INVALID_MENTION / INVALID_CODE / NOT_ACCEPTING
+            WAITING（仍有 needs_confirmation）
+            RESUME_READY（身份全确认且 relation 可执行，可领取）
+            RESUME_IN_PROGRESS（resuming 期同值重放）
+            ALREADY_RESUMED（consumed 后同值重放）
+            RELATION_BLOCKED（身份全确认但 relation 未解析/不可执行——
+                v3.1 P0-3：不启动 T+1，进入 relation_clarify）
+        """
+        with self._lock:
+            pending = session.pending_disambiguation
+            if pending is None or pending.get("origin_turn_id") != pending_turn_id:
+                return "NO_PENDING", {}
+            lifecycle = pending.get("lifecycle_status")
+            mention = pending.get("mentions", {}).get(mention_id)
+            if mention is None:
+                return "INVALID_MENTION", {}
+            # 候选校验（首次写入与重放一致：code 必须属于候选集）
+            if wind_code not in self._mention_candidate_codes(mention):
+                return "INVALID_CODE", {}
+
+            # ── v3.2.1 幂等重放：已确认的同值请求不产生写入 ──
+            if mention.get("status") == "user_confirmed":
+                if mention.get("selected_wind_code") != wind_code:
+                    return "NOT_ACCEPTING", {}
+                snapshot = _deepcopy_dict(pending)
+                if lifecycle == "collecting":
+                    remaining = [
+                        mid
+                        for mid, m in pending.get("mentions", {}).items()
+                        if m.get("status") == "needs_confirmation"
+                    ]
+                    if remaining:
+                        return "WAITING", snapshot
+                    # 全部身份已确认且仍 collecting：只在 relation 不可执行
+                    # 路径出现（首次确认已返 RELATION_BLOCKED）
+                    return "RELATION_BLOCKED", snapshot
+                if lifecycle == "ready_to_resume":
+                    return "RESUME_READY", snapshot
+                if lifecycle == "resuming":
+                    return "RESUME_IN_PROGRESS", snapshot
+                if lifecycle == "consumed":
+                    return "ALREADY_RESUMED", snapshot
+                return "NOT_ACCEPTING", {}
+
+            # ── 首次写入：仅 needs_confirmation + collecting ──
+            if mention.get("status") != "needs_confirmation":
+                return "INVALID_MENTION", {}
+            if lifecycle != "collecting":
+                return "NOT_ACCEPTING", {}
+            if pending.get("revision") != expected_revision:
+                return "REVISION_MISMATCH", {}
+
+            mention["selected_wind_code"] = wind_code
+            mention["status"] = "user_confirmed"
+            mention["resolution_source"] = "user_confirm"
+            pending["revision"] += 1
+
+            remaining = [
+                mid
+                for mid, m in pending.get("mentions", {}).items()
+                if m.get("status") == "needs_confirmation"
+            ]
+            snapshot = _deepcopy_dict(pending)
+            if remaining:
+                return "WAITING", snapshot
+            # A comparison may have been intentionally kept in an
+            # intermediate needs_clarification state while its last identity
+            # was pending. Re-evaluate the strict terminal invariant now that
+            # all identities are selected; unsupported relations remain
+            # blocked below.
+            relation = pending.get("relation")
+            if (
+                relation in _EXECUTABLE_RELATION_SET
+                and pending.get("relation_waiting_for_identity") is True
+                and validate_finalized_relation_roles(
+                    str(relation), _entity_mentions_from_pending(pending)
+                )
+            ):
+                pending["relation_status"] = "resolved"
+                snapshot = _deepcopy_dict(pending)
+            # v3.3 P0-2：relation 不可执行 → RELATION_BLOCKED（P0-3 语义）；
+            # 可执行但身份集不完整（not_found/needs_refinement/重复代码/
+            # role 缺失）→ IDENTITY_BLOCKED，均不得进入 ready_to_resume
+            relation = pending.get("relation")
+            relation_status = pending.get("relation_status")
+            if not (
+                relation_status == "resolved" and relation in _EXECUTABLE_RELATION_SET
+            ):
+                return "RELATION_BLOCKED", snapshot
+            valid, reason = validate_pending_resume_state(pending)
+            if not valid:
+                logger.warning(
+                    "WsSessionManager: 身份确认后终态校验失败（%s），IDENTITY_BLOCKED",
+                    reason,
+                )
+                return "IDENTITY_BLOCKED", snapshot
+            pending["lifecycle_status"] = "ready_to_resume"
+            return "RESUME_READY", _deepcopy_dict(pending)
+
+    def claim_pending_resume(
+        self,
+        session: WsSession,
+        origin_turn_id: str,
+        expected_revision: int,
+        new_turn_id: str,
+    ) -> tuple[str, dict]:
+        """原子领取确认结果并登记 T+1（v3.1 P0-1）。
+
+        同一把锁内完成：
+          1. pending 必须为 ready_to_resume；2. revision 匹配；
+          3. 来源 turn 已不在 session.turns（P0-1 竞态：等待 remove_turn）；
+          4. 当前会话无其他活跃 turn；5. 创建并登记 T+1；
+          6. pending → resuming 并记录 resumed_turn_id；
+          7. 返回不可变的 question + override 快照。
+        启动失败（异常）时 pending 回滚 ready_to_resume，允许幂等重试。
+        """
+        with self._lock:
+            pending = session.pending_disambiguation
+            if pending is None or pending.get("origin_turn_id") != origin_turn_id:
+                return "NO_PENDING", {}
+            if pending.get("revision") != expected_revision:
+                return "REVISION_MISMATCH", {}
+            lifecycle = pending.get("lifecycle_status")
+            if lifecycle == "resuming":
+                # v3.2.1 批次 5：区分"已被他人领取"与普通未就绪
+                return "RESUME_IN_PROGRESS", {}
+            if lifecycle == "consumed":
+                return "ALREADY_RESUMED", {}
+            if lifecycle != "ready_to_resume":
+                return "NOT_READY", {}
+            if session.turns.get(origin_turn_id) is not None:
+                # 来源 turn 尚未移除：确认已写入，等待其收尾后再领取
+                return "ORIGIN_TURN_ACTIVE", {}
+            if session.turns:
+                return "TURN_IN_PROGRESS", {}
+
+            # v3.3.1 §7.1：注册 T+1 之前构造并严格校验 override
+            # decisions（与 T+1 override 重跑同一套终态闸门）；失败保持
+            # ready_to_resume，不登记新 ActiveTurn
+            decisions, override_error = build_and_validate_override_decisions(pending)
+            if decisions is None:
+                logger.warning(
+                    "WsSessionManager: claim 前 override 构造校验失败（%s），"
+                    "pending 保持 ready_to_resume",
+                    override_error,
+                )
+                return "OVERRIDE_INVALID", {}
+
+            # v3.3.1 §7.2：一次性 claim token——attach/abort 必须同时
+            # 校验 origin/resumed/claim 三件套，收敛 abort 所有权
+            claim_id = uuid.uuid4().hex[:12]
+            turn = ActiveTurn(
+                turn_id=new_turn_id,
+                session_id=session.session_id,
+                question=str(pending.get("question") or ""),
+                resume_claim_id=claim_id,
+            )
+            try:
+                session.turns[new_turn_id] = turn
+            except Exception:  # noqa: BLE001 — 登记失败回滚，允许幂等重试
+                pending["lifecycle_status"] = "ready_to_resume"
+                logger.warning(
+                    "WsSessionManager: T+1 登记失败，pending 保持 ready_to_resume",
+                    exc_info=True,
+                )
+                return "TURN_IN_PROGRESS", {}
+            pending["lifecycle_status"] = "resuming"
+            pending["resumed_turn_id"] = new_turn_id
+            pending["resume_claim_id"] = claim_id
+            session.last_activity = self._clock()
+
+            # 构造不可变 override 快照（保留 relation/role，防 reference/sequence 错当比较）
+            return "OK", {
+                "claim_id": claim_id,
+                "question": str(pending.get("question") or ""),
+                "query_fingerprint": str(pending.get("query_fingerprint") or ""),
+                "override": {
+                    "resolution_version": pending.get("resolution_version", 1),
+                    "query_fingerprint": str(pending.get("query_fingerprint") or ""),
+                    "relation": pending.get("relation"),
+                    "selected_alternative_id": pending.get("selected_alternative_id"),
+                    "decisions": decisions,
+                },
+            }
+
+    def consume_pending_resume(
+        self, session: WsSession, origin_turn_id: str, resumed_turn_id: str
+    ) -> bool:
+        """T+1 成功接受后标记 pending consumed（P0-1：不提前清除）。
+
+        Returns:
+            True = 已置 consumed；False = pending 缺失或 resumed_turn_id 不匹配。
+        """
+        with self._lock:
+            pending = session.pending_disambiguation
+            if pending is None or pending.get("origin_turn_id") != origin_turn_id:
+                return False
+            if pending.get("resumed_turn_id") != resumed_turn_id:
+                return False
+            pending["lifecycle_status"] = "consumed"
+            return True
+
+    def attach_and_consume_pending_resume(
+        self,
+        session: WsSession,
+        origin_turn_id: str,
+        resumed_turn_id: str,
+        task: asyncio.Task,
+        claim_id: str,
+    ) -> bool:
+        """v3.3 批次 A（P0-1）：attach task 与 consume pending 的锁内原子合并。
+
+        同一把锁内校验 origin/resumed_turn_id/claim_id/lifecycle==resuming
+        且新 turn 存在后，绑定 task 并置 consumed——杜绝 attach 成功但
+        consume 失败的中间状态（旧实现两步分离，consume 返回 False 被
+        调用方忽略）。v3.3.1 §7.2：claim token 三件套校验。
+
+        Returns:
+            True = 已 attach 且 consumed；
+            False = state conflict（调用方必须取消 task、abort 回滚
+            pending、抢占唯一终态，不得返回 OK）。
+        """
+        with self._lock:
+            pending = session.pending_disambiguation
+            if pending is None or pending.get("origin_turn_id") != origin_turn_id:
+                return False
+            if pending.get("resumed_turn_id") != resumed_turn_id:
+                return False
+            if pending.get("resume_claim_id") != claim_id:
+                return False
+            if pending.get("lifecycle_status") != "resuming":
+                return False
+            turn = session.turns.get(resumed_turn_id)
+            if turn is None:
+                return False
+            if turn.resume_claim_id != claim_id:
+                return False
+            turn.task = task
+            pending["lifecycle_status"] = "consumed"
+            return True
+
+    def abort_claimed_resume(
+        self,
+        session: WsSession,
+        origin_turn_id: str,
+        resumed_turn_id: str,
+        claim_id: str,
+    ) -> ResumeAbortOutcome:
+        """v3.3.1 §7.2：claim token 收敛 abort 所有权的锁内原子回滚
+        （取代 rollback_resume——旧实现仅校验 lifecycle==resuming 且
+        返回值被调用方忽略，可能误回滚他人 claim 或遗留孤儿状态）。
+
+        规则：
+        - 只修改本 claim 拥有的 turn（origin/resumed/claim 三件套）；
+        - pending 仍属于本 claim 时恢复 ready_to_resume 并清 claim 字段；
+        - pending 已被其他合法状态替换时不得覆盖（owned=False 不动）；
+        - 精确新 turn 的终态发送权在锁内抢占（terminal_claimed）；
+        - caller 必须处理并记录返回值：按 terminal_claimed/accepted
+          决定是否写终态，再定向移除该 turn。
+        """
+        with self._lock:
+            pending = session.pending_disambiguation
+            turn = session.turns.get(resumed_turn_id)
+            owned = (
+                pending is not None
+                and pending.get("origin_turn_id") == origin_turn_id
+                and pending.get("resumed_turn_id") == resumed_turn_id
+                and pending.get("resume_claim_id") == claim_id
+            )
+            terminal_claimed = False
+            pending_restored = False
+            if owned and pending.get("lifecycle_status") == "resuming":
+                pending["lifecycle_status"] = "ready_to_resume"
+                pending["resumed_turn_id"] = None
+                pending["resume_claim_id"] = None
+                pending_restored = True
+            if owned and turn is not None and not turn.terminal_event_sent:
+                turn.terminal_event_sent = True
+                terminal_claimed = True
+            return ResumeAbortOutcome(
+                owned=owned,
+                terminal_claimed=terminal_claimed,
+                pending_restored=pending_restored,
+                turn_present=turn is not None,
+            )
 
     # ── 事件缓冲转发 ──────────────────────────────────────
 

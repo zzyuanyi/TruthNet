@@ -57,15 +57,55 @@ env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(env_path)
 
 
+def _validate_release_mode() -> None:
+    """v3.3.1 §9.1：生产发布闸门——全局非 off（suggest/auto）会同步
+    阻塞用户请求或自动绑定身份，必须拒绝启动；离线 suggest/auto 通过
+    显式构造 CompanySemanticSelector(mode=...) 运行，不经此处。
+
+    最终续审 §6 C3：Interpreter 同步调用同样会增加在线延迟（shadow 不
+    改变结果），生产只允许 off 或 fallback（5s fail-closed），shadow
+    仅限离线 runner。
+    """
+    from app.core.config import settings as _settings
+
+    if _settings.ENTITY_SEMANTIC_SELECTION_MODE != "off":
+        raise RuntimeError(
+            f"ENTITY_SEMANTIC_SELECTION_MODE="
+            f"{_settings.ENTITY_SEMANTIC_SELECTION_MODE} 仅限离线评测，"
+            "生产 REST/WS 必须保持 off；离线 runner 请显式构造 selector"
+        )
+    if _settings.ENTITY_QUERY_INTERPRETER_MODE not in ("off", "fallback"):
+        raise RuntimeError(
+            f"ENTITY_QUERY_INTERPRETER_MODE="
+            f"{_settings.ENTITY_QUERY_INTERPRETER_MODE} 仅限离线评测"
+            "（shadow 同步调用不改变结果，不应在线开启）；"
+            "生产允许 off（零调用）或 fallback（5s fail-closed）"
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """应用生命周期.
 
-    启动：恢复遗留 running 报告任务（Phase D #8，重启后不永久卡死）；
-          注册 WS janitor 周期清理（缓冲 TTL + 空闲会话回收）。
+    启动：发布模式校验（§9.1）；恢复遗留 running 报告任务（Phase D #8，
+    重启后不永久卡死）；注册 WS janitor 周期清理（缓冲 TTL + 空闲会话回收）。
     关闭：停止 janitor task（不阻塞）。
     """
     import asyncio
+
+    _validate_release_mode()
+    # 最终续审 §6 C3：实体链路配置启动观测（验收必须能核对模式）
+    from app.core.config import settings as _settings
+
+    logger.info(
+        "entity config: entity_selector_mode=%s "
+        "entity_query_interpreter_mode=%s "
+        "entity_query_interpreter_budget_seconds=%s llm_backend=%s",
+        _settings.ENTITY_SEMANTIC_SELECTION_MODE,
+        _settings.ENTITY_QUERY_INTERPRETER_MODE,
+        _settings.ENTITY_QUERY_INTERPRETER_BUDGET_SECONDS,
+        _settings.LLM_BACKEND,
+    )
 
     try:
         from app.application.services.report_service import recover_stale_running_jobs
