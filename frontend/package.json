@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "ts-check": "tsc -p tsconfig.app.json --noEmit",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.958.0",
@@ -86,7 +87,8 @@
     "tailwindcss": "^4.3.0",
     "terser": "^5.49.1",
     "typescript": "^5",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^4.1.10"
   },
   "packageManager": "pnpm@9.0.0"
 }

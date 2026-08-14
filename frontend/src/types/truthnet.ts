@@ -92,6 +92,8 @@ export interface Message {
   is_streaming?: boolean;
   thinking?: string;
   follow_ups?: string[];
+  // v3.3.4 收口复核清单 §5：结构化比较下一步（后端 next_steps 只读透出）
+  next_steps?: ComparisonNextStep[];
   sources?: Array<{
     id: string;
     title: string;
@@ -115,6 +117,8 @@ export interface PanelData {
   triggered_rules?: TriggeredRuleInfo[];
   key_metrics?: Record<string, number>;
   follow_ups?: string[];
+  // v3.3.4 收口复核清单 §5：结构化比较下一步（优先于 follow_ups 渲染）
+  next_steps?: ComparisonNextStep[];
 }
 
 // ============ 财务分析 (对齐 FinanceResponseData) ============
@@ -512,6 +516,52 @@ export interface ChatDataV1 {
   supporting_evidence?: ChatEvidenceV1[];
   // 2026-08-08 追加：用户请求中的期次原文（如"2025年报"）
   requested_period_text?: string;
+  // 2026-08-14 追加：v3.3.4 轻量整体对比只读载荷（后端 ChatDataV1）
+  comparison_mode?: string;
+  overview_rows?: OverviewMetricRow[];
+  requested_scope?: string;
+  next_steps?: ComparisonNextStep[];
+}
+
+// ============ 轻量整体对比（对齐 v3.3.4 Preview First 载荷）============
+
+export type ComparisonNextStepKind =
+  | 'open_full_comparison'
+  | 'open_industry_comparison'
+  | 'open_multi_company_comparison'
+  | 'choose_comparison_pair'
+  | 'compare_metric';
+
+export interface ComparisonNextStep {
+  kind: ComparisonNextStepKind;
+  label: string;
+  target: string;
+  participant_codes: string[];
+  params: Record<string, string>;
+}
+
+export interface OverviewComparisonValue {
+  company_code: string;
+  sec_name: string;
+  metric_id: string;
+  metric_label: string;
+  period: string;
+  value: number | string;
+  unit: string;
+  observations?: Array<Record<string, unknown>>;
+}
+
+export interface OverviewMetricRow {
+  metric_id: string;
+  metric_label: string;
+  status: 'ok' | 'insufficient_data' | 'unsupported';
+  unit: string;
+  period: string;
+  values: OverviewComparisonValue[];
+  difference: number | string | null;
+  difference_unit: string;
+  conclusion: string;
+  warnings: string[];
 }
 
 // ============ WebSocket ============
