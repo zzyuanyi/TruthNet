@@ -104,3 +104,5 @@ data/model_cache/
 frontend-source.tar.gz
 public/*.tar.gz
 data/backups/
+.cozeproj/reduction
+.codegraph
