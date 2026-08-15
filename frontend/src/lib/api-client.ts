@@ -67,6 +67,69 @@ export interface EvidenceLookupData {
   };
 }
 
+// 声明追溯: GET /claims/{claim_id}
+export interface ClaimLookupData {
+  claim: Record<string, unknown>;
+  evidence: Array<Record<string, unknown>>;
+  turn: Record<string, unknown> | null;
+}
+
+// 整轮溯源: GET /traces/{trace_id}/provenance
+export interface TraceProvenanceData {
+  trace_id: string;
+  claims: Array<Record<string, unknown>>;
+  evidence: Array<Record<string, unknown>>;
+}
+
+// 规则定义: GET /rules/definitions
+export interface RuleMetricMeta {
+  key: string;
+  label: string;
+  unit?: string;
+  formula?: string;
+  risk_direction?: string;
+}
+
+export interface RuleParameterMeta {
+  key: string;
+  unit?: string;
+  description?: string;
+  value?: number | null;
+}
+
+export interface RuleConditions {
+  red: string;
+  orange: string;
+  yellow: string;
+}
+
+export interface RuleDefinition {
+  rule_id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  thresholds: Record<string, number>;
+  metrics: RuleMetricMeta[];
+  parameters: RuleParameterMeta[];
+  conditions: RuleConditions;
+}
+
+export interface RulesDefinitionsData {
+  version: string;
+  execution_version?: string;
+  rules: RuleDefinition[];
+  evaluation_config_hash: string;
+  definition_hash: string;
+  source?: string;
+}
+
+// 就绪检查: GET /readyz
+export interface ReadyData {
+  status: string;
+  profile: string;
+  checks: Record<string, Record<string, unknown>>;
+}
+
 // 会话历史轮次（GET /sessions/{id} 的 turns 元素）
 export interface SessionTurnData {
   turn_id: string;
@@ -249,6 +312,21 @@ export const truthnetAPI = {
   // 下载报告文件: GET /api/v1/reports/{reportId}/file
   getReportDownloadUrl: (reportId: string) =>
     `${API_BASE}/reports/${reportId}/file`,
+  // 声明追溯: GET /api/v1/claims/{claim_id}
+  getClaim: (claimId: string) =>
+    request<ClaimLookupData>('GET', `/claims/${encodeURIComponent(claimId)}`),
+
+  // 整轮溯源: GET /api/v1/traces/{trace_id}/provenance
+  getTraceProvenance: (traceId: string) =>
+    request<TraceProvenanceData>('GET', `/traces/${encodeURIComponent(traceId)}/provenance`),
+
+  // 规则定义: GET /api/v1/rules/definitions
+  getRuleDefinitions: () =>
+    request<RulesDefinitionsData>('GET', '/rules/definitions'),
+
+  // 就绪检查: GET /api/v1/readyz
+  readyz: () => request<ReadyData>('GET', '/readyz'),
+
 };
 
 // ---------------------------------------------------------------------------
