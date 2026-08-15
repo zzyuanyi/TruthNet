@@ -6,6 +6,8 @@ Phase C: mock → 真实 MySQL 查询。
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import time
 
@@ -25,6 +27,70 @@ from app.domain.events.fcode_taxonomy import fcode_category_label
 logger = logging.getLogger(__name__)
 
 _engine: Engine | None = None
+
+# ── B2 第二阶段：舆情影响分析同步适配 ─────────────────────
+# 事件节点是同步 def（graph 全同步 add_node），而 generate_impacts 是
+# async。两条调用路径：REST（asyncio.to_thread → 线程池线程，无事件循环）
+# 与 WS（astream_events 在事件循环线程驱动同步节点）。统一做法：始终在
+# 专用 worker 线程内 asyncio.run 该 coroutine 并带统一超时——禁止在事件
+# 循环线程内直接 asyncio.run（抛 RuntimeError），也不引入通用 event-loop
+# 框架。超时/异常 → impacts=[] + warning，绝不阻塞公告/事件链路。
+_IMPACT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="events-impact"
+)
+
+
+def _impact_timeout() -> float:
+    """影响分析统一超时：LLM 请求超时 + 股权事实/组装缓冲。"""
+    try:
+        return float(settings.LLM_REQUEST_TIMEOUT) + 10.0
+    except Exception:  # noqa: BLE001
+        return 70.0
+
+
+def _run_event_impacts(
+    *, company, clusters: list, timeline: list, rating_changes: list
+) -> tuple[list, list[str]]:
+    """构造 facts + 输入证据集并调用 generate_impacts（专用 worker 线程）。"""
+    from app.application.services.events_impact_service import (
+        build_equity_impact_facts,
+        build_impact_facts,
+        generate_impacts,
+    )
+
+    async def _compute() -> tuple[list, list[str]]:
+        facts, input_evidence = build_impact_facts(
+            event_clusters=clusters,
+            timeline=timeline,
+            rating_changes=rating_changes,
+        )
+        # v3.4：股权事实只送已材料化（evidence_refs 可回查）的直接持股边；
+        # Neo4j/MySQL 失败 → 空事实（内部已兜底，不阻塞影响分析）
+        eq_facts, eq_evidence = await build_equity_impact_facts(
+            company.wind_code, settings.GRAPH_VERSION
+        )
+        facts.extend(eq_facts)
+        input_evidence |= eq_evidence
+        return await generate_impacts(
+            wind_code=company.wind_code,
+            sec_name=company.sec_name,
+            months=36,
+            graph_version=settings.GRAPH_VERSION,
+            facts=facts,
+            input_evidence_ids=input_evidence,
+        )
+
+    timeout = _impact_timeout()
+    future = _IMPACT_EXECUTOR.submit(asyncio.run, _compute())
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        future.cancel()
+        logger.warning("events: 影响分析超时（>%ss），降级", timeout)
+        return [], [f"IMPACT_TIMEOUT: 影响分析超过 {timeout}s，已放弃"]
+    except Exception as exc:  # noqa: BLE001 — 影响分析失败不阻塞事件链路
+        logger.warning("events: 影响分析失败，降级: %s", exc)
+        return [], [f"IMPACT_ERROR: {exc}"]
 
 
 def _get_engine() -> Engine:
@@ -243,22 +309,6 @@ def events_node(state: AgentState) -> dict:
         category_label = fcode_category_label(first_fcode)
         sentiment = str(r.get("sentiment", "neutral") or "neutral")
 
-        timeline.append(
-            {
-                "date": str(r.get("ann_dt", "")),
-                "title": str(r.get("n_info_title", "")),
-                "category": category_label,
-                "sentiment": sentiment,
-                "object_id": str(r.get("object_id", "")),
-                "sources": [str(r.get("source_uri", ""))]
-                if r.get("source_uri")
-                else [],
-            }
-        )
-
-        categories[category_label] = categories.get(category_label, 0) + 1
-        sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
-
         object_id = str(r["object_id"])
         ann_dt = str(r.get("ann_dt", "") or "")
         evidence_id = make_evidence_id(
@@ -269,6 +319,26 @@ def events_node(state: AgentState) -> dict:
             dataset_version=settings.DATASET_VERSION,
             company_code=company.wind_code,
         )
+
+        timeline.append(
+            {
+                "date": str(r.get("ann_dt", "")),
+                "title": str(r.get("n_info_title", "")),
+                "category": category_label,
+                "sentiment": sentiment,
+                "object_id": object_id,
+                "sources": [str(r.get("source_uri", ""))]
+                if r.get("source_uri")
+                else [],
+                # B2：时间线携带统一 evidence_id（供 build_impact_facts 输入
+                # 证据集合，REST TimelineEvent.evidence_ids 同构）
+                "evidence_ids": [evidence_id] if object_id else [],
+            }
+        )
+
+        categories[category_label] = categories.get(category_label, 0) + 1
+        sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+
         evidence_list.append(
             EvidenceRef(
                 evidence_id=evidence_id,
@@ -372,6 +442,23 @@ def events_node(state: AgentState) -> dict:
         status, error_code = "partial", "NO_ANNOUNCEMENT_DATA"
     else:
         status, error_code = "success", None
+
+    # ── B2 第二阶段：舆情影响分析（共享服务 generate_impacts；失败降级）──
+    # 无公告且无事件簇 → 无事实可分析，跳过（不伪造影响结论），公告/事件链路原样。
+    impacts: list = []
+    impact_warnings: list[str] = []
+    if not no_announcement or clusters:
+        impacts, impact_warnings = _run_event_impacts(
+            company=company,
+            clusters=clusters,
+            timeline=timeline,
+            rating_changes=rating_changes,
+        )
+    else:
+        impact_warnings.append(
+            "IMPACT_SKIPPED_NO_FACTS: 无公告且无事件簇，跳过影响分析"
+        )
+
     return {
         "module_status": {
             "events": ModuleStatus(
@@ -387,6 +474,8 @@ def events_node(state: AgentState) -> dict:
                 clusters=clusters,
                 rating_changes=rating_changes,
                 evidence=evidence_list,
+                impacts=impacts,
+                impact_warnings=impact_warnings,
             )
         ),
     }

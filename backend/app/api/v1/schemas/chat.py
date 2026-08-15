@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.v1.schemas.events import ImpactConclusion
+
 _SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
 
 
@@ -275,4 +277,14 @@ class ChatDataV1(BaseModel):
             "如 open_full_comparison/open_industry_comparison/"
             "open_multi_company_comparison/choose_comparison_pair"
         ),
+    )
+    # B2 第二阶段（方案 §4.1）：舆情影响结论（与 REST /events 同构）；
+    # 事件模块未执行/无结果 → 空列表。impact_warnings 为影响分析降级提示。
+    impact_conclusions: list[ImpactConclusion] = Field(
+        default_factory=list,
+        description="舆情影响结论（B2 第二阶段，事件模块生成；无则空列表）",
+    )
+    impact_warnings: list[str] = Field(
+        default_factory=list,
+        description="舆情影响分析降级提示（LLM 失败/超时/无事实）",
     )

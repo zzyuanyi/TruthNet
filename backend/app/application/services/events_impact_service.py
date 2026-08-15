@@ -304,6 +304,29 @@ async def _compute_impacts(
     return conclusions, dropped
 
 
+def _pick(obj, *keys: str, default=""):
+    """按候选键从 dict 或对象取字段（REST schema 对象 / Agent dict 双通道）。
+
+    - dict：依次尝试 keys（键存在且非 None/""）；
+    - 对象：依次尝试 getattr；
+    - 全缺 → default。
+    B2 第二阶段：Agent 节点的事件簇/时间线/评级元素是 dict，字段名与
+    REST schema 略有差异（如 institution vs org_name、published_at vs date），
+    此处统一双通道兼容，保持 routers/events.py 既有对象调用不变。
+    """
+    if isinstance(obj, dict):
+        for k in keys:
+            v = obj.get(k)
+            if v not in (None, ""):
+                return v
+    else:
+        for k in keys:
+            v = getattr(obj, k, None)
+            if v not in (None, ""):
+                return v
+    return default
+
+
 def build_impact_facts(
     *,
     event_clusters: list,
@@ -313,38 +336,43 @@ def build_impact_facts(
     """从事件数据构造 LLM 输入事实 + 输入证据 ID 集合（供程序校验）。
 
     事实只含已有数据（摘要/标题/情绪/评级变更），不含推断性文字。
+    event_clusters/timeline/rating_changes 元素可为 REST schema 对象或
+    Agent 节点产出的 dict（双通道 _pick 兼容）。
     """
     facts: list[dict] = []
     evidence_ids: set[str] = set()
     for c in event_clusters:
-        eids = list(getattr(c, "evidence_ids", []) or [])
+        eids = list(_pick(c, "evidence_ids", default=[]) or [])
         evidence_ids.update(eids)
+        label = _pick(c, "topic", "cluster_label", default="未分类")
         facts.append(
             {
-                "text": f"事件簇[{getattr(c, 'cluster_label', '') or '未分类'}]: "
-                f"{getattr(c, 'summary', '') or ''}",
+                "text": f"事件簇[{label}]: {_pick(c, 'summary', default='')}",
                 "evidence_ids": eids,
             }
         )
     for t in timeline:
-        eids = list(getattr(t, "evidence_ids", []) or [])
+        eids = list(_pick(t, "evidence_ids", default=[]) or [])
         evidence_ids.update(eids)
         facts.append(
             {
-                "text": f"公告[{getattr(t, 'date', '')}] {getattr(t, 'title', '')} "
-                f"(情绪:{getattr(t, 'sentiment', 'neutral')})",
+                "text": f"公告[{_pick(t, 'date', default='')}] "
+                f"{_pick(t, 'title', default='')} "
+                f"(情绪:{_pick(t, 'sentiment', default='neutral')})",
                 "evidence_ids": eids,
             }
         )
     for r in rating_changes:
-        eid = getattr(r, "evidence_id", "") or ""
+        eid = _pick(r, "evidence_id", default="") or ""
         if eid:
             evidence_ids.add(eid)
         facts.append(
             {
-                "text": f"评级变更[{getattr(r, 'date', '')}] {getattr(r, 'org_name', '')}: "
-                f"{getattr(r, 'prev_rating', '')}→{getattr(r, 'new_rating', '')} "
-                f"({getattr(r, 'change', 'maintain')})",
+                "text": f"评级变更[{_pick(r, 'date', 'published_at', default='')}] "
+                f"{_pick(r, 'org_name', 'institution', default='')}: "
+                f"{_pick(r, 'prev_rating', 'previous_rating', default='')}→"
+                f"{_pick(r, 'new_rating', 'current_rating', default='')} "
+                f"({_pick(r, 'change', 'direction', default='maintain')})",
                 "evidence_ids": [eid] if eid else [],
             }
         )

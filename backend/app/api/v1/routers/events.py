@@ -477,6 +477,7 @@ async def get_company_events(
             rating_changes=rating_changes,
             keyword_summary=keyword_summary,
             impact_conclusions=impact_conclusions,
+            impact_warnings=data_warnings,
             evidence_ids=all_evidence_ids,
             announcements_available=announcements_available,
             months_covered=months,

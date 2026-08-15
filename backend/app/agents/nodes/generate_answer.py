@@ -530,6 +530,82 @@ def _build_rule_details(state: AgentState) -> str:
     return "触发规则明细：" + "；".join(lines) + "。"
 
 
+# ── B2 第二阶段：舆情影响结论段 ──────────────────────────
+
+_IMPACT_TYPE_LABELS: dict[str, str] = {
+    "equity_structure": "股权结构",
+    "operation": "经营",
+    "financing": "融资",
+    "market": "市场",
+}
+_IMPACT_DIRECTION_LABELS: dict[str, str] = {
+    "positive": "利好",
+    "negative": "利空",
+    "neutral": "中性",
+}
+_IMPACT_SEVERITY_LABELS: dict[str, str] = {
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+}
+
+
+def _build_impact_conclusions_segment(state: AgentState) -> str:
+    """B2 第二阶段（方案 §4.2.3）：事件回答追加「舆情影响结论」段。
+
+    每条结论展示 display_tag（已发生/推断/风险推演，后端确定性渲染）+
+    impact_type/direction/severity + conclusion + 因果链步骤 + evidence
+    引用；无 impacts 则返回空串（不渲染该段）。因果链措辞保持「风险推演」
+    （由 display_tag 体现），不把推断写成已发生事实。
+    """
+    results = state.get("results")
+    evt = results.events if results else None
+    impacts = getattr(evt, "impacts", None) if evt is not None else None
+    if not impacts:
+        return ""
+
+    lines: list[str] = []
+    for idx, imp in enumerate(impacts, start=1):
+        if isinstance(imp, dict):
+            tag = imp.get("display_tag") or "推断"
+            itype = imp.get("impact_type") or "operation"
+            direction = imp.get("direction") or "neutral"
+            severity = imp.get("severity") or "low"
+            conclusion = imp.get("conclusion") or ""
+            chain = imp.get("causality_chain") or []
+            evidence_ids = imp.get("evidence_ids") or []
+        else:
+            tag = getattr(imp, "display_tag", "") or "推断"
+            itype = getattr(imp, "impact_type", "") or "operation"
+            direction = getattr(imp, "direction", "") or "neutral"
+            severity = getattr(imp, "severity", "") or "low"
+            conclusion = getattr(imp, "conclusion", "") or ""
+            chain = getattr(imp, "causality_chain", []) or []
+            evidence_ids = getattr(imp, "evidence_ids", []) or []
+
+        header = (
+            f"{idx}.【{tag}】{_IMPACT_TYPE_LABELS.get(itype, itype)}·"
+            f"{_IMPACT_DIRECTION_LABELS.get(direction, direction)}·"
+            f"{_IMPACT_SEVERITY_LABELS.get(severity, severity)}影响：{conclusion}"
+        )
+        lines.append(header)
+        if chain:
+            steps = []
+            for s in chain:
+                text = (
+                    s.get("text", "") if isinstance(s, dict) else getattr(s, "text", "")
+                )
+                if text:
+                    steps.append(text)
+            if steps:
+                lines.append("因果链：" + " → ".join(steps))
+        if evidence_ids:
+            lines.append("证据引用：" + "、".join(str(e) for e in evidence_ids))
+    if not lines:
+        return ""
+    return "舆情影响结论：\n" + "\n".join(lines) + "\n"
+
+
 # ── Phase D #13: LLM 问答润色 ─────────────────────────────
 
 
@@ -2252,6 +2328,11 @@ def generate_answer_node(state: AgentState) -> dict:
         equity_overview = _build_equity_overview(state)
         segments.append(equity_overview)
         _emit_segment(state, equity_overview)
+    # B2 第二阶段：舆情影响结论段（事件模块有 impacts 才渲染；无则不渲染）
+    impact_seg = _build_impact_conclusions_segment(state)
+    if impact_seg:
+        segments.append(impact_seg)
+        _emit_segment(state, impact_seg)
     if rule_details:
         segments.append(rule_details)
         _emit_segment(state, rule_details)

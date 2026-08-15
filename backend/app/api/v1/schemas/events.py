@@ -135,6 +135,13 @@ class EventsResponseData(BaseModel):
         default_factory=list,
         description="舆情影响结论（⑧ B2，include_impacts=true 时生成）",
     )
+    impact_warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "舆情影响分析降级提示（⑧ B2，include_impacts=true 时生成；"
+            "LLM 失败/超时/无事实/证据丢弃），与通用 warnings 字段并存不冲突"
+        ),
+    )
     evidence_ids: list[str] = Field(default_factory=list)
     announcements_available: bool = Field(default=True, description="公告数据是否可用")
     months_covered: int = Field(default=36, description="覆盖月数")
