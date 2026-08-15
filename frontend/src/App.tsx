@@ -7,6 +7,7 @@ import ChatPage from './pages/ChatPage';
 import CompanyProfilePage from './pages/CompanyProfilePage';
 import ComparePage from './pages/ComparePage';
 import ReportPage from './pages/ReportPage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="/" element={<ChatPage />} />
           <Route path="/company/:code" element={<CompanyProfilePage />} />
           <Route path="/compare" element={<ComparePage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
 
         {/* 报告页独立布局（无 Header） */}

@@ -3,7 +3,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { MessageSquare, Shield, TrendingUp } from 'lucide-react';
+import { MessageSquare, Shield, TrendingUp, Settings } from 'lucide-react';
 
 export function AppHeader() {
   const location = useLocation();
@@ -27,6 +27,7 @@ export function AppHeader() {
       icon: Shield,
     },
     { id: 'compare', href: '/compare', label: '跨公司对比', icon: TrendingUp },
+    { id: 'settings', href: '/settings', label: '设置', icon: Settings },
   ];
 
   return (
