@@ -253,6 +253,45 @@ def test_shrink_fallback_not_found_stays_blocked():
     assert r.selected_companies == []
 
 
+def test_short_name_boundary_regression_20260815():
+    """第三轮复核 P1/P2 回归（2026-08-15，交接说明 §十一.3）。
+
+    真机现象：『围海近期舆情事件对公司有什么影响？』被提取为
+    mention「围海近期」（短称与邻近时间词误并单 span）→ not_found，
+    用户可见"疑似公司「围海近期」但未能识别"；『002586.SZ 近期…』
+    则多出「近期」not_found mention（fail-closed 阻断整句）。
+
+    当前锁定行为（防串保持，不修 span 边界）：
+    - 「围海近期」误并 span → not_found，不静默锁任何公司；
+    - 「002586.SZ」代码 mention 正常 auto_selected，附属「近期」not_found。
+    修复批目标（实体识别后续批次）：短称「围海」应走候选确认
+    （needs_confirmation 候选 *ST围海）而非直接 NIL；届时更新本用例断言。
+    """
+    lookup = _mysql_lookup(
+        [
+            (
+                "c1",
+                "002586.SZ",
+                "*ST围海",
+                json.dumps(["围海", "围海股份"], ensure_ascii=False),
+            )
+        ]
+    )
+    # ① 短称+邻近词误并：not_found 且不锁公司（防串保持）
+    r = _resolver(lookup).resolve("围海近期舆情事件对公司有什么影响？")
+    m = r.mentions[0]
+    assert m.text == "围海近期"
+    assert m.status == "not_found"
+    assert r.selected_companies == []
+    assert not r.needs_confirmation
+    # ② 代码 + 邻近词：代码正常锁定，附属词 not_found
+    r2 = _resolver(lookup).resolve("002586.SZ 近期舆情事件对公司有什么影响？")
+    by_text = {mm.text: mm for mm in r2.mentions}
+    assert by_text["002586.SZ"].status == "auto_selected"
+    assert by_text["002586.SZ"].selected_wind_code == "002586.SZ"
+    assert by_text["近期"].status == "not_found"
+
+
 # ── v3.2.1 批次 2/3：业务上下文与受控所有格（旧断言迁移）──────
 
 
