@@ -27,6 +27,8 @@ import type {
   EventCluster,
   FinanceRuleItem,
   CompanyRiskSummary,
+  ReportResponse,
+  ReportDetailResponse,
 } from '@/types/truthnet';
 
 // 会话列表响应（V12 envelope: data.sessions + data.total）
@@ -228,6 +230,25 @@ export const truthnetAPI = {
         session_id: sessionId,
       }),
     }),
+
+  // 创建报告: POST /api/v1/reports
+  createReport: (sessionId: string, turnId: string, format?: 'pdf' | 'markdown') =>
+    request<ReportResponse>('POST', '/reports', {
+      body: JSON.stringify({
+        session_id: sessionId,
+        turn_id: turnId,
+        format: format || 'pdf',
+        include_details: true,
+      }),
+    }),
+
+  // 获取报告: GET /api/v1/reports/{reportId}
+  getReport: (reportId: string) =>
+    request<ReportDetailResponse>('GET', `/reports/${reportId}`),
+
+  // 下载报告文件: GET /api/v1/reports/{reportId}/file
+  getReportDownloadUrl: (reportId: string) =>
+    `${API_BASE}/reports/${reportId}/file`,
 };
 
 // ---------------------------------------------------------------------------

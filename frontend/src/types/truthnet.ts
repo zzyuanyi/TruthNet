@@ -162,9 +162,42 @@ export interface FinanceResponseData {
   rules: FinanceRuleItem[];
   industry_benchmark: IndustryBenchmark;
   data_quality: DataQuality;
+  similar_cases?: SimilarCasesResult | null;
   claim_ids: string[];
   evidence_ids: string[];
   warnings: string[];
+}
+
+// ============ 相似案例 (对齐 SimilarCase / SimilarCasesResult) ============
+
+export interface SimilarCaseSource {
+  source_table: string;
+  row_id?: number | null;
+  source_record_id?: string | null;
+  wind_code: string;
+  report_period: string;
+  report_statement_type?: string;
+  period_role?: 'current' | 'prior';
+  fields?: string[];
+}
+
+export interface SimilarCaseItem {
+  company_code: string;
+  company_name: string;
+  industry: string;
+  period: string;
+  metric: Record<string, unknown>;
+  distance: number;
+  statement_type?: string;
+  report_statement_type?: string;
+  sources?: SimilarCaseSource[];
+  evidence_ids?: string[];
+}
+
+export interface SimilarCasesResult {
+  status: 'ok' | 'empty' | 'error' | 'not_supported';
+  reason?: string;
+  cases: SimilarCaseItem[];
 }
 
 // ============ 舆情事件 (对齐 EventsResponseData) ============
@@ -562,6 +595,59 @@ export interface OverviewMetricRow {
   difference_unit: string;
   conclusion: string;
   warnings: string[];
+}
+
+// ============ 报告 ============
+
+export interface ReportRequest {
+  session_id: string;
+  turn_id: string;
+  format?: 'pdf' | 'markdown';
+  include_details?: boolean;
+}
+
+export interface ReportInfo {
+  report_id: string;
+  report_type: string;
+  format: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  title: string;
+  company_name?: string;
+  risk_level?: string;
+  session_id: string;
+  turn_id?: string;
+  created_at: string;
+  completed_at?: string;
+  error_message?: string;
+  has_file: boolean;
+  file_url?: string;
+}
+
+export interface ReportDetail extends ReportInfo {
+  summary: string;
+  key_findings: string[];
+  details: string;
+  evidence_count: number;
+  claim_count: number;
+  risk_score?: number;
+}
+
+export interface ReportResponse {
+  success: boolean;
+  data: ReportInfo;
+  meta?: unknown;
+}
+
+export interface ReportDetailResponse {
+  success: boolean;
+  data: ReportDetail;
+  meta?: unknown;
+}
+
+export interface ReportListResponse {
+  success: boolean;
+  data: ReportInfo[];
+  meta?: { total: number };
 }
 
 // ============ WebSocket ============

@@ -17,6 +17,7 @@ import type {
   PanelState,
   ChatDataV1,
   RiskLevel,
+  ModuleStatusV1,
   ComparisonNextStep,
 } from '@/types/truthnet';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
@@ -45,6 +46,10 @@ export default function ChatPage() {
   // Task 7: 面板联动状态
   const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
   const [filteredEvidenceIds, setFilteredEvidenceIds] = useState<string[] | null>(null);
+
+  // Phase D: 模块进度追踪
+  const [moduleStatus, setModuleStatus] = useState<Record<string, ModuleStatusV1> | null>(null);
+  const [missingModules, setMissingModules] = useState<string[] | null>(null);
 
   const loadSessions = useCallback(async (selectFirst = false) => {
     try {
@@ -250,9 +255,19 @@ export default function ChatPage() {
         // （候选确认后重跑的轮次在此清空已确认卡片）
         setPendingCandidates(null);
         setPanelState('loading');
+        setModuleStatus(null);
+        setMissingModules(null);
         break;
       case 'module.started':
         setPanelState('thinking');
+        // Phase D: 跟踪模块启动
+        setModuleStatus(prev => {
+          const moduleName = (payload as { module?: string })?.module || 'unknown';
+          return {
+            ...(prev || {}),
+            [moduleName]: { state: 'running', error_code: null, recoverable: true, duration_ms: null },
+          };
+        });
         break;
       case 'answer.delta': {
         // 服务器 V12 契约 payload.text 优先；旧 content 仅作兼容回退
@@ -294,6 +309,8 @@ export default function ChatPage() {
           intent?: string;
           trace_id?: string;
           risk_level?: string;
+          module_status?: Record<string, ModuleStatusV1>;
+          missing_modules?: string[];
           // v3.3.4 收口复核清单 §5：轻量比较结构化载荷（只读透出）
           comparison_mode?: string;
           overview_rows?: Array<Record<string, unknown>>;
@@ -405,6 +422,9 @@ export default function ChatPage() {
           setPendingCandidates(null);
         }
         setIsLoading(false);
+        // Phase D: 提取模块进度
+        setModuleStatus(result.module_status || null);
+        setMissingModules(result.missing_modules || null);
         void loadSessions(false);
         // WS completed 载荷不含 company_code，完成后从会话详情同步画像入口。
         void apiClient.getSession(currentSessionId).then(res => {
@@ -587,6 +607,8 @@ export default function ChatPage() {
             data={panelData}
             company={undefined}
             activeRuleId={activeRuleId}
+            moduleStatus={moduleStatus}
+            missingModules={missingModules}
             onFollowUp={handleFollowUp}
             onRuleClick={handleRuleClick}
             onNavigateStep={handleNavigateStep}

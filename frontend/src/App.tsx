@@ -6,6 +6,7 @@ import Layout from './components/layout';
 import ChatPage from './pages/ChatPage';
 import CompanyProfilePage from './pages/CompanyProfilePage';
 import ComparePage from './pages/ComparePage';
+import ReportPage from './pages/ReportPage';
 
 export default function App() {
   return (
@@ -17,6 +18,9 @@ export default function App() {
           <Route path="/company/:code" element={<CompanyProfilePage />} />
           <Route path="/compare" element={<ComparePage />} />
         </Route>
+
+        {/* 报告页独立布局（无 Header） */}
+        <Route path="/reports/:reportId" element={<ReportPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

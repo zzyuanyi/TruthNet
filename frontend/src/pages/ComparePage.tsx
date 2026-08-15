@@ -12,10 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import {
   ArrowLeft,
-  TrendingUp,
   AlertTriangle,
-  GitBranch,
-  Newspaper,
   BarChart3,
   Building2,
   Search,
@@ -223,15 +220,6 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
   unknown: { label: '未知', color: 'bg-gray-500 text-white' },
 };
 
-// 对比指标
-const comparisonMetrics = [
-  { key: 'risk_level', label: '风险等级', icon: AlertTriangle },
-  { key: 'triggered_rules', label: '触发规则数', icon: AlertTriangle },
-  { key: 'coverage', label: '数据覆盖率', icon: Newspaper },
-  { key: 'overall_score', label: '综合评分', icon: TrendingUp },
-  { key: 'evidence_count', label: '证据数量', icon: GitBranch },
-];
-
 export default function ComparePage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -308,24 +296,6 @@ export default function ComparePage() {
     loadCompanies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
-
-  // 获取指标值
-  const getMetricValue = (company: CompanyRiskSummary, metricKey: string) => {
-    switch (metricKey) {
-      case 'risk_level':
-        return company.risk_level;
-      case 'triggered_rules':
-        return company.triggered_rules.length;
-      case 'coverage':
-        return `${(company.coverage * 100).toFixed(0)}%`;
-      case 'overall_score':
-        return company.overall_score.toFixed(1);
-      case 'evidence_count':
-        return company.evidence_ids.length;
-      default:
-        return '-';
-    }
-  };
 
   // 获取风险等级样式
   const getRiskLevelStyle = (level: string) => {
@@ -514,29 +484,37 @@ export default function ComparePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {comparisonMetrics.map((metric) => {
-                    const Icon = metric.icon;
+                  {(comparisonData?.indicators && comparisonData.indicators.length > 0 ? comparisonData.indicators : comparisonData?.companies?.[0] ? [
+                    { indicator: 'risk_level', label: '风险等级', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: 0, unit: '', severity: c.risk_level, status: '' })) },
+                    { indicator: 'overall_score', label: '综合评分', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.overall_score, unit: '分', severity: '', status: '' })) },
+                    { indicator: 'triggered_rules', label: '触发规则数', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.triggered_rules.length, unit: '条', severity: '', status: '' })) },
+                    { indicator: 'coverage', label: '数据覆盖率', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.coverage, unit: '%', severity: '', status: '' })) },
+                    { indicator: 'pattern_matches', label: '模式匹配', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.pattern_matches?.length ?? 0, unit: '个', severity: '', status: '' })) },
+                  ] : []).map((indicator) => {
                     return (
-                      <div key={metric.key} className="space-y-2">
+                      <div key={indicator.indicator} className="space-y-2">
                         <div className="flex items-center gap-2 text-sm font-medium">
-                          <Icon className="h-4 w-4 text-muted-foreground" />
-                          {metric.label}
+                          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                          {indicator.label}
                         </div>
                         <div className="grid grid-cols-3 gap-4">
-                          {companies.map((company) => {
-                            const value = getMetricValue(company, metric.key);
+                          {indicator.companies.map((ci) => {
+                            const isRisk = indicator.indicator === 'risk_level';
+                            const displayValue = indicator.indicator === 'coverage'
+                              ? `${((ci.value ?? 0) * 100).toFixed(0)}%`
+                              : ci.value != null ? `${ci.value}${ci.unit || ''}` : '-';
                             return (
                               <div
-                                key={company.wind_code}
+                                key={ci.wind_code}
                                 className="p-3 rounded-lg border bg-card text-center"
                               >
-                                {metric.key === 'risk_level' ? (
-                                  <Badge className={cn('text-xs', getRiskLevelStyle(value as string))}>
-                                    {riskLevelConfig[value as RiskLevel]?.label}
+                                {isRisk ? (
+                                  <Badge className={cn('text-xs', getRiskLevelStyle(ci.severity || String(ci.value ?? '')))}>
+                                    {riskLevelConfig[ci.severity as RiskLevel]?.label || ci.severity || String(ci.value ?? '-')}
                                   </Badge>
                                 ) : (
                                   <span className="text-lg font-medium">
-                                    {value}
+                                    {displayValue}
                                   </span>
                                 )}
                               </div>

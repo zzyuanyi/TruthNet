@@ -30,11 +30,12 @@ import {
 import { truthnetAPI, type EvidenceLookupData } from '@/lib/api-client';
 import { EquityGraph } from '@/components/truthnet/EquityGraph';
 import { RuleCard } from '@/components/truthnet/RuleCard';
+import { SimilarCases } from '@/components/truthnet/SimilarCases';
 import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
 import { RelatedPartyTable } from '@/components/truthnet/RelatedPartyTable';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company } from '@/types/truthnet';
+import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, SimilarCasesResult, Company } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
 function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
@@ -100,6 +101,7 @@ export default function CompanyProfilePage() {
   const [sentimentEvents, setSentimentEvents] = useState<TimelineEvent[]>([]);
   const [eventClusters, setEventClusters] = useState<EventCluster[]>([]);
   const [riskData, setRiskData] = useState<RiskResponseData | null>(null);
+  const [similarCases, setSimilarCases] = useState<SimilarCasesResult | null>(null);
   const [activeSection, setActiveSection] = useState('overview');
   const [evidenceDialogOpen, setEvidenceDialogOpen] = useState(false);
   const [evidenceDialogTitle, setEvidenceDialogTitle] = useState('证据详情');
@@ -138,6 +140,7 @@ export default function CompanyProfilePage() {
       ]);
       setProfile(profileRes.data);
       setFinancialAnomalies(financeRes.data?.rules || []);
+      setSimilarCases(financeRes.data?.similar_cases || null);
       setEquityData(equityRes.data);
       setSentimentEvents(eventsRes.data?.timeline || []);
       setEventClusters(eventsRes.data?.event_clusters || []);
@@ -300,6 +303,13 @@ export default function CompanyProfilePage() {
               </Card>
             )}
           </div>
+
+          {/* 相似案例 */}
+          {similarCases && similarCases.cases.length > 0 && (
+            <div className="mt-6">
+              <SimilarCases data={similarCases} />
+            </div>
+          )}
 
           <Separator className="my-6" />
 

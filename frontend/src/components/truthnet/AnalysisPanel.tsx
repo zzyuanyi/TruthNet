@@ -3,6 +3,7 @@
 
 import { cn } from '@/lib/utils';
 import { AnimatedNumber } from '@/components/animated-number';
+import { ModuleProgress } from '@/components/truthnet/ModuleProgress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,7 @@ import {
   CheckCircle2,
   Info,
 } from 'lucide-react';
-import type { PanelData, PanelState, RiskLevel, ComparisonNextStep } from '@/types/truthnet';
+import type { PanelData, PanelState, RiskLevel, ModuleStatusV1, ComparisonNextStep } from '@/types/truthnet';
 
 interface AnalysisPanelProps {
   state: PanelState;
@@ -27,7 +28,9 @@ interface AnalysisPanelProps {
   onViewDetails?: (type: 'rules' | 'equity' | 'sentiment' | 'evidence') => void;
   onRuleClick?: (ruleId: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
-  activeRuleId?: string | null; // 规则筛选高亮（对齐审计 P1-3）
+  activeRuleId?: string | null;
+  moduleStatus?: Record<string, ModuleStatusV1> | null;
+  missingModules?: string[] | null;
   // v3.3.4 收口复核清单 §5：结构化比较下一步导航
   onNavigateStep?: (step: ComparisonNextStep) => void;
 }
@@ -51,6 +54,8 @@ export function AnalysisPanel({
   onRuleClick,
   onMetricClick,
   activeRuleId,
+  moduleStatus,
+  missingModules,
   onNavigateStep,
 }: AnalysisPanelProps) {
   return (
@@ -66,6 +71,13 @@ export function AnalysisPanel({
       {/* 内容区域 */}
       <ScrollArea className="flex-1">
         <div className="p-4">
+          {/* Phase D: 模块执行进度 */}
+          {moduleStatus && (state === 'thinking' || state === 'streaming') && (
+            <ModuleProgress
+              moduleStatus={moduleStatus}
+              missingModules={missingModules}
+            />
+          )}
           {/* 根据状态渲染不同内容 */}
           {state === 'empty' && <EmptyState />}
           {state === 'loading' && <LoadingState />}
@@ -73,7 +85,16 @@ export function AnalysisPanel({
           {state === 'streaming' && <StreamingState data={data} />}
           {state === 'ready' && <ReadyState data={data} />}
           {state === 'done' && data && (
-            <DoneState
+            <>
+              {moduleStatus && (
+                <div className="mb-4">
+                  <ModuleProgress
+                    moduleStatus={moduleStatus}
+                    missingModules={missingModules}
+                  />
+                </div>
+              )}
+              <DoneState
               data={data}
               onFollowUp={onFollowUp}
               onViewDetails={onViewDetails}
@@ -82,6 +103,7 @@ export function AnalysisPanel({
               activeRuleId={activeRuleId}
               onNavigateStep={onNavigateStep}
             />
+            </>
           )}
           {state === 'done' && !data && <EmptyState />}
           {state === 'error' && <ErrorState />}
