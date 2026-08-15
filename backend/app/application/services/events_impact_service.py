@@ -383,14 +383,19 @@ async def build_equity_impact_facts(
     wind_code: str,
     graph_version: str = "",
     limit: int = 5,
-) -> tuple[list[dict], set[str]]:
+) -> tuple[list[dict], set[str], list[str]]:
     """股权事实：只送已材料化（evidence_refs 可回查）的 Neo4j 直接持股边。
 
     v3.4：不直接用 fetch_shareholder_records（仅 source_record_id、无
     canonical ID）——改走 Neo4j 边 + build_edge_evidence_map 统一 ID 算法，
     且每条边验证已落库（可回查）才送 LLM；未材料化边保守丢弃。
-    Neo4j/MySQL 失败 → 空事实（不阻塞影响分析）。
+    Neo4j/MySQL 失败 → 空事实 + IMPACT_EQUITY_FACTS_FAILED warning
+    （不阻塞影响分析；调用方保留公告/事件簇/评级事实）。
+
+    B2 批次 D（方案 §五）：返回结构改为 (facts, evidence_ids, warnings) 三元组，
+    失败时带 IMPACT_EQUITY_FACTS_FAILED，不再静默返回空。
     """
+    warnings: list[str] = []
     gv = graph_version or settings.GRAPH_VERSION
     graph = None
     try:
@@ -404,13 +409,13 @@ async def build_equity_impact_facts(
         )
         edges = list(graph.edges)[:limit]
         if not edges:
-            return [], set()
+            return [], set(), []
         edge_map = build_edge_evidence_map(
             edges=edges, company_code=wind_code, graph_version=gv
         )
     except Exception as exc:  # noqa: BLE001 — 股权事实失败不阻塞影响分析
         logger.warning("build_equity_impact_facts: Neo4j 查询失败: %s", exc)
-        return [], set()
+        return [], set(), [f"IMPACT_EQUITY_FACTS_FAILED: Neo4j 查询失败: {exc}"]
 
     labels = {n.id: (n.label or n.id) for n in (graph.nodes or [])}
     facts: list[dict] = []
@@ -458,5 +463,5 @@ async def build_equity_impact_facts(
                 evidence_ids.add(eid)
     except Exception as exc:  # noqa: BLE001 — 回查失败保守丢弃（不送未验证证据）
         logger.warning("build_equity_impact_facts: evidence 回查失败: %s", exc)
-        return [], set()
-    return facts, evidence_ids
+        return [], set(), [f"IMPACT_EQUITY_FACTS_FAILED: evidence 回查失败: {exc}"]
+    return facts, evidence_ids, warnings

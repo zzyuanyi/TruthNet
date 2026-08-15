@@ -32,7 +32,7 @@ def _company() -> CompanyRef:
 
 def _state() -> dict:
     return {
-        "plan": ExecutionPlan(requested_modules=["events"]),
+        "plan": ExecutionPlan(requested_modules=["events"], impact_requested=True),
         "company": _company(),
         "runtime": RuntimeState(trace_id="t", turn_id="u"),
     }
@@ -107,7 +107,9 @@ def _patch_node_data(monkeypatch, *, rows, clusters, rating_changes) -> None:
     monkeypatch.setattr(settings, "SQL_BACKEND", "mysql")
     monkeypatch.setattr(events_mod, "_fetch_announcements", lambda *a, **k: list(rows))
     monkeypatch.setattr(
-        events_mod, "_fetch_event_clusters", lambda *a, **k: list(clusters)
+        events_mod,
+        "_fetch_event_clusters",
+        lambda *a, **k: (list(clusters) if clusters is not None else [], None),
     )
     monkeypatch.setattr(
         events_mod, "_fetch_rating_changes", lambda *a, **k: list(rating_changes)
@@ -125,7 +127,7 @@ def _patch_impacts(monkeypatch, impacts, warnings):
         return list(impacts), list(warnings)
 
     async def _fake_equity(wind_code, graph_version=""):
-        return [], set()
+        return [], set(), []
 
     monkeypatch.setattr(svc, "generate_impacts", _fake_generate)
     monkeypatch.setattr(svc, "build_equity_impact_facts", _fake_equity)
@@ -232,7 +234,7 @@ def test_node_timeout(monkeypatch):
         return [], []
 
     async def _fake_equity(wind_code, graph_version=""):
-        return [], set()
+        return [], set(), []
 
     monkeypatch.setattr(svc, "generate_impacts", _slow_generate)
     monkeypatch.setattr(svc, "build_equity_impact_facts", _fake_equity)
@@ -256,7 +258,7 @@ def test_node_coroutine_exception_degraded(monkeypatch):
         raise RuntimeError("impact service exploded")
 
     async def _fake_equity(wind_code, graph_version=""):
-        return [], set()
+        return [], set(), []
 
     monkeypatch.setattr(svc, "generate_impacts", _boom)
     monkeypatch.setattr(svc, "build_equity_impact_facts", _fake_equity)
@@ -312,7 +314,7 @@ def test_node_no_announcement_no_cluster_skips_impact(monkeypatch):
         return [], []
 
     async def _fake_equity(wind_code, graph_version=""):
-        return [], set()
+        return [], set(), []
 
     monkeypatch.setattr(svc, "generate_impacts", _fake_generate)
     monkeypatch.setattr(svc, "build_equity_impact_facts", _fake_equity)

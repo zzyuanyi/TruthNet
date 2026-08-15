@@ -563,6 +563,12 @@ def _build_impact_conclusions_segment(state: AgentState) -> str:
     impacts = getattr(evt, "impacts", None) if evt is not None else None
     if not impacts:
         return ""
+    # B2 批次 A（方案 §二.5）：渲染前必须再次校验 plan.impact_requested，
+    # 不能只看 impacts 非空——即使上游状态被错误注入 impacts，也不得把
+    # 舆情影响段追加到普通财务/事件回答中。
+    plan = state.get("plan")
+    if plan is None or not getattr(plan, "impact_requested", False):
+        return ""
 
     lines: list[str] = []
     for idx, imp in enumerate(impacts, start=1):

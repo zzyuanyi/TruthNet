@@ -186,6 +186,10 @@ class ExecutionPlan(BaseModel):
     # 用户原话中的期次文本（如 "2025年报"），用于回答/API meta 展示
     requested_period_text: str = ""
     deadline_ms: int = 8000
+    # B2 批次 A（方案 §二）：是否请求舆情影响分析。仅当计划层确定性
+    # 双条件（事件指代 cue + 影响/风险 cue）命中才置 True；综合诊断/
+    # 宽泛风险/仅公告查询/LLM events=True 一律 False（加性字段，默认 False）。
+    impact_requested: bool = False
     # v3.3.3 批次 C（方案 §5.1）：结构化比较规格（唯一比较入口，
     # 禁止散装字段形成非法组合）
     comparison: ComparisonSpec | None = None
