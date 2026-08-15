@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -56,6 +57,32 @@ ApplyRow = tuple[str, str | None, str | None, str | None, str]
 
 class PostApplyRebuildError(RuntimeError):
     """apply 已提交、但后续 benchmark 重建失败——数据库不会自动回滚，需手动恢复。"""
+
+
+def _save_partial_report(result: PipelineResult, gate: Any) -> None:
+    """apply 提交后步骤失败路径：尽力落盘部分报告（含 post_apply_steps/run_dir）。
+
+    rebuild/CSV 失败会提前抛 PostApplyRebuildError，完整 report（build_report 之后）
+    在 CLI 不可达；这里在异常传播前把已有指标+门禁写入 run_dir/report.json，
+    供取证与恢复（对抗审查 F）。best-effort：失败不影响主异常传播。
+    """
+    if result.run_dir is None:
+        return
+    try:
+        partial = build_report(
+            result.report,
+            list(getattr(gate, "checks", []) or []),
+            list(getattr(gate, "problems", []) or []),
+        )
+        out = result.run_dir / "report.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(partial, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        log.info("部分报告已落盘（apply 后步骤失败取证）: %s", out)
+    except Exception:  # noqa: BLE001
+        log.exception("部分报告落盘失败（不影响主异常传播）")
 
 
 def _resolve_benchmark_script(script_path: str = "") -> Path:
@@ -285,18 +312,37 @@ def run_pipeline(
         result.apply_result = apply_out
         result.report["companies_updated"] = apply_out["companies_updated"]
         result.report["post_apply_steps"] = []
-        _regenerate_mapping_csv(engine, config.mapping_csv_path)
+        # CSV 重生成也是提交后步骤：失败同样必须显式"不会自动回滚"（对抗审查 E）
+        try:
+            _regenerate_mapping_csv(engine, config.mapping_csv_path)
+        except Exception as exc:  # noqa: BLE001 - pandas/磁盘/Windows 文件占用等
+            _save_partial_report(result, gate)
+            raise PostApplyRebuildError(
+                f"industry_mapping.csv 重生成失败：{exc}；注意：行业字段已提交数据库，"
+                "数据库不会自动回滚——请修复后重新生成 CSV 并重建基准（恢复路径见档案 §7.4）。"
+            ) from exc
         result.report["post_apply_steps"].append("industry_mapping.csv 已重生成")
         if not config.skip_benchmark_rebuild:
             try:
                 _rebuild_benchmarks(config.database, config.benchmark_rebuild_exe)
             except RuntimeError as exc:
+                _save_partial_report(result, gate)
                 raise PostApplyRebuildError(
                     f"{exc}；注意：行业字段已提交数据库，数据库不会自动回滚——"
                     "请修复 benchmark 脚本后重新运行 rebuild（恢复路径见档案 §7.4）。"
                 ) from exc
             result.report["post_apply_steps"].append("industry_benchmarks 已重建并校验")
-        after = fetch_coverage_stats(engine)
+        # 最后一步覆盖读同样是提交后步骤：失败必须显式"不会自动回滚"并落盘部分报告，
+        # 否则 SQLAlchemy OperationalError（非 RuntimeError）会在 CLI 层裸奔
+        # （对抗审查 H3）。
+        try:
+            after = fetch_coverage_stats(engine)
+        except Exception as exc:  # noqa: BLE001 - 连接中断/读失败
+            _save_partial_report(result, gate)
+            raise PostApplyRebuildError(
+                f"apply 后覆盖统计读取失败：{exc}；注意：行业字段已提交数据库，"
+                "数据库不会自动回滚——请确认库内数据后按档案 §7.4 完成 CSV/基准重建。"
+            ) from exc
     else:
         after = fetch_coverage_stats(engine)
         no_change = check_dry_run_no_change(
@@ -372,8 +418,13 @@ def _preflight_benchmarks(script_path: str = "") -> None:
             "benchmark 预检失败：industry_benchmarks 表缺失，拒绝 apply（零写入）"
         )
     if verify.returncode == 1:
+        # 退出码 1 既可能是"数据校验不过"，也可能是脚本自身异常（DB 连接/依赖）
+        # 崩溃——Python 未捕获异常默认也是 1。两者都 fail-closed（零写入），
+        # 但诊断需提示两种可能，避免误导运维只查数据完整性（对抗审查 G）。
         raise RuntimeError(
-            "benchmark 预检失败：既有 industry_benchmarks 数据校验不过，拒绝 apply（零写入）"
+            "benchmark 预检失败（退出码 1）：既有 industry_benchmarks 数据校验不过，"
+            "或脚本执行异常（DB 连接/依赖失败），拒绝 apply（零写入）——"
+            "请查看上方透传输出定位具体原因"
         )
     if verify.returncode != 0:
         raise RuntimeError(

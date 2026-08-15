@@ -306,9 +306,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"报告已保存: {saved}")
         print(f"staging 目录: {result.run_dir}")
 
-    problems = report.get("gate_problems") or []
+    problems = _gate_problems_for_exit(report)
     if problems:
-        print(f"[FAIL] 质量门禁失败 {len(problems)} 项，不得进入 apply")
+        print(f"[FAIL] 门禁失败 {len(problems)} 项，不得进入 apply")
         return 1
     if args.apply:
         print(
@@ -316,6 +316,20 @@ def main(argv: list[str] | None = None) -> int:
             "请按档案 §9 复验覆盖率与来源分布。"
         )
     return 0
+
+
+def _gate_problems_for_exit(report: dict) -> list[str]:
+    """合并两重门禁的问题集，用于决定退出码（对抗审查 D）。
+
+    staging 门禁（gate_problems）与 apply readiness 门禁（apply_readiness_*）
+    必须一致地反映"apply 将被阻止"：dry-run 时 staging 门禁通过但存在 ERROR/
+    UNMAPPED（readiness 拒绝），退出码也应非 0，避免自动化把将被阻止的
+    dry-run 当作成功。
+    """
+    problems = list(report.get("gate_problems") or [])
+    if not report.get("apply_readiness_ok", True):
+        problems += list(report.get("apply_readiness_problems") or [])
+    return problems
 
 
 def _akshare_version() -> str:

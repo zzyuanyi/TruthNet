@@ -32,6 +32,8 @@ REPORT_METRIC_KEYS = [
     "provider_retries",
     "provider_throttles",
     "provider_fallbacks",
+    "provider_batch_requests",
+    "provider_batch_misses",
     "provider_host_distribution",
     "effective_concurrency",
     "provider_pressure",

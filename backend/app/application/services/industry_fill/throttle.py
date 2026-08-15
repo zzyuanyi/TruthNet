@@ -73,8 +73,15 @@ class RateController:
             return self._pressure
 
     def set_capacity(self, capacity: int) -> None:
-        """钳制到 [min, max_capacity] 后更新；notify 唤醒等待线程。"""
+        """设置并发，并把恢复上限也钳制为调用方请求值（--concurrency 即天花板）。
+
+        若不改 _max_capacity，稳定成功后 on_success 会一路回升到构造默认的
+        MAX_CONCURRENCY=8，静默越过用户显式设定的并发（对抗审查 B）。
+        此处把两者都钳到 [min, MAX_CONCURRENCY]；notify 唤醒等待线程。
+        """
         with self._cv:
+            ceiling = max(self._min, min(capacity, MAX_CONCURRENCY))
+            self._max_capacity = ceiling
             self._capacity = max(self._min, min(capacity, self._max_capacity))
             self._cv.notify_all()
 
