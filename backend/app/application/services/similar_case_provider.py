@@ -241,13 +241,13 @@ def _to_float(value):
 
 
 def _load_companies(engine: Engine) -> dict[str, dict]:
-    """非金融企业主表（comp_type_code=1）。"""
+    """非金融企业主表（comp_type_code=1 且 is_latest=1，仅最新快照）。"""
     with engine.connect() as conn:
         rows = (
             conn.execute(
                 text(
                     "SELECT wind_code, sec_name, industry_l1 "
-                    "FROM companies WHERE comp_type_code = 1"
+                    "FROM companies WHERE comp_type_code = 1 AND is_latest = 1"
                 )
             )
             .mappings()
@@ -287,19 +287,13 @@ def _load_rows(
 
 def _load_prev_values(
     engine: Engine, table: str, period: str, statement_type: str
-) -> dict[str, dict]:
-    """加载去年同期字段值（仅 YoY 派生指标需要）。"""
-    fields = _TABLE_FIELDS[table]
-    cols = ["wind_code", *fields]
-    sql = text(
-        f"SELECT {', '.join(cols)} FROM {table} "
-        "WHERE report_period = :per AND statement_type = :stmt"
-    )
-    with engine.connect() as conn:
-        rows = (
-            conn.execute(sql, {"per": period, "stmt": statement_type}).mappings().all()
-        )
-    return {r["wind_code"]: {f: _to_float(r[f]) for f in fields} for r in rows}
+) -> dict[str, _RawRow]:
+    """加载去年同期原始行（含行级定位字段，仅 YoY 派生指标需要）。
+
+    与 _load_rows 同结构：保留 id / source_record_id / wind_code / report_period /
+    字段值，供 _build_sources 构建 period_role="prior" 的可回查来源。
+    """
+    return _load_rows(engine, table, period, statement_type)
 
 
 def _field(cur_rows: dict, table: str, wind_code: str, field: str) -> float | None:
@@ -311,7 +305,7 @@ def _prev_field(
     prev_rows: dict, table: str, wind_code: str, field: str
 ) -> float | None:
     row = prev_rows.get(table, {}).get(wind_code)
-    return _to_float(row.get(field)) if row is not None else None
+    return _to_float(row.values.get(field)) if row is not None else None
 
 
 def _ratio(numerator: float | None, denominator: float | None) -> float | None:
@@ -420,9 +414,13 @@ def _scale(values: list[float]) -> float:
 
 
 def _build_sources(
-    rule_id: str, cur_rows: dict, wind_code: str
+    rule_id: str, cur_rows: dict, prev_rows: dict, wind_code: str
 ) -> list[SimilarCaseSource]:
-    """为一条案例构建 sources[]（覆盖该规则指标计算涉及的全部报表行）。"""
+    """为一条案例构建 sources[]（覆盖该规则指标计算涉及的全部报表行）。
+
+    YoY 规则（R1/R4）额外追加去年同期行（period_role="prior"）；每条 source 的
+    report_period / row_id / source_record_id 均取自真实行，去年行不填当前期。
+    """
     sources: list[SimilarCaseSource] = []
     for table, fields in RULE_TABLES[rule_id].items():
         row = cur_rows.get(table, {}).get(wind_code)
@@ -436,9 +434,25 @@ def _build_sources(
                 wind_code=wind_code,
                 report_period=row.report_period,
                 report_statement_type=STATEMENT_TYPE,
+                period_role="current",
                 fields=list(fields),
             )
         )
+        if rule_id in _YOY_RULES:
+            prev_row = prev_rows.get(table, {}).get(wind_code)
+            if prev_row is not None:
+                sources.append(
+                    SimilarCaseSource(
+                        source_table=table,
+                        row_id=prev_row.row_id,
+                        source_record_id=prev_row.source_record_id,
+                        wind_code=wind_code,
+                        report_period=prev_row.report_period,
+                        report_statement_type=STATEMENT_TYPE,
+                        period_role="prior",
+                        fields=list(fields),
+                    )
+                )
     return sources
 
 
@@ -572,7 +586,7 @@ class RealSimilarCaseProvider:
                 distance=round(float(_distance(metric)), 4),
                 statement_type="observed",
                 report_statement_type=STATEMENT_TYPE,
-                sources=_build_sources(rule_id, cur_rows, wind_code),
+                sources=_build_sources(rule_id, cur_rows, prev_rows, wind_code),
                 evidence_ids=[],  # 原始行回查模式：sources[] 可回查，不伪造 evidence
             )
             for wind_code, metric in selected

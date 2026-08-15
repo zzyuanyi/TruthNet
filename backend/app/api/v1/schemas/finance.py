@@ -16,6 +16,7 @@ class SimilarCaseSource(BaseModel):
     wind_code: str
     report_period: str
     report_statement_type: str = "408006000"
+    period_role: Literal["current", "prior"] = "current"  # 当前期 / 去年同期
     fields: list[str] = Field(default_factory=list)
 
 

@@ -40,7 +40,7 @@ def provider_engine(tmp_path):
         conn.execute(
             text(
                 "CREATE TABLE companies (wind_code TEXT PRIMARY KEY, sec_name TEXT, "
-                "comp_type_code INTEGER, industry_l1 TEXT)"
+                "comp_type_code INTEGER, industry_l1 TEXT, is_latest INTEGER)"
             )
         )
         conn.execute(
@@ -82,7 +82,9 @@ def _insert(engine, table, values):
         )
 
 
-def _insert_company(engine, code, name=None, comp_type=1, industry="医药生物"):
+def _insert_company(
+    engine, code, name=None, comp_type=1, industry="医药生物", is_latest=1
+):
     _insert(
         engine,
         "companies",
@@ -91,6 +93,7 @@ def _insert_company(engine, code, name=None, comp_type=1, industry="医药生物
             "sec_name": name or code,
             "comp_type_code": comp_type,
             "industry_l1": industry,
+            "is_latest": is_latest,
         },
     )
 
@@ -170,6 +173,59 @@ def _seed_r1_peer(engine, code, gap, industry="医药生物"):
     )
 
 
+def _seed_r4_peer(engine, code, gap, industry="医药生物"):
+    """按目标 gap（pp）播种一个 R4 同行公司（or_yoy=0，inv_yoy=gap/100）。
+
+    R4 growth_gap = 存货增速 - 营收增速；存货去年同期 ≥1 万元避免分母保护。
+    """
+    _insert_company(engine, code, industry=industry)
+    inv_prev = 100_000_000.0
+    inv_cur = inv_prev * (1 + gap / 100)
+    _insert_bs(
+        engine,
+        code,
+        "20250331",
+        inventories=inv_prev,
+        source_record_id=f"bs:{code}:prev",
+    )
+    _insert_bs(
+        engine, code, "20260331", inventories=inv_cur, source_record_id=f"bs:{code}:cur"
+    )
+    _insert_is(
+        engine,
+        code,
+        "20250331",
+        oper_rev=200_000_000.0,
+        source_record_id=f"is:{code}:prev",
+    )
+    _insert_is(
+        engine,
+        code,
+        "20260331",
+        oper_rev=200_000_000.0,
+        source_record_id=f"is:{code}:cur",
+    )
+
+
+def _fetch_source_row(engine, source):
+    """按 source 的 row_id 回查真实行（字段值 + 期间 + 口径 + 公司）。"""
+    table = source.source_table
+    field = source.fields[0]
+    with engine.connect() as conn:
+        row = (
+            conn.execute(
+                text(
+                    f"SELECT wind_code, report_period, statement_type, "
+                    f"{field} AS value FROM {table} WHERE id = :rid"
+                ),
+                {"rid": source.row_id},
+            )
+            .mappings()
+            .one()
+        )
+    return row
+
+
 # ══════════════════════════════════════════════════════════
 # Schema 序列化
 # ══════════════════════════════════════════════════════════
@@ -224,6 +280,23 @@ def test_schema_source_and_finance_rule_item():
     assert dumped["similar_cases"]["status"] == "empty"
     # 未传入时默认 None
     assert FinanceRuleItem(rule_id="R2").similar_cases is None
+
+
+def test_schema_source_period_role():
+    current = SimilarCaseSource(
+        source_table="balance_sheet",
+        wind_code="600000.SH",
+        report_period="20260331",
+    )
+    assert current.period_role == "current"
+    prior = SimilarCaseSource(
+        source_table="balance_sheet",
+        wind_code="600000.SH",
+        report_period="20250331",
+        period_role="prior",
+    )
+    assert prior.period_role == "prior"
+    assert prior.model_dump(mode="json")["period_role"] == "prior"
 
 
 def test_extract_metric_value():
@@ -360,18 +433,32 @@ def test_provider_r1_sources_cover_all_tables_and_row_backtrace(provider_engine)
     result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
     case = result.cases[0]
     assert case.company_code == "P10"
-    # R1 跨表：必须返回 balance_sheet + income_statement 两条 source
-    tables = sorted(s.source_table for s in case.sources)
-    assert tables == ["balance_sheet", "income_statement"]
-    by_table = {s.source_table: s for s in case.sources}
-    assert by_table["balance_sheet"].fields == ["acct_rcv"]
-    assert by_table["income_statement"].fields == ["oper_rev"]
+    # R1 跨表 × YoY：balance_sheet + income_statement × current + prior = 4 条
+    assert len(case.sources) == 4
+    roles = {(s.source_table, s.period_role) for s in case.sources}
+    assert roles == {
+        ("balance_sheet", "current"),
+        ("balance_sheet", "prior"),
+        ("income_statement", "current"),
+        ("income_statement", "prior"),
+    }
+    for s in case.sources:
+        assert s.fields == (
+            ["acct_rcv"] if s.source_table == "balance_sheet" else ["oper_rev"]
+        )
+        assert s.report_period == (
+            "20260331" if s.period_role == "current" else "20250331"
+        )
 
     # row_id 可回查：用 row_id 查回真实行，且 wind_code/report_period/口径一致
-    bs = by_table["balance_sheet"]
-    assert bs.row_id is not None
-    assert bs.report_period == "20260331"
-    assert bs.report_statement_type == "408006000"
+    bs_cur = next(
+        s
+        for s in case.sources
+        if s.source_table == "balance_sheet" and s.period_role == "current"
+    )
+    assert bs_cur.row_id is not None
+    assert bs_cur.report_period == "20260331"
+    assert bs_cur.report_statement_type == "408006000"
     with provider_engine.connect() as conn:
         row = (
             conn.execute(
@@ -379,7 +466,7 @@ def test_provider_r1_sources_cover_all_tables_and_row_backtrace(provider_engine)
                     "SELECT wind_code, report_period, statement_type, acct_rcv "
                     "FROM balance_sheet WHERE id = :rid"
                 ),
-                {"rid": bs.row_id},
+                {"rid": bs_cur.row_id},
             )
             .mappings()
             .one()
@@ -393,6 +480,171 @@ def test_provider_r1_sources_cover_all_tables_and_row_backtrace(provider_engine)
     assert case.evidence_ids == []
     assert case.statement_type == "observed"
     assert case.report_statement_type == "408006000"
+
+
+def test_provider_r1_sources_recompute_metric(provider_engine):
+    """用 R1 sources[]（current+prior 回查真实值）重算 gap，须与案例 metric 一致。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r1_peer(provider_engine, "P10", 10.0)
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    case = result.cases[0]
+    assert case.company_code == "P10"
+
+    def val(table, role):
+        source = next(
+            s for s in case.sources if s.source_table == table and s.period_role == role
+        )
+        row = _fetch_source_row(provider_engine, source)
+        # 每个 source 都能按其 row_id 回查到对应行（期间/公司/口径一致）
+        assert row["wind_code"] == case.company_code
+        assert row["report_period"] == source.report_period
+        assert row["statement_type"] == "408006000"
+        return row["value"]
+
+    ar_cur = val("balance_sheet", "current")
+    ar_prev = val("balance_sheet", "prior")
+    or_cur = val("income_statement", "current")
+    or_prev = val("income_statement", "prior")
+    ar_yoy = (ar_cur - ar_prev) / abs(ar_prev)
+    or_yoy = (or_cur - or_prev) / abs(or_prev)
+    gap = (ar_yoy - or_yoy) * 100
+    assert gap == pytest.approx(case.metric["gap"], rel=1e-6)
+    # 播种口径：or_yoy=0，gap 即应收增速
+    assert gap == pytest.approx(10.0, rel=1e-6)
+
+
+def test_provider_r4_sources_recompute_metric(provider_engine):
+    """用 R4 sources[]（current+prior 回查真实值）重算 growth_gap，与案例一致。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r4_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r4_peer(provider_engine, "P10", 10.0)
+
+    result = p.find("R4", "600000.SH", {"growth_gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    case = result.cases[0]
+    assert case.company_code == "P10"
+    assert len(case.sources) == 4
+
+    def val(table, role):
+        source = next(
+            s for s in case.sources if s.source_table == table and s.period_role == role
+        )
+        row = _fetch_source_row(provider_engine, source)
+        assert row["report_period"] == source.report_period
+        assert row["statement_type"] == "408006000"
+        return row["value"]
+
+    inv_cur = val("balance_sheet", "current")
+    inv_prev = val("balance_sheet", "prior")
+    or_cur = val("income_statement", "current")
+    or_prev = val("income_statement", "prior")
+    inv_yoy = (inv_cur - inv_prev) / abs(inv_prev)
+    or_yoy = (or_cur - or_prev) / abs(or_prev)
+    growth_gap = (inv_yoy - or_yoy) * 100
+    assert growth_gap == pytest.approx(case.metric["growth_gap"], rel=1e-6)
+    assert growth_gap == pytest.approx(10.0, rel=1e-6)
+
+
+def test_provider_r1_missing_prior_excluded_no_forged_source(provider_engine):
+    """缺去年同期数据的公司被排除；存续案例的去年行填真实期间，不伪造。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r1_peer(provider_engine, "P10", 10.0)
+    # 只有当前期行，无 20250331 行
+    _insert_company(provider_engine, "P_NO_PRIOR")
+    _insert_bs(provider_engine, "P_NO_PRIOR", "20260331", acct_rcv=110_000_000.0)
+    _insert_is(provider_engine, "P_NO_PRIOR", "20260331", oper_rev=200_000_000.0)
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    codes = [c.company_code for c in result.cases]
+    assert "P_NO_PRIOR" not in codes  # 缺去年同期 → 排除
+    assert "P10" in codes
+    case = next(c for c in result.cases if c.company_code == "P10")
+    prior_periods = {s.report_period for s in case.sources if s.period_role == "prior"}
+    assert prior_periods == {"20250331"}  # 去年行填真实期间，不填当前期
+
+
+def test_provider_r1_missing_prior_all_empty(provider_engine):
+    """唯一候选缺去年同期时，返回 empty，绝不伪造去年行。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _insert_company(provider_engine, "P_NO_PRIOR")
+    _insert_bs(provider_engine, "P_NO_PRIOR", "20260331", acct_rcv=110_000_000.0)
+    _insert_is(provider_engine, "P_NO_PRIOR", "20260331", oper_rev=200_000_000.0)
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "empty"
+    assert result.cases == []
+
+
+# ══════════════════════════════════════════════════════════
+# 批次 G：候选公司只取最新快照（is_latest=1）
+# ══════════════════════════════════════════════════════════
+
+
+def test_provider_excludes_stale_company_snapshot(provider_engine):
+    """is_latest=0 的公司即便有完整当前期+去年同期行，也不能成为候选。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r1_peer(provider_engine, "P10", 10.0)
+    _seed_r1_peer(provider_engine, "P_STALE", 8.0)  # 距离最近但为旧快照
+    with provider_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE companies SET is_latest = 0 WHERE wind_code = :wc"),
+            {"wc": "P_STALE"},
+        )
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    codes = [c.company_code for c in result.cases]
+    assert "P_STALE" not in codes
+    assert codes == ["P10"]
+
+
+def test_provider_includes_latest_company_snapshot(provider_engine):
+    """is_latest=1 的公司可成为候选。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r1_peer(provider_engine, "P10", 10.0)
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    assert [c.company_code for c in result.cases] == ["P10"]
+
+
+def test_provider_self_exclusion_still_applies(provider_engine):
+    """目标公司即便 is_latest=1 也仍自排除。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r1_peer(provider_engine, "P10", 10.0)
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    assert "600000.SH" not in [c.company_code for c in result.cases]
+
+
+def test_provider_financial_company_not_participating(provider_engine):
+    """comp_type_code != 1 的金融企业不参与候选（即便 is_latest=1）。"""
+    p = RealSimilarCaseProvider(engine=provider_engine)
+    _seed_r1_peer(provider_engine, "600000.SH", 12.0)
+    _seed_r1_peer(provider_engine, "P10", 10.0)
+    _seed_r1_peer(provider_engine, "BANK", 8.0)  # 数据完整但为金融企业
+    with provider_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE companies SET comp_type_code = 2, industry_l1 = '银行' "
+                "WHERE wind_code = :wc"
+            ),
+            {"wc": "BANK"},
+        )
+
+    result = p.find("R1", "600000.SH", {"gap": 12.0}, "医药生物", "20260331")
+    assert result.status == "ok"
+    assert "BANK" not in [c.company_code for c in result.cases]
 
 
 def test_provider_r3_single_table_multi_metric(provider_engine):
@@ -506,8 +758,12 @@ class TestDecimalCoercion:
             },
         }
         prev_rows = {
-            "balance_sheet": {"600000.SH": {"acct_rcv": Decimal("100000000")}},
-            "income_statement": {"600000.SH": {"oper_rev": Decimal("180000000")}},
+            "balance_sheet": {
+                "600000.SH": row("20250331", acct_rcv=Decimal("100000000"))
+            },
+            "income_statement": {
+                "600000.SH": row("20250331", oper_rev=Decimal("180000000"))
+            },
         }
         m1 = _compute_metric("R1", cur_rows, prev_rows, "600000.SH")
         assert isinstance(m1["gap"], float)  # Decimal * float 不再抛 TypeError
