@@ -133,6 +133,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="apply 后跳过 industry_benchmarks 重建（与 --apply 互斥，测试链路用，正式验收禁止）",
     )
+    ap.add_argument(
+        "--allow-unmapped",
+        action="store_true",
+        help="apply readiness 门禁人工例外：存在未映射行业时仍允许 apply"
+        "（默认拒绝；仅在人工确认数据源口径后使用，禁止隐式忽略）",
+    )
     return ap
 
 
@@ -256,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             _REPO_ROOT / "scripts" / "build_industry_benchmarks.py"
         ),
         mapping_csv_path=_REPO_ROOT / "data" / "processed" / "industry_mapping.csv",
+        allow_unmapped=args.allow_unmapped,
     )
 
     # 步骤 6：执行链路
@@ -279,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
                 "backoff_seconds": args.backoff_seconds,
                 "provider": args.provider,
                 "retry_empty": args.retry_empty,
+                "allow_unmapped": args.allow_unmapped,
             },
         )
     except RuntimeError as exc:

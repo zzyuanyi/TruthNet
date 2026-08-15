@@ -44,6 +44,7 @@ from backend.app.application.services.industry_fill.staging import (
     StagingStore,
 )
 from backend.app.application.services.industry_fill.validation import (
+    check_apply_readiness,
     check_dry_run_no_change,
     validate_staging,
 )
@@ -51,6 +52,18 @@ from backend.app.application.services.industry_fill.validation import (
 log = logging.getLogger(__name__)
 
 ApplyRow = tuple[str, str | None, str | None, str | None, str]
+
+
+class PostApplyRebuildError(RuntimeError):
+    """apply 已提交、但后续 benchmark 重建失败——数据库不会自动回滚，需手动恢复。"""
+
+
+def _resolve_benchmark_script(script_path: str = "") -> Path:
+    if script_path:
+        return Path(script_path)
+    return (
+        Path(__file__).resolve().parents[5] / "scripts" / "build_industry_benchmarks.py"
+    )
 
 
 @dataclass
@@ -73,6 +86,8 @@ class RunConfig:
     benchmark_rebuild_exe: str = ""
     mapping_csv_path: Path = Path("data/processed/industry_mapping.csv")
     concurrency: int = 4
+    # apply readiness 门禁人工例外：默认 unmapped_count==0 强制；显式开启才放行
+    allow_unmapped: bool = False
 
 
 @dataclass
@@ -175,6 +190,10 @@ def run_pipeline(
     )
     result.report["staging_rows"] = len(store.records())
 
+    # provider 运行统计（自适应节流/主机分布/有效并发，档案 v1.1 §6.4）
+    if hasattr(config.provider, "report_stats"):
+        result.report.update(config.provider.report_stats())
+
     # 6) 四态统计
     counts = {s: 0 for s in ("success", "empty", "unmapped", "error")}
     for res in results:
@@ -196,6 +215,16 @@ def run_pipeline(
     if config.apply and not gate.ok:
         raise RuntimeError(
             "staging 质量门禁失败，拒绝 apply：" + "；".join(gate.problems)
+        )
+
+    # 7b) apply 就绪门禁（P0 收口：ERROR/UNMAPPED 拒绝 apply；EMPTY 允许保留）
+    #     始终计算并写入报告（dry-run 也能看到将被阻止的项），apply 时强制执行。
+    readiness = check_apply_readiness(results, allow_unmapped=config.allow_unmapped)
+    result.report["apply_readiness_problems"] = readiness.problems
+    result.report["apply_readiness_ok"] = readiness.ok
+    if config.apply and not readiness.ok:
+        raise RuntimeError(
+            "apply readiness 门禁失败，拒绝 apply：" + "；".join(readiness.problems)
         )
 
     # 8) 写库计划：研报确定性 + akshare success，默认只补缺失
@@ -243,6 +272,9 @@ def run_pipeline(
     dry_run_ok: bool | None = None
     if config.apply:
         rows = research_rows + provider_rows
+        # 预检：benchmark 重建在 DB 写入前可运行（防"库已改、基准未建"部分状态）
+        if not config.skip_benchmark_rebuild:
+            _preflight_benchmarks(config.benchmark_rebuild_exe)
         apply_out = apply_industry_fill(
             engine,
             expected_database=config.database,
@@ -252,9 +284,18 @@ def run_pipeline(
         )
         result.apply_result = apply_out
         result.report["companies_updated"] = apply_out["companies_updated"]
+        result.report["post_apply_steps"] = []
         _regenerate_mapping_csv(engine, config.mapping_csv_path)
+        result.report["post_apply_steps"].append("industry_mapping.csv 已重生成")
         if not config.skip_benchmark_rebuild:
-            _rebuild_benchmarks(config.database, config.benchmark_rebuild_exe)
+            try:
+                _rebuild_benchmarks(config.database, config.benchmark_rebuild_exe)
+            except RuntimeError as exc:
+                raise PostApplyRebuildError(
+                    f"{exc}；注意：行业字段已提交数据库，数据库不会自动回滚——"
+                    "请修复 benchmark 脚本后重新运行 rebuild（恢复路径见档案 §7.4）。"
+                ) from exc
+            result.report["post_apply_steps"].append("industry_benchmarks 已重建并校验")
         after = fetch_coverage_stats(engine)
     else:
         after = fetch_coverage_stats(engine)
@@ -311,21 +352,45 @@ def _regenerate_mapping_csv(engine: Engine, out_path: Path) -> None:
     log.info("已重生成 %s（%d 行，无 nan 来源）", out_path, len(df))
 
 
+def _preflight_benchmarks(script_path: str = "") -> None:
+    """apply 前预检 benchmark 系统可重建（--verify-only）。
+
+    防止"companies 已写入、industry_benchmarks 却建不起来"的部分状态：
+    表缺失（退出码 2）或既有数据损坏（退出码 1）→ 在 DB 写入前 fail-closed（零写入）。
+    """
+    script = _resolve_benchmark_script(script_path)
+    if not script.exists():
+        raise RuntimeError(f"benchmark 脚本不存在，无法预检: {script}")
+    verify = subprocess.run(
+        [sys.executable, str(script), "--verify-only"],
+        stdout=None,
+        stderr=None,
+        check=False,
+    )
+    if verify.returncode == 2:
+        raise RuntimeError(
+            "benchmark 预检失败：industry_benchmarks 表缺失，拒绝 apply（零写入）"
+        )
+    if verify.returncode == 1:
+        raise RuntimeError(
+            "benchmark 预检失败：既有 industry_benchmarks 数据校验不过，拒绝 apply（零写入）"
+        )
+    if verify.returncode != 0:
+        raise RuntimeError(
+            f"benchmark 预检失败：退出码 {verify.returncode}，拒绝 apply（零写入）"
+        )
+    log.info("benchmark 预检通过：industry_benchmarks 可重建 ✓")
+
+
 def _rebuild_benchmarks(database: str, script_path: str = "") -> None:
     """apply 后重建并校验离线基准表（档案 v1.1 §7.4）。
 
     子进程 stdio 透传（不捕获管道，兼容沙箱）；脚本继承当前进程环境变量，
     因而沿用目标库凭据注入。
     """
-    if script_path:
-        script = Path(script_path)
-    else:
-        # ../../../../../../scripts/build_industry_benchmarks.py（代码仓库根）
-        script = (
-            Path(__file__).resolve().parents[5]
-            / "scripts"
-            / "build_industry_benchmarks.py"
-        )
+    script = _resolve_benchmark_script(script_path)
+    if not script.exists():
+        raise RuntimeError(f"benchmark 脚本不存在，无法重建: {script}")
     log.info("重建 industry_benchmarks（%s）: %s", database, script)
     rebuild = subprocess.run(
         [sys.executable, str(script), "--rebuild"],

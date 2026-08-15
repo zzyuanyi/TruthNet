@@ -27,6 +27,18 @@ REPORT_METRIC_KEYS = [
     "existing_values_overwritten",
     "duplicate_wind_codes",
     "nan_source_count",
+    # provider 运行统计（档案 v1.1 §6.4 收口批次）
+    "provider_requests",
+    "provider_retries",
+    "provider_throttles",
+    "provider_fallbacks",
+    "provider_host_distribution",
+    "effective_concurrency",
+    "provider_pressure",
+    # P0 就绪门禁与 apply 后置步骤
+    "apply_readiness_ok",
+    "apply_readiness_problems",
+    "post_apply_steps",
 ]
 
 
@@ -46,8 +58,10 @@ def render_text(report: dict, *, title: str) -> str:
     lines = [f"=== {title} ==="]
     for key in REPORT_METRIC_KEYS:
         value = report.get(key)
-        if key == "source_distribution":
+        if key in ("source_distribution", "provider_host_distribution"):
             lines.append(f"{key}: {json.dumps(value or {}, ensure_ascii=False)}")
+        elif key == "post_apply_steps":
+            lines.append(f"{key}: {json.dumps(value or [], ensure_ascii=False)}")
         else:
             lines.append(f"{key}: {value}")
     lines.append(f"quality_gates: {len(report.get('quality_gates') or [])} 项通过")

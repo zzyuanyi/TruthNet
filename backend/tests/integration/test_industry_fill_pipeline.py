@@ -227,7 +227,7 @@ class TestPipelineSqlite:
             "600519.SH": ProviderResult(
                 wind_code="600519.SH",
                 security_number="600519",
-                query_status=QueryStatus.UNMAPPED,
+                query_status=QueryStatus.EMPTY,  # EMPTY 是合法终态，readiness 门禁放行
             ),
         }
         provider = FakeProvider(script)
@@ -458,13 +458,11 @@ class TestPipelineSqlite:
         assert stats["missing"] == 2
         assert stats["nan_source_count"] == 2
 
-    def test_invalid_industry_value_downgraded_to_unmapped_not_written(
-        self, engine, tmp_path
-    ):
-        """非法行业值经 _persist 降级为 UNMAPPED（合法终态），apply 照常执行但不写入。
+    def test_apply_rejected_when_unmapped_remains(self, engine, tmp_path):
+        """非法行业值经 _persist 降级为 UNMAPPED；apply readiness 门禁（P0）默认拒绝 apply。
 
-        口径说明（复核整改）：这不是"门禁拒绝 apply"——staging 门禁对 UNMAPPED 放行，
-        整批 apply 执行、仅非法记录被排除出写入行；库行数与覆盖率不变。
+        用户规格（数据组 2026-08）：unmapped_count 默认必须为 0，apply 前强制检查，
+        不隐式忽略。因此 UNMAPPED 残留时整批 apply 被拒绝、零写入。
         """
         _seed(engine, ["000001.SZ", "600519.SH"])
         script = {
@@ -472,7 +470,7 @@ class TestPipelineSqlite:
                 wind_code="000001.SZ",
                 security_number="000001",
                 query_status=QueryStatus.SUCCESS,
-                industry_l1="火星行业",  # 不在 31 申万一级允许集合
+                industry_l1="火星行业",  # 不在 31 申万一级允许集合 → _persist 降级 UNMAPPED
             ),
             "600519.SH": ProviderResult(
                 wind_code="600519.SH",
@@ -488,24 +486,158 @@ class TestPipelineSqlite:
             apply=True,
             mapping_csv_path=tmp_path / "industry_mapping.csv",
         )
-        result = run_pipeline(engine, config)
-        assert result.apply_result["companies_updated"] == 0
-        assert result.report["akshare_unmapped"] == 1  # 降级为 UNMAPPED 而非写入
+        with pytest.raises(RuntimeError, match="unmapped_count=1"):
+            run_pipeline(engine, config)
         stats = fetch_coverage_stats(engine)
-        # 行数与覆盖率完全不变
+        # 行数与覆盖率完全不变（fail-closed：不允许任何行写入）
         assert stats["companies_total"] == 2
         assert stats["companies_with_industry_before"] == 0
         assert stats["missing"] == 2
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text(
-                    "SELECT industry_l1, industry_l2, sw_indu_code, industry_source "
-                    "FROM companies ORDER BY wind_code"
+        assert stats["nan_source_count"] == 2  # apply 未执行，占位值未清洗
+
+    def test_apply_rejected_when_error_remains(self, engine, tmp_path):
+        """P0 门禁：存在未解决 provider 错误，apply 必须技术上不可行（错误信息按用户规格）。"""
+        _seed(engine, ["000001.SZ"])
+        script = {
+            "000001.SZ": ProviderResult(
+                wind_code="000001.SZ",
+                security_number="000001",
+                query_status=QueryStatus.ERROR,
+                last_error="timeout",
+            ),
+        }
+        provider = FakeProvider(script)
+        config = _config(
+            engine,
+            provider,
+            cache_dir=tmp_path,
+            apply=True,
+            mapping_csv_path=tmp_path / "industry_mapping.csv",
+        )
+        with pytest.raises(RuntimeError, match="unresolved provider errors remain"):
+            run_pipeline(engine, config)
+        stats = fetch_coverage_stats(engine)
+        assert stats["companies_total"] == 1
+        assert stats["companies_with_industry_before"] == 0
+        assert stats["missing"] == 1
+
+    def test_apply_with_allow_unmapped_explicitly_writes_success_only(
+        self, engine, tmp_path
+    ):
+        """显式 --allow-unmapped 人工例外：UNMAPPED 记录不写入，但 SUCCESS 正常写入。"""
+        _seed(engine, ["000001.SZ", "600519.SH"])
+        script = {
+            "000001.SZ": ProviderResult(
+                wind_code="000001.SZ",
+                security_number="000001",
+                query_status=QueryStatus.SUCCESS,
+                industry_l1="食品饮料",
+            ),
+            "600519.SH": ProviderResult(
+                wind_code="600519.SH",
+                security_number="600519",
+                query_status=QueryStatus.UNMAPPED,
+            ),
+        }
+        provider = FakeProvider(script)
+        config = _config(
+            engine,
+            provider,
+            cache_dir=tmp_path,
+            apply=True,
+            allow_unmapped=True,
+            mapping_csv_path=tmp_path / "industry_mapping.csv",
+        )
+        result = run_pipeline(engine, config)
+        assert result.apply_result["companies_updated"] == 1
+        stats = fetch_coverage_stats(engine)
+        assert stats["companies_with_industry_before"] == 1  # 000001 写入
+        assert stats["missing"] == 1  # 600519 未写
+
+    def test_dry_run_reports_readiness_problems(self, engine, tmp_path):
+        """dry-run 不强制执行就绪门禁，但报告须暴露将被阻止的项（可提前诊断）。"""
+        _seed(engine, ["000001.SZ"])
+        script = {
+            "000001.SZ": ProviderResult(
+                wind_code="000001.SZ",
+                security_number="000001",
+                query_status=QueryStatus.ERROR,
+                last_error="timeout",
+            ),
+        }
+        provider = FakeProvider(script)
+        config = _config(engine, provider, cache_dir=tmp_path)
+        result = run_pipeline(engine, config)
+        assert result.report["apply_readiness_ok"] is False
+        assert any(
+            "unresolved provider errors remain" in p
+            for p in result.report["apply_readiness_problems"]
+        )
+        assert result.report["dry_run_no_change_ok"] is True
+
+    def test_apply_preflight_blocks_when_benchmark_unavailable(self, engine, tmp_path):
+        """preflight：benchmark 表缺失（--verify-only 退出码 2）→ DB 写入前拒绝（零写入）。"""
+        _seed(engine, ["000001.SZ"])
+        script = tmp_path / "fake_benchmarks.py"
+        script.write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+        provider = FakeProvider(
+            {
+                "000001.SZ": ProviderResult(
+                    wind_code="000001.SZ",
+                    security_number="000001",
+                    query_status=QueryStatus.SUCCESS,
+                    industry_l1="食品饮料",
                 )
-            ).fetchall()
-        # 行业三列零写入；industry_source 的 nan→NULL 是 apply 事务既定清洗（档案 §8）
-        assert [(r[0], r[1], r[2]) for r in rows] == [
-            (None, None, None),
-            (None, None, None),
-        ]
-        assert [r[3] for r in rows] == [None, None]
+            }
+        )
+        config = _config(
+            engine,
+            provider,
+            cache_dir=tmp_path,
+            apply=True,
+            skip_benchmark_rebuild=False,
+            benchmark_rebuild_exe=str(script),
+            mapping_csv_path=tmp_path / "industry_mapping.csv",
+        )
+        with pytest.raises(RuntimeError, match="benchmark 预检失败"):
+            run_pipeline(engine, config)
+        stats = fetch_coverage_stats(engine)
+        assert stats["companies_with_industry_before"] == 0  # 零写入
+        assert stats["missing"] == 1
+
+    def test_apply_post_commit_rebuild_failure_reports_no_rollback(
+        self, engine, tmp_path
+    ):
+        """post-commit 重建失败：明确报"数据库不会自动回滚"（部分状态显式化，不吞错）。"""
+        _seed(engine, ["000001.SZ"])
+        script = tmp_path / "fake_benchmarks.py"
+        script.write_text(
+            "import sys\n"
+            "if '--verify-only' in sys.argv:\n"
+            "    sys.exit(0)\n"
+            "sys.exit(1)\n",
+            encoding="utf-8",
+        )
+        provider = FakeProvider(
+            {
+                "000001.SZ": ProviderResult(
+                    wind_code="000001.SZ",
+                    security_number="000001",
+                    query_status=QueryStatus.SUCCESS,
+                    industry_l1="食品饮料",
+                )
+            }
+        )
+        config = _config(
+            engine,
+            provider,
+            cache_dir=tmp_path,
+            apply=True,
+            skip_benchmark_rebuild=False,
+            benchmark_rebuild_exe=str(script),
+            mapping_csv_path=tmp_path / "industry_mapping.csv",
+        )
+        with pytest.raises(RuntimeError, match="不会自动回滚"):
+            run_pipeline(engine, config)
+        stats = fetch_coverage_stats(engine)
+        assert stats["companies_with_industry_before"] == 1  # 已提交，不会回滚
