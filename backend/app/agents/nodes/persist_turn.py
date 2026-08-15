@@ -374,17 +374,19 @@ def _build_panel_data(state: AgentState) -> dict | None:
         for rid, status in (finance.rule_statuses or {}).items():
             if status == "triggered":
                 detail = details.get(rid, {}) or {}
-                panel["triggered_rules"].append(
-                    {
-                        "rule_id": rid,
-                        "rule_name": detail.get("rule_name") or rid,
-                        # canonical 证据 ID：rule_details 由 finance.py 写入
-                        # ev_fin_<hash>（与 evidence_refs 一致）。勿用
-                        # FinanceRuleItem.evidence_ids（ev_bs_*/ev_is_* 不落库）
-                        # ——对齐审计 P1-2
-                        "evidence_ids": detail.get("evidence_ids") or [],
-                    }
-                )
+                entry = {
+                    "rule_id": rid,
+                    "rule_name": detail.get("rule_name") or rid,
+                    # canonical 证据 ID：rule_details 由 finance.py 写入
+                    # ev_fin_<hash>（与 evidence_refs 一致）。勿用
+                    # FinanceRuleItem.evidence_ids（ev_bs_*/ev_is_* 不落库）
+                    # ——对齐审计 P1-2
+                    "evidence_ids": detail.get("evidence_ids") or [],
+                }
+                # 任务①：触发规则条目带上相似案例（若 finance.py 已写入）
+                if "similar_cases" in detail:
+                    entry["similar_cases"] = detail["similar_cases"]
+                panel["triggered_rules"].append(entry)
     return panel
 
 

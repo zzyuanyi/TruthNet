@@ -23,9 +23,36 @@ from app.api.v1.schemas.finance import (
     FinanceRuleItem,
     IndustryBenchmark,
 )
+from app.application.services.similar_case_provider import (
+    SimilarCaseProvider,
+    compute_similar_cases,
+)
 from app.core.config import settings
+from app.domain.finance._fetch import fetch_company_field
 
 router = APIRouter(tags=["finance"])
+
+# 相似指标案例 Provider（模块级可注入，供测试替换 FakeProvider）
+_similar_case_provider: SimilarCaseProvider | None = None
+
+
+def set_similar_case_provider(provider: SimilarCaseProvider | None) -> None:
+    """注入/重置相似案例 Provider（测试替换 FakeProvider）。"""
+    global _similar_case_provider
+    _similar_case_provider = provider
+
+
+def _get_similar_case_provider() -> SimilarCaseProvider:
+    """返回当前相似案例 Provider（默认惰性建真实实现）。"""
+    global _similar_case_provider
+    if _similar_case_provider is None:
+        from app.application.services.similar_case_provider import (
+            RealSimilarCaseProvider,
+        )
+
+        _similar_case_provider = RealSimilarCaseProvider()
+    return _similar_case_provider
+
 
 _TABLE_CODE_MAP = {
     "bs": "balance_sheet",
@@ -153,14 +180,30 @@ async def get_company_finance(
                     legacy_ev,
                     normalize_rule_evidence_id(legacy_ev, wind_code, as_of_str),
                 )
+        # 相似指标案例（任务①）：comp_type_code 仅取一次，仅对触发规则透出
+        try:
+            comp_type_code = fetch_company_field(wind_code, "comp_type_code")
+        except Exception:  # noqa: BLE001 — 公司字段读取失败不阻塞财务分析
+            comp_type_code = None
+        sc_provider = _get_similar_case_provider()
         for rid in [f"R{i}" for i in range(1, 8)]:
             r = results.get(rid)
             if r is None:
                 continue
             unified_evidence: list[str] = list(rule_evidence_by_rule.get(rid, []))
+            similar_cases = None
             if r.status == "triggered":
                 trigger_claim_texts[rid] = (
                     f"{r.rule_name}触发（{r.severity}）：{r.explanation or '财务异常信号'}"
+                )
+                similar_cases = compute_similar_cases(
+                    sc_provider,
+                    rule_id=r.rule_id,
+                    company_code=wind_code,
+                    current=dict(getattr(r, "current", None) or {}),
+                    industry=industry_l1,
+                    as_of=as_of_str,
+                    comp_type_code=comp_type_code,
                 )
             rules.append(
                 FinanceRuleItem(
@@ -178,6 +221,7 @@ async def get_company_finance(
                     evidence_ids=unified_evidence,
                     claim_ids=r.claim_ids,
                     warnings=r.warnings,
+                    similar_cases=similar_cases,
                 )
             )
 
