@@ -80,6 +80,36 @@ def validate_staging(
     return report
 
 
+def check_apply_readiness(
+    records: list[ProviderResult], *, allow_unmapped: bool = False
+) -> GateReport:
+    """apply 前就绪门禁（档案 §9 门禁 5 扩展；P0 收口批次）。
+
+    与 staging integrity gate 分离：integrity 允许 error/unmapped 存在以便完整
+    报告诊断；就绪门禁在 --apply 前强制 fail-closed（零写入）。
+
+    - error_count != 0 → 拒绝：存在未解决 provider 错误，必须先 --resume 重查；
+    - unmapped_count != 0 且未显式 allow_unmapped → 拒绝（不隐式忽略）；
+    - EMPTY 是合法终态，允许保留（dry-run 语义）。
+    """
+    report = GateReport()
+    error_count = sum(1 for r in records if r.query_status == QueryStatus.ERROR)
+    if error_count:
+        report.fail(
+            "unresolved provider errors remain; resume required before apply"
+            f"（error_count={error_count}）"
+        )
+    unmapped_count = sum(1 for r in records if r.query_status == QueryStatus.UNMAPPED)
+    if unmapped_count and not allow_unmapped:
+        report.fail(
+            f"unmapped_count={unmapped_count} 存在未映射行业，默认拒绝 apply；"
+            "人工例外需显式 --allow-unmapped（禁止隐式忽略）"
+        )
+    if report.ok:
+        report.pass_("apply readiness 门禁通过：error=0、unmapped=0")
+    return report
+
+
 def plan_apply_rows(
     records: list[ProviderResult],
     current_industry: dict[str, str | None],

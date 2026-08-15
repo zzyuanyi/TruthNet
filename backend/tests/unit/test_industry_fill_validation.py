@@ -5,6 +5,7 @@ from __future__ import annotations
 from backend.app.application.services.industry_fill.constants import QueryStatus
 from backend.app.application.services.industry_fill.provider import ProviderResult
 from backend.app.application.services.industry_fill.validation import (
+    check_apply_readiness,
     check_dry_run_no_change,
     plan_apply_rows,
     validate_staging,
@@ -91,3 +92,46 @@ class TestDryRunNoChange:
         after = dict(before)
         after["covered"] = 6
         assert not check_dry_run_no_change(before, after).ok
+
+
+class TestCheckApplyReadiness:
+    """P0：apply 前 error==0 且 unmapped==0（默认）；EMPTY 允许；显式 allowlist 例外。"""
+
+    def test_empty_only_is_allowed(self):
+        report = check_apply_readiness(
+            [
+                _res("000001.SZ", QueryStatus.EMPTY),
+                _res("600519.SH", QueryStatus.SUCCESS, "食品饮料"),
+            ]
+        )
+        assert report.ok
+
+    def test_error_rejected(self):
+        report = check_apply_readiness(
+            [_res("000001.SZ", QueryStatus.ERROR), _res("600519.SH", QueryStatus.EMPTY)]
+        )
+        assert not report.ok
+        assert any("unresolved provider errors remain" in p for p in report.problems)
+
+    def test_unmapped_rejected_by_default(self):
+        report = check_apply_readiness([_res("000001.SZ", QueryStatus.UNMAPPED)])
+        assert not report.ok
+        assert any("unmapped_count=1" in p for p in report.problems)
+
+    def test_unmapped_allowed_with_explicit_allowlist(self):
+        report = check_apply_readiness(
+            [_res("000001.SZ", QueryStatus.UNMAPPED)], allow_unmapped=True
+        )
+        assert report.ok
+
+    def test_error_rejected_even_with_allow_unmapped(self):
+        """--allow-unmapped 只豁免 UNMAPPED，绝不豁免 ERROR（错误必须清零才能 apply）。"""
+        report = check_apply_readiness(
+            [
+                _res("000001.SZ", QueryStatus.ERROR),
+                _res("600519.SH", QueryStatus.UNMAPPED),
+            ],
+            allow_unmapped=True,
+        )
+        assert not report.ok
+        assert any("unresolved provider errors remain" in p for p in report.problems)

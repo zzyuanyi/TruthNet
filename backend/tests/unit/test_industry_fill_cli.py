@@ -69,6 +69,45 @@ class TestArgParserContract:
             ap.parse_args(["--database", "truthnet_test", "--provider", "unknown"])
 
 
+class TestExitCodeGateSemantics:
+    """对抗审查 D：dry-run 退出码须反映 apply readiness 门禁将被阻止的状态。"""
+
+    def test_staging_gate_problems_return_nonzero(self, cli_mod):
+        assert cli_mod._gate_problems_for_exit(
+            {"gate_problems": ["问题 A"], "apply_readiness_ok": True}
+        ) == ["问题 A"]
+
+    def test_readiness_failure_adds_problems(self, cli_mod):
+        problems = cli_mod._gate_problems_for_exit(
+            {
+                "gate_problems": [],
+                "apply_readiness_ok": False,
+                "apply_readiness_problems": [
+                    "unresolved provider errors remain; resume required before apply"
+                ],
+            }
+        )
+        assert "unresolved provider errors remain" in problems[0]
+
+    def test_both_gates_combined(self, cli_mod):
+        problems = cli_mod._gate_problems_for_exit(
+            {
+                "gate_problems": ["staging 问题"],
+                "apply_readiness_ok": False,
+                "apply_readiness_problems": ["unmapped_count=3"],
+            }
+        )
+        assert problems == ["staging 问题", "unmapped_count=3"]
+
+    def test_all_clear_returns_empty(self, cli_mod):
+        assert (
+            cli_mod._gate_problems_for_exit(
+                {"gate_problems": [], "apply_readiness_ok": True}
+            )
+            == []
+        )
+
+
 class TestResolveDatabaseEnv:
     def test_test_triple_injected(self, monkeypatch, tmp_path):
         from backend.app.application.services.industry_fill.guards import (
