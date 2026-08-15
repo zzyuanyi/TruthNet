@@ -264,9 +264,40 @@ class TestQueryMany:
             def get(self, *a, **k):
                 return _Resp()
 
+        class _FakeAkWithoutBatch:
+            """akshare 已安装但 stock_info_shenwan_industry 批量接口不可用的场景。"""
+
         monkeypatch.setattr(akshare_provider, "_PUSH2_HOSTS", ["example.invalid"])
         monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
+        # 确定性环境：模拟 akshare 已安装（与 CI 未安装 akshare 解耦），
+        # 断言批量不可用诊断仍带"禁止猜测口径"契约。
+        monkeypatch.setattr(akshare_provider, "akshare_version", lambda: "1.18.91")
+        monkeypatch.setattr(
+            AkShareProvider, "_import_ak", lambda self: _FakeAkWithoutBatch()
+        )
         info = _provider().probe()
         assert "eastmoney.push2.direct" in info["endpoints"]
         assert any("禁止猜测口径" in n for n in info["notes"])
         assert info["akshare_version"] is not None
+
+    def test_probe_reports_batch_unavailable_without_akshare(self, monkeypatch):
+        """akshare 未安装（CI 环境）：批量不可用诊断仍须含禁止猜测口径契约，且给出回退提示。"""
+
+        class _Resp:
+            text = '{"data": {"f57": "600519", "f58": "贵州茅台", "f127": "白酒Ⅱ"}}'
+
+            def json(self):
+                return {"data": {"f57": "600519", "f58": "贵州茅台", "f127": "白酒Ⅱ"}}
+
+        class _SessionStub:
+            def get(self, *a, **k):
+                return _Resp()
+
+        monkeypatch.setattr(akshare_provider, "_PUSH2_HOSTS", ["example.invalid"])
+        monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
+        monkeypatch.setattr(akshare_provider, "akshare_version", lambda: None)
+        info = _provider().probe()
+        assert "eastmoney.push2.direct" in info["endpoints"]
+        assert any("禁止猜测口径" in n for n in info["notes"])
+        assert any("akshare 未安装" in n for n in info["notes"])
+        assert info["akshare_version"] is None

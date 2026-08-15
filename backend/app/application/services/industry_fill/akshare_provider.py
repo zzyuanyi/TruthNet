@@ -131,8 +131,13 @@ class AkShareProvider:
             "samples": [],
             "notes": [],
         }
+        # 口径契约（无条件成立）：批量行业接口不可作为权威分类来源，禁止猜测口径。
+        # 正式路径始终为逐证券确定性查询（东财 push2 直连 + akshare 兜底）。
+        info["notes"].append(
+            "批量行业接口不可作为权威分类来源；禁止猜测口径，正式路径采用逐证券确定性查询。"
+        )
         if akshare_version() is None:
-            info["notes"].append("akshare 未安装")
+            info["notes"].append("akshare 未安装，AkShare fallback 不可用")
         else:
             # 批量接口候选实测
             ak = self._import_ak()
