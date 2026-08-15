@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field
 # canonical 模型定义于 domain/evidence/models.py，此处 re-export 保持导入兼容
 from app.domain.evidence.models import Claim, EvidenceRef
 
+# 舆情影响结论（⑧ B2）复用 REST schema，保证 REST/WS/Agent 三出口同构
+from app.api.v1.schemas.events import ImpactConclusion
+
 
 # ── V12 §7.3 模型 ──────────────────────────────────────────
 
@@ -183,6 +186,10 @@ class ExecutionPlan(BaseModel):
     # 用户原话中的期次文本（如 "2025年报"），用于回答/API meta 展示
     requested_period_text: str = ""
     deadline_ms: int = 8000
+    # B2 批次 A（方案 §二）：是否请求舆情影响分析。仅当计划层确定性
+    # 双条件（事件指代 cue + 影响/风险 cue）命中才置 True；综合诊断/
+    # 宽泛风险/仅公告查询/LLM events=True 一律 False（加性字段，默认 False）。
+    impact_requested: bool = False
     # v3.3.3 批次 C（方案 §5.1）：结构化比较规格（唯一比较入口，
     # 禁止散装字段形成非法组合）
     comparison: ComparisonSpec | None = None
@@ -320,6 +327,11 @@ class EventsResult(BaseModel):
     clusters: list[dict] = Field(default_factory=list)
     rating_changes: list[dict] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
+    # B2 第二阶段（方案 §4.1）：舆情影响结论 + 降级提示。
+    # impacts 复用 REST ImpactConclusion（REST/WS 三出口同构）；
+    # 失败/超时/空 → impacts=[] + warning，不阻断既有 timeline/clusters/evidence。
+    impacts: list[ImpactConclusion] = Field(default_factory=list)
+    impact_warnings: list[str] = Field(default_factory=list)
 
 
 # ── 交叉验证模型（Phase C 任务 3）──────────────────────────

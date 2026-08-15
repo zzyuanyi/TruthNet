@@ -1,8 +1,51 @@
 """财务分析 REST Schema — V12 §11.10."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.api.v1.schemas.benchmarks import IndustryPercentile
+
+
+class SimilarCaseSource(BaseModel):
+    """相似案例的底层报表行来源（可回查证据）。"""
+
+    source_table: str
+    row_id: int | None = None  # 数据库业务表主键 id
+    source_record_id: str | None = None  # 原始记录 ID，可能为空且不保证唯一
+    wind_code: str
+    report_period: str
+    report_statement_type: str = "408006000"
+    period_role: Literal["current", "prior"] = "current"  # 当前期 / 去年同期
+    fields: list[str] = Field(default_factory=list)
+
+
+class SimilarCase(BaseModel):
+    """一条相似指标案例。
+
+    措辞约束：只表述「指标值相似」，绝不表述为「同类造假」。
+    """
+
+    company_code: str
+    company_name: str
+    industry: str
+    period: str
+    metric: dict  # 与 SIMILAR_CASES_SCHEMA.md §3 的 metric key 对齐
+    distance: float
+    statement_type: Literal["observed"] = "observed"  # 陈述性质，不是报表口径
+    report_statement_type: str = "408006000"  # 母公司报表口径
+    sources: list[SimilarCaseSource] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(
+        default_factory=list
+    )  # optional：canonical 算法生成或为空
+
+
+class SimilarCasesResult(BaseModel):
+    """相似指标案例检索结果。"""
+
+    status: Literal["ok", "empty", "error", "not_supported"]
+    reason: str = ""  # empty 时="暂无相似案例"；error 时=失败原因
+    cases: list[SimilarCase] = Field(default_factory=list)
 
 
 class FinanceRuleItem(BaseModel):
@@ -37,6 +80,7 @@ class FinanceRuleItem(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     claim_ids: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    similar_cases: SimilarCasesResult | None = None
 
 
 class IndustryBenchmark(BaseModel):

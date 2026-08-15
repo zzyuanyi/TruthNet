@@ -432,6 +432,14 @@ def _build_chat_response(
         if hasattr(evt, "timeline"):
             timeline = evt.timeline
 
+    # B2 第二阶段：舆情影响结论（事件模块生成；未执行/无结果 → 空列表）
+    impact_conclusions: list = []
+    impact_warnings: list[str] = []
+    if results and getattr(results, "events", None):
+        evt = results.events
+        impact_conclusions = getattr(evt, "impacts", None) or []
+        impact_warnings = getattr(evt, "impact_warnings", None) or []
+
     # 收集 warnings（Finance 口径说明恰好一次 + 模块状态）
     warnings: list[str] = []
     runtime = result.get("runtime")
@@ -581,6 +589,8 @@ def _build_chat_response(
             overview_rows=overview_rows,
             requested_scope=requested_scope,
             next_steps=next_steps,
+            impact_conclusions=impact_conclusions,
+            impact_warnings=impact_warnings,
         ),
         meta=ApiMeta(
             request_id=trace_id,

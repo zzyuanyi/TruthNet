@@ -17,6 +17,11 @@ from app.agents.state import (
     ModuleResults,
     ModuleStatus,
 )
+from app.application.services.similar_case_provider import (
+    SimilarCaseProvider,
+    compute_similar_cases,
+)
+from app.domain.finance import parent_scope
 from app.domain.finance.parent_scope import (
     PARENT_STATEMENT_TYPE,
     SCOPE_NOTE,
@@ -24,6 +29,28 @@ from app.domain.finance.parent_scope import (
 )
 
 _RULES = [f"R{i}" for i in range(1, 8)]
+
+# 相似指标案例 Provider（模块级可注入，供测试替换 FakeProvider）
+_similar_case_provider: SimilarCaseProvider | None = None
+
+
+def set_similar_case_provider(provider: SimilarCaseProvider | None) -> None:
+    """注入/重置相似案例 Provider（测试替换 FakeProvider）。"""
+    global _similar_case_provider
+    _similar_case_provider = provider
+
+
+def get_similar_case_provider() -> SimilarCaseProvider:
+    """返回当前相似案例 Provider（默认惰性建真实实现）。"""
+    global _similar_case_provider
+    if _similar_case_provider is None:
+        from app.application.services.similar_case_provider import (
+            RealSimilarCaseProvider,
+        )
+
+        _similar_case_provider = RealSimilarCaseProvider()
+    return _similar_case_provider
+
 
 # 规则证据 ID 中的表代码 → 真实表名
 _TABLE_CODE_MAP = {
@@ -355,6 +382,32 @@ def finance_node(state: AgentState) -> dict:
                 )
             )
         rule_details[rid]["evidence_ids"] = generated_ids
+
+    # 相似指标案例（任务①）：仅对触发规则调用 Provider，metric_value 来自
+    # RuleResult.current（不内部自算）；comp_type 非 1 → not_supported；
+    # Provider 异常 → error（compute_similar_cases 内部捕获，不抛出不阻塞）。
+    triggered_rids = [rid for rid in _RULES if rule_statuses.get(rid) == "triggered"]
+    if triggered_rids:
+        try:
+            comp_type = parent_scope.fetch_company_field(code, "comp_type_code")
+            industry_l1 = parent_scope.fetch_company_field(code, "industry_l1")
+        except Exception:  # noqa: BLE001 — 公司字段读取失败不阻塞财务分析
+            comp_type = None
+            industry_l1 = None
+        provider = get_similar_case_provider()
+        for rid in triggered_rids:
+            r = results.get(rid)
+            current = dict(getattr(r, "current", None) or {})
+            sc_result = compute_similar_cases(
+                provider,
+                rule_id=rid,
+                company_code=code,
+                current=current,
+                industry=industry_l1,
+                as_of=as_of,
+                comp_type_code=comp_type,
+            )
+            rule_details[rid]["similar_cases"] = sc_result.model_dump(mode="json")
 
     # 统一口径说明恰好一次（规则实际执行时才有意义）
     if rule_statuses:

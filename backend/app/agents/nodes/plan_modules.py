@@ -325,6 +325,44 @@ _RISK_COMPARE_CUES = ("风险",)
 # v3.3.3 收口批次 D（方案 §3.6）：指标回答语义操作 cue
 _ASSESSMENT_CUES = ("正常吗", "正常么", "合理吗", "健康吗", "偏高", "偏低")
 
+# B2 批次 A（方案 §二.2/§二.3）：舆情影响分析确定性双条件 cue——
+# 事件指代 cue（舆情/公告/评级/事件/新闻/处罚/调查/立案/st）+ 影响/风险 cue。
+# 只有两条件同时命中才置 impact_requested=True；单 cue 不推导。
+_IMPACT_EVENT_REF_CUES = (
+    "舆情",
+    "公告",
+    "评级",
+    "事件",
+    "新闻",
+    "处罚",
+    "调查",
+    "立案",
+    "st",
+)
+_IMPACT_REQUEST_CUES = (
+    "影响",
+    "风险",
+    "冲击",
+    "后果",
+    "拖累",
+    "利好",
+    "利空",
+)
+
+
+def _detect_impact_requested(user_query: str) -> bool:
+    """B2 触发条件收紧（批次 A §二.3）：显式 cue 双条件确定性判定。
+
+    只有同时命中「事件指代 cue」与「影响/风险 cue」才返回 True。
+    综合诊断（"康美有造假风险吗"）、仅公告查询（"最近有什么公告"）、
+    宽泛问题（"康美药业怎么样"）均因缺少其中一侧 cue 而返回 False；
+    LLM 意图识别返回 events=True 不进入本函数（不得自动推导）。
+    """
+    ql = (user_query or "").lower()
+    has_event_ref = any(cue in ql for cue in _IMPACT_EVENT_REF_CUES)
+    has_impact_cue = any(cue in ql for cue in _IMPACT_REQUEST_CUES)
+    return has_event_ref and has_impact_cue
+
 
 def _detect_answer_operation(user_query: str) -> str:
     """指标回答语义操作：assessment（需基准）/ value（只答数值）。
@@ -969,5 +1007,8 @@ def plan_modules_node(state: AgentState) -> dict:
             as_of_kind=as_of_kind,
             requested_period_text=period_text,
             answer_target=answer_target,
+            # B2 批次 A：确定性双条件判定（事件指代 + 影响/风险 cue），
+            # 综合诊断/宽泛风险/仅公告查询/LLM events=True 一律 False
+            impact_requested=_detect_impact_requested(user_query),
         )
     }

@@ -53,7 +53,7 @@ def _state(monkeypatch, announcements, rating_rows, cluster_rows) -> AgentState:
 
     def _fake_clusters(*a, **k):
         calls["clusters"] += 1
-        return cluster_rows
+        return (cluster_rows, None)
 
     monkeypatch.setattr(ev, "_fetch_announcements", _fake_ann)
     monkeypatch.setattr(ev, "_fetch_rating_changes", _fake_rating)
@@ -148,3 +148,104 @@ def test_rating_and_cluster_evidence_join_module_output(monkeypatch, _mysql_back
     assert by_id["ev_rating_1"].source_type == "research_report"
     assert by_id["ev_rating_1"].field_path == "rating_change"
     assert by_id["ev_cluster_1"].source_record_id == "ann_1"
+
+
+def test_cluster_data_error_partial_status(monkeypatch, _mysql_backend):
+    """批次 E：事件簇数据错误 → partial/EVENT_CLUSTER_DATA_ERROR + runtime warning。"""
+    import app.agents.nodes.events as ev
+
+    state, _calls = _state(monkeypatch, [], [], [])
+    # 覆盖 _state 内的默认 mock：显式返回 DATA_ERROR issue
+    monkeypatch.setattr(
+        ev, "_fetch_event_clusters", lambda *a, **k: ([], "EVENT_CLUSTER_DATA_ERROR")
+    )
+    out = events_node(state)
+
+    ms = out["module_status"]["events"]
+    assert ms.state == "partial"
+    assert ms.error_code == "EVENT_CLUSTER_DATA_ERROR"
+    assert any("EVENT_CLUSTER_DATA_ERROR" in w for w in state["runtime"].warnings)
+
+
+def test_cluster_not_ready_warning_preserved(monkeypatch, _mysql_backend):
+    """批次 E：真无数据 → NOT_READY warning（语义不与数据错误混淆）。"""
+    import app.agents.nodes.events as ev
+
+    state, _calls = _state(monkeypatch, [], [], [])
+    monkeypatch.setattr(
+        ev,
+        "_fetch_event_clusters",
+        lambda *a, **k: ([], "EVENT_CLUSTER_DATA_NOT_READY"),
+    )
+    events_node(state)
+    assert any("EVENT_CLUSTER_DATA_NOT_READY" in w for w in state["runtime"].warnings)
+    assert not any("EVENT_CLUSTER_DATA_ERROR" in w for w in state["runtime"].warnings)
+
+
+class TestFetchEventClustersIssue:
+    """_fetch_event_clusters 三态 issue 语义（批次 E）。"""
+
+    def _patch(self, monkeypatch, repo_result, has_rows):
+        import app.agents.nodes.events as ev
+
+        class _FakeRepo:
+            def list_by_company_sync(self, *a, **k):
+                if isinstance(repo_result, Exception):
+                    raise repo_result
+                return list(repo_result)
+
+        monkeypatch.setattr(
+            "app.infrastructure.persistence.mysql.event_cluster_repository"
+            ".MySQLEventClusterRepository",
+            lambda: _FakeRepo(),
+        )
+
+        class _FakeConn:
+            def __init__(self, first):
+                self._first = first
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, *a, **k):
+                return self
+
+            def first(self):
+                return self._first
+
+        monkeypatch.setattr(
+            ev,
+            "_get_engine",
+            lambda: type(
+                "E", (), {"connect": lambda s: _FakeConn(("1",) if has_rows else None)}
+            )(),
+        )
+
+    def test_repo_raises_returns_data_error(self, monkeypatch, _mysql_backend):
+        self._patch(monkeypatch, RuntimeError("boom"), True)
+        import app.agents.nodes.events as ev
+
+        clusters, issue = ev._fetch_event_clusters("600518.SH")
+        assert clusters == []
+        assert issue == "EVENT_CLUSTER_DATA_ERROR"
+
+    def test_rows_exist_but_unparseable_returns_data_error(
+        self, monkeypatch, _mysql_backend
+    ):
+        self._patch(monkeypatch, [], True)
+        import app.agents.nodes.events as ev
+
+        clusters, issue = ev._fetch_event_clusters("600518.SH")
+        assert clusters == []
+        assert issue == "EVENT_CLUSTER_DATA_ERROR"
+
+    def test_no_rows_returns_not_ready(self, monkeypatch, _mysql_backend):
+        self._patch(monkeypatch, [], False)
+        import app.agents.nodes.events as ev
+
+        clusters, issue = ev._fetch_event_clusters("600518.SH")
+        assert clusters == []
+        assert issue == "EVENT_CLUSTER_DATA_NOT_READY"

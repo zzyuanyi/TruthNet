@@ -445,13 +445,17 @@ async def get_company_events(
                 rating_changes=rating_changes,
             )
             # v3.4：股权事实只送已材料化（evidence_refs 可回查）的
-            # Neo4j 直接持股边证据（不可回查的边保守丢弃）
+            # Neo4j 直接持股边证据（不可回查的边保守丢弃）。
+            # B2 批次 D：build_equity_impact_facts 返回 (facts, evidence_ids,
+            # warnings)，失败时带 IMPACT_EQUITY_FACTS_FAILED 且不阻断 B2。
             try:
-                eq_facts, eq_evidence = await build_equity_impact_facts(
+                eq_facts, eq_evidence, eq_warnings = await build_equity_impact_facts(
                     wind_code, settings.GRAPH_VERSION
                 )
                 facts.extend(eq_facts)
                 input_evidence |= eq_evidence
+                for w in eq_warnings:
+                    data_warnings.append(w)
             except Exception as exc:  # noqa: BLE001 — 股权事实失败不阻塞影响分析
                 data_warnings.append(f"IMPACT_EQUITY_FACTS_FAILED: {exc}")
             impact_conclusions, impact_warnings = await generate_impacts(
@@ -477,6 +481,7 @@ async def get_company_events(
             rating_changes=rating_changes,
             keyword_summary=keyword_summary,
             impact_conclusions=impact_conclusions,
+            impact_warnings=data_warnings,
             evidence_ids=all_evidence_ids,
             announcements_available=announcements_available,
             months_covered=months,

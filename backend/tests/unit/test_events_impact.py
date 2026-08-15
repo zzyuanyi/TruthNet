@@ -57,6 +57,50 @@ def test_build_facts_collects_evidence_ids():
     assert all("text" in f and "evidence_ids" in f for f in facts)
 
 
+def test_build_facts_from_dicts():
+    """B2 第二阶段：Agent 节点产出 dict（而非 REST schema 对象）也能正确构造 facts。
+
+    字段名差异（institution/previous_rating/current_rating/direction/
+    published_at vs REST 的 org_name/prev_rating/new_rating/change/date）
+    由 _pick 双通道兼容，且 clusters/timeline 携带 evidence_ids。
+    """
+    from app.application.services.events_impact_service import build_impact_facts
+
+    facts, eids = build_impact_facts(
+        event_clusters=[
+            {
+                "topic": "股权变动",
+                "summary": "质押上升",
+                "evidence_ids": ["c1"],
+            }
+        ],
+        timeline=[
+            {
+                "date": "2026-06-01",
+                "title": "减持公告",
+                "sentiment": "negative",
+                "evidence_ids": ["t1"],
+            }
+        ],
+        rating_changes=[
+            {
+                "published_at": "2026-06-05",
+                "institution": "某证券",
+                "previous_rating": "增持",
+                "current_rating": "中性",
+                "direction": "down",
+                "evidence_id": "r1",
+            }
+        ],
+    )
+    assert eids == {"c1", "t1", "r1"}
+    assert len(facts) == 3
+    texts = [f["text"] for f in facts]
+    assert any("股权变动" in t and "质押上升" in t for t in texts)
+    assert any("减持公告" in t for t in texts)
+    assert any("某证券" in t and "增持→中性" in t for t in texts)
+
+
 @pytest.mark.asyncio
 async def test_mock_backend_returns_empty_with_warning(monkeypatch):
     """LLM_BACKEND=mock/空 → 不调用 LLM，返回空 + 可恢复 warning。"""

@@ -627,6 +627,12 @@ async def _finalize_turn(
                     .get(rid, {})
                     .get("evidence_ids")
                     or [],
+                    # D#14 相似案例：由 finance 节点写入 rule_details 的
+                    # SimilarCasesResult.model_dump(mode="json")，透传给前端
+                    # RuleCard；未生成时为 None（仅触发规则可能有值）。
+                    "similar_cases": (fin.rule_details or {})
+                    .get(rid, {})
+                    .get("similar_cases"),
                 }
                 for rid, status in (fin.rule_statuses or {}).items()
                 if status == "triggered"
@@ -716,6 +722,9 @@ async def _finalize_turn(
             "supporting_evidence_ids": supporting_evidence_ids(state.get("claims", [])),
             "warnings": warnings,
             "finance": finance_payload,
+            # B2 第二阶段（方案 §4.1）：events 模块只读载荷
+            # （impact_conclusions/impact_warnings）
+            "events": _events_payload(state),
             "pattern_matches": pattern_items,
             # Phase D #12: 正式链路载荷（与 REST equity_chains 一致）
             "equity_chains": _extract_equity_chains(state),
@@ -774,3 +783,31 @@ def _extract_equity_chains(state: dict) -> list[dict]:
         return list(details)
     except Exception:  # noqa: BLE001
         return []
+
+
+def _events_payload(state: dict) -> dict:
+    """B2 第二阶段（方案 §4.1）：turn.completed.events 只读载荷。
+
+    透出 events 模块的 impact_conclusions / impact_warnings；events 未执行
+    或无结果 → 空列表。impact_conclusions 用 model_dump(mode="json")
+    序列化（ImpactConclusion 无 Decimal，但保持与其它模块载荷一致的
+    JSON 安全序列化口径）。
+    """
+    try:
+        results_obj = state.get("results")
+        if results_obj is None or not getattr(results_obj, "events", None):
+            return {"impact_conclusions": [], "impact_warnings": []}
+        evt = results_obj.events
+        impacts = getattr(evt, "impacts", None) or []
+        impact_warnings = getattr(evt, "impact_warnings", None) or []
+        return {
+            "impact_conclusions": [
+                item.model_dump(mode="json")
+                if hasattr(item, "model_dump")
+                else dict(item)
+                for item in impacts
+            ],
+            "impact_warnings": list(impact_warnings),
+        }
+    except Exception:  # noqa: BLE001 — 载荷组装失败不阻塞终态
+        return {"impact_conclusions": [], "impact_warnings": []}

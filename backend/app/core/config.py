@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENCY: int = 4
     LLM_QUEUE_TIMEOUT_SECONDS: float = 5.0
 
+    # ===== 舆情影响分析（B2 批次 C）=====
+    # 有界执行器 worker 数 + 有界信号量在途数上限。在途数（信号量）满时
+    # 快速返回 impacts=[] + IMPACT_BUSY，不无限排队、不占用全局唯一 worker。
+    EVENT_IMPACT_MAX_WORKERS: int = 3
+    EVENT_IMPACT_MAX_INFLIGHT: int = 8
+
     # ===== 实体解析（v3.1 冻结方案）=====
     # 唯一命中自动锁定策略：exact_only | safe_reverse_contains | confirm_all_heuristic
     ENTITY_UNIQUE_MATCH_POLICY: str = "safe_reverse_contains"

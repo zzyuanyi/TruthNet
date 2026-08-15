@@ -168,6 +168,48 @@ except Exception as exc:  # noqa: BLE001
     print(f"  ⚠️ Chroma 审计跳过: {exc}")
 
 print()
+print("=== 五、版本一致性（2026-08-15 复核 P1：统一 competition-2026）===")
+expected_dv = settings.DATASET_VERSION
+with e.connect() as c:
+    for t in (
+        "announcements",
+        "companies",
+        "balance_sheet",
+        "income_statement",
+        "cash_flow",
+        "research_reports",
+        "top_shareholders",
+        "event_clusters",
+        "rating_changes",
+        "industry_benchmarks",
+    ):
+        rows = c.execute(
+            text(
+                f"SELECT dataset_version, COUNT(*) FROM {t} " "GROUP BY dataset_version"
+            )
+        ).fetchall()
+        ok = all(str(r[0]) == expected_dv for r in rows)
+        flag = "✅" if ok else "❌"
+        print(f"  {flag} {t}: {rows}")
+        if not ok:
+            issues.append(
+                f"{t} dataset_version 不一致: {rows}（期望全部 {expected_dv}）"
+            )
+    # 证据链：announcement 证据版本必须与 announcements 表一致
+    # （evidence ID digest 含 dataset_version，版本漂移会产生两种 ID）
+    ann_ev = c.execute(
+        text(
+            "SELECT dataset_version, COUNT(*) FROM evidence_refs "
+            "WHERE source_type='announcement' GROUP BY dataset_version"
+        )
+    ).fetchall()
+    ok = all(str(r[0]) == expected_dv for r in ann_ev)
+    flag = "✅" if ok else "❌"
+    print(f"  {flag} evidence_refs(announcement): {ann_ev}")
+    if not ok:
+        issues.append(f"evidence_refs announcement 版本不一致: {ann_ev}")
+
+print()
 print("=" * 50)
 if issues:
     print(f"❌ 发现 {len(issues)} 处与预期不一致：")
