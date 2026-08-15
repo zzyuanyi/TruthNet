@@ -1,6 +1,7 @@
 // 织网鉴真 TruthNet - 对话界面
 
 import { useState, useRef, useEffect } from 'react';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { cn } from '@/lib/utils';
 import { ThinkingBubble } from '@/components/thinking-bubble';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -54,6 +55,7 @@ export function ChatInterface({
   const [input, setInput] = useState('');
   const [confirmingCode, setConfirmingCode] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [msgParent] = useAutoAnimate();
 
   // 8.11 P0（审查）：新的候选轮次（turn_id 变化）重置确认状态，
   // 避免第二次歧义时按钮全部被禁用
@@ -109,7 +111,7 @@ export function ChatInterface({
             </Button>
           </div>
         )}
-        <div className="p-4 space-y-4">
+        <div ref={msgParent} className="p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-8">
               <Shield className="h-10 w-10 text-primary/40 mx-auto mb-3" />

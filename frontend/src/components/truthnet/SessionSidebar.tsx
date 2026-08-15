@@ -1,5 +1,6 @@
 // 织网鉴真 TruthNet - 会话侧边栏
 
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -31,6 +32,7 @@ export function SessionSidebar({
   onNewSession,
   onDeleteSession,
 }: SessionSidebarProps) {
+  const [listParent] = useAutoAnimate();
   const navigate = useNavigate();
 
   return (
@@ -95,7 +97,7 @@ export function SessionSidebar({
 
       {/* 会话列表（min-h-0：flex item 默认 min-height:auto 会按内容高度阻止收缩，导致列表撑开布局） */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="p-2 space-y-1">
+        <div ref={listParent} className="p-2 space-y-1">
           {sessions.map(session => (
             <div
               key={session.session_id}

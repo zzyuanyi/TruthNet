@@ -1,6 +1,7 @@
 // 织网鉴真 TruthNet - 证据链组件
 // Phase 2: 证据链展示 (ChatEvidenceV1 数据模型)
 
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,7 @@ const categoryLabelsMap: Record<string, string> = {
 
 export function EvidenceChain({ categories, onViewSource, onLinkToRule, filterEvidenceIds }: EvidenceChainProps) {
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
+  const [listParent] = useAutoAnimate();
 
   // Task 8: 按 filterEvidenceIds 过滤
   const filteredCategories = filterEvidenceIds
@@ -76,7 +78,7 @@ export function EvidenceChain({ categories, onViewSource, onLinkToRule, filterEv
 
       <CardContent>
         <ScrollArea className="h-[500px] pr-4">
-          <div className="space-y-3">
+          <div ref={listParent} className="space-y-3">
             {filteredCategories.map(category => (
               <RiskEvidenceSection
                 key={category.category}
