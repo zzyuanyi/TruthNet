@@ -135,6 +135,7 @@ class MySQLEventClusterRepository:
                 .all()
             )
             clusters = []
+            skipped = 0
             for row in rows:
                 src_rows = (
                     conn.execute(
@@ -147,7 +148,26 @@ class MySQLEventClusterRepository:
                     .mappings()
                     .all()
                 )
-                clusters.append(_row_to_cluster(dict(row), [dict(s) for s in src_rows]))
+                # 批次 E：单行不合规（如 sources 为空违反契约 min_length=1）→
+                # 跳过并告警，不再"一坏全坏"拖垮整家公司。
+                try:
+                    clusters.append(
+                        _row_to_cluster(dict(row), [dict(s) for s in src_rows])
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    skipped += 1
+                    logger.warning(
+                        "event_cluster 行转换失败，跳过 event_cluster_id=%s: %s",
+                        row.get("event_cluster_id"),
+                        exc,
+                    )
+            if skipped:
+                logger.warning(
+                    "list_by_company_sync: %d/%d 簇因结构不合法被跳过 (wind_code=%s)",
+                    skipped,
+                    len(rows),
+                    wind_code,
+                )
         return clusters
 
     # ── 导入（幂等 upsert）──────────────────────────────
