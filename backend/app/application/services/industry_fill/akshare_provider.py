@@ -10,6 +10,15 @@
   4. 因此正式路径 = 逐股查询（档案允许的回退），首选东财 push2 直连
      （少一层 akshare 封装），akshare 包装为兜底；任何返回值先过
      normalizer（二级→一级映射 + 允许集合校验），不能映射进 unmapped。
+
+收口批次（大规模补全可靠性，档案 v1.1 §6.4 扩展）：
+  - 主机轮换真正做到"限流换主机"：某主机 data:null / 连接失败 → 记录失败、
+    进入冷却并继续下一主机，全部失败才抛错再走 akshare 兜底；
+  - CLI 的 --max-retries / --backoff-seconds 真正贯穿到请求层（不再硬编码）；
+  - 有界自适应节流：并发被钳制在 [1, 8]，连续限流/超时降并发、稳定成功
+    缓慢恢复、host cooldown、负载感知 sleep + 抖动（见 throttle.py）；
+  - 报告输出 requests / retry_count / throttle_count / fallback_count /
+    host_distribution / effective_concurrency。
 """
 
 from __future__ import annotations
@@ -24,6 +33,7 @@ from typing import Callable
 from backend.app.application.services.industry_fill.constants import (
     DEFAULT_RATE_LIMIT_SLEEP,
     PROVIDER_AKSHARE,
+    MAX_CONCURRENCY,
     QueryStatus,
 )
 from backend.app.application.services.industry_fill.normalizer import (
@@ -35,6 +45,7 @@ from backend.app.application.services.industry_fill.provider import (
     call_with_retry,
     raw_value_hash,
 )
+from backend.app.application.services.industry_fill.throttle import RateController
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +101,42 @@ class AkShareProvider:
         self._ak = None
         self._last_host: str | None = None
         self._tl = threading.local()  # 每线程一个 Session（连接复用，实测提速 20 倍+）
+        self._controller = RateController(4)
+        self._stats_lock = threading.Lock()
+        self._stats: dict = self._fresh_stats()
+
+    @staticmethod
+    def _fresh_stats() -> dict:
+        return {
+            "requests": 0,
+            "retries": 0,
+            "throttles": 0,
+            "fallbacks": 0,
+            "host_hits": {},
+        }
+
+    def _stats_reset(self) -> None:
+        with self._stats_lock:
+            self._stats = self._fresh_stats()
+
+    def _stat_inc(self, key: str, delta: int = 1) -> None:
+        with self._stats_lock:
+            self._stats[key] = self._stats.get(key, 0) + delta
+
+    def report_stats(self) -> dict:
+        """运行统计（供 service 写入报告）：请求/重试/限流/兜底/主机分布/有效并发。"""
+        with self._stats_lock:
+            out = {
+                "provider_requests": self._stats["requests"],
+                "provider_retries": self._stats["retries"],
+                "provider_throttles": self._stats["throttles"],
+                "provider_fallbacks": self._stats["fallbacks"],
+                "provider_host_distribution": dict(self._stats["host_hits"]),
+            }
+        snap = self._controller.snapshot()
+        out["effective_concurrency"] = snap["effective_concurrency"]
+        out["provider_pressure"] = snap["pressure"]
+        return out
 
     def _session(self):
         sess = getattr(self._tl, "session", None)
@@ -111,6 +158,13 @@ class AkShareProvider:
         if self._last_host and self._last_host in hosts:
             hosts.remove(self._last_host)
             hosts.insert(0, self._last_host)
+        return hosts
+
+    def _ordered_hosts(self) -> list[str]:
+        """按记忆顺序过滤冷却主机；全部冷却中则退化为全量尝试（避免死锁）。"""
+        hosts = [h for h in self._hosts_in_order() if self._controller.host_allowed(h)]
+        if not hosts:
+            hosts = self._hosts_in_order()
         return hosts
 
     # ── 依赖与探测 ─────────────────────────────────────────
@@ -181,12 +235,29 @@ class AkShareProvider:
         return info
 
     # ── 直连查询 ───────────────────────────────────────────
-    def _fetch_direct(self, bare: str) -> dict:
-        """主机轮换请求（Session 连接复用）；成功主机记忆并置顶，全部失败抛最后异常。"""
+    def _fetch_direct(
+        self,
+        bare: str,
+        *,
+        max_retries: int = 1,
+        backoff_seconds: float = 0.5,
+        attempts: list[int] | None = None,
+        throttled_flag: list[bool] | None = None,
+    ) -> dict:
+        """主机轮换请求（Session 连接复用）。
+
+        - 成功主机记忆并置顶；data:null / rc!=0 视为限流，记录失败并换下一主机；
+        - 主机连续失败达到阈值进入冷却窗口（throttle.RateController）；
+        - 全部主机失败才抛最后异常（然后由 _query_one 走 akshare 兜底）；
+        - max_retries / backoff_seconds 由上层配置贯穿（不再硬编码）。
+        attempts 为可选计数器列表（每主机 call_with_retry 尝试次数累加）。
+        throttled_flag 为可选单元素列表：轮换中任一主机限流则置 True
+        （即使最终由其他主机/兜底恢复，调用方也据此降并发）。
+        """
         secid = f"{1 if bare.startswith(('6', '9')) else 0}.{bare}"
         last_exc: BaseException | None = None
-        for host in self._hosts_in_order():
-            result, _attempts, err = call_with_retry(
+        for host in self._ordered_hosts():
+            result, n_attempts, err = call_with_retry(
                 lambda h=host: self._session().get(
                     f"https://{h}/api/qt/stock/get",
                     params={
@@ -201,31 +272,58 @@ class AkShareProvider:
                     },
                     timeout=10,
                 ),
-                max_retries=1,
-                backoff_seconds=0.5,
+                max_retries=max_retries,
+                backoff_seconds=backoff_seconds,
             )
+            if attempts is not None:
+                attempts.append(n_attempts)
+            if n_attempts > 1:
+                self._stat_inc("retries", n_attempts - 1)
             if err is None and result is not None:
                 self._last_host = host
+                self._controller.host_ok(host)
+                with self._stats_lock:
+                    self._stats["host_hits"][host] = (
+                        self._stats["host_hits"].get(host, 0) + 1
+                    )
                 payload = json.loads(result.text)
                 data = payload.get("data")
                 if data is None:
-                    # 限流/降级响应（rc!=0 或 data:null）→ 可重试异常，换主机继续
-                    raise _Push2Throttled(
+                    # 限流/降级响应（rc!=0 或 data:null）→ 记录并换主机继续
+                    self._stat_inc("throttles")
+                    if throttled_flag is not None:
+                        throttled_flag[0] = True
+                    self._controller.host_failed(host)
+                    last_exc = _Push2Throttled(
                         f"{host} 限流/空 data（rc={payload.get('rc')!r}）"
                     )
+                    continue
                 return data
-            last_exc = err if err is not None else last_exc
+            if err is not None:
+                self._controller.host_failed(host)
+                last_exc = err
         raise (
             last_exc if last_exc is not None else ConnectionError("push2 全部主机失败")
         )
 
-    def _fetch_akshare(self, bare: str) -> dict:
+    def _fetch_akshare(
+        self,
+        bare: str,
+        *,
+        max_retries: int = 2,
+        backoff_seconds: float = 1.0,
+        attempts: list[int] | None = None,
+    ) -> dict:
         ak = self._import_ak()
-        df, _attempts, err = call_with_retry(
+        df, n_attempts, err = call_with_retry(
             lambda: ak.stock_individual_info_em(symbol=bare),
-            max_retries=2,
-            backoff_seconds=1.0,
+            max_retries=max_retries,
+            backoff_seconds=backoff_seconds,
         )
+        if attempts is not None:
+            attempts.append(n_attempts)
+        if n_attempts > 1:
+            self._stat_inc("retries", n_attempts - 1)
         if err is not None or df is None or getattr(df, "empty", True):
             raise (err if err is not None else ValueError("akshare 返回空"))
         items: dict[str, str] = {}
@@ -239,7 +337,10 @@ class AkShareProvider:
     def _query_one(
         self, wind_code: str, *, max_retries: int, backoff_seconds: float
     ) -> ProviderResult:
-        """逐股查询：直连 push2 优先，akshare 兜底；失败分类四态。"""
+        """逐股查询：直连 push2（主机轮换）优先，akshare 兜底；失败分类四态。
+
+        max_retries / backoff_seconds 贯穿到直连与兜底（不再硬编码）。
+        """
         bare = _bare_number(wind_code)
         base = ProviderResult(
             wind_code=wind_code,
@@ -248,23 +349,43 @@ class AkShareProvider:
             provider=self.name,
             provider_endpoint="eastmoney.push2.direct",
         )
+        self._stat_inc("requests")
+        direct_attempts: list[int] = []
+        ak_attempts: list[int] = []
+        throttled_hit: list[bool] = [False]  # 轮换中任一主机限流即置位（供降并发）
         try:
-            data = self._fetch_direct(bare)
+            data = self._fetch_direct(
+                bare,
+                max_retries=max_retries,
+                backoff_seconds=backoff_seconds,
+                attempts=direct_attempts,
+                throttled_flag=throttled_hit,
+            )
             base.provider_endpoint = "eastmoney.push2.direct"
+            base.throttled = throttled_hit[0]
         except Exception as direct_exc:  # noqa: BLE001
+            throttled = isinstance(direct_exc, _Push2Throttled) or throttled_hit[0]
+            self._stat_inc("fallbacks")
             try:
-                data = self._fetch_akshare(bare)
+                data = self._fetch_akshare(
+                    bare,
+                    max_retries=max_retries,
+                    backoff_seconds=backoff_seconds,
+                    attempts=ak_attempts,
+                )
                 base.provider_endpoint = "ak.stock_individual_info_em"
             except Exception as ak_exc:  # noqa: BLE001
-                base.attempts = 1
+                base.attempts = sum(direct_attempts) + sum(ak_attempts)
                 base.last_error = (
                     f"direct={type(direct_exc).__name__}:{direct_exc}; "
                     f"akshare={type(ak_exc).__name__}:{ak_exc}"
                 )
+                base.throttled = throttled
                 return base
+            base.throttled = throttled
 
+        base.attempts = sum(direct_attempts) + sum(ak_attempts)
         ind_raw = str(data.get("f127") or "").strip()
-        base.attempts = 1
         if not ind_raw or ind_raw == "-":
             base.query_status = QueryStatus.EMPTY
             return base
@@ -296,6 +417,9 @@ class AkShareProvider:
         cached = cached or {}
         counter = ProgressCounter()
         by_code: dict[str, ProviderResult] = {}
+        controller = self._controller
+        controller.set_capacity(concurrency)  # 有界：钳制到 [1, MAX_CONCURRENCY]
+        self._stats_reset()
 
         def task(code: str) -> tuple[str, ProviderResult, bool]:
             if code in cached:
@@ -305,11 +429,15 @@ class AkShareProvider:
                 if st == QueryStatus.EMPTY and not retry_empty:
                     return code, cached[code], True
                 # error 允许按重试策略继续（档案 §6.1/§6.3）；empty 加 --retry-empty 重查
-            res = self._query_one(
-                code, max_retries=max_retries, backoff_seconds=backoff_seconds
-            )
-            time.sleep(DEFAULT_RATE_LIMIT_SLEEP)
-            return code, res, False
+            controller.enter()
+            try:
+                res = self._query_one(
+                    code, max_retries=max_retries, backoff_seconds=backoff_seconds
+                )
+                return code, res, False
+            finally:
+                controller.exit()
+                time.sleep(controller.sleep_seconds(DEFAULT_RATE_LIMIT_SLEEP))
 
         def finish(code: str, res: ProviderResult, was_cached: bool, done: int) -> None:
             by_code[code] = res
@@ -317,19 +445,27 @@ class AkShareProvider:
                 counter.cached += 1
             else:
                 self._count(counter, res)
+                # 自适应节流：限流/错误 → 降并发；否则稳定成功缓慢恢复
+                if res.throttled or res.query_status == QueryStatus.ERROR:
+                    controller.on_throttle()
+                else:
+                    controller.on_success()
             if on_result is not None:
                 on_result(res)  # 逐码回调：每查询完成一个代码即落盘（档案 §6.2）
             if on_progress is not None:
                 on_progress(done, len(codes), counter.as_dict())
 
-        workers = max(1, min(concurrency, len(codes)))
-        if workers == 1:
+        n = len(codes)
+        if n == 0:
+            return []
+        max_workers = min(MAX_CONCURRENCY, n)
+        if max_workers == 1:
             for idx, code in enumerate(codes):
                 code2, res, was_cached = task(code)
                 finish(code2, res, was_cached, idx + 1)
         else:
             done = 0
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = [pool.submit(task, code) for code in codes]
                 for fut in as_completed(futures):
                     code2, res, was_cached = fut.result()

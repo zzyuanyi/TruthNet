@@ -27,6 +27,10 @@ PROGRESS_EVERY = 200
 # 单代码最小请求间隔（秒，防限流；provider 内实现）
 DEFAULT_RATE_LIMIT_SLEEP = 0.05
 
+# 自适应节流硬边界：provider 并发被钳制在此范围（throttle.RateController 引用）
+MIN_CONCURRENCY = 1
+MAX_CONCURRENCY = 8
+
 # 允许重试的异常类别（档案 §6.3）
 RETRYABLE_EXC_TYPES = (TimeoutError, ConnectionError, OSError)
 

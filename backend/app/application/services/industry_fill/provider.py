@@ -31,6 +31,9 @@ class ProviderResult:
     last_error: str | None = None
     queried_at: str = ""
     raw_value_hash: str = ""
+    # 本次查询是否遇到限流/降级响应（即使经其他主机/兜底恢复也置位）——
+    # 供自适应节流降并发，避免接口过载。
+    throttled: bool = False
 
     def __post_init__(self) -> None:
         if not self.queried_at:
