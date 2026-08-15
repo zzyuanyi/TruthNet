@@ -35,7 +35,7 @@ import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
 import { RelatedPartyTable } from '@/components/truthnet/RelatedPartyTable';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, SimilarCasesResult, Company } from '@/types/truthnet';
+import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, SimilarCasesResult, Company, DerivationChain } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
 function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
@@ -101,6 +101,22 @@ export default function CompanyProfilePage() {
   const [sentimentEvents, setSentimentEvents] = useState<TimelineEvent[]>([]);
   const [eventClusters, setEventClusters] = useState<EventCluster[]>([]);
   const [riskData, setRiskData] = useState<RiskResponseData | null>(null);
+  const [derivationChains, setDerivationChains] = useState<DerivationChain[]>([]);
+
+  const getRiskColor = (level: string) => {
+    const colors: Record<string, string> = { red: '#ef4444', orange: '#f97316', yellow: '#eab308', blue: '#3b82f6', unknown: '#6b7280' };
+    return colors[level] || '#6b7280';
+  };
+  const getRiskBadgeStyle = (level: string) => {
+    const styles: Record<string, string> = {
+      red: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
+      orange: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
+      yellow: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
+      blue: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+      unknown: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+    };
+    return styles[level] || styles.unknown;
+  };
   const [similarCases, setSimilarCases] = useState<SimilarCasesResult | null>(null);
   const [activeSection, setActiveSection] = useState('overview');
   const [evidenceDialogOpen, setEvidenceDialogOpen] = useState(false);
@@ -114,10 +130,12 @@ export default function CompanyProfilePage() {
 
   const sectionRefs = {
     overview: useRef<HTMLDivElement>(null),
+    conclusions: useRef<HTMLDivElement>(null),
+    evidence: useRef<HTMLDivElement>(null),
+    impact: useRef<HTMLDivElement>(null),
     financial: useRef<HTMLDivElement>(null),
     equity: useRef<HTMLDivElement>(null),
     sentiment: useRef<HTMLDivElement>(null),
-    evidence: useRef<HTMLDivElement>(null),
   };
 
   useEffect(() => {
@@ -145,6 +163,7 @@ export default function CompanyProfilePage() {
       setSentimentEvents(eventsRes.data?.timeline || []);
       setEventClusters(eventsRes.data?.event_clusters || []);
        setRiskData(riskRes.data);
+      setDerivationChains(riskRes.data?.derivation_chains || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -266,7 +285,7 @@ export default function CompanyProfilePage() {
                   </div>
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">触发规则数</p>
-                    <p className="text-2xl font-bold">{financialAnomalies.length}</p>
+                    <p className="text-2xl font-bold">{financialAnomalies.filter(r => r.status === "triggered").length}</p>
                   </div>
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">舆情事件数</p>
@@ -277,9 +296,67 @@ export default function CompanyProfilePage() {
             </Card>
           </div>
 
+          
+          {/* 核心结论区块 (Phase E P0-1) */}
+          <div ref={sectionRefs.conclusions} className="mb-8">
+            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+              <FileText className="h-5 w-5" />
+              核心结论
+            </h2>
+            {derivationChains.length > 0 ? (
+              <div className="space-y-4">
+                {derivationChains.map((chain, ci) => (
+                  <Card key={ci} className="border-l-4" style={{ borderLeftColor: getRiskColor(chain.risk_level) }}>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle(chain.risk_level)}`}>
+                          {chain.risk_level}
+                        </span>
+                        <span className="text-sm font-medium">{chain.conclusion}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pb-3">
+                      {chain.signals.map((signal, si) => (
+                        <div key={si} className="mb-3 rounded-lg border bg-muted/30 p-3">
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-sm font-medium">{signal.label}</span>
+                            <span className="text-xs text-muted-foreground">{signal.severity}</span>
+                          </div>
+                          <p className="mb-2 text-sm text-muted-foreground">{signal.explanation}</p>
+                          {signal.industry_percentile != null && (
+                            <p className="mb-1 text-xs text-muted-foreground">
+                              行业分位: {signal.industry_percentile}%
+                            </p>
+                          )}
+                          {signal.data_refs.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {signal.data_refs.map((ref, ri) => (
+                                <div key={ri} className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span className="rounded bg-muted px-1.5 py-0.5">{ref.period}</span>
+                                  <span>{ref.field_path}: {ref.value ?? '-'}{ref.unit ?? ''}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  <p>暂无结论数据</p>
+                  <p className="text-xs mt-1">选择公司后将自动加载风险分析结论</p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
           <Separator className="my-6" />
 
-          {/* 财务异常区块 - 使用 RuleCard 组件 */}
+          {/* 财务规则区块 - 使用 RuleCard 组件 */}
           <div ref={sectionRefs.financial} className="mb-8">
             <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
               <TrendingUp className="h-5 w-5" />
@@ -445,6 +522,57 @@ export default function CompanyProfilePage() {
             </div>
           )}
         </DialogContent>
+
+          {/* 影响建议区块 (Phase E P0-1) */}
+          <div ref={sectionRefs.impact} className="mb-8">
+            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+              <TrendingUp className="h-5 w-5" />
+              影响与建议
+            </h2>
+            {derivationChains.length > 0 ? (
+              <div className="space-y-4">
+                {derivationChains.map((chain, ci) => (
+                  <Card key={ci} className="bg-muted/20">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle(chain.risk_level)}`}>
+                          影响等级: {chain.risk_level}
+                        </span>
+                        <span className="text-sm font-medium">{chain.conclusion}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pb-3">
+                      <p className="text-sm text-muted-foreground">
+                        共触发 {chain.signals.length} 个异常信号，涉及 {chain.evidence_ids.length} 条证据。建议关注相关财务指标变动，结合行业分位数据综合判断。
+                      </p>
+                      {chain.evidence_ids.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {chain.evidence_ids.slice(0, 5).map((eid, ei) => (
+                            <span key={ei} className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                              {eid}
+                            </span>
+                          ))}
+                          {chain.evidence_ids.length > 5 && (
+                            <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                              +{chain.evidence_ids.length - 5} 条
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  <p>暂无影响建议</p>
+                  <p className="text-xs mt-1">风险分析完成后将自动生成影响与建议</p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
       </Dialog>
     </div>
   );

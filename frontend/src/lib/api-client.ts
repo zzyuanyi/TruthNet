@@ -27,8 +27,6 @@ import type {
   EventCluster,
   FinanceRuleItem,
   CompanyRiskSummary,
-  ReportResponse,
-  ReportDetailResponse,
 } from '@/types/truthnet';
 
 // 会话列表响应（V12 envelope: data.sessions + data.total）
@@ -89,20 +87,17 @@ export interface RuleMetricMeta {
   formula?: string;
   risk_direction?: string;
 }
-
 export interface RuleParameterMeta {
   key: string;
   unit?: string;
   description?: string;
   value?: number | null;
 }
-
 export interface RuleConditions {
   red: string;
   orange: string;
   yellow: string;
 }
-
 export interface RuleDefinition {
   rule_id: string;
   name: string;
@@ -113,7 +108,6 @@ export interface RuleDefinition {
   parameters: RuleParameterMeta[];
   conditions: RuleConditions;
 }
-
 export interface RulesDefinitionsData {
   version: string;
   execution_version?: string;
@@ -130,6 +124,34 @@ export interface ReadyData {
   checks: Record<string, Record<string, unknown>>;
 }
 
+// 报告相关类型
+export interface ReportRequest {
+  session_id: string;
+  turn_id?: string;
+  format?: string;
+}
+export interface ReportInfo {
+  id: string;
+  status: string;
+  created_at: string;
+  completed_at?: string | null;
+  format?: string;
+  size?: number | null;
+}
+export interface ReportDetail {
+  id: string;
+  status: string;
+  summary: string;
+  key_findings: string[];
+  detailed_analysis: string;
+  created_at: string;
+  completed_at?: string | null;
+  format?: string;
+  download_url?: string | null;
+}
+export interface ReportDetailResponse {
+  data: ReportDetail;
+}
 // 会话历史轮次（GET /sessions/{id} 的 turns 元素）
 export interface SessionTurnData {
   turn_id: string;
@@ -286,32 +308,7 @@ export const truthnetAPI = {
     ),
 
   // 发送消息: POST /api/v1/chat
-  sendChatMessage: (question: string, sessionId?: string) =>
-    request<ChatResponse>('POST', '/chat', {
-      body: JSON.stringify({
-        question,
-        session_id: sessionId,
-      }),
-    }),
 
-  // 创建报告: POST /api/v1/reports
-  createReport: (sessionId: string, turnId: string, format?: 'pdf' | 'markdown') =>
-    request<ReportResponse>('POST', '/reports', {
-      body: JSON.stringify({
-        session_id: sessionId,
-        turn_id: turnId,
-        format: format || 'pdf',
-        include_details: true,
-      }),
-    }),
-
-  // 获取报告: GET /api/v1/reports/{reportId}
-  getReport: (reportId: string) =>
-    request<ReportDetailResponse>('GET', `/reports/${reportId}`),
-
-  // 下载报告文件: GET /api/v1/reports/{reportId}/file
-  getReportDownloadUrl: (reportId: string) =>
-    `${API_BASE}/reports/${reportId}/file`,
   // 声明追溯: GET /api/v1/claims/{claim_id}
   getClaim: (claimId: string) =>
     request<ClaimLookupData>('GET', `/claims/${encodeURIComponent(claimId)}`),
@@ -327,6 +324,27 @@ export const truthnetAPI = {
   // 就绪检查: GET /api/v1/readyz
   readyz: () => request<ReadyData>('GET', '/readyz'),
 
+  // 报告: POST /api/v1/reports
+  createReport: (sessionId: string, turnId?: string, format?: string) =>
+    request<ReportInfo>('POST', '/reports', {
+      body: JSON.stringify({ session_id: sessionId, turn_id: turnId, format }),
+    }),
+
+  // 报告详情: GET /api/v1/reports/{report_id}
+  getReport: (reportId: string) =>
+    request<ReportDetailResponse>('GET', `/reports/${encodeURIComponent(reportId)}`),
+
+  // 报告下载: GET /api/v1/reports/{report_id}/file
+  getReportDownloadUrl: (reportId: string) =>
+    `${API_BASE}/reports/${reportId}/file`,
+
+  sendChatMessage: (question: string, sessionId?: string) =>
+    request<ChatResponse>('POST', '/chat', {
+      body: JSON.stringify({
+        question,
+        session_id: sessionId,
+      }),
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -391,10 +409,34 @@ export const wsClient = {
       onMessage({ event_type: 'error', payload: { message: '连接错误' } });
     };
 
-    ws.onclose = () => {
-      if (!closeRequested && !connectionErrorReported) {
-        onMessage({ event_type: 'error', payload: { message: '连接已断开，请重试' } });
-      }
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+
+    const tryReconnect = () => {
+      if (reconnectAttempts >= 5) return;
+      const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000);
+      reconnectAttempts++;
+      console.log(`[WS] Reconnecting in ${delay}ms (${reconnectAttempts}/5)`);
+      reconnectTimer = setTimeout(() => {
+        try {
+          const newWs = new WebSocket(wsUrl);
+          newWs.onopen = () => {
+            reconnectAttempts = 0;
+            newWs.send(JSON.stringify({ event_type: 'stream.resume', payload: { session_id: sessionId } }));
+          };
+          // Re-use the same handler setup logic
+          newWs.onmessage = ws.onmessage;
+          newWs.onerror = ws.onerror;
+          newWs.onclose = ws.onclose;
+        } catch (e) {
+          tryReconnect();
+        }
+      }, delay);
+    };
+
+    ws.onclose = (event) => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (event.code !== 1000 && event.code !== 1001) tryReconnect();
     };
 
     return {

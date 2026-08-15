@@ -2,12 +2,32 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { FileText, Download, AlertTriangle, CheckCircle, Clock, Loader2, ArrowLeft, Shield } from 'lucide-react';
 import truthnetAPI from '@/lib/api-client';
-import type { ReportDetail } from '@/types/truthnet';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+
+interface ReportDetail {
+  id: string;
+  status: string;
+  title?: string;
+  company_name?: string;
+  risk_level?: string;
+  risk_score?: number;
+  evidence_count?: number;
+  claim_count?: number;
+  summary: string;
+  key_findings: string[];
+  detailed_analysis: string;
+  details?: string;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string | null;
+  format?: string;
+  download_url?: string | null;
+}
 
 export default function ReportPage() {
   const { reportId } = useParams<{ reportId: string }>();

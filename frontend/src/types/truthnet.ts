@@ -138,6 +138,8 @@ export interface FinanceRuleItem {
   evidence_ids: string[];
   claim_ids: string[];
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 export interface IndustryBenchmark {
@@ -145,6 +147,8 @@ export interface IndustryBenchmark {
   peer_count: number;
   percentile: Record<string, number | null>;
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 export interface DataQuality {
@@ -153,6 +157,8 @@ export interface DataQuality {
   statement_scope: string;
   gaps: string[];
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 export interface FinanceResponseData {
@@ -166,6 +172,8 @@ export interface FinanceResponseData {
   claim_ids: string[];
   evidence_ids: string[];
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 // ============ 相似案例 (对齐 SimilarCase / SimilarCasesResult) ============
@@ -273,6 +281,39 @@ export interface EventsResponseData {
   announcements_available: boolean;
   months_covered: number;
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
+}
+
+// 推导链: RiskResponseData.derivation_chains (Phase E)
+export interface DerivationDataRef {
+  evidence_id: string;
+  source_type: string;
+  field_path: string;
+  period: string;
+  value?: string | null;
+  unit?: string | null;
+}
+
+export interface DerivationSignal {
+  signal_id: string;
+  signal_type: string;
+  label: string;
+  severity: string;
+  explanation: string;
+  current: Record<string, unknown>;
+  industry_percentile?: number | null;
+  data_refs: DerivationDataRef[];
+  evidence_ids: string[];
+}
+
+export interface DerivationChain {
+  conclusion_id: string;
+  conclusion_type: string;
+  conclusion: string;
+  risk_level: string;
+  signals: DerivationSignal[];
+  evidence_ids: string[];
 }
 
 // ============ 风险评估 (对齐 RiskResponseData) ============
@@ -339,6 +380,8 @@ export interface RiskResponseData {
   rule_set_version: string;
   evidence: RiskEvidence[]; // /risk 返回 RiskEvidence（审计 P1-1 修正原 ChatEvidenceV1）
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 // ============ 行业基准 (对齐 BenchmarksResponseData) ============
@@ -373,6 +416,8 @@ export interface BenchmarksResponseData {
   dataset_version: string;
   statement_scope: string;
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 // ============ 股权穿透 (对齐 EquityResponseData) ============
@@ -435,6 +480,8 @@ export interface EquityResponseData {
   source_system: string;
   partial: boolean;
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 // ============ 跨公司对比 (对齐 ComparisonsResponseData) ============
@@ -465,6 +512,8 @@ export interface CompanyRiskSummary {
   coverage: number;
   evidence_ids: string[];
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 export interface ComparisonsResponseData {
@@ -474,6 +523,8 @@ export interface ComparisonsResponseData {
   indicators: IndicatorCompare[];
   dataset_version: string;
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 // ============ Chat 响应 (对齐 ChatDataV1) ============
@@ -595,6 +646,8 @@ export interface OverviewMetricRow {
   difference_unit: string;
   conclusion: string;
   warnings: string[];
+  /** 推导链 (Phase E) */
+  derivation_chains: DerivationChain[];
 }
 
 // ============ 报告 ============

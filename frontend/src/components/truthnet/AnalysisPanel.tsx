@@ -309,7 +309,7 @@ function DoneState({
 
 // 风险摘要
 function RiskSummary({ data }: { data: PanelData }) {
-  const riskLevel = data.risk_level || 'green';
+  const riskLevel = data.risk_level || 'unknown';
   const riskConfig = riskLevelConfig[riskLevel];
   const RiskIcon = riskConfig.icon;
   const triggeredCount = data.triggered_rules?.length || 0;

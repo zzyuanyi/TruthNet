@@ -8,6 +8,14 @@ interface EquityGraphProps {
   targetId: string;
 }
 
+const RISK_LEVEL_COLORS: Record<string, string> = {
+  red: '#ef4444',
+  orange: '#f97316',
+  yellow: '#eab308',
+  blue: '#3b82f6',
+  unknown: '#6b7280',
+};
+
 // 后端 entity_type 值域 → 图节点类型（ListedCompany/Company → company、Person → person、其他 → fund）
 function mapEntityType(entityType: string): string {
   if (entityType === 'Person') return 'person';
@@ -123,7 +131,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
       .attr('fill', '#64748b')
       .attr('text-anchor', 'middle')
       .attr('dy', -5)
-      .text(d => d.relation_type);
+      .text(d => `${d.relation_type} ${(d as any).ownership_pct != null ? (d as any).ownership_pct.toFixed(1) + '%' : ''}`);
 
     linkLabel.append('text')
       .attr('font-size', '10px')
@@ -157,7 +165,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
     // Node circles
     node.append('circle')
       .attr('r', d => NODE_RADIUS[d.nodeType] || 20)
-      .attr('fill', d => NODE_COLORS[d.nodeType] || '#6b7280')
+      .attr('fill', d => (d as any).risk_level ? (RISK_LEVEL_COLORS[(d as any).risk_level] || '#6b7280') : (NODE_COLORS[d.nodeType] || '#6b7280'))
       .attr('stroke', '#fff')
       .attr('stroke-width', 2.5)
       .attr('opacity', 0.9);
@@ -248,6 +256,16 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
         height={dimensions.height}
         className="cursor-grab active:cursor-grabbing"
       />
+      
+      {/* Risk level legend (Phase E P0-2) */}
+      <div className="absolute bottom-3 left-3 flex flex-wrap gap-2 bg-background/90 backdrop-blur-sm border border-border rounded-md p-2 text-xs">
+        {Object.entries(RISK_LEVEL_COLORS).map(([level, color]) => (
+          <span key={level} className="flex items-center gap-1">
+            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color as React.CSSProperties['backgroundColor'] }} />
+            {level}
+          </span>
+        ))}
+      </div>
       {/* Zoom controls */}
       <div className="absolute top-3 left-3 flex flex-col gap-1">
         <button
