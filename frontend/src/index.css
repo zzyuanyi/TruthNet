@@ -47,3 +47,18 @@ body {
   background: #cbd5e1;
   border-radius: 3px;
 }
+
+/* Phase E P1-10: Responsive regression fixes */
+@media (max-width: 375px) {
+  .hide-on-mobile { display: none !important; }
+  .text-responsive { font-size: 0.875rem; }
+}
+@media (max-width: 768px) {
+  .hide-on-tablet { display: none !important; }
+}
+.overflow-guard {
+  overflow-x: auto;
+  overflow-y: visible;
+  max-width: 100%;
+  word-break: break-word;
+}

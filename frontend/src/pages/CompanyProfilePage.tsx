@@ -1,9 +1,17 @@
 // 织网鉴真 TruthNet - 企业画像页
 // T3: 5 区块（概览/财务/股权/舆情/证据），使用新组件
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+const sourceTypeIcons: Record<string, string> = {
+  announcement: '公告',
+  news: '新闻',
+  research_report: '研报',
+  regulation: '监管',
+};
+
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
