@@ -86,6 +86,9 @@ export default function SettingsPage() {
       '--reduce-motion',
       settings.reduceMotion ? 'reduce' : 'no-preference',
     );
+    // 应用字号
+    const fontSizeMap: Record<string, string> = { sm: '14px', md: '16px', lg: '18px' };
+    root.style.fontSize = fontSizeMap[settings.fontSize] || '16px';
   }, [settings]);
 
   const update = (patch: Partial<Settings>) =>

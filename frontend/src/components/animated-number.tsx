@@ -48,7 +48,7 @@ export function AnimatedNumber({
   }, [value, duration]);
 
   return (
-    <span className={className}>
+    <span className={`tabular-nums ${className}`}>
       {prefix}
       {displayValue.toFixed(decimals)}
       {suffix}

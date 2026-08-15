@@ -19,15 +19,16 @@ export function AppHeader() {
   }, []);
 
   const navItems = [
-    { id: 'chat', href: '/', label: '智能问答', icon: MessageSquare },
+    { id: 'chat', href: '/', label: '智能问答', icon: MessageSquare, match: (p: string) => p === '/' },
     {
       id: 'company',
-      href: companyCode ? `/company/${encodeURIComponent(companyCode)}` : '/',
+      href: companyCode ? `/company/${encodeURIComponent(companyCode)}` : '#',
       label: '企业画像',
       icon: Shield,
+      match: (p: string) => p.startsWith('/company/'),
     },
-    { id: 'compare', href: '/compare', label: '跨公司对比', icon: TrendingUp },
-    { id: 'settings', href: '/settings', label: '设置', icon: Settings },
+    { id: 'compare', href: '/compare', label: '跨公司对比', icon: TrendingUp, match: (p: string) => p === '/compare' },
+    { id: 'settings', href: '/settings', label: '设置', icon: Settings, match: (p: string) => p === '/settings' },
   ];
 
   return (
@@ -51,8 +52,9 @@ export function AppHeader() {
               to={item.href}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors',
-                pathname === item.href
+                item.match(pathname)
                   ? 'bg-primary/10 text-primary font-medium'
+                  : item.href === '#' ? 'text-muted-foreground/50 cursor-not-allowed'
                   : 'text-muted-foreground hover:text-foreground hover:bg-accent'
               )}
             >
