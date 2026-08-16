@@ -337,8 +337,9 @@ export default function CompanyProfilePage() {
   const coreConclusionChains = [overallConclusion, ...patternConclusions].filter(
     (c): c is NonNullable<typeof c> => Boolean(c),
   );
-  const patternByConclusionId = new Map(
-    (riskData?.pattern_matches || []).map(p => [`pattern:${p.pattern_id}`, p] as const),
+  const patternMatches = riskData?.pattern_matches || [];
+  const patternByConclusionId = new Map<string, (typeof patternMatches)[number]>(
+    patternMatches.map(p => [`pattern:${p.pattern_id}`, p]),
   );
 
   // 2026-08-16 口径整改：覆盖判定改用"真实数据存在性"，废弃后端
