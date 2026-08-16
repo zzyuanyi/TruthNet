@@ -107,6 +107,7 @@ def _evidence_context(ev, label: str) -> str:
         return " · ".join(parts)
     return f"{label} 模块证据"
 
+
 def _evidence_summary(ev, label: str) -> str:
     """真实摘要：source_title → source_excerpt → "字段 期次: 值" → 模块兜底。"""
     title = str(getattr(ev, "source_title", "") or "").strip()

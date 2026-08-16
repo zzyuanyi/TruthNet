@@ -247,7 +247,9 @@ def _resolve_as_of(state: AgentState) -> str:
     company = state.get("company")
     code = ""
     if company is not None:
-        code = getattr(company, "wind_code", "") or getattr(company, "entity_id", "") or ""
+        code = (
+            getattr(company, "wind_code", "") or getattr(company, "entity_id", "") or ""
+        )
     if code:
         try:
             from app.domain.finance.data_as_of import resolve_company_data_as_of

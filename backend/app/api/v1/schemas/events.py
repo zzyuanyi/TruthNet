@@ -62,7 +62,9 @@ class TimelineEvent(BaseModel):
     summary: str = Field(default="", description="摘要")
     sources: list[str] = Field(default_factory=list, description="来源")
     evidence_ids: list[str] = Field(default_factory=list)
-    object_id: str = Field(default="", description="公告原始 object_id（摘要端点定位用）")
+    object_id: str = Field(
+        default="", description="公告原始 object_id（摘要端点定位用）"
+    )
 
 
 class AnnouncementSummaryData(BaseModel):
@@ -73,7 +75,9 @@ class AnnouncementSummaryData(BaseModel):
     evidence_id: str = Field(default="", description="统一 evidence_id")
     source_uri: str | None = Field(default=None, description="原文链接")
     summary: str = Field(default="", description="公告内容摘要")
-    method: str = Field(default="pdf_llm", description="pdf_llm | text_excerpt | title_only")
+    method: str = Field(
+        default="pdf_llm", description="pdf_llm | text_excerpt | title_only"
+    )
 
 
 class RatingChange(BaseModel):

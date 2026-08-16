@@ -193,7 +193,8 @@ async def get_company_equity(
     # 上市公司节点显示名：Neo4j 的 canonical_name 为证券代码，统一替换为公司简称
     code_name_map: dict[str, str] = {}
     _code_nodes = [
-        n for n in nodes
+        n
+        for n in nodes
         if n.wind_code and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", n.wind_code)
     ]
     if _code_nodes:
@@ -272,26 +273,24 @@ async def get_company_equity(
         )
         equity_chains = [EquityChainDTO(**c.to_dict()) for c in chain_models]
         if True:  # node risk guard
-          
-          
-          
-
-          # 缺口 #31：节点风险标签统一消费 canonical 链路风险等级，
-          # 不再由前端按持股比例阈值自判（红/橙/黄优先级取高）。
-          _risk_rank = {"red": 5, "orange": 4, "yellow": 3, "blue": 2, "green": 1}
-          _node_risk: dict[str, str] = {}
-          for _chain in equity_chains:
-              if not _chain.node_ids or not _chain.risk_level:
-                  continue
-              if _chain.risk_level not in _risk_rank:
-                  continue
-              for _nid in _chain.node_ids:
-                  _old = _node_risk.get(_nid)
-                  if not _old or _risk_rank[_chain.risk_level] > _risk_rank.get(_old, 0):
-                      _node_risk[_nid] = _chain.risk_level
-          for _node in nodes:
-              if _node.id in _node_risk:
-                  _node.risk_level = _node_risk[_node.id]
+            # 缺口 #31：节点风险标签统一消费 canonical 链路风险等级，
+            # 不再由前端按持股比例阈值自判（红/橙/黄优先级取高）。
+            _risk_rank = {"red": 5, "orange": 4, "yellow": 3, "blue": 2, "green": 1}
+            _node_risk: dict[str, str] = {}
+            for _chain in equity_chains:
+                if not _chain.node_ids or not _chain.risk_level:
+                    continue
+                if _chain.risk_level not in _risk_rank:
+                    continue
+                for _nid in _chain.node_ids:
+                    _old = _node_risk.get(_nid)
+                    if not _old or _risk_rank[_chain.risk_level] > _risk_rank.get(
+                        _old, 0
+                    ):
+                        _node_risk[_nid] = _chain.risk_level
+            for _node in nodes:
+                if _node.id in _node_risk:
+                    _node.risk_level = _node_risk[_node.id]
         data_warnings.extend(chain_warnings)
     except Exception as exc:  # noqa: BLE001 — 链路载荷失败不影响基础图
         logger.warning("equity_chains 构建失败: %s", exc, exc_info=True)

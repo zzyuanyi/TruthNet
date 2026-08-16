@@ -623,10 +623,14 @@ async def _finalize_turn(
                     "rule_name": (
                         (fin.rule_details or {}).get(rid, {}).get("rule_name") or rid
                     ),
-                      # 2026-08-16 面板可读性：透传严重度与触发解释，
-                      # 前端分析面板直接展示"为什么触发"，无需点开证据 ID。
-                      "severity": (fin.rule_details or {}).get(rid, {}).get("severity") or "",
-                      "explanation": (fin.rule_details or {}).get(rid, {}).get("explanation") or "",
+                    # 2026-08-16 面板可读性：透传严重度与触发解释，
+                    # 前端分析面板直接展示"为什么触发"，无需点开证据 ID。
+                    "severity": (fin.rule_details or {}).get(rid, {}).get("severity")
+                    or "",
+                    "explanation": (fin.rule_details or {})
+                    .get(rid, {})
+                    .get("explanation")
+                    or "",
                     "evidence_ids": (fin.rule_details or {})
                     .get(rid, {})
                     .get("evidence_ids")

@@ -483,7 +483,9 @@ def _collect_report_data(company_code: str, as_of: str = "") -> dict:
         from app.domain.finance.data_as_of import resolve_company_data_as_of
         from app.domain.finance.period import normalize_period
 
-        norm_as_of = normalize_period(as_of) or resolve_company_data_as_of(company_code) or ""
+        norm_as_of = (
+            normalize_period(as_of) or resolve_company_data_as_of(company_code) or ""
+        )
     except Exception:  # noqa: BLE001
         norm_as_of = ""
     try:
@@ -496,9 +498,7 @@ def _collect_report_data(company_code: str, as_of: str = "") -> dict:
                 assemble_and_score,
             )
 
-            out = asyncio.run(
-                assemble_and_score(company_code, norm_as_of or "")
-            )
+            out = asyncio.run(assemble_and_score(company_code, norm_as_of or ""))
             data["risk_level"] = out.risk_level
             data["overall_score"] = out.overall_score
             data["pattern_matches"] = [

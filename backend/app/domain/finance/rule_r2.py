@@ -244,7 +244,7 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         f"ev_is_net_profit_{as_of}",
         f"ev_cf_oper_{as_of}",
     ]
-            
+
     if severity == "red":
         result.explanation = (
             f"最近 {max_consec_neg} 个季度净利润为正但经营现金流为负，"

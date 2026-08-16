@@ -291,7 +291,6 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if non_oper_ratio is not None:
         result.evidence_ids.append(f"ev_is_oper_profit_{as_of}")
         result.evidence_ids.append(f"ev_is_tot_profit_{as_of}")
-            
 
     if simplified:
         result.warnings.append("扣非净利润字段不可用，使用简化版判断（上限 orange）")
@@ -303,13 +302,9 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         )
     elif severity == "orange":
         if core_ratio is not None:
-            result.explanation = (
-                f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
-            )
+            result.explanation = f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
         else:
-            result.explanation = (
-                f"净利润增速与现金流/营收增速存在背离，盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
-            )
+            result.explanation = f"净利润增速与现金流/营收增速存在背离，盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
     elif severity == "yellow":
         if core_ratio is not None and core_ratio < thresholds.weak_core_profit_ratio:
             result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"

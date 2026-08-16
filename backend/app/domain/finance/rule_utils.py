@@ -1,4 +1,6 @@
 """规则计算公共工具函数 — RULES_SPEC §1.2."""
+
+
 def fmt_period(period: str | None) -> str:
     """YYYYMMDD → YYYY-MM-DD；非 8 位原样返回（用户可读期次）。"""
     p = str(period or "")

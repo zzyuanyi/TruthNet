@@ -228,11 +228,6 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
     if len(gap_series) >= 2:
         result.history = gap_series
 
-      
-      
-
-            
-            
     result.evidence_ids = [f"ev_bs_inventories_{as_of}", f"ev_is_oper_rev_{as_of}"]
     if severity == "red":
         result.explanation = (
@@ -245,7 +240,5 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"需关注存货周转效率（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
         )
     elif severity == "yellow":
-        result.explanation = (
-            f"存货增速快于营收增速（增速差 {fmt_gap_pct(growth_gap)}），建议持续关注（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
-        )
+        result.explanation = f"存货增速快于营收增速（增速差 {fmt_gap_pct(growth_gap)}），建议持续关注（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
     return result

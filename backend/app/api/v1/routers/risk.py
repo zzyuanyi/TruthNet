@@ -312,7 +312,14 @@ def _build_fraud_conclusion_input(out) -> tuple[str, str, list[str], int]:
     )
 
     # 确定性模板结论（LLM 失败/关闭时的兜底）
-    risk_cn = {"red": "高危", "orange": "中高危", "yellow": "中等", "green": "正常", "blue": "低风险", "unknown": "数据不足"}.get(out.risk_level, out.risk_level)
+    risk_cn = {
+        "red": "高危",
+        "orange": "中高危",
+        "yellow": "中等",
+        "green": "正常",
+        "blue": "低风险",
+        "unknown": "数据不足",
+    }.get(out.risk_level, out.risk_level)
     if patterns:
         template = (
             f"该公司综合风险等级为{risk_cn}（{out.overall_score:.3f} 分），"
@@ -350,7 +357,9 @@ async def get_fraud_conclusion(
 
         out = await assemble_and_score(code, as_of_ymd or "")
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=f"Company not found: {code}") from exc
+        raise HTTPException(
+            status_code=404, detail=f"Company not found: {code}"
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"风险评分失败: {exc}") from exc
 

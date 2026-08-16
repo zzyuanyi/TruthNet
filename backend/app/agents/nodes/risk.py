@@ -111,9 +111,7 @@ def risk_node(state: AgentState) -> dict:
 
     # 评级拐点 + 行业基准
     rating_inflections = _fetch_rating_inflections(company.wind_code, as_of=as_of)
-    benchmarks = _fetch_benchmarks(
-        company.wind_code, as_of, company.industry_l1 or ""
-    )
+    benchmarks = _fetch_benchmarks(company.wind_code, as_of, company.industry_l1 or "")
 
     try:
         from app.application.services.risk_scoring_service import RiskScoringService

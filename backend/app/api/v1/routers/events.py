@@ -126,6 +126,7 @@ def _summarize_announcement_text(*, title: str, text: str, sec_name: str) -> str
     except Exception:  # noqa: BLE001 — LLM 失败降级为原文摘录
         return ""
 
+
 def _fetch_event_clusters(wind_code: str, start_date: date) -> list[EventCluster]:
     """从 event_clusters 表读取交接数据（按日期过滤）。"""
     from app.infrastructure.persistence.mysql.event_cluster_repository import (
@@ -414,7 +415,7 @@ async def get_company_events(
                     summary=str(r.get("n_info_title") or "")[:120],
                     sources=[str(r["source_uri"])] if r.get("source_uri") else [],
                     evidence_ids=[evidence_id] if object_id else [],
-                      object_id=object_id,
+                    object_id=object_id,
                 )
             )
         sentiment_summary = SentimentSummary(
@@ -559,6 +560,7 @@ async def get_company_events(
         warnings=warnings,
     )
 
+
 @router.get(
     "/companies/{code}/announcements/{object_id}/summary",
     response_model=V12Response[AnnouncementSummaryData],
@@ -613,7 +615,9 @@ async def get_announcement_summary(
         engine.dispose()
 
     if row is None:
-        raise HTTPException(status_code=404, detail=f"Announcement not found: {object_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Announcement not found: {object_id}"
+        )
 
     source_uri = row.get("source_uri") or ""
     title = str(row.get("n_info_title") or "")[:120]
@@ -641,7 +645,9 @@ async def get_announcement_summary(
                 async for chunk in response.aiter_bytes():
                     total += len(chunk)
                     if total > _MAX_PDF_BYTES:
-                        raise HTTPException(status_code=413, detail="PDF 文件过大（>15MB）")
+                        raise HTTPException(
+                            status_code=413, detail="PDF 文件过大（>15MB）"
+                        )
                     chunks.append(chunk)
     except HTTPException:
         raise
@@ -653,7 +659,9 @@ async def get_announcement_summary(
 
     pdf_bytes = b"".join(chunks)
     if not pdf_bytes:
-        raise HTTPException(status_code=502, detail="ANNOUNCEMENT_DOWNLOAD_FAILED: 空文件")
+        raise HTTPException(
+            status_code=502, detail="ANNOUNCEMENT_DOWNLOAD_FAILED: 空文件"
+        )
 
     tmp_path = ""
     try:

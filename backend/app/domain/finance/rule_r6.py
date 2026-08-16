@@ -220,7 +220,7 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.history = oth_series
 
     result.evidence_ids = [f"ev_bs_oth_rcv_{as_of}", f"ev_bs_tot_assets_{as_of}"]
-            
+
     # P1-3：同比缺失（去年同期无数据）时 explanation 不得格式化 None
     yoy_text = (
         f"，同比增速 {oth_yoy_pct:.1f}%"
@@ -233,13 +233,11 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
             f"金额 {fmt_yi(oth_val)} 亿元，可能存在关联方资金占用（数据期：{fmt_period(cur_period)}，母公司报表）。"
         )
     elif severity == "orange":
-        result.explanation = (
-            f"其他应收款占总资产 {oth_to_assets:.1f}%{yoy_text}，建议关注具体构成（数据期：{fmt_period(cur_period)}，母公司报表）。"
-        )
+        result.explanation = f"其他应收款占总资产 {oth_to_assets:.1f}%{yoy_text}，建议关注具体构成（数据期：{fmt_period(cur_period)}，母公司报表）。"
     elif severity == "yellow":
         result.explanation = (
             f"其他应收款增速较快（{oth_yoy_pct:.1f}%）"
             if oth_yoy_pct is not None
             else "其他应收款占总资产比例偏高"
-                  ) + f"，建议持续关注（数据期：{fmt_period(cur_period)}，母公司报表）。"
+        ) + f"，建议持续关注（数据期：{fmt_period(cur_period)}，母公司报表）。"
     return result

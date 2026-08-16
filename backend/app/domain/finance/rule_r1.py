@@ -178,9 +178,8 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         data_completeness=round(valid_ar / 4, 2),
         missing_periods=4 - valid_ar,
         extra={"denominator_protection_applied": False},
-      
     )
-            
+
     result.warnings = field_warnings
     result.evidence_ids = [
         f"ev_bs_acct_rcv_{as_of}",
