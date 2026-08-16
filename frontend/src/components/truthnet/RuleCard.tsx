@@ -13,6 +13,16 @@ interface RuleCardProps {
   rule: FinanceRuleItem;
   onViewEvidence?: (ruleId: string) => void;
   onViewDetail?: (ruleId: string) => void;
+  // A2（8/9 老师要求）：证据在信号下方直接平铺（弹窗仅作次级入口）
+  evidenceSummaries?: RuleEvidenceSummary[];
+}
+
+// 平铺用证据摘要（由画像页批量拉取 /evidence 后注入）
+export interface RuleEvidenceSummary {
+  evidenceId: string;
+  title: string;
+  sourceType: string;
+  period: string;
 }
 
 // 风险等级颜色映射
@@ -50,6 +60,33 @@ const statusLabels = {
   insufficient_data: '数据不足',
 };
 
+// 单位可读化：percentage_point 按用户口径显示 %，不再出现英文 pp/ratio
+const displayUnitLabels: Record<string, string> = {
+  percent: '%',
+  percentage_point: '%',
+  ratio: '',
+  quarters: '个季度',
+  days: '天',
+  bool: '',
+  yuan: '元',
+  times: '倍',
+};
+
+function formatRuleValue(value: number | undefined, unit: string | undefined): string {
+  if (typeof value !== 'number') return '--';
+  if (unit === 'bool') return value ? '是' : '否';
+  const digits = unit === 'ratio' ? 2 : unit === 'percent' || unit === 'percentage_point' || unit === 'days' ? 1 : 0;
+  const text = value.toFixed(digits);
+  const unitText = displayUnitLabels[unit || ''] ?? (unit || '');
+  return unitText ? `${text}${unitText}` : text;
+}
+
+function latestHistoryPeriod(rule: FinanceRuleItem): string {
+  const last = rule.history?.at(-1);
+  if (!last || typeof last.period !== 'string') return '';
+  return last.period;
+}
+
 // 图表指标映射：rule_id → history 数值字段 + 行业基准 metric_id
 // R6/R7 无配置（R7 无行业指标）→ 回退找第一个数值字段
 const chartMetricConfig: Partial<Record<string, { seriesKey: string; benchmarkId: string }>> = {
@@ -70,7 +107,7 @@ function extractSeriesValue(item: Record<string, unknown>, key: string): number 
   return null;
 }
 
-export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) {
+export function RuleCard({ rule, onViewEvidence, onViewDetail, evidenceSummaries }: RuleCardProps) {
   const chartConfig = chartMetricConfig[rule.rule_id];
   // 动态从 history 中提取折线图数据（优先配置的 seriesKey，R6/R7 回退找第一个数值字段）
   const chartData = rule.history.map(item => {
@@ -136,20 +173,37 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
         </div>
       </CardHeader>
 
+        {/* 触发原因置顶：先解释为什么触发，再看指标/证据 */}
+        {rule.status === 'triggered' && (
+          <div className="mx-6 mb-4 rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-2">
+            <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">
+              为什么触发
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              {rule.explanation || '规则指标超过预设阈值，详见下方指标与证据。'}
+            </p>
+          </div>
+        )}
+
       <CardContent className="space-y-4">
         {/* 当前值与行业基准（industry_metrics typed 分位，R3/R4/R5 多指标逐行） */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <div className="text-xs text-muted-foreground mb-1">当前值</div>
             <div className="text-lg font-semibold">
-              {typeof currentValue?.value === 'number' ? currentValue.value.toFixed(2) : '--'}
+              {formatRuleValue(currentValue?.value, currentValue?.unit)}
               <span className="text-xs text-muted-foreground ml-1">
-                {currentValue?.unit}
+                
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
               {currentMetric}
             </div>
+              {latestHistoryPeriod(rule) && (
+                <div className="text-[10px] text-muted-foreground">
+                  数据期：{latestHistoryPeriod(rule)}
+                </div>
+              )}
           </div>
           <div>
             <div className="text-xs text-muted-foreground mb-1">行业基准</div>
@@ -220,10 +274,81 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail }: RuleCardProps) 
           </ResponsiveContainer>
         </div>
 
-        {/* 说明文字 */}
-        <p className="text-xs text-muted-foreground line-clamp-2">
+        {/* 触发原因已置顶，此处不再重复展示；下方为直接展开的证据列表 */}
+        <p className="hidden">
           {rule.explanation}
         </p>
+
+        {/* A2（8/9 老师要求）：关联证据直接平铺在信号下方，点击可进详情弹窗（次级入口） */}
+        {false && (
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-foreground">关联证据</span>
+              <span className="text-[10px] text-muted-foreground">共 {rule.evidence_ids.length} 条</span>
+            </div>
+            <div className="space-y-1.5">
+              {evidenceSummaries!.slice(0, 3).map(item => (
+                <button
+                  key={item.evidenceId}
+                  onClick={() => onViewEvidence?.(rule.rule_id)}
+                  className="w-full rounded-md border border-border/50 bg-background px-2.5 py-1.5 text-left transition-colors hover:border-primary/40 hover:bg-muted/30"
+                >
+                  <p className="text-xs text-foreground line-clamp-1">{item.title}</p>
+                  <p className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <span className="rounded bg-muted px-1">{item.sourceType || '证据'}</span>
+                    {item.period && <span>{item.period}</span>}
+                  </p>
+                </button>
+              ))}
+              {rule.evidence_ids.length > 3 && (
+                <p className="text-center text-[10px] text-muted-foreground">
+                  还有 {rule.evidence_ids.length - 3} 条，点击「查看证据」展开全部
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+          {/* A2（8/9 老师要求）：关联证据默认直接展开平铺，点下方按钮看来源记录 */}
+          {(evidenceSummaries?.length ?? 0) > 0 && (
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-medium text-foreground">关联证据（已展开）</span>
+                <span className="text-[10px] text-muted-foreground">
+                  展示 {evidenceSummaries!.length}/{rule.evidence_ids.length} 条
+                </span>
+              </div>
+                <p className="mb-1.5 text-[10px] text-muted-foreground">
+                  触发证据基于最新数据期{latestHistoryPeriod(rule) ? `（${latestHistoryPeriod(rule)}）` : ''}；历史曲线为趋势参考
+                </p>
+              <div className="max-h-64 space-y-1.5 overflow-y-auto pr-0.5">
+                {evidenceSummaries!.map(item => (
+                  <div
+                    key={item.evidenceId}
+                    className="rounded-md border border-border/50 bg-background px-2.5 py-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs leading-5 text-foreground">{item.title}</p>
+                      {item.period && (
+                        <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                          {item.period}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+                      <span className="rounded bg-muted px-1">{item.sourceType || '证据'}</span>
+                      <span className="font-mono">{item.evidenceId}</span>
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {rule.evidence_ids.length > evidenceSummaries!.length && (
+                <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
+                  还有 {rule.evidence_ids.length - evidenceSummaries!.length} 条，点击下方「查看证据」查看全部来源记录
+                </p>
+              )}
+            </div>
+          )}
 
         {/* 操作按钮 */}
         <div className="flex gap-2 pt-2">

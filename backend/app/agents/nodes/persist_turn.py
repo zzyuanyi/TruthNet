@@ -382,6 +382,9 @@ def _build_panel_data(state: AgentState) -> dict | None:
                     # FinanceRuleItem.evidence_ids（ev_bs_*/ev_is_* 不落库）
                     # ——对齐审计 P1-2
                     "evidence_ids": detail.get("evidence_ids") or [],
+                      # 2026-08-16：历史面板同样带严重度/触发解释
+                      "severity": detail.get("severity") or "",
+                      "explanation": detail.get("explanation") or "",
                 }
                 # 任务①：触发规则条目带上相似案例（若 finance.py 已写入）
                 if "similar_cases" in detail:

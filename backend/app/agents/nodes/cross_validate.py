@@ -309,7 +309,15 @@ def _run_numerical_conflicts(state: AgentState) -> list[dict]:
 
         code = company.wind_code or company.entity_id
         plan = state.get("plan")
-        as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else "20260331"
+        as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+        # 2026-08-16 口径整改：未传期次时从库内真实期次推导，禁止硬编码默认
+        if not as_of:
+            try:
+                from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+                as_of = resolve_company_data_as_of(code)
+            except Exception:  # noqa: BLE001
+                as_of = ""
 
         # CV-NUM-01 数据：母公司利润表净利润 + 现金流量表经营现金流
         profit = fetch_series(

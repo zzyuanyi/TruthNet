@@ -21,6 +21,7 @@ from app.application.services.similar_case_provider import (
     SimilarCaseProvider,
     compute_similar_cases,
 )
+from app.application.services.finance_evidence import display_period
 from app.domain.finance import parent_scope
 from app.domain.finance.parent_scope import (
     PARENT_STATEMENT_TYPE,
@@ -242,14 +243,21 @@ def _resolve_as_of(state: AgentState) -> str:
     plan = state.get("plan")
     if plan is not None and plan.as_of:
         return plan.as_of.strftime("%Y%m%d")
-    try:
-        from app.core.config import settings
+    # 2026-08-16 口径整改：未传期次时从库内真实期次推导，禁止硬编码默认
+    company = state.get("company")
+    code = ""
+    if company is not None:
+        code = getattr(company, "wind_code", "") or getattr(company, "entity_id", "") or ""
+    if code:
+        try:
+            from app.domain.finance.data_as_of import resolve_company_data_as_of
 
-        if settings.DEFAULT_AS_OF:
-            return settings.DEFAULT_AS_OF
-    except Exception:  # noqa: BLE001 — settings 不可用时回退默认 as_of
-        return "20260331"
-    return "20260331"
+            derived = resolve_company_data_as_of(code)
+            if derived:
+                return derived
+        except Exception:  # noqa: BLE001 — 推导失败如实返回空串
+            pass
+    return ""
 
 
 def finance_node(state: AgentState) -> dict:
@@ -370,7 +378,11 @@ def finance_node(state: AgentState) -> dict:
                     period=period,
                     value=value,
                     unit=unit,
-                    source_title=f"母公司报表 · 财务反欺诈规则 {rid}",
+                    # 来源标题可读性（演示整改）：规则中文名 + 期次 + 口径
+                    # （保留"母公司报表"字样：test_parent_scope_consistency 断言）
+                    source_title=(
+                        f"{r.rule_name or rid} · {display_period(period)} · 母公司报表"
+                    ),
                     source_excerpt=str(r.explanation or "")[:200],
                     statement_scope="parent_company",
                     module="finance",

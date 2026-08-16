@@ -11,7 +11,11 @@ GET /api/v1/companies/{code}/events?months=36
   - 无事件簇 → EVENT_CLUSTER_DATA_NOT_READY；无公告 → NO_ANNOUNCEMENT_DATA
 """
 
+import asyncio
+import logging
+import os
 import re
+import tempfile
 import uuid
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
@@ -21,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.core.errors import ErrorCode
 from app.api.v1.schemas.events import (
+    AnnouncementSummaryData,
     EventCluster,
     EventSourceDTO,
     EventsResponseData,
@@ -33,6 +38,7 @@ from app.api.v1.schemas.events import (
 from app.application.services.company_resolver import CompanyResolver
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["events"])
 
 # 关键词提取：跳过常见停用词
@@ -63,6 +69,62 @@ _STOPWORDS = {
 def _trace() -> str:
     return str(uuid.uuid4())
 
+
+_MAX_PDF_BYTES = 15 * 1024 * 1024
+_MAX_PDF_TEXT_CHARS = 12000
+_MAX_PDF_PAGES = 8
+
+
+def _is_http_uri(uri: str | None) -> bool:
+    """只允许 http/https，避免 SSRF 类本地协议下载。"""
+    return bool(uri) and str(uri).startswith(("http://", "https://"))
+
+
+def _extract_pdf_text(path: str) -> str:
+    """PDF → 纯文本（前 N 页 + 长度上限）。pypdf 未安装时明确报错。"""
+    try:
+        from pypdf import PdfReader
+    except Exception as exc:  # noqa: BLE001 — 缺失依赖返回明确错误
+        raise RuntimeError("PDF_PARSER_UNAVAILABLE: pypdf 未安装") from exc
+
+    parts: list[str] = []
+    reader = PdfReader(path)
+    for page in reader.pages[:_MAX_PDF_PAGES]:
+        try:
+            text = page.extract_text() or ""
+        except Exception:  # noqa: BLE001 — 单页解析失败跳过
+            text = ""
+        parts.append(text.strip())
+        if sum(len(p) for p in parts) >= _MAX_PDF_TEXT_CHARS:
+            break
+    return "\n".join(parts)[:_MAX_PDF_TEXT_CHARS].strip()
+
+
+def _summarize_announcement_text(*, title: str, text: str, sec_name: str) -> str:
+    """LLM 摘要；失败返回空串（由调用方降级为原文摘录）。"""
+    if not text:
+        return ""
+    try:
+        from app.agents.llm_sync import run_llm_chat
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是上市公司公告摘要助手。只依据给定公告原文概括，不得补充原文"
+                    "没有的事实。输出 2-4 句中文摘要，先说明公告事项，再说影响与风险。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"公司：{sec_name}\n公告标题：{title}\n公告正文（节选）：\n{text}"
+                ),
+            },
+        ]
+        return str(run_llm_chat(messages) or "").strip()
+    except Exception:  # noqa: BLE001 — LLM 失败降级为原文摘录
+        return ""
 
 def _fetch_event_clusters(wind_code: str, start_date: date) -> list[EventCluster]:
     """从 event_clusters 表读取交接数据（按日期过滤）。"""
@@ -352,6 +414,7 @@ async def get_company_events(
                     summary=str(r.get("n_info_title") or "")[:120],
                     sources=[str(r["source_uri"])] if r.get("source_uri") else [],
                     evidence_ids=[evidence_id] if object_id else [],
+                      object_id=object_id,
                 )
             )
         sentiment_summary = SentimentSummary(
@@ -495,3 +558,163 @@ async def get_company_events(
         ),
         warnings=warnings,
     )
+
+@router.get(
+    "/companies/{code}/announcements/{object_id}/summary",
+    response_model=V12Response[AnnouncementSummaryData],
+)
+async def get_announcement_summary(
+    code: str = Path(..., description="公司代码"),
+    object_id: str = Path(..., description="公告 object_id"),
+):
+    """按需下载公告 PDF → 提取正文 → LLM 摘要 → 删除临时 PDF。
+
+    设计约束：
+    - 摘要按需生成，不落库、不缓存 PDF，原文链接仍可独立查看；
+    - 只允许 http/https；超过 15MB 或无法提取文本时明确失败；
+    - LLM 失败降级为 PDF 原文前 500 字摘录（method 标记 text_excerpt）。
+    """
+    trace_id = _trace()
+    if settings.SQL_BACKEND != "mysql":
+        raise HTTPException(
+            status_code=503,
+            detail="ANNOUNCEMENT_SUMMARY_UNAVAILABLE: 非 full profile 不提供公告摘要",
+        )
+
+    resolver = CompanyResolver()
+    company = await resolver.resolve(code)
+    if company is None:
+        raise HTTPException(status_code=404, detail=f"Company not found: {code}")
+
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(
+        f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
+        f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
+        "?charset=utf8mb4",
+        echo=False,
+    )
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT object_id, n_info_title, source_uri, sentiment, ann_dt "
+                        "FROM announcements "
+                        "WHERE wind_code = :code AND object_id = :object_id "
+                        "AND is_latest = 1 LIMIT 1"
+                    ),
+                    {"code": company.wind_code, "object_id": object_id},
+                )
+                .mappings()
+                .first()
+            )
+    finally:
+        engine.dispose()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Announcement not found: {object_id}")
+
+    source_uri = row.get("source_uri") or ""
+    title = str(row.get("n_info_title") or "")[:120]
+    if not _is_http_uri(source_uri):
+        raise HTTPException(
+            status_code=422,
+            detail="ANNOUNCEMENT_SOURCE_UNAVAILABLE: 该公告无可用原文下载链接",
+        )
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(20.0, connect=10.0),
+            headers={"User-Agent": "Mozilla/5.0 (TruthNet announcement summarizer)"},
+        ) as client:
+            async with client.stream("GET", source_uri) as response:
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > _MAX_PDF_BYTES:
+                    raise HTTPException(status_code=413, detail="PDF 文件过大（>15MB）")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > _MAX_PDF_BYTES:
+                        raise HTTPException(status_code=413, detail="PDF 文件过大（>15MB）")
+                    chunks.append(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 下载失败明确返回，不伪造摘要
+        raise HTTPException(
+            status_code=502,
+            detail=f"ANNOUNCEMENT_DOWNLOAD_FAILED: {exc}",
+        ) from exc
+
+    pdf_bytes = b"".join(chunks)
+    if not pdf_bytes:
+        raise HTTPException(status_code=502, detail="ANNOUNCEMENT_DOWNLOAD_FAILED: 空文件")
+
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = tmp.name
+
+        try:
+            text = await asyncio.to_thread(_extract_pdf_text, tmp_path)
+        except Exception as exc:  # noqa: BLE001 — 依赖缺失/PDF损坏返回明确错误
+            raise HTTPException(
+                status_code=503,
+                detail=f"ANNOUNCEMENT_PDF_PARSE_FAILED: {exc}",
+            ) from exc
+        if not text:
+            raise HTTPException(
+                status_code=422,
+                detail="ANNOUNCEMENT_PDF_NO_TEXT: PDF 无可提取文本（可能为扫描件）",
+            )
+
+        summary = await asyncio.to_thread(
+            _summarize_announcement_text,
+            title=title,
+            text=text,
+            sec_name=company.sec_name,
+        )
+        method = "pdf_llm" if summary else "text_excerpt"
+        if not summary:
+            summary = text[:500].replace("\n", " ").strip()
+            if not summary:
+                summary = title
+
+        from app.domain.provenance.id_factory import NS_ANNOUNCEMENT, make_evidence_id
+
+        evidence_id = make_evidence_id(
+            source_namespace=NS_ANNOUNCEMENT,
+            source_type="announcement",
+            source_record_id=object_id,
+            period=str(row.get("ann_dt", "")) if "ann_dt" in row else "",
+            dataset_version=settings.DATASET_VERSION,
+            company_code=company.wind_code,
+        )
+        return V12Response(
+            data=AnnouncementSummaryData(
+                object_id=object_id,
+                title=title,
+                evidence_id=evidence_id,
+                source_uri=source_uri,
+                summary=summary,
+                method=method,
+            ),
+            meta=ApiMeta(
+                request_id=trace_id,
+                trace_id=trace_id,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                dataset_version=settings.DATASET_VERSION,
+            ),
+        )
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                logger.warning("announcement_summary: 临时 PDF 删除失败: %s", tmp_path)

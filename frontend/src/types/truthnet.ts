@@ -62,11 +62,33 @@ export interface Company {
   wind_code: string;
   sec_name: string;
   entity_id?: string;
-  company_type?: string;
+  // 对齐后端 CompanyProfileV1（schemas/companies.py:43-58，v11 迁移新增字段）
+  aliases?: string[];
+  exchange?: string;
   industry_l1?: string;
   industry_l2?: string;
-  province?: string;
+  sw_indu_code?: string;
+  comp_type_code?: string | number | null;
+  company_type?: string;
   listing_date?: string; // 后端字段为 listing_date（审计修正，原误写 list_date）
+  data_quality?: Record<string, unknown>;
+  risk_summary?: Record<string, unknown>;
+}
+
+// ============ 公司歧义确认（对齐 WS company.candidates 事件） ============
+
+// v3.1 mention 分组协议：多候选时后端 candidates 为空、候选在 mentions[]；
+// 每个 mention 携带 mention_id，确认需回传 mention_id + revision。
+export interface PendingCompanyMention {
+  mention_id: string;
+  text: string;
+  candidates: Array<{ wind_code: string; sec_name: string }>;
+}
+
+export interface PendingCompanyCandidates {
+  turn_id: string;
+  revision: number;
+  mentions: PendingCompanyMention[];
 }
 
 // ============ 会话 ============
@@ -110,6 +132,9 @@ export interface TriggeredRuleInfo {
   rule_id: string;
   rule_name: string;
   evidence_ids: string[];
+  /** 2026-08-16 面板可读性：后端 turn.completed.finance.triggered_rules 透传 */
+  severity?: string;
+  explanation?: string;
 }
 
 export interface PanelData {
@@ -138,6 +163,8 @@ export interface FinanceRuleItem {
   evidence_ids: string[];
   claim_ids: string[];
   warnings: string[];
+  /** 相似指标案例（后端 FinanceRuleItem.similar_cases，仅触发规则可能非空） */
+  similar_cases?: SimilarCasesResult | null;
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
 }
@@ -168,7 +195,6 @@ export interface FinanceResponseData {
   rules: FinanceRuleItem[];
   industry_benchmark: IndustryBenchmark;
   data_quality: DataQuality;
-  similar_cases?: SimilarCasesResult | null;
   claim_ids: string[];
   evidence_ids: string[];
   warnings: string[];
@@ -252,6 +278,8 @@ export interface TimelineEvent {
   summary: string;
   sources: string[];
   evidence_ids: string[];
+  /** 公告 object_id：调用公告 PDF 摘要端点定位原文 */
+  object_id?: string;
 }
 
 export interface RatingChange {
@@ -277,12 +305,34 @@ export interface EventsResponseData {
   timeline: TimelineEvent[];
   rating_changes: RatingChange[];
   keyword_summary: KeywordSummary;
+  // 舆情影响结论（后端 events.py:134/138；GET 需 include_impacts=true）
+  impact_conclusions: ImpactConclusion[];
+  impact_warnings: string[];
   evidence_ids: string[];
   announcements_available: boolean;
   months_covered: number;
   warnings: string[];
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
+}
+
+// ============ 舆情影响结论 (对齐 schemas/events.py ImpactConclusion) ============
+
+export interface CausalityStep {
+  text: string;
+  statement_type: string; // observed | inference | projection
+  evidence_ids: string[];
+}
+
+export interface ImpactConclusion {
+  conclusion: string;
+  impact_type: string; // equity_structure | operation | financing | market
+  direction: string; // positive | negative | neutral
+  severity: string; // low | medium | high
+  evidence_ids: string[];
+  causality_chain: CausalityStep[];
+  statement_type: string; // observed | inference | projection
+  display_tag: string;
 }
 
 // 推导链: RiskResponseData.derivation_chains (Phase E)
@@ -340,6 +390,9 @@ export interface PatternMatch {
   triggered_rules: string[];
   confidence: string;  // high / medium / low
   reasoning: string;
+  phase?: string;
+  alternative_explanation?: string;
+  regulatory_hint?: string;
 }
 
 export interface MitigatingFactor {
@@ -480,6 +533,12 @@ export interface EquityResponseData {
   source_system: string;
   partial: boolean;
   warnings: string[];
+  // 后端 schemas/equity.py:126,135-146 新增字段（前端暂未消费，契约对齐用）
+  equity_chains?: Array<Record<string, unknown>>;
+  requested_depth?: number;
+  max_observed_hops?: number;
+  truncated?: boolean;
+  coverage_note?: string;
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
 }
@@ -511,9 +570,34 @@ export interface CompanyRiskSummary {
   pattern_matches: string[];
   coverage: number;
   evidence_ids: string[];
-  warnings: string[];
+  // 对齐后端 comparisons.py TriggeredRuleDetail（规则级指标值/方向/单位/证据）
+  triggered_rule_details?: TriggeredRuleDetail[];
+  partial?: boolean;
+  warnings?: string[];
   /** 推导链 (Phase E) */
-  derivation_chains: DerivationChain[];
+  derivation_chains?: DerivationChain[];
+}
+
+// ============ 触发规则详情 (对齐 comparisons.py TriggeredRuleDetail/RuleMetricValue) ============
+
+export interface RuleMetricValue {
+  key: string;
+  label: string;
+  value: number | string | boolean | null;
+  unit: string;
+  // higher_is_riskier / lower_is_riskier / neutral（D2 元数据）
+  risk_direction: string;
+}
+
+export interface TriggeredRuleDetail {
+  rule_id: string;
+  label: string;
+  status: string;
+  severity: string;
+  as_of: string;
+  metrics: RuleMetricValue[];
+  evidence_ids: string[];
+  explanation: string;
 }
 
 export interface ComparisonsResponseData {
@@ -605,6 +689,18 @@ export interface ChatDataV1 {
   overview_rows?: OverviewMetricRow[];
   requested_scope?: string;
   next_steps?: ComparisonNextStep[];
+  // B2 舆情影响结论（后端 chat.py:283-289 与 events 同构）
+  impact_conclusions?: ImpactConclusion[];
+  impact_warnings?: string[];
+  // 审计 item 10.7：后端 ChatDataV1 已就绪、前端类型缺失的字段（契约对齐用）
+  session_id?: string;
+  company_candidates?: Array<Record<string, unknown>>;
+  company_mentions?: Array<Record<string, unknown>>;
+  needs_confirmation?: boolean;
+  segmentation_alternatives?: Array<Record<string, unknown>>;
+  entity_resolution_issues?: Array<Record<string, unknown>>;
+  pattern_matches?: Array<Record<string, unknown>>;
+  equity_chains?: Array<Record<string, unknown>>;
 }
 
 // ============ 轻量整体对比（对齐 v3.3.4 Preview First 载荷）============
@@ -651,57 +747,10 @@ export interface OverviewMetricRow {
 }
 
 // ============ 报告 ============
-
-export interface ReportRequest {
-  session_id: string;
-  turn_id: string;
-  format?: 'pdf' | 'markdown';
-  include_details?: boolean;
-}
-
-export interface ReportInfo {
-  report_id: string;
-  report_type: string;
-  format: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  title: string;
-  company_name?: string;
-  risk_level?: string;
-  session_id: string;
-  turn_id?: string;
-  created_at: string;
-  completed_at?: string;
-  error_message?: string;
-  has_file: boolean;
-  file_url?: string;
-}
-
-export interface ReportDetail extends ReportInfo {
-  summary: string;
-  key_findings: string[];
-  details: string;
-  evidence_count: number;
-  claim_count: number;
-  risk_score?: number;
-}
-
-export interface ReportResponse {
-  success: boolean;
-  data: ReportInfo;
-  meta?: unknown;
-}
-
-export interface ReportDetailResponse {
-  success: boolean;
-  data: ReportDetail;
-  meta?: unknown;
-}
-
-export interface ReportListResponse {
-  success: boolean;
-  data: ReportInfo[];
-  meta?: { total: number };
-}
+// 报告任务状态类型以 api-client.ts 的 ReportJobStatus 为准（对齐后端
+// schemas/reports.py ReportJobStatusData：report_id + queued/running/
+// succeeded/failed/cancelled + progress + download_available 等）。
+// 后端无「报告内容」详情端点，摘要/关键发现在 PDF 文件里，不做内容类型。
 
 // ============ WebSocket ============
 

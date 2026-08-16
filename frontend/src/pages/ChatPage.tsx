@@ -20,6 +20,7 @@ import type {
   RiskLevel,
   ModuleStatusV1,
   ComparisonNextStep,
+  PendingCompanyCandidates,
 } from '@/types/truthnet';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -38,10 +39,11 @@ export default function ChatPage() {
   const [isLoading, setIsLoading] = useState(false);
   const wsRef = useRef<ReturnType<typeof wsClient.create> | null>(null);
   // 8.11：待确认公司候选（后端 company.candidates 事件，选择后重跑原问题）
-  const [pendingCandidates, setPendingCandidates] = useState<{
-    turn_id: string;
-    candidates: Array<{ wind_code: string; sec_name: string }>;
-  } | null>(null);
+  // v3.1 mention 分组协议：多候选时后端 candidates 为空、候选在 mentions[] 中，
+  // 每个 mention 携带 mention_id + revision，确认时需原样回传。
+  const [pendingCandidates, setPendingCandidates] = useState<PendingCompanyCandidates | null>(null);
+  // v3.3.1 §8.2：分段歧义澄清提示（后端 entity.clarification_required，无可点选候选）
+  const [clarificationIssue, setClarificationIssue] = useState<string | null>(null);
   // 8.11（C9）：本对话涉及的公司列表（按 company_code 去重，每公司一个画像入口）
   const [involvedCompanies, setInvolvedCompanies] = useState<string[]>([]);
 
@@ -151,6 +153,7 @@ export default function ChatPage() {
       setCurrentCompanyCode(null);
       setInvolvedCompanies([]);
       setPendingCandidates(null);
+      setClarificationIssue(null);
     } catch (error) {
       console.error('Failed to create session:', error);
     }
@@ -160,10 +163,11 @@ export default function ChatPage() {
   const handleSelectSession = (sessionId: string) => {
     if (isLoading && sessionId !== currentSessionId) return;
     setCurrentSessionId(sessionId);
-    // 切换会话时清空规则筛选（对齐审计 P1-3）与待确认候选（8.11）
+    // 切换会话时清空规则筛选（对齐审计 P1-3）、待确认候选（8.11）与澄清提示
     setActiveRuleId(null);
     setFilteredEvidenceIds(null);
     setPendingCandidates(null);
+    setClarificationIssue(null);
   };
 
   // 删除会话
@@ -180,6 +184,7 @@ export default function ChatPage() {
         setCurrentCompanyCode(null);
         setInvolvedCompanies([]);
         setPendingCandidates(null);
+        setClarificationIssue(null);
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
@@ -256,6 +261,7 @@ export default function ChatPage() {
         // 8.11 P0（审查）：新一轮开始，作废上一张候选卡
         // （候选确认后重跑的轮次在此清空已确认卡片）
         setPendingCandidates(null);
+        setClarificationIssue(null);
         setPanelState('loading');
         setModuleStatus(null);
         setMissingModules(null);
@@ -311,8 +317,8 @@ export default function ChatPage() {
           intent?: string;
           trace_id?: string;
           risk_level?: string;
-          module_status?: Record<string, ModuleStatusV1>;
-          missing_modules?: string[];
+          // 契约修复：turn.completed 不含 module_status/missing_modules
+          // （模块进度由 module.started/module.completed 事件驱动）
           // v3.3.4 收口复核清单 §5：轻量比较结构化载荷（只读透出）
           comparison_mode?: string;
           overview_rows?: Array<Record<string, unknown>>;
@@ -324,6 +330,8 @@ export default function ChatPage() {
               rule_id: string;
               rule_name?: string;
               evidence_ids?: string[];
+                severity?: string;
+                explanation?: string;
             }>;
           } | null;
         };
@@ -346,6 +354,8 @@ export default function ChatPage() {
                 rule_id: r.rule_id,
                 rule_name: r.rule_name || r.rule_id,
                 evidence_ids: r.evidence_ids || [],
+                  severity: r.severity,
+                  explanation: r.explanation,
               }))
             : result.finance?.rule_statuses
               ? Object.entries(result.finance.rule_statuses)
@@ -424,9 +434,8 @@ export default function ChatPage() {
           setPendingCandidates(null);
         }
         setIsLoading(false);
-        // Phase D: 提取模块进度
-        setModuleStatus(result.module_status || null);
-        setMissingModules(result.missing_modules || null);
+        // 契约修复：后端 turn.completed 不含 module_status/missing_modules——
+        // 模块进度由 module.started/module.completed 事件驱动，此处不再清空。
         void loadSessions(false);
         // WS completed 载荷不含 company_code，完成后从会话详情同步画像入口。
         void apiClient.getSession(currentSessionId).then(res => {
@@ -449,17 +458,126 @@ export default function ChatPage() {
         setIsLoading(false);
         break;
       case 'company.candidates': {
-        // 8.11：保存候选供用户点选；本轮无公司照常完成，确认后重跑原问题
+        // 契约修复：mention 分组协议优先——多候选时后端 candidates 为空、
+        // 候选在 mentions[]（每 mention 带 mention_id，payload 带 revision）。
         const cand = payload as {
           turn_id?: string;
+          revision?: number;
+          mentions?: Array<{
+            mention_id?: string;
+            text?: string;
+            status?: string;
+            candidates?: Array<{ company?: { wind_code?: string; sec_name?: string } }>;
+          }>;
           candidates?: Array<{ wind_code?: string; sec_name?: string }>;
         };
-        const candidates = (cand.candidates || [])
+        const mentions = (cand.mentions || [])
+          .filter(m => m.status === 'needs_confirmation' && m.mention_id)
+          .map(m => ({
+            mention_id: m.mention_id!,
+            text: m.text || '',
+            candidates: (m.candidates || [])
+              .filter(c => c.company?.wind_code && c.company?.sec_name)
+              .map(c => ({ wind_code: c.company!.wind_code!, sec_name: c.company!.sec_name! })),
+          }))
+          .filter(m => m.candidates.length > 0);
+        if (mentions.length > 0) {
+          setPendingCandidates({
+            turn_id: cand.turn_id || '',
+            revision: cand.revision ?? 0,
+            mentions,
+          });
+          setClarificationIssue(null);
+          break;
+        }
+        // 旧协议兼容（恰好一个可确认候选）：扁平 candidates
+        const flat = (cand.candidates || [])
           .filter(c => c.wind_code && c.sec_name)
           .map(c => ({ wind_code: c.wind_code!, sec_name: c.sec_name! }));
-        if (candidates.length > 0) {
-          setPendingCandidates({ turn_id: cand.turn_id || '', candidates });
+        if (flat.length > 0) {
+          setPendingCandidates({
+            turn_id: cand.turn_id || '',
+            revision: 0,
+            mentions: [{ mention_id: '', text: '', candidates: flat }],
+          });
+          setClarificationIssue(null);
         }
+        break;
+      }
+      case 'entity.clarification_required': {
+        // v3.3.1 §8.2 契约修复：分段歧义、无可确认候选 → 提示用户重述问题
+        const clar = payload as { issues?: Array<{ message?: string }> };
+        setPendingCandidates(null);
+        setClarificationIssue(
+          clar.issues?.[0]?.message ||
+            '公司名称存在歧义，请使用更明确的说法重新提问（如完整公司名称）',
+        );
+        break;
+      }
+      case 'module.completed': {
+        // 契约修复：后端 module.started → module.completed 成对发送，
+        // completed 载荷 {module, status:"success", duration_ms}
+        const done = payload as { module?: string; status?: string; duration_ms?: number };
+        const moduleName = done.module || 'unknown';
+        setModuleStatus(prev => ({
+          ...(prev || {}),
+          [moduleName]: {
+            state: done.status === 'success' ? 'success' : 'failed',
+            error_code: done.status === 'success' ? null : (done.status || 'failed'),
+            recoverable: true,
+            duration_ms: done.duration_ms ?? null,
+          },
+        }));
+        break;
+      }
+      case 'company.confirm_ack': {
+        // 契约修复：后端逐 mention 确认回执（部分确认不重发 company.candidates，
+        // 只回 confirm_ack{resolved,remaining_mentions,revision}）。
+        const ack = payload as {
+          turn_id?: string;
+          mention_id?: string;
+          wind_code?: string;
+          remaining_mentions?: string[];
+          resolved?: boolean;
+          revision?: number;
+          resume_status?: string;
+          relation_status?: string;
+        };
+        if (ack.resolved) {
+          setPendingCandidates(null);
+          if (ack.resume_status === 'completed') {
+            // 幂等重放已完成：T+1 早已跑完，直接刷新会话
+            setIsLoading(false);
+            setPanelState('done');
+            void loadSessions(false);
+          } else {
+            // resume 进行中：等 turn.accepted → turn.completed
+            setPanelState('loading');
+            setIsLoading(true);
+          }
+          break;
+        }
+        // 部分确认/阻断：移除已确认 mention，保留剩余分组与最新 revision
+        const remainingIds = ack.remaining_mentions || [];
+        if (remainingIds.length === 0) {
+          setPendingCandidates(null);
+          setIsLoading(false);
+          setClarificationIssue(
+            ack.relation_status === 'needs_clarification'
+              ? '公司身份已确认，但问题中的比较关系不明确，请重新描述问题'
+              : '该问题暂无法继续分析，请重新描述问题',
+          );
+          break;
+        }
+        setPendingCandidates(prev => {
+          if (!prev) return prev;
+          const mentions = prev.mentions
+            .filter(m => m.mention_id !== ack.mention_id)
+            .filter(m => remainingIds.includes(m.mention_id) || !m.mention_id);
+          if (mentions.length === 0) return null;
+          return { ...prev, revision: ack.revision ?? prev.revision, mentions };
+        });
+        setIsLoading(false);
         break;
       }
       case 'heartbeat':
@@ -510,13 +628,19 @@ export default function ChatPage() {
     handleSendMessage(suggestion);
   };
 
-  // 8.11：确认候选公司 → 后端以新 turn 重跑原问题
-  const handleConfirmCompany = useCallback((turnId: string, windCode: string) => {
-    setPendingCandidates(null);
-    setPanelState('loading');
-    setIsLoading(true);
-    wsRef.current?.confirmCompany(turnId, windCode);
-  }, []);
+  // 8.11/契约修复：确认候选公司。卡片清空与 loading 由 company.confirm_ack
+  // 驱动（部分确认 resolved=False 时卡片保留、可继续点选剩余 mention）。
+  const handleConfirmCompany = useCallback(
+    (turnId: string, mentionId: string, revision: number, windCode: string) => {
+      setClarificationIssue(null);
+      if (!wsRef.current) {
+        setClarificationIssue('连接不可用，请稍后重试');
+        return;
+      }
+      wsRef.current.confirmCompany(turnId, windCode, mentionId || undefined, revision);
+    },
+    [],
+  );
 
   // v3.3.4 收口复核清单 §5.2：结构化比较下一步 → 页面 URL（白名单/
   // 去重/URLSearchParams 编码由纯函数保证；非法 target 不导航）
@@ -592,6 +716,8 @@ export default function ChatPage() {
           }}
           pendingCandidates={pendingCandidates}
           onConfirmCompany={handleConfirmCompany}
+          clarificationIssue={clarificationIssue}
+          onDismissClarification={() => setClarificationIssue(null)}
           onNavigateStep={handleNavigateStep}
         />
       </div>
@@ -599,7 +725,7 @@ export default function ChatPage() {
       {/* 右侧：分析面板 */}
       <div
         className={cn(
-          'relative shrink-0 border-l border-border transition-[width] duration-300',
+          'relative h-full min-h-0 shrink-0 border-l border-border transition-[width] duration-300',
           panelCollapsed ? 'w-0' : 'w-[clamp(360px,25vw,440px)]',
         )}
       >

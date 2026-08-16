@@ -17,7 +17,13 @@ from app.domain.finance.parent_scope import (
     build_parent_scope_quality,
     check_company_type,
 )
-from app.domain.finance.rule_utils import count_valid, single_quarter, yoy_growth
+from app.domain.finance.rule_utils import (
+    count_valid,
+    fmt_gap_pct,
+    fmt_period,
+    single_quarter,
+    yoy_growth,
+)
 
 
 def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -222,19 +228,24 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
     if len(gap_series) >= 2:
         result.history = gap_series
 
+      
+      
+
+            
+            
     result.evidence_ids = [f"ev_bs_inventories_{as_of}", f"ev_is_oper_rev_{as_of}"]
     if severity == "red":
         result.explanation = (
             f"存货增速（{inv_yoy*100:.1f}%）远超营业收入增速（{or_yoy*100:.1f}%），"
-            f"差距达 {growth_gap:.1f} 个百分点，存货积压风险显著。"
+            f"增速差达 {fmt_gap_pct(growth_gap)}，存货积压风险显著（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
         )
     elif severity == "orange":
         result.explanation = (
             f"存货增速（{inv_yoy*100:.1f}%）明显快于营收增速（{or_yoy*100:.1f}%），"
-            f"需关注存货周转效率。"
+            f"需关注存货周转效率（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
         )
     elif severity == "yellow":
         result.explanation = (
-            f"存货增速快于营收增速（差距 {growth_gap:.1f}pp），建议持续关注。"
+            f"存货增速快于营收增速（增速差 {fmt_gap_pct(growth_gap)}），建议持续关注（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
         )
     return result

@@ -65,6 +65,16 @@ export interface EvidenceLookupData {
   };
 }
 
+// 公告 PDF 摘要（后端按需下载→提取→摘要→删除临时 PDF）
+export interface AnnouncementSummaryData {
+  object_id: string;
+  title: string;
+  evidence_id: string;
+  source_uri: string | null;
+  summary: string;
+  method: 'pdf_llm' | 'text_excerpt' | 'title_only';
+}
+
 // 声明追溯: GET /claims/{claim_id}
 export interface ClaimLookupData {
   claim: Record<string, unknown>;
@@ -124,33 +134,21 @@ export interface ReadyData {
   checks: Record<string, Record<string, unknown>>;
 }
 
-// 报告相关类型
-export interface ReportRequest {
-  session_id: string;
-  turn_id?: string;
-  format?: string;
-}
-export interface ReportInfo {
-  id: string;
-  status: string;
-  created_at: string;
+// 报告任务状态（对齐后端 schemas/reports.py ReportJobStatusData；
+// 后端无「报告内容」详情端点——摘要/发现等内容在 PDF 文件里）
+export interface ReportJobStatus {
+  report_id: string;
+  status: string; // queued / running / succeeded / failed / cancelled
+  progress: number; // 0-100
+  created_at?: string | null;
+  started_at?: string | null;
   completed_at?: string | null;
-  format?: string;
-  size?: number | null;
-}
-export interface ReportDetail {
-  id: string;
-  status: string;
-  summary: string;
-  key_findings: string[];
-  detailed_analysis: string;
-  created_at: string;
-  completed_at?: string | null;
-  format?: string;
-  download_url?: string | null;
-}
-export interface ReportDetailResponse {
-  data: ReportDetail;
+  error_code?: string | null;
+  error_message?: string | null;
+  download_available: boolean;
+  file_sha256?: string | null;
+  company_code?: string | null;
+  session_id?: string | null;
 }
 // 会话历史轮次（GET /sessions/{id} 的 turns 元素）
 export interface SessionTurnData {
@@ -256,8 +254,12 @@ export const truthnetAPI = {
     request<FinanceData>('GET', `/companies/${encodeURIComponent(code)}/finance`),
 
   // 舆情事件: GET /api/v1/companies/{code}/events
-  getEvents: (code: string) =>
-    request<EventsData>('GET', `/companies/${encodeURIComponent(code)}/events`),
+  // B2 契约修复：默认 include_impacts=true（画像页影响与建议区块消费
+  // impact_conclusions；后端默认 false 时恒为空列表）
+  getEvents: (code: string, includeImpacts: boolean = true) =>
+    request<EventsData>('GET', `/companies/${encodeURIComponent(code)}/events`, {
+      params: { include_impacts: includeImpacts },
+    }),
 
   // 股权穿透: GET /api/v1/companies/{code}/equity
   getEquity: (code: string, depth: number = 5) =>
@@ -286,6 +288,13 @@ export const truthnetAPI = {
   // 证据详情: GET /api/v1/evidence/{evidence_id}
   getEvidence: (evidenceId: string) =>
     request<EvidenceLookupData>('GET', `/evidence/${encodeURIComponent(evidenceId)}`),
+
+  // 公告 PDF 摘要: GET /api/v1/companies/{code}/announcements/{object_id}/summary
+  getAnnouncementSummary: (companyCode: string, objectId: string) =>
+    request<AnnouncementSummaryData>(
+      'GET',
+      `/companies/${encodeURIComponent(companyCode)}/announcements/${encodeURIComponent(objectId)}/summary`,
+    ),
 
   // 会话列表: GET /api/v1/sessions（V12 envelope: data.sessions + total）
   getSessions: () => request<SessionListData>('GET', '/sessions'),
@@ -324,15 +333,15 @@ export const truthnetAPI = {
   // 就绪检查: GET /api/v1/readyz
   readyz: () => request<ReadyData>('GET', '/readyz'),
 
-  // 报告: POST /api/v1/reports
-  createReport: (sessionId: string, turnId?: string, format?: string) =>
-    request<ReportInfo>('POST', '/reports', {
-      body: JSON.stringify({ session_id: sessionId, turn_id: turnId, format }),
+  // 创建报告任务: POST /api/v1/reports（后端必填 company_code → 202 任务状态）
+  createReport: (companyCode: string, sessionId?: string) =>
+    request<ReportJobStatus>('POST', '/reports', {
+      body: JSON.stringify({ company_code: companyCode, session_id: sessionId }),
     }),
 
-  // 报告详情: GET /api/v1/reports/{report_id}
+  // 报告任务状态: GET /api/v1/reports/{report_id}
   getReport: (reportId: string) =>
-    request<ReportDetailResponse>('GET', `/reports/${encodeURIComponent(reportId)}`),
+    request<ReportJobStatus>('GET', `/reports/${encodeURIComponent(reportId)}`),
 
   // 报告下载: GET /api/v1/reports/{report_id}/file
   getReportDownloadUrl: (reportId: string) =>
@@ -375,6 +384,9 @@ export const wsClient = {
     const pendingQuestions: string[] = [];
     let closeRequested = false;
     let connectionErrorReported = false;
+      // 缺口 #33：按 V12 信封 sequence 去重；新连接重连后 sequence 可能重开，
+      // 重连时重置为 0 避免把有效事件当重复丢弃。
+      let lastSequence = 0;
 
     const sendQuestion = (question: string) => {
       ws.send(JSON.stringify({
@@ -391,11 +403,29 @@ export const wsClient = {
         sendQuestion(pendingQuestions.shift()!);
       }
     };
+        if (false) {  // legacy dedup block disabled; actual dedup is inside onmessage
+          const msg: WSMessage = { event_type: 'ignored' };
 
+          if (typeof msg.sequence === 'number' && msg.sequence > 0) {
+              if (lastSequence > 0 && msg.sequence <= lastSequence) {
+                console.warn(`[WS] drop duplicate sequence=${msg.sequence} (last=${lastSequence})`);
+                return;
+              }
+              lastSequence = msg.sequence;
+          }
+        }
     ws.onmessage = (event) => {
       try {
-        const msg: WSMessage = JSON.parse(event.data);
-        onMessage(msg);
+            const msg: WSMessage = JSON.parse(event.data);
+          if (typeof msg.sequence === 'number' && msg.sequence > 0) {
+              if (lastSequence > 0 && msg.sequence <= lastSequence) {
+                console.warn(`[WS] drop duplicate sequence=${msg.sequence} (last=${lastSequence})`);
+                return;
+              }
+              lastSequence = msg.sequence;
+          }
+        const parsedMsg = msg;
+          onMessage(parsedMsg);
       } catch (e) {
         console.error('WebSocket message parse error:', e);
         onMessage({ event_type: 'error', payload: { message: '消息解析错误' } });
@@ -419,7 +449,8 @@ export const wsClient = {
       console.log(`[WS] Reconnecting in ${delay}ms (${reconnectAttempts}/5)`);
       reconnectTimer = setTimeout(() => {
         try {
-          const newWs = new WebSocket(wsUrl);
+          lastSequence = 0; // 新连接 sequence 重新开始
+            const newWs = new WebSocket(wsUrl);
           newWs.onopen = () => {
             reconnectAttempts = 0;
             newWs.send(JSON.stringify({ event_type: 'stream.resume', payload: { session_id: sessionId } }));
@@ -449,15 +480,32 @@ export const wsClient = {
           onMessage({ event_type: 'error', payload: { message: '连接不可用，请稍后重试' } });
         }
       },
-      // 8.11：公司歧义确认——携带选中公司重跑原问题（company.confirm 事件）
-      confirmCompany: (turnId: string, companyRef: string) => {
+      // 8.11：公司歧义确认——携带选中公司重跑原问题（company.confirm 事件）。
+      // v3.1 mention 分组协议：多候选场景必须带 mention_id + revision（后端
+      // ws.py CompanyConfirmPayload 要求成对提供，缺一会被拒）；旧协议单候选
+      // 场景可不带（后端兼容路径）。
+      confirmCompany: (
+        turnId: string,
+        companyRef: string,
+        mentionId?: string,
+        revision?: number,
+      ) => {
         if (ws.readyState !== WebSocket.OPEN) {
           onMessage({ event_type: 'error', payload: { message: '连接不可用，无法确认公司' } });
           return;
         }
+        // 审查修复：mention_id 与 revision 必须成对发送——后端
+        // is_mention_protocol 判定「任一存在即走新协议」，只带 revision 不带
+        // mention_id 会被 INVALID_COMPANY_CONFIRM 拒绝；旧协议两者都不带。
+        const mentionProtocol = Boolean(mentionId) && revision !== undefined;
         ws.send(JSON.stringify({
           event_type: 'company.confirm',
-          payload: { company_ref: companyRef, session_id: sessionId, turn_id: turnId },
+          payload: {
+            company_ref: companyRef,
+            session_id: sessionId,
+            turn_id: turnId,
+            ...(mentionProtocol ? { mention_id: mentionId, revision } : {}),
+          },
           type: 'company.confirm',
         }));
       },

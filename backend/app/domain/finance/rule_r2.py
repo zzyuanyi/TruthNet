@@ -18,7 +18,12 @@ from app.domain.finance.parent_scope import (
     check_company_type,
 )
 from app.domain.finance.period import next_quarter  # noqa: E402 — 与 R2 共用公共季度函数（8.11）
-from app.domain.finance.rule_utils import mean_or_none, safe_div, yoy_growth
+from app.domain.finance.rule_utils import (
+    fmt_period,
+    mean_or_none,
+    safe_div,
+    yoy_growth,
+)
 
 
 def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -239,16 +244,17 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         f"ev_is_net_profit_{as_of}",
         f"ev_cf_oper_{as_of}",
     ]
+            
     if severity == "red":
         result.explanation = (
             f"最近 {max_consec_neg} 个季度净利润为正但经营现金流为负，"
-            f"平均现金流/利润比仅 {avg_ratio:.2f}，盈利缺乏现金支撑。"
+            f"平均现金流/利润比仅 {avg_ratio:.2f}，盈利缺乏现金支撑（数据期：{fmt_period(cur_period)}，母公司报表）。"
         )
     elif severity == "orange":
         result.explanation = (
             f"净利润为正但经营现金流近 {max_consec_neg} 个季度为负，"
-            f"现金流/利润比（{avg_ratio:.2f}）低于健康水平。"
+            f"现金流/利润比（{avg_ratio:.2f}）低于健康水平（数据期：{fmt_period(cur_period)}，母公司报表）。"
         )
     elif severity == "yellow":
-        result.explanation = "本季经营现金流为负，与正利润背离，建议关注。"
+        result.explanation = f"本期经营现金流为负，与正利润背离，建议关注（数据期：{fmt_period(cur_period)}，母公司报表）。"
     return result

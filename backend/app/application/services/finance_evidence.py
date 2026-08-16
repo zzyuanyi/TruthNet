@@ -53,6 +53,14 @@ def legacy_field(legacy: str, as_of: str) -> str:
     return field or legacy
 
 
+def display_period(period: str) -> str:
+    """YYYYMMDD → YYYY-MM-DD（其余原样），用于人类可读的证据标题。"""
+    p = str(period or "")
+    if len(p) == 8 and p.isdigit():
+        return f"{p[:4]}-{p[4:6]}-{p[6:]}"
+    return p
+
+
 def build_finance_rule_evidence_drafts(*, rules, wind_code: str, as_of: str) -> dict:
     """规则结果 → (unique_drafts, rule_evidence_map)。
 
@@ -81,7 +89,12 @@ def build_finance_rule_evidence_drafts(*, rules, wind_code: str, as_of: str) -> 
                 "field_path": legacy_field(legacy_ev, as_of),
                 "period": as_of,
                 "statement_scope": "parent_company",
-                "source_title": f"母公司报表 · 财务反欺诈规则 {rid}",
+                # 来源标题可读性（演示整改）：规则中文名 + 期次 + 口径，
+                # 避免"母公司报表 · 财务反欺诈规则 R1"整列同质化；
+                # 必须保留"母公司报表"（test_parent_scope_consistency 断言）
+                "source_title": (
+                    f"{r.rule_name or rid} · {display_period(as_of)} · 母公司报表"
+                ),
                 "module": "finance",
                 "source_table": "financial_statement",
             }

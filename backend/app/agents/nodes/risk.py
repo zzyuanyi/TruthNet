@@ -100,11 +100,19 @@ def risk_node(state: AgentState) -> dict:
     plan = state.get("plan")
     if plan is not None and plan.as_of:
         as_of = plan.as_of.strftime("%Y%m%d")
+    # 2026-08-16 口径整改：未传期次时从库内真实期次推导，禁止硬编码默认
+    if not as_of:
+        try:
+            from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+            as_of = resolve_company_data_as_of(company.wind_code)
+        except Exception:  # noqa: BLE001
+            as_of = ""
 
     # 评级拐点 + 行业基准
     rating_inflections = _fetch_rating_inflections(company.wind_code, as_of=as_of)
     benchmarks = _fetch_benchmarks(
-        company.wind_code, as_of or "20260331", company.industry_l1 or ""
+        company.wind_code, as_of, company.industry_l1 or ""
     )
 
     try:
@@ -113,7 +121,7 @@ def risk_node(state: AgentState) -> dict:
         svc = RiskScoringService()
         out = svc.score(
             wind_code=company.wind_code,
-            as_of=as_of or "20260331",
+            as_of=as_of,
             sec_name=company.sec_name,
             finance_result=results.finance if results else None,
             equity_result=results.equity if results else None,

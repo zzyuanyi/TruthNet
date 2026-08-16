@@ -1,102 +1,87 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { FileText, Download, AlertTriangle, CheckCircle, Clock, Loader2, ArrowLeft, Shield } from 'lucide-react';
+import { FileText, Download, AlertTriangle, CheckCircle, Clock, Loader2, ArrowLeft, XCircle, Hash } from 'lucide-react';
 import truthnetAPI from '@/lib/api-client';
+import type { ReportJobStatus } from '@/lib/api-client';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
-interface ReportDetail {
-  id: string;
-  status: string;
-  title?: string;
-  company_name?: string;
-  risk_level?: string;
-  risk_score?: number;
-  evidence_count?: number;
-  claim_count?: number;
-  summary: string;
-  key_findings: string[];
-  detailed_analysis: string;
-  details?: string;
-  error_message?: string;
-  created_at: string;
-  completed_at?: string | null;
-  format?: string;
-  download_url?: string | null;
+// 后端状态机：queued / running / succeeded / failed / cancelled
+const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+
+function statusConfig(status: string) {
+  switch (status) {
+    case 'queued':
+      return { icon: Clock, label: '排队中', variant: 'secondary' as const };
+    case 'running':
+      return { icon: Loader2, label: '生成中', variant: 'secondary' as const, spin: true };
+    case 'succeeded':
+      return { icon: CheckCircle, label: '已完成', variant: 'default' as const };
+    case 'failed':
+      return { icon: AlertTriangle, label: '失败', variant: 'destructive' as const };
+    case 'cancelled':
+      return { icon: XCircle, label: '已取消', variant: 'outline' as const };
+    default:
+      return { icon: Clock, label: status, variant: 'secondary' as const };
+  }
 }
 
 export default function ReportPage() {
   useDocumentTitle('报告详情');
   const { reportId } = useParams<{ reportId: string }>();
-  const [report, setReport] = useState<ReportDetail | null>(null);
+  const [report, setReport] = useState<ReportJobStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusRef = useRef<string>('');
 
   useEffect(() => {
     if (!reportId) return;
     let cancelled = false;
+    // 审查修复：切换 reportId 时重置加载/错误状态，避免展示上一个报告
+    setLoading(true);
+    setError(null);
+    statusRef.current = '';
 
-    const fetchReport = async () => {
-      setLoading(true);
-      setError(null);
+    const fetchStatus = async (first: boolean) => {
       try {
         const response = await truthnetAPI.getReport(reportId);
-        if (!cancelled) {
-          setReport(response.data.data);
+        if (cancelled) return;
+        setReport(response.data);
+        statusRef.current = response.data.status;
+        setError(null);
+        const status = response.data.status;
+        if (!TERMINAL_STATUSES.has(status)) {
+          // 未到终态 → 2s 后继续轮询
+          pollTimerRef.current = setTimeout(() => fetchStatus(false), 2000);
         }
       } catch (err) {
-        if (!cancelled) {
+        if (cancelled) return;
+        if (first) {
           setError(err instanceof Error ? err.message : '获取报告失败');
         }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    // 轮询直到报告完成
-    const poll = async () => {
-      try {
-        const response = await truthnetAPI.getReport(reportId);
-        if (!cancelled) {
-          setReport(response.data.data);
-          if (response.data.data.status === 'completed' || response.data.data.status === 'failed') {
-            setLoading(false);
-            return;
-          }
+        // 审查修复：用 statusRef 判终态，避免闭包读到陈旧的 report 状态
+        if (!TERMINAL_STATUSES.has(statusRef.current)) {
+          pollTimerRef.current = setTimeout(() => fetchStatus(false), 3000);
         }
-      } catch {
-        // 继续轮询
-      }
-      if (!cancelled) {
-        setTimeout(poll, 2000);
+      } finally {
+        if (cancelled || first) setLoading(false);
       }
     };
 
-    fetchReport().then(() => {
-      if (report?.status === 'pending' || report?.status === 'processing') {
-        poll();
-      }
-    });
-
-    return () => { cancelled = true; };
-  }, [reportId]);
+    void fetchStatus(true);
+    return () => {
+      cancelled = true;
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+  }, [reportId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDownload = () => {
     if (!reportId) return;
-    const url = truthnetAPI.getReportDownloadUrl(reportId);
-    window.open(url, '_blank');
-  };
-
-  const statusConfig: Record<string, { icon: React.ReactNode; label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-    pending: { icon: <Clock className="w-4 h-4" />, label: '等待中', variant: 'secondary' },
-    processing: { icon: <Loader2 className="w-4 h-4 animate-spin" />, label: '生成中', variant: 'secondary' },
-    completed: { icon: <CheckCircle className="w-4 h-4" />, label: '已完成', variant: 'default' },
-    failed: { icon: <AlertTriangle className="w-4 h-4" />, label: '失败', variant: 'destructive' },
+    window.open(truthnetAPI.getReportDownloadUrl(reportId), '_blank');
   };
 
   if (loading) {
@@ -127,7 +112,8 @@ export default function ReportPage() {
     );
   }
 
-  const status = statusConfig[report.status] || statusConfig.pending;
+  const cfg = statusConfig(report.status);
+  const StatusIcon = cfg.icon;
 
   return (
     <div className="min-h-screen bg-background">
@@ -140,10 +126,10 @@ export default function ReportPage() {
               返回
             </Link>
           </Button>
-          {report.status === 'completed' && (
+          {report.status === 'succeeded' && report.download_available && (
             <Button onClick={handleDownload} size="sm">
               <Download className="w-4 h-4 mr-2" />
-              下载 {report.format?.toUpperCase() || 'PDF'}
+              下载 PDF
             </Button>
           )}
         </div>
@@ -155,112 +141,85 @@ export default function ReportPage() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <FileText className="w-6 h-6 text-primary" />
-                  <CardTitle className="text-2xl">{report.title}</CardTitle>
+                  <CardTitle className="text-2xl">分析报告</CardTitle>
                 </div>
-                {report.company_name && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Hash className="h-3 w-3" />
+                  {report.report_id}
+                </p>
+                {report.company_code && (
                   <p className="text-muted-foreground">
-                    分析对象：{report.company_name}
-                    {report.risk_level && (
-                      <Badge variant="outline" className="ml-2">
-                        <Shield className="w-3 h-3 mr-1" />
-                        {report.risk_level}
-                      </Badge>
-                    )}
+                    分析对象：{report.company_code}
                   </p>
                 )}
               </div>
-              <Badge variant={status.variant} className="flex items-center gap-1.5">
-                {status.icon}
-                {status.label}
+              <Badge variant={cfg.variant} className="flex items-center gap-1.5">
+                <StatusIcon className={`w-3.5 h-3.5 ${cfg.spin ? 'animate-spin' : ''}`} />
+                {cfg.label}
               </Badge>
             </div>
           </CardHeader>
-          {report.status === 'completed' && (
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="p-3 bg-muted/50 rounded-lg">
-                  <div className="text-2xl font-bold text-primary">{report.evidence_count}</div>
-                  <div className="text-xs text-muted-foreground">证据项</div>
+          <CardContent className="space-y-4">
+            {/* 进度（queued/running） */}
+            {(report.status === 'queued' || report.status === 'running') && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>报告生成中，请稍候…</span>
+                  <span>{report.progress}%</span>
                 </div>
-                <div className="p-3 bg-muted/50 rounded-lg">
-                  <div className="text-2xl font-bold text-primary">{report.claim_count}</div>
-                  <div className="text-xs text-muted-foreground">结论</div>
-                </div>
-                <div className="p-3 bg-muted/50 rounded-lg">
-                  <div className="text-2xl font-bold text-primary">{report.risk_score?.toFixed(1) || '-'}</div>
-                  <div className="text-xs text-muted-foreground">风险评分</div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${Math.max(2, report.progress)}%` }}
+                  />
                 </div>
               </div>
-            </CardContent>
-          )}
-        </Card>
-
-        {/* 报告内容（仅完成时显示） */}
-        {report.status === 'completed' && (
-          <>
-            {/* 摘要 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">摘要</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground leading-relaxed">{report.summary}</p>
-              </CardContent>
-            </Card>
-
-            {/* 关键发现 */}
-            {report.key_findings && report.key_findings.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">关键发现</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ul className="space-y-2">
-                    {report.key_findings.map((finding, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <Shield className="w-4 h-4 text-primary mt-0.5 shrink-0" />
-                        <span className="text-muted-foreground">{finding}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
             )}
 
-            <Separator />
+            {/* 失败信息 */}
+            {report.status === 'failed' && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <p className="text-sm text-destructive flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  {report.error_message || '报告生成失败'}
+                </p>
+                {report.error_code && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    错误码：{report.error_code}
+                  </p>
+                )}
+              </div>
+            )}
 
-            {/* 详细分析 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">详细分析</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="max-h-[600px]">
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <div className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                      {report.details}
-                    </div>
+            {/* 已完成 */}
+            {report.status === 'succeeded' && (
+              <div className="grid grid-cols-2 gap-4 text-center">
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <div className="text-sm font-medium text-primary">PDF 已生成</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    点击右上角「下载 PDF」查看
                   </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </>
-        )}
+                </div>
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <div className="text-sm font-medium text-primary">完成时间</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {report.completed_at
+                      ? new Date(report.completed_at).toLocaleString()
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+            )}
 
-        {/* 失败状态 */}
-        {report.status === 'failed' && (
-          <Card className="border-destructive/50">
-            <CardHeader>
-              <CardTitle className="text-destructive text-lg flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5" />
-                报告生成失败
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">{report.error_message || '未知错误，请稍后重试'}</p>
-            </CardContent>
-          </Card>
-        )}
+            {/* 元信息 */}
+            <div className="text-xs text-muted-foreground space-y-1 border-t border-border/50 pt-3">
+              <p>创建时间：{report.created_at ? new Date(report.created_at).toLocaleString() : '-'}</p>
+              {report.file_sha256 && (
+                <p className="font-mono break-all">SHA-256：{report.file_sha256}</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

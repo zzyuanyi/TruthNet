@@ -54,6 +54,51 @@ _SNAPSHOT_MAP_CACHE: dict[
     tuple[str, str], tuple[float, dict[str, str]]
 ] = {}  # (gv, as_of) → (ts, {tgt: latest})
 _SNAPSHOT_CACHE_MAX = 16
+# ── 全图短 TTL 缓存（缺口 #18：equity 冷查询约 8.66s；键含 code/depth/
+#    direction/as_of/graph_version/dataset_version，重复请求 60s 内直接复用）──
+_GRAPH_CACHE_TTL_SECONDS = 60.0
+_GRAPH_CACHE_MAX = 32
+_GRAPH_CACHE: dict[
+    tuple[str, int, str, str, str, str], tuple[float, "EquityGraph"]
+
+] = {}
+def _cached_get_graph(
+    adapter: "Neo4jEquityGraph",
+    *,
+    company_code: str,
+    depth: int,
+    direction: str,
+    as_of: str | None,
+    graph_version: str | None,
+) -> "EquityGraph":
+    """全图短 TTL 缓存入口（缺口 #18；同步核心查询前先查缓存）。"""
+    active_graph_version = graph_version or settings.GRAPH_VERSION
+    cache_key = (
+        company_code,
+        depth,
+        direction,
+        as_of or "",
+        active_graph_version,
+        settings.DATASET_VERSION,
+    )
+    cached_graph = _GRAPH_CACHE.get(cache_key)
+    if cached_graph is not None:
+        cached_at, cached = cached_graph
+        if time.monotonic() - cached_at <= _GRAPH_CACHE_TTL_SECONDS:
+            return cached
+        _GRAPH_CACHE.pop(cache_key, None)
+    graph = adapter._get_graph_sync(
+        company_code,
+        depth=depth,
+        direction=direction,
+        as_of=as_of,
+        graph_version=graph_version,
+    )
+    if graph.nodes or graph.edges:
+        if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
+            _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)))
+        _GRAPH_CACHE[cache_key] = (time.monotonic(), graph)
+    return graph
 
 
 # ═══════════════════════════════════════════════════════════
@@ -251,6 +296,15 @@ class Neo4jEquityGraph:
         graph_version: str | None = None,
     ) -> EquityGraph:
         """获取股权穿透图谱（真实 Neo4j 查询）— 异步入口."""
+        if True:  # cached entry guard
+          return _cached_get_graph(
+              self,
+              company_code=company_code,
+              depth=depth,
+              direction=direction,
+              as_of=as_of,
+              graph_version=graph_version,
+          )
         return self._get_graph_sync(
             company_code,
             depth=depth,
@@ -296,6 +350,22 @@ class Neo4jEquityGraph:
         norm_as_of = normalize_period(as_of) if as_of else None
         if as_of and norm_as_of is None:
             raise ValueError(f"INVALID_AS_OF: {as_of!r}")
+        if True:  # cache lookup guard
+
+          graph_cache_key = (
+              resolved_code,
+              depth,
+              direction,
+              norm_as_of or "",
+              active_graph_version,
+              settings.DATASET_VERSION,
+          )
+          cached_graph = _GRAPH_CACHE.get(graph_cache_key)
+          if cached_graph is not None:
+              cached_at, cached = cached_graph
+              if time.monotonic() - cached_at <= _GRAPH_CACHE_TTL_SECONDS:
+                  return cached
+              _GRAPH_CACHE.pop(graph_cache_key, None)
 
         # ── 快照过滤（8.09 审查：与导入侧 is_latest 快照级标记同语义）──
         #  - 无 as_of：每条边 is_latest=true（目标公司"最新完整股东快照"）。
@@ -497,6 +567,26 @@ class Neo4jEquityGraph:
                 "在当前图版本及已覆盖的十大股东数据中，未发现可验证的4跳及以上"
                 "股权链路；该结果不代表现实中不存在未被当前数据源覆盖的上层关系。"
             )
+        if True:  # cache block guard
+
+          # short TTL cache return（缺口 #18）
+          graph = EquityGraph(
+              company_id=company_code,
+              nodes=list(nodes_map.values()),
+              edges=list(edges_map.values()),
+              control_chains=paths_list,
+              graph_version=active_graph_version,
+              dataset_version=settings.DATASET_VERSION,
+              source_system="neo4j",
+              requested_depth=depth,
+              max_observed_hops=max_observed_hops,
+              truncated=truncated,
+              coverage_note=coverage_note,
+          )
+          if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
+              _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)))
+          _GRAPH_CACHE[graph_cache_key] = (time.monotonic(), graph)
+          return graph
 
         return EquityGraph(
             company_id=company_code,

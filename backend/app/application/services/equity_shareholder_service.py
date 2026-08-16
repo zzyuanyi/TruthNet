@@ -134,11 +134,13 @@ def materialize_equity_evidence(
     graph_version: str,
     trace_id: str = "",
     turn_id: str | None = None,
+    node_name_map: dict[str, str] | None = None,
 ) -> tuple[int, list[str]]:
     """幂等落库股权边证据；返回 (新增数, 冲突跳过列表)。
 
     与 Agent 路径同一 canonical ID 算法：同边同内容 → 幂等复用；
     同 ID 不同内容 → 跳过（不覆盖已落库内容，避免与 Agent 冲突）。
+    node_name_map：实体 ID → 显示名（来源标题可读化，避免整列 ID）。
     """
     added = 0
     conflicts: list[str] = []
@@ -168,7 +170,10 @@ def materialize_equity_evidence(
                 )
                 src = _edge_attr(edge, "source") or ""
                 tgt = _edge_attr(edge, "target") or ""
-                title = f"{src}→{tgt} 持股 {value}"
+                names = node_name_map or {}
+                src_label = names.get(src) or ""
+                tgt_label = names.get(tgt) or ""
+                title = f"{src_label or src}→{tgt_label or tgt} 持股 {value}"
 
                 existing = conn.execute(
                     text(

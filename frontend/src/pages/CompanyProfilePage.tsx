@@ -11,6 +11,13 @@ const sourceTypeIcons: Record<string, string> = {
   research_report: '研报',
   regulation: '监管',
 };
+function formatChainPct(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '比例缺失';
+  if (value === 0) return '0%';
+  if (value >= 0.01) return `${value.toFixed(2)}%`;
+  if (value >= 0.0001) return `${value.toFixed(4)}%`;
+  return `${value.toExponential(2)}%`;
+}
 
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,16 +42,18 @@ import {
   ChevronDown,
   ChevronRight,
   Shield,
+  Loader2,
 } from 'lucide-react';
 import { truthnetAPI, type EvidenceLookupData } from '@/lib/api-client';
 import { EquityGraph } from '@/components/truthnet/EquityGraph';
-import { RuleCard } from '@/components/truthnet/RuleCard';
+import { RelatedPartyTable } from '@/components/truthnet/RelatedPartyTable';
+import { RuleCard, type RuleEvidenceSummary } from '@/components/truthnet/RuleCard';
 import { SimilarCases } from '@/components/truthnet/SimilarCases';
 import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
-import { RelatedPartyTable } from '@/components/truthnet/RelatedPartyTable';
+
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, SimilarCasesResult, Company, DerivationChain } from '@/types/truthnet';
+import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, SimilarCasesResult, Company, DerivationChain, ImpactConclusion, DataQuality } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
 function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
@@ -100,7 +109,10 @@ const navItems = [
 ];
 
 export default function CompanyProfilePage() {
-  const { code } = useParams<{ code: string }>();
+  // 契约修复：路由 param 是 :companyCode（App.tsx:39），旧代码读 code 恒为
+  // undefined → loadData 永不执行、页面永远卡骨架屏。
+  const { companyCode } = useParams<{ companyCode: string }>();
+  const code = companyCode;
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +124,9 @@ export default function CompanyProfilePage() {
   const [eventClusters, setEventClusters] = useState<EventCluster[]>([]);
   const [riskData, setRiskData] = useState<RiskResponseData | null>(null);
   const [derivationChains, setDerivationChains] = useState<DerivationChain[]>([]);
+  // 2026-08-16 口径整改：覆盖判定用真实数据存在性信号
+  const [financeQuality, setFinanceQuality] = useState<DataQuality | null>(null);
+  const [announcementsAvailable, setAnnouncementsAvailable] = useState<boolean | null>(null);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = { red: '#ef4444', orange: '#f97316', yellow: '#eab308', blue: '#3b82f6', unknown: '#6b7280' };
@@ -127,7 +142,43 @@ export default function CompanyProfilePage() {
     };
     return styles[level] || styles.unknown;
   };
-  const [similarCases, setSimilarCases] = useState<SimilarCasesResult | null>(null);
+  const [similarCasesByRule, setSimilarCasesByRule] = useState<
+    Array<{ rule_id: string; rule_name: string; data: SimilarCasesResult }>
+  >([]);
+  // B2 舆情影响结论（后端 events.impact_conclusions，需 include_impacts=true）
+  const [impactConclusions, setImpactConclusions] = useState<ImpactConclusion[]>([]);
+  // A2（8/9 老师要求）：触发规则关联证据的摘要（evidenceId → 平铺摘要）
+  const [ruleEvidenceSummary, setRuleEvidenceSummary] = useState<Record<string, RuleEvidenceSummary>>({});
+  // A2：批量拉取触发规则的证据摘要用于平铺（去重 + 上限 30）。
+  // 注意：本 effect 必须在 early return 之前注册（Rules of Hooks）；
+  // 依赖稳定字符串键（避免数组身份变化导致无限重跑）。
+  const triggeredEvidenceKey = financialAnomalies
+    .filter(r => r.status === 'triggered')
+    .flatMap(r => r.evidence_ids || [])
+    .join(',');
+  useEffect(() => {
+    const ids = [...new Set(triggeredEvidenceKey.split(',').filter(Boolean))].slice(0, 30);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const settled = await Promise.allSettled(ids.map(id => truthnetAPI.getEvidence(id)));
+      if (cancelled) return;
+      const map: Record<string, RuleEvidenceSummary> = {};
+      settled.forEach((res, i) => {
+        if (res.status === 'fulfilled') {
+          const ev = (res.value.data?.evidence || {}) as Record<string, unknown>;
+          map[ids[i]] = {
+            evidenceId: ids[i],
+            title: String(ev.source_title || ev.field_path || ids[i]),
+            sourceType: String(ev.source_type || ''),
+            period: String(ev.period || ''),
+          };
+        }
+      });
+      setRuleEvidenceSummary(map);
+    })();
+    return () => { cancelled = true; };
+  }, [code, triggeredEvidenceKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [activeSection, setActiveSection] = useState('overview');
   const [evidenceDialogOpen, setEvidenceDialogOpen] = useState(false);
   const [evidenceDialogTitle, setEvidenceDialogTitle] = useState('证据详情');
@@ -137,6 +188,21 @@ export default function CompanyProfilePage() {
     error?: string;
   }>>([]);
   const [evidenceDialogLoading, setEvidenceDialogLoading] = useState(false);
+  // 报告生成（P1：画像页入口 → 创建任务 → 跳报告页，状态轮询由 ReportPage 接管）
+  const [reportCreating, setReportCreating] = useState(false);
+
+  // 生成报告：POST /reports（必填 company_code）→ 跳 /reports/{id}
+  const handleGenerateReport = async () => {
+    if (!profile || reportCreating) return;
+    setReportCreating(true);
+    try {
+      const res = await truthnetAPI.createReport(profile.wind_code);
+      navigate(`/reports/${res.data.report_id}`);
+    } catch (err) {
+      console.error('创建报告失败:', err);
+      setReportCreating(false);
+    }
+  };
 
   const sectionRefs = {
     overview: useRef<HTMLDivElement>(null),
@@ -167,13 +233,32 @@ export default function CompanyProfilePage() {
         truthnetAPI.getRisk(code),
       ]);
       setProfile(profileRes.data);
-      setFinancialAnomalies(financeRes.data?.rules || []);
-      setSimilarCases(financeRes.data?.similar_cases || null);
+      const rules = financeRes.data?.rules || [];
+      setFinancialAnomalies(rules);
+      // 契约修复：相似案例在后端 FinanceRuleItem.similar_cases（逐规则），
+      // 顶层 finance.similar_cases 不存在——按触发规则聚合展示。
+      setSimilarCasesByRule(
+        rules
+          .filter(r => r.similar_cases && (r.similar_cases.status === 'ok' || r.similar_cases.status === 'error'))
+          .map(r => ({
+            rule_id: r.rule_id,
+            rule_name: r.rule_name || r.rule_id,
+            data: r.similar_cases as SimilarCasesResult,
+          })),
+      );
       setEquityData(equityRes.data);
       setSentimentEvents(eventsRes.data?.timeline || []);
       setEventClusters(eventsRes.data?.event_clusters || []);
-       setRiskData(riskRes.data);
-      setDerivationChains(riskRes.data?.derivation_chains || []);
+      // B2 契约修复：消费后端 impact_conclusions（include_impacts=true 时返回）
+      setImpactConclusions(eventsRes.data?.impact_conclusions || []);
+      setRiskData(riskRes.data);
+              const allChains = riskRes.data?.derivation_chains || [];
+        setDerivationChains([
+          ...allChains.filter(c => c.conclusion_type === 'risk_level'),
+          ...allChains.filter(c => c.conclusion_type === 'pattern_match').slice(0, 3),
+        ]);
+      setFinanceQuality(financeRes.data?.data_quality || null);
+      setAnnouncementsAvailable(eventsRes.data?.announcements_available ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -240,6 +325,55 @@ export default function CompanyProfilePage() {
   }
 
   const riskConfig = riskLevelConfig[(riskData?.risk_level || 'unknown') as RiskLevel];
+  // A3（8/9 老师要求）：触发的规则（风险提示集中展示 + 财务区筛选口径一致）
+  const triggeredRules = financialAnomalies.filter(r => r.status === 'triggered');
+
+  // 核心结论压缩：只展示 overall 风险链 + 风险模式链；
+  // 逐规则推导链与财务异常区重复，不再在概览区完整展开。
+  const overallConclusion = derivationChains.find(c => c.conclusion_type === 'risk_level');
+  const patternConclusions = derivationChains
+    .filter(c => c.conclusion_type === 'pattern_match')
+    .slice(0, 3);
+  const coreConclusionChains = [overallConclusion, ...patternConclusions].filter(
+    (c): c is NonNullable<typeof c> => Boolean(c),
+  );
+  const patternByConclusionId = new Map(
+    (riskData?.pattern_matches || []).map(p => [`pattern:${p.pattern_id}`, p] as const),
+  );
+
+  // 2026-08-16 口径整改：覆盖判定改用"真实数据存在性"，废弃后端
+  // coverage_ratio（其为模块执行成功占比，曾把"舆情无公告数据"算进 100%）。
+  const financeHasData = (financeQuality?.periods_available ?? 0) > 0;
+  const equityHasData = (equityData?.nodes?.length ?? 0) > 0;
+  const eventsHasData =
+    (announcementsAvailable ?? false) ||
+    eventClusters.length > 0 ||
+    sentimentEvents.length > 0;
+  const benchmarksHasData = financialAnomalies.some(r =>
+    (r.industry_metrics ?? []).some(m => (m.sample_count ?? 0) > 0),
+  );
+  const coverageGaps: string[] = [];
+  if (!financeHasData) {
+    coverageGaps.push('财务无报表数据');
+  } else if (
+    financeQuality &&
+    financeQuality.periods_available < financeQuality.periods_requested
+  ) {
+    coverageGaps.push(`财务 ${financeQuality.periods_available}/${financeQuality.periods_requested} 期`);
+  }
+  if (!equityHasData) coverageGaps.push('股权无数据');
+  if (!eventsHasData) coverageGaps.push('舆情无公告数据');
+  if (!benchmarksHasData) coverageGaps.push('行业基准无样本');
+  const coverageModulesText = riskData
+    ? `${[financeHasData, equityHasData, eventsHasData, benchmarksHasData].filter(Boolean).length}/4 有数据`
+    : '-';
+  const coverageStatusText = !riskData
+    ? '-'
+    : coverageGaps.length === 0
+      ? '完整'
+      : '部分覆盖';
+  const coverageGapText =
+    coverageGaps.length > 0 ? `数据说明：${coverageGaps.join(' · ')}` : '';
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 bg-background">
@@ -279,6 +413,20 @@ export default function CompanyProfilePage() {
               <h1 className="text-2xl font-bold text-foreground">{profile.sec_name}</h1>
               <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
               <span className="text-sm text-muted-foreground">{profile.wind_code}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto gap-1.5"
+                onClick={handleGenerateReport}
+                disabled={reportCreating}
+              >
+                {reportCreating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5" />
+                )}
+                生成报告
+              </Button>
             </div>
             <Card className="overflow-hidden">
               <div className="bg-gradient-to-r from-muted/30 to-muted/10 px-6 py-3 border-b border-border/50">
@@ -287,7 +435,7 @@ export default function CompanyProfilePage() {
                   <span className="text-sm font-semibold text-foreground">风险概览</span>
                 </div>
               </div>
-              <CardContent className="pt-5">
+              <CardContent className="pt-5 space-y-4">
                 <div className="grid grid-cols-3 gap-4">
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">综合风险等级</p>
@@ -295,13 +443,72 @@ export default function CompanyProfilePage() {
                   </div>
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">触发规则数</p>
-                    <p className="text-2xl font-bold">{financialAnomalies.filter(r => r.status === "triggered").length}</p>
+                    <p className="text-2xl font-bold">{triggeredRules.length}</p>
                   </div>
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">舆情事件数</p>
                     <p className="text-2xl font-bold">{sentimentEvents.length}</p>
                   </div>
                 </div>
+
+                {/* A3（8/9 老师要求）：数据截止日 / 数据模块 / 覆盖状态
+                    （2026-08-16 口径整改：截止日由后端从库内真实期次推导；
+                    覆盖率不再显示百分比，改为真实数据模块数 x/4） */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="rounded-md border border-border/60 p-3 text-center">
+                    <p className="text-xs text-muted-foreground mb-1">数据截止日</p>
+                    <p className="text-sm font-semibold">{riskData?.as_of || '-'}</p>
+                  </div>
+                  <div className="rounded-md border border-border/60 p-3 text-center">
+                    <p className="text-xs text-muted-foreground mb-1">数据模块</p>
+                    <p className="text-sm font-semibold">{coverageModulesText}</p>
+                  </div>
+                  <div className="rounded-md border border-border/60 p-3 text-center">
+                    <p className="text-xs text-muted-foreground mb-1">覆盖状态</p>
+                    <p className="text-sm font-semibold">{coverageStatusText}</p>
+                  </div>
+                </div>
+                {coverageGapText && (
+                  <p className="rounded-md border border-dashed border-border/60 p-2 text-xs text-muted-foreground">
+                    {coverageGapText}
+                  </p>
+                )}
+
+                {/* A3：top 触发规则（点击跳转财务异常区） */}
+                {triggeredRules.length > 0 && (
+                  <div className="rounded-md border border-border/60 p-3">
+                    <p className="text-xs text-muted-foreground mb-2">主要风险信号（点击查看详情）</p>
+                    <div className="flex flex-wrap gap-2">
+                      {triggeredRules.slice(0, 5).map(r => (
+                        <button
+                          key={r.rule_id}
+                          onClick={() => handleNavClick('financial')}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors',
+                            'border-border/60 bg-background hover:border-primary/50 hover:bg-muted/50',
+                          )}
+                        >
+                          <span className="text-foreground">{r.rule_name || r.rule_id}</span>
+                          <span className={`rounded-full px-1.5 py-0.5 ${getRiskBadgeStyle(r.severity)}`}>
+                            {r.severity}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* A3：risk warnings 集中展示 */}
+                {(riskData?.warnings?.length ?? 0) > 0 && (
+                  <div className="rounded-md border border-yellow-500/40 bg-yellow-500/5 p-3 space-y-1">
+                    {riskData!.warnings.map((w, wi) => (
+                      <p key={wi} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                        <AlertTriangle className="h-3.5 w-3.5 text-yellow-600 shrink-0 mt-0.5" />
+                        {w}
+                      </p>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -326,7 +533,7 @@ export default function CompanyProfilePage() {
                       </div>
                     </CardHeader>
                     <CardContent className="pb-3">
-                      {chain.signals.map((signal, si) => (
+                      {(chain.conclusion_type === 'risk_level' ? chain.signals.slice(0, 3) : []).map((signal, si) => (
                         <div key={si} className="mb-3 rounded-lg border bg-muted/30 p-3">
                           <div className="mb-1 flex items-center justify-between">
                             <span className="text-sm font-medium">{signal.label}</span>
@@ -338,7 +545,7 @@ export default function CompanyProfilePage() {
                               行业分位: {signal.industry_percentile}%
                             </p>
                           )}
-                          {signal.data_refs.length > 0 && (
+                          {false && (
                             <div className="mt-2 space-y-1">
                               {signal.data_refs.map((ref, ri) => (
                                 <div key={ri} className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -350,6 +557,32 @@ export default function CompanyProfilePage() {
                           )}
                         </div>
                       ))}
+                        {chain.conclusion_type === 'pattern_match' && (() => {
+                          const pattern = patternByConclusionId.get(chain.conclusion_id);
+                          if (!pattern) return null;
+                          return (
+                            <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs space-y-1.5">
+                              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                                <span>置信度：{pattern.confidence || '-'}</span>
+                                {pattern.phase && <span>阶段：{pattern.phase}</span>}
+                                {pattern.triggered_rules.length > 0 && (
+                                  <span>关联规则：{pattern.triggered_rules.join('、')}</span>
+                                )}
+                              </div>
+                              {pattern.reasoning && (
+                                <p className="leading-5">匹配理由：{pattern.reasoning}</p>
+                              )}
+                              {pattern.alternative_explanation && (
+                                <p className="leading-5">替代解释：{pattern.alternative_explanation}</p>
+                              )}
+                              {pattern.regulatory_hint && (
+                                <p className="leading-5 text-amber-700 dark:text-amber-400">
+                                  监管提示：{pattern.regulatory_hint}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
                     </CardContent>
                   </Card>
                 ))}
@@ -379,6 +612,14 @@ export default function CompanyProfilePage() {
                       key={anomaly.rule_id}
                       rule={anomaly}
                       onViewEvidence={handleViewRuleEvidence}
+                      // A2：触发规则证据直接平铺在信号下方（弹窗仅作次级入口）
+                      evidenceSummaries={
+                        anomaly.status === 'triggered'
+                          ? (anomaly.evidence_ids || [])
+                              .map(id => ruleEvidenceSummary[id])
+                              .filter((x): x is RuleEvidenceSummary => Boolean(x))
+                          : undefined
+                      }
                     />
                   ))}
               </div>
@@ -391,16 +632,18 @@ export default function CompanyProfilePage() {
             )}
           </div>
 
-          {/* 相似案例 */}
-          {similarCases && similarCases.cases.length > 0 && (
-            <div className="mt-6">
-              <SimilarCases data={similarCases} />
+          {/* 相似案例（契约修复：逐规则渲染 rules[].similar_cases） */}
+          {similarCasesByRule.length > 0 && (
+            <div className="mt-6 space-y-4">
+              {similarCasesByRule.map(r => (
+                <SimilarCases key={r.rule_id} data={r.data} ruleName={r.rule_name} />
+              ))}
             </div>
           )}
 
           <Separator className="my-6" />
 
-          {/* 股权穿透区块 - 使用 RelatedPartyTable 组件 */}
+          {/* 股权穿透区块：移除缺列关联方表，保留多跳分层穿透图 */}
           <div ref={sectionRefs.equity} className="mb-8">
             <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
               <GitBranch className="h-5 w-5" />
@@ -410,6 +653,82 @@ export default function CompanyProfilePage() {
               <Card>
                 <CardContent className="p-4">
                   <RelatedPartyTable equityData={equityData} />
+
+                    {/* 间接持股链路：消费后端 equity_chains，补齐多跳最终持股视图 */}
+                    {(equityData.equity_chains?.length ?? 0) > 0 && (
+                      <div className="mb-4 rounded-lg border border-border/60 bg-muted/20 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-foreground">间接持股链路（多跳）</span>
+                          <span className="text-[10px] text-muted-foreground">表格仅直接持股；最终持股=各跳比例连乘，多跳时会稀释到极小值</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {(equityData.equity_chains as Array<Record<string, unknown>>).slice(0, 6).map((chain, index) => {
+                            const names = Array.isArray(chain.path_names)
+                              ? chain.path_names.map(String).filter(Boolean)
+                              : [];
+                            const pct = typeof chain.final_control_pct === 'number'
+                              ? chain.final_control_pct
+                              : null;
+                              const nodeIds = Array.isArray(chain.node_ids)
+                                ? chain.node_ids.map(String)
+                                : [];
+                              const edgeIds = Array.isArray(chain.edge_ids)
+                                ? chain.edge_ids.map(String)
+                                : [];
+                              const firstEdge = equityData.edges.find(edge => {
+                                if (edgeIds.length > 0 && edge.relationship_id && edgeIds[0] === edge.relationship_id) {
+                                  return true;
+                                }
+                                return nodeIds.length >= 2
+                                  && edge.source === nodeIds[0]
+                                  && edge.target === nodeIds[1];
+                              });
+                              const firstPct = firstEdge?.ownership_pct ?? null;
+                            const pathType = String(chain.path_type || 'ownership');
+                            const riskLevel = String(chain.risk_level || 'green');
+                            return (
+                              <div key={String(chain.chain_id || index)} className="rounded-md border border-border/50 bg-background px-2.5 py-2">
+                                <div className="flex items-start justify-between gap-3">
+                                  <p className="min-w-0 flex-1 text-xs leading-5 text-foreground">
+                                    {names.length > 0 ? names.join(' → ') : '未命名链路'}
+                                  </p>
+                                  <span className="shrink-0 text-xs font-semibold text-foreground">
+                                    {pct != null
+                                        ? `${pathType === 'control' ? '最终控制' : '最终持股'} ${formatChainPct(pct)}${firstPct != null ? ` · 首层 ${formatChainPct(firstPct)}` : ''}`
+                                        : '比例缺失'}
+                                  </span>
+                                </div>
+                                <div className="mt-1 flex items-center gap-2">
+                                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${getRiskBadgeStyle(riskLevel)}`}>
+                                    {riskLevel === 'red' ? '高危'
+                                      : riskLevel === 'orange' ? '中高危'
+                                      : riskLevel === 'yellow' ? '中等'
+                                      : riskLevel === 'blue' ? '低风险' : '正常'}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {Array.isArray(chain.risk_reasons) && chain.risk_reasons.length > 0
+                                      ? String(chain.risk_reasons[0]).slice(0, 60)
+                                      : '未发现附加风险说明'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <Badge variant="outline">{equityData.nodes.length} 个节点</Badge>
+                      <Badge variant="outline">{equityData.edges.length} 条边</Badge>
+                      <Badge variant="outline">
+                        {equityData.paths.length > 0 ? `${equityData.paths.length} 条穿透路径` : '暂无路径'}
+                      </Badge>
+                      <Badge variant="outline">
+                        最深 {equityData.max_observed_hops ?? Math.max(0, ...equityData.paths.map(p => p.depth || 0))} 跳
+                      </Badge>
+                      <span>从左到右为向上穿透层级，可滚轮缩放、按住拖拽</span>
+                    </div>
                   <div className="mt-4">
                     <EquityGraph
                       nodes={equityData.nodes}
@@ -439,6 +758,7 @@ export default function CompanyProfilePage() {
             {sentimentEvents.length > 0 ? (
               <RiskTimeline
                 events={sentimentEvents}
+                  companyCode={code}
                 clusters={eventClusters}
                 onEventClick={() => {
                   const evidenceSection = sectionRefs.evidence;
@@ -477,6 +797,69 @@ export default function CompanyProfilePage() {
               </Card>
             )}
           </div>
+
+            <Separator className="my-6" />
+
+            {/* 影响与建议：从 Dialog 外移回主内容列，并压缩为摘要 + 可展开因果链 */}
+            <div ref={sectionRefs.impact} className="mb-8">
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <TrendingUp className="h-5 w-5" />
+                影响与建议
+              </h2>
+              {impactConclusions.length > 0 ? (
+                <div className="space-y-2">
+                  {impactConclusions.map((ic, i) => (
+                    <Card key={i} className="bg-muted/20">
+                      <CardContent className="p-3">
+                        <div className="flex items-start gap-2">
+                          <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle({ high: 'red', medium: 'yellow', low: 'blue' }[ic.severity] || 'unknown')}`}>
+                            {ic.display_tag}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium leading-snug">{ic.conclusion}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {ic.impact_type} · {ic.direction} · {ic.evidence_ids.length} 条证据
+                            </p>
+                          </div>
+                        </div>
+                        {ic.causality_chain.length > 0 && (
+                          <Collapsible className="mt-2">
+                            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                              <ChevronRight className="h-3.5 w-3.5" />
+                              查看因果链（{ic.causality_chain.length} 步）
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                              <div className="mt-2 flex flex-wrap items-start gap-1.5">
+                                {ic.causality_chain.map((step, si) => (
+                                  <span key={si} className="flex items-center gap-1.5">
+                                    {si > 0 && <span className="text-muted-foreground text-xs">→</span>}
+                                    <span className={`rounded-md border px-2 py-1 text-xs text-foreground ${
+                                      step.statement_type === 'observed'
+                                        ? 'border-green-500/40 bg-green-500/5'
+                                        : step.statement_type === 'inference'
+                                          ? 'border-yellow-500/40 bg-yellow-500/5'
+                                          : 'border-gray-500/40 bg-muted/30'
+                                    }`}>
+                                      {step.text}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card className="border-dashed">
+                  <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                    暂无影响建议（舆情影响分析完成后自动生成）
+                  </CardContent>
+                </Card>
+              )}
+            </div>
         </div>
       </div>
       <Dialog open={evidenceDialogOpen} onOpenChange={setEvidenceDialogOpen}>
@@ -532,13 +915,80 @@ export default function CompanyProfilePage() {
             </div>
           )}
         </DialogContent>
-
-          {/* 影响建议区块 (Phase E P0-1) */}
+          {false && (
+          /* 影响建议区块 (Phase E P0-1) — 旧版完整卡（新摘要版已在主列 647-706 行，此块临时禁用待删除） */
           <div ref={sectionRefs.impact} className="mb-8">
             <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
               <TrendingUp className="h-5 w-5" />
               影响与建议
             </h2>
+            {/* B2 契约修复：消费后端 events.impact_conclusions（include_impacts=true） */}
+            {impactConclusions.length > 0 && (
+              <div className="space-y-3">
+                {impactConclusions.map((ic, i) => (
+                  <Card key={i} className="bg-muted/20">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle({ high: 'red', medium: 'yellow', low: 'blue' }[ic.severity] || 'unknown')}`}>
+                          {ic.display_tag}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {ic.impact_type} · {ic.direction}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium pt-1">{ic.conclusion}</p>
+                    </CardHeader>
+                    {(ic.causality_chain.length > 0 || ic.evidence_ids.length > 0) && (
+                      <CardContent className="pb-3">
+                        {/* B2：事理图谱式因果传导（A→B→C，按陈述性质着色） */}
+                        {ic.causality_chain.length > 0 && (
+                          <>
+                            <div className="flex flex-wrap items-start gap-1.5">
+                              {ic.causality_chain.map((step, si) => {
+                                const stBorder =
+                                  step.statement_type === 'observed'
+                                    ? 'border-green-500/40 bg-green-500/5'
+                                    : step.statement_type === 'inference'
+                                      ? 'border-yellow-500/40 bg-yellow-500/5'
+                                      : 'border-gray-500/40 bg-muted/30';
+                                return (
+                                  <span key={si} className="flex items-center gap-1.5">
+                                    {si > 0 && <span className="text-muted-foreground text-xs">→</span>}
+                                    <span className={`rounded-md border px-2 py-1 text-xs text-foreground ${stBorder}`}>
+                                      {step.text}
+                                      <span className="ml-1 text-[10px] text-muted-foreground">
+                                        ({step.statement_type})
+                                      </span>
+                                    </span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <p className="mt-1.5 text-[10px] text-muted-foreground">
+                              绿框=已发生事实 · 黄框=推断 · 灰框=预测
+                            </p>
+                          </>
+                        )}
+                        {ic.evidence_ids.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {ic.evidence_ids.slice(0, 5).map((eid, ei) => (
+                              <span key={ei} className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                {eid}
+                              </span>
+                            ))}
+                            {ic.evidence_ids.length > 5 && (
+                              <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                +{ic.evidence_ids.length - 5} 条
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
             {derivationChains.length > 0 ? (
               <div className="space-y-4">
                 {derivationChains.map((chain, ci) => (
@@ -573,16 +1023,17 @@ export default function CompanyProfilePage() {
                   </Card>
                 ))}
               </div>
-            ) : (
+            ) : impactConclusions.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="py-8 text-center text-muted-foreground">
                   <p>暂无影响建议</p>
                   <p className="text-xs mt-1">风险分析完成后将自动生成影响与建议</p>
                 </CardContent>
               </Card>
-            )}
+            ) : null}
           </div>
 
+          )}
       </Dialog>
     </div>
   );

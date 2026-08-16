@@ -9,6 +9,7 @@ Lite profile 使用 NetworkX（明确降级适配器）。
 """
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -189,6 +190,36 @@ async def get_company_equity(
         partial = True
         nodes, edges, paths = [], [], []
 
+    # 上市公司节点显示名：Neo4j 的 canonical_name 为证券代码，统一替换为公司简称
+    code_name_map: dict[str, str] = {}
+    _code_nodes = [
+        n for n in nodes
+        if n.wind_code and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", n.wind_code)
+    ]
+    if _code_nodes:
+        try:
+            from sqlalchemy import text
+
+            from app.domain.finance._fetch import _get_engine
+
+            _codes = sorted({n.wind_code for n in _code_nodes})
+            _ph = ",".join([f":c{i}" for i in range(len(_codes))])
+            _params = {f"c{i}": c for i, c in enumerate(_codes)}
+            with _get_engine().connect() as _conn:
+                _rows = _conn.execute(
+                    text(
+                        "SELECT wind_code, sec_name FROM companies "
+                        f"WHERE wind_code IN ({_ph})"
+                    ),
+                    _params,
+                ).fetchall()
+            code_name_map = {str(r[0]): str(r[1]) for r in _rows if r[1]}
+        except Exception:  # noqa: BLE001 — 名称替换失败不阻断图展示
+            logger.warning("equity: 公司名映射失败，回退证券代码", exc_info=True)
+        for _n in _code_nodes:
+            if code_name_map.get(_n.wind_code):
+                _n.name = code_name_map[_n.wind_code]
+
     # Phase D #12: 正式链路载荷（证据/风险标签/合并说明）
     # canonical evidence_id 映射 + 幂等落库：REST 画像返回的 evidence_ids
     # 可立即经 GET /evidence/{id} 回查（与 Agent 落库同一算法）
@@ -196,16 +227,29 @@ async def get_company_equity(
     chain_warnings: list[str] = []
     try:
         graph_version = getattr(graph, "graph_version", "") or settings.GRAPH_VERSION
+        # 证据标题用名映射（节点 ID → 显示名）：代码样式 label 用公司简称替换
+        evidence_name_map: dict[str, str] = {}
+        for n in graph.nodes:
+            label = n.label or ""
+            if label and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", label):
+                label = code_name_map.get(label) or n.wind_code or label
+            evidence_name_map[n.id] = label
         try:
             _materialized, _conflicts = materialize_equity_evidence(
                 edges=graph.edges,
                 company_code=company.wind_code,
                 graph_version=graph_version,
                 trace_id=trace_id,
+                node_name_map=evidence_name_map,
             )
         except Exception as exc:  # noqa: BLE001 — 证据落库失败不阻断链路
             logger.warning("equity: 证据落库失败: %s", exc, exc_info=True)
-        node_name_map = {n.id: n.label for n in graph.nodes}
+        node_name_map: dict[str, str] = {}
+        for n in graph.nodes:
+            label = n.label or ""
+            if label and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", label):
+                label = code_name_map.get(label) or n.wind_code or label
+            node_name_map[n.id] = label
         edge_evidence_map = build_edge_evidence_map(
             edges=graph.edges,
             company_code=company.wind_code,
@@ -227,6 +271,27 @@ async def get_company_equity(
             merge_groups=[],
         )
         equity_chains = [EquityChainDTO(**c.to_dict()) for c in chain_models]
+        if True:  # node risk guard
+          
+          
+          
+
+          # 缺口 #31：节点风险标签统一消费 canonical 链路风险等级，
+          # 不再由前端按持股比例阈值自判（红/橙/黄优先级取高）。
+          _risk_rank = {"red": 5, "orange": 4, "yellow": 3, "blue": 2, "green": 1}
+          _node_risk: dict[str, str] = {}
+          for _chain in equity_chains:
+              if not _chain.node_ids or not _chain.risk_level:
+                  continue
+              if _chain.risk_level not in _risk_rank:
+                  continue
+              for _nid in _chain.node_ids:
+                  _old = _node_risk.get(_nid)
+                  if not _old or _risk_rank[_chain.risk_level] > _risk_rank.get(_old, 0):
+                      _node_risk[_nid] = _chain.risk_level
+          for _node in nodes:
+              if _node.id in _node_risk:
+                  _node.risk_level = _node_risk[_node.id]
         data_warnings.extend(chain_warnings)
     except Exception as exc:  # noqa: BLE001 — 链路载荷失败不影响基础图
         logger.warning("equity_chains 构建失败: %s", exc, exc_info=True)

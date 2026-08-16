@@ -17,7 +17,13 @@ from app.domain.finance.parent_scope import (
     build_parent_scope_quality,
     check_company_type,
 )
-from app.domain.finance.rule_utils import count_valid, yoy_growth
+from app.domain.finance.rule_utils import (
+    count_valid,
+    fmt_gap_pct,
+    fmt_pct,
+    fmt_period,
+    yoy_growth,
+)
 
 
 def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -172,33 +178,45 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         data_completeness=round(valid_ar / 4, 2),
         missing_periods=4 - valid_ar,
         extra={"denominator_protection_applied": False},
+      
     )
+            
     result.warnings = field_warnings
     result.evidence_ids = [
         f"ev_bs_acct_rcv_{as_of}",
         f"ev_is_oper_rev_{as_of}",
     ]
-    template = _build_explanation(severity, ar_pct, or_pct, gap)
+    template = _build_explanation(
+        severity,
+        ar_pct,
+        or_pct,
+        gap,
+        acct_rcv_sr.periods[-1] if acct_rcv_sr.periods else as_of,
+    )
     if template:
         result.explanation = template
 
     return result
 
 
-def _build_explanation(sev: str, ar: float, ore: float, gap: float) -> str:
+def _build_explanation(sev: str, ar: float, ore: float, gap: float, period: str) -> str:
+    """触发解释：数值最多 1 位小数，增速差用百分号，并标明实际数据期。"""
+    period_text = fmt_period(period)
     if sev == "red":
         return (
-            f"应收账款增速（{ar}%）显著高于营业收入增速（{ore}%），"
-            f"差距达 {gap} 个百分点，收入质量存在明显下降风险。"
+            f"应收账款增速（{fmt_pct(ar)}）显著高于营业收入增速（{fmt_pct(ore)}），"
+            f"增速差达 {fmt_gap_pct(gap)}，收入质量存在明显下降风险"
+            f"（数据期：{period_text}，母公司报表）。"
         )
     if sev == "orange":
         return (
-            f"应收账款增速（{ar}%）明显高于营业收入增速（{ore}%），"
-            f"差距达 {gap} 个百分点，需关注收入确认节奏。"
+            f"应收账款增速（{fmt_pct(ar)}）明显高于营业收入增速（{fmt_pct(ore)}），"
+            f"增速差达 {fmt_gap_pct(gap)}，需关注收入确认节奏"
+            f"（数据期：{period_text}，母公司报表）。"
         )
     if sev == "yellow":
         return (
-            f"应收账款增速略高于营业收入增速，差距 {gap} 个百分点，"
-            f"建议持续关注后续季度变化。"
+            f"应收账款增速略高于营业收入增速，增速差 {fmt_gap_pct(gap)}，"
+            f"建议持续关注后续季度变化（数据期：{period_text}，母公司报表）。"
         )
     return ""
