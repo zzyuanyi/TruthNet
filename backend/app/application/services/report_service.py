@@ -294,7 +294,15 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     """从真实持久化数据生成 PDF 报告（同步，线程内执行）。"""
     company_code = job.get("company_code") or ""
     # 8.09 审查：报告使用任务实际期次（创建时 as_of 参数），不再固定最新图
-    as_of = ((job.get("request_payload") or {}).get("as_of")) or "20260331"
+    # 2026-08-16 口径整改：未传时从库内真实期次推导，禁止硬编码默认
+    as_of = ((job.get("request_payload") or {}).get("as_of")) or ""
+    if not as_of:
+        try:
+            from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+            as_of = resolve_company_data_as_of(company_code)
+        except Exception:  # noqa: BLE001
+            as_of = ""
     data = _collect_report_data(company_code, as_of=as_of)
 
     from reportlab.lib.pagesizes import A4
@@ -463,36 +471,34 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     return pdf_path
 
 
-def _collect_report_data(company_code: str, as_of: str = "20260331") -> dict:
+def _collect_report_data(company_code: str, as_of: str = "") -> dict:
     """从真实持久化数据收集报告内容（不编造）。
 
     as_of：报告任务实际期次（YYYYMMDD 或可解析格式），统一传给风险、
     股权图与股东记录，保证报告内各模块同期次口径。
+    未传/空时从库内真实期次推导（2026-08-16 口径整改，禁止硬编码默认）。
     """
     data: dict = {"company_code": company_code}
     try:
+        from app.domain.finance.data_as_of import resolve_company_data_as_of
         from app.domain.finance.period import normalize_period
 
-        norm_as_of = normalize_period(as_of) or "20260331"
+        norm_as_of = (
+            normalize_period(as_of) or resolve_company_data_as_of(company_code) or ""
+        )
     except Exception:  # noqa: BLE001
-        norm_as_of = "20260331"
+        norm_as_of = ""
     try:
-        # 风险（同步 score，避免在 to_thread 内嵌 asyncio.run 导致事件循环冲突）
+        # 风险（真实数据：复用 assemble_and_score 收集四模块并评分；
+        # 2026-08-16 修复：此前用空模块调 score()，综合风险恒为 unknown/0.0，
+        # 与画像页 red/yellow 矛盾。本函数运行于 to_thread 的工作线程，
+        # 该线程无运行中的事件循环，asyncio.run 是安全的。）
         try:
-            from app.application.services.risk_scoring_service import RiskScoringService
-
-            svc = RiskScoringService()
-            out = svc.score(
-                wind_code=company_code,
-                as_of=norm_as_of,
-                sec_name=company_code,
-                finance_result=None,
-                equity_result=None,
-                events_result=None,
-                benchmarks={},
-                rating_inflections=[],
-                cross_validation=None,
+            from app.application.services.risk_scoring_service import (
+                assemble_and_score,
             )
+
+            out = asyncio.run(assemble_and_score(company_code, norm_as_of or ""))
             data["risk_level"] = out.risk_level
             data["overall_score"] = out.overall_score
             data["pattern_matches"] = [
@@ -514,7 +520,7 @@ def _collect_report_data(company_code: str, as_of: str = "20260331") -> dict:
         try:
             from app.domain.finance.rule_engine import evaluate_all_rules
 
-            results = evaluate_all_rules(company_code, "20260331")
+            results = evaluate_all_rules(company_code, norm_as_of or None)
             data["rules"] = [
                 {
                     "rule_id": rid,

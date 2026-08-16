@@ -59,7 +59,7 @@ export function AnalysisPanel({
   onNavigateStep,
 }: AnalysisPanelProps) {
   return (
-    <div className="h-full flex flex-col bg-background">
+    <div className="h-full min-h-0 flex flex-col bg-background">
       {/* 头部 */}
       <div className="p-4 border-b border-border">
         <h2 className="text-lg font-semibold">分析面板</h2>
@@ -69,7 +69,7 @@ export function AnalysisPanel({
       </div>
 
       {/* 内容区域 */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-4">
           {/* Phase D: 模块执行进度 */}
           {moduleStatus && (state === 'thinking' || state === 'streaming') && (
@@ -419,15 +419,37 @@ function TriggeredRules({
             <CardContent className="p-3">
               <div className="text-sm">
                 {typeof rule === 'string' ? rule : rule.rule_name}
+                <div className="mt-1.5 flex items-center gap-2">
+                  {rule.severity && (
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${
+                      rule.severity === 'red' ? 'bg-red-500/10 text-red-600'
+                      : rule.severity === 'orange' ? 'bg-orange-500/10 text-orange-600'
+                      : rule.severity === 'yellow' ? 'bg-yellow-500/10 text-yellow-600'
+                      : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {rule.severity === 'red' ? '高危'
+                        : rule.severity === 'orange' ? '中高危'
+                        : rule.severity === 'yellow' ? '中等' : rule.severity}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground">
+                    {rule.evidence_ids?.length ?? 0} 条证据
+                  </span>
+                </div>
+                {rule.explanation && (
+                  <p className="mt-1.5 line-clamp-3 text-xs leading-5 text-muted-foreground">
+                    {rule.explanation}
+                  </p>
+                )}
               </div>
               {typeof rule !== 'string' && rule.evidence_ids && rule.evidence_ids.length > 0 && (
                 <>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {rule.evidence_ids.length} 条证据
+                  <div className="hidden">
+                    {/* 证据数量在上方 */}
                   </div>
                   {activeRuleId === rule.rule_id && (
                     <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
-                      {rule.evidence_ids.map(evidenceId => (
+                      {rule.evidence_ids.slice(0, 2).map(evidenceId => (
                         <code
                           key={evidenceId}
                           className="block truncate rounded bg-muted px-1.5 py-1 text-[10px] text-muted-foreground"
@@ -436,6 +458,11 @@ function TriggeredRules({
                           {evidenceId}
                         </code>
                       ))}
+                        {rule.evidence_ids.length > 2 && (
+                          <p className="text-[10px] text-muted-foreground">
+                            另有 {rule.evidence_ids.length - 2} 条证据，可在对话消息或画像页查看
+                          </p>
+                        )}
                     </div>
                   )}
                 </>

@@ -17,7 +17,11 @@ from app.domain.finance.parent_scope import (
     build_parent_scope_quality,
     check_company_type,
 )
-from app.domain.finance.rule_utils import count_valid, yoy_growth
+from app.domain.finance.rule_utils import (
+    count_valid,
+    fmt_period,
+    yoy_growth,
+)
 
 
 def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
@@ -294,20 +298,16 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if severity == "red" and core_ratio is not None:
         result.explanation = (
             f"扣非利润占净利润仅 {core_ratio*100:.1f}%，盈利对非经常性损益严重依赖，"
-            f"主营业务盈利能力需审视。"
+            f"主营业务盈利能力需审视（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
         )
     elif severity == "orange":
         if core_ratio is not None:
-            result.explanation = (
-                f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善。"
-            )
+            result.explanation = f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
         else:
-            result.explanation = (
-                "净利润增速与现金流/营收增速存在背离，盈利质量有待改善。"
-            )
+            result.explanation = f"净利润增速与现金流/营收增速存在背离，盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
     elif severity == "yellow":
         if core_ratio is not None and core_ratio < thresholds.weak_core_profit_ratio:
-            result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性。"
+            result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
         else:
-            result.explanation = "净利润增速与现金流/营收增速存在背离，建议关注。"
+            result.explanation = f"净利润增速与现金流/营收增速存在背离，建议关注（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
     return result

@@ -12,6 +12,7 @@ Router 职责（任务 11 验收）:
 Router 禁止: 查四张表 / 重算规则 / new NetworkX / 硬编码 pattern / 临时 evidence ID。
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -22,6 +23,7 @@ from app.core.errors import ErrorCode
 from app.api.v1.schemas.risk import (
     DataCoverage,
     DerivationChain,
+    FraudConclusionData,
     MitigatingFactor,
     PatternMatch,
     RiskEvidence,
@@ -154,9 +156,10 @@ async def get_company_risk(
     warnings: list[WarningItem] = []
 
     # as_of 规范化（支持 YYYYMMDD / YYYY-MM-DD / YYYYQn）
+    # 未传时传空串，由 assemble_and_score 在公司解析后从库内推导真实截止期
     from app.domain.finance.period import normalize_period
 
-    as_of_ymd = normalize_period(as_of) or settings.DEFAULT_AS_OF or "20260331"
+    as_of_ymd = normalize_period(as_of) or ""
 
     # ── CompanyResolver + RiskScoringService（Router 不收集模块数据）──
     try:
@@ -272,4 +275,134 @@ async def get_company_risk(
             rule_set_version=settings.RULE_SET_VERSION,
         ),
         warnings=warnings,
+    )
+
+
+def _build_fraud_conclusion_input(out) -> tuple[str, str, list[str], int]:
+    """把 RiskOutput 组装成「锁定输入」+ 确定性模板结论。
+
+    返回 (locked_text, template_conclusion, pattern_names, evidence_count)。
+    """
+    patterns: list[str] = []
+    for m in out.pattern_matches or []:
+        name = getattr(m, "pattern_name", "") or ""
+        conf = getattr(m, "confidence", "") or ""
+        rules = getattr(m, "triggered_rules", []) or []
+        patterns.append(f"{name}（{conf}，规则 {','.join(rules)}）")
+
+    rule_lines: list[str] = []
+    evidence_ids: set[str] = set()
+    for chain in out.derivation_chains or []:
+        if getattr(chain, "conclusion_type", "") != "rule_trigger":
+            continue
+        conclusion = getattr(chain, "conclusion", "") or ""
+        expl = ""
+        for sig in getattr(chain, "signals", []) or []:
+            expl = getattr(sig, "explanation", "") or ""
+            if expl:
+                break
+        evidence_ids.update(getattr(chain, "evidence_ids", []) or [])
+        rule_lines.append(f"- {conclusion}：{expl}")
+
+    locked = (
+        f"公司：{out.sec_name}\n"
+        f"综合风险等级：{out.risk_level}（{out.overall_score:.3f} 分）\n"
+        f"命中造假模式：{'; '.join(patterns) if patterns else '无'}\n"
+        f"触发规则证据：\n" + "\n".join(rule_lines)
+    )
+
+    # 确定性模板结论（LLM 失败/关闭时的兜底）
+    risk_cn = {
+        "red": "高危",
+        "orange": "中高危",
+        "yellow": "中等",
+        "green": "正常",
+        "blue": "低风险",
+        "unknown": "数据不足",
+    }.get(out.risk_level, out.risk_level)
+    if patterns:
+        template = (
+            f"该公司综合风险等级为{risk_cn}（{out.overall_score:.3f} 分），"
+            f"疑似命中造假模式：{'、'.join(patterns)}；"
+            f"上述结论由规则引擎评分、触发规则与造假模式匹配结果汇总，数字均可追溯至对应证据。"
+        )
+    else:
+        template = (
+            f"该公司综合风险等级为{risk_cn}（{out.overall_score:.3f} 分），"
+            f"当前数据未命中既有造假模式；结论仅反映既有规则覆盖范围，不构成对未覆盖风险的排除。"
+        )
+    return locked, template, patterns, len(evidence_ids)
+
+
+@router.get(
+    "/companies/{code}/fraud-conclusion",
+    response_model=V12Response[FraudConclusionData],
+)
+async def get_fraud_conclusion(
+    code: str = Path(..., description="公司代码，如 600518.SH"),
+    as_of: str | None = Query(default=None, description="数据截止日期"),
+):
+    """反欺诈结论（结论层 + 叙事层）——按需调用。
+
+    - 数字/规则名/公司名/模式名/置信度全部由后端确定性计算并锁定，
+      LLM 仅做措辞归纳，禁止改动任何数值；
+    - LLM 失败/关闭时回退确定性模板结论（method=template）。
+    """
+    trace_id = str(uuid.uuid4())
+    from app.domain.finance.period import normalize_period
+
+    as_of_ymd = normalize_period(as_of) or ""
+    try:
+        from app.application.services.risk_scoring_service import assemble_and_score
+
+        out = await assemble_and_score(code, as_of_ymd or "")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Company not found: {code}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"风险评分失败: {exc}") from exc
+
+    locked, template, patterns, ev_count = _build_fraud_conclusion_input(out)
+
+    conclusion, method = template, "template"
+    try:
+        from app.agents.llm_sync import run_llm_chat
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是上市公司财报反欺诈分析助手。只能依据下面给定的结构化数据归纳，"
+                    "严禁改动、新增或猜测任何数字、规则编号、公司名、模式名、置信度；"
+                    "每个数字必须原样引用。输出 2-4 句中文：先说疑似造假模式，"
+                    "再给关键证据数字，最后一句风险提示。数据不足就如实说，不得虚构。"
+                ),
+            },
+            {"role": "user", "content": locked},
+        ]
+        llm_out = await asyncio.to_thread(run_llm_chat, messages)
+        if llm_out and str(llm_out).strip():
+            conclusion, method = str(llm_out).strip(), "llm"
+    except Exception:  # noqa: BLE001 — LLM 失败回退模板
+        pass
+
+    return V12Response(
+        data=FraudConclusionData(
+            wind_code=out.wind_code,
+            sec_name=out.sec_name,
+            risk_level=out.risk_level,
+            overall_score=out.overall_score,
+            as_of=getattr(out, "as_of", "") or as_of_ymd or None,
+            conclusion=conclusion,
+            method=method,
+            patterns=patterns,
+            evidence_count=ev_count,
+        ),
+        meta=ApiMeta(
+            request_id=trace_id,
+            trace_id=trace_id,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            data_as_of=as_of_ymd,
+        ),
     )

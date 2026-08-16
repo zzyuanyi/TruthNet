@@ -1,7 +1,7 @@
 // 织网鉴真 TruthNet - 跨公司对比页
 // Phase 3: 多公司对比分析
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
@@ -221,6 +221,116 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
   unknown: { label: '未知', color: 'bg-gray-500 text-white' },
 };
 
+// 后端 D2 元数据单位为英文键（D3 参数评审前），前端映射为展示单位
+const unitLabelMap: Record<string, string> = {
+  percent: '%',
+  percentage_point: '%',
+  quarters: '个季度',
+  ratio: '比率',
+  yuan: '元',
+  times: '倍',
+};
+
+// 后端对比服务已有完整财务规则分析缓存；请求 7 条规则可一次性展示，
+// 不增加后端计算量（evaluate_all_rules 本就全量执行，仅多透出 current 值）。
+const DEFAULT_COMPARISON_RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'];
+
+const RISK_ORDER: Record<string, number> = {
+  red: 5,
+  orange: 4,
+  yellow: 3,
+  blue: 2,
+  green: 1,
+  unknown: 0,
+};
+
+interface RuleMatrixCell {
+  code: string;
+  name: string;
+  triggered: boolean;
+  severity: string;
+  explanation: string;
+  metrics: Array<{ label: string; text: string; riskDirection?: string }>;
+}
+
+interface RuleMatrixRow {
+  ruleId: string;
+  label: string;
+  cells: RuleMatrixCell[];
+}
+
+function buildRuleMatrix(companies: CompanyRiskSummary[]): RuleMatrixRow[] {
+  const ruleIds = new Set<string>();
+  const labelByRule = new Map<string, string>();
+  companies.forEach(c => {
+    c.triggered_rules?.forEach(id => ruleIds.add(id));
+    c.triggered_rule_details?.forEach(d => {
+      ruleIds.add(d.rule_id);
+      labelByRule.set(d.rule_id, d.label || d.rule_id);
+    });
+  });
+
+  return Array.from(ruleIds)
+    .sort()
+    .map(ruleId => ({
+      ruleId,
+      label: labelByRule.get(ruleId) || ruleId,
+      cells: companies.map(c => {
+        const detail = c.triggered_rule_details?.find(d => d.rule_id === ruleId);
+        return {
+          code: c.wind_code,
+          name: c.sec_name,
+          triggered: c.triggered_rules?.includes(ruleId) || Boolean(detail),
+          severity: detail?.severity || (c.triggered_rules?.includes(ruleId) ? 'yellow' : 'green'),
+          explanation: detail?.explanation || '',
+          metrics: (detail?.metrics || []).map(m => ({
+            label: m.label || m.key,
+            text: m.value != null ? `${m.value}${unitLabelMap[m.unit] ?? (m.unit || '')}` : '-',
+            riskDirection: m.risk_direction,
+          })),
+        };
+      }),
+    }));
+}
+
+function buildComparisonConclusions(companies: CompanyRiskSummary[]): string[] {
+  const ranked = [...companies].sort((a, b) => {
+    const levelDiff = (RISK_ORDER[b.risk_level] ?? 0) - (RISK_ORDER[a.risk_level] ?? 0);
+    if (levelDiff !== 0) return levelDiff;
+    return (b.overall_score ?? 0) - (a.overall_score ?? 0);
+  });
+  const conclusions: string[] = [];
+
+  const riskText = ranked
+    .map((c, i) => `${i + 1}. ${c.sec_name}：${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}（${(c.overall_score ?? 0).toFixed(3)} 分）`)
+    .join('；');
+  conclusions.push(`风险排序：${riskText}`);
+
+  const commonRules = new Set<string>();
+  companies.forEach((c, idx) => {
+    const own = new Set(c.triggered_rules || []);
+    companies.slice(idx + 1).forEach(other => {
+      (other.triggered_rules || []).forEach(rid => {
+        if (own.has(rid)) commonRules.add(rid);
+      });
+    });
+  });
+  if (commonRules.size > 0) {
+    conclusions.push(`共同触发规则：${Array.from(commonRules).sort().join('、')}，建议优先对比这些维度的指标值与证据。`);
+  } else {
+    conclusions.push(`${companies.length} 家公司没有共同触发规则，风险差异主要来自各自财务指标结构。`);
+  }
+
+  const patterns = companies
+    .filter(c => (c.pattern_matches?.length ?? 0) > 0)
+    .map(c => `${c.sec_name}：${c.pattern_matches!.join('、')}`);
+  if (patterns.length > 0) {
+    conclusions.push(`风险模式：${patterns.join('；')}。`);
+  }
+
+  return conclusions;
+}
+
 export default function ComparePage() {
   useDocumentTitle('跨公司对比');
   const [searchParams] = useSearchParams();
@@ -279,7 +389,7 @@ export default function ComparePage() {
 
       try {
         // 调用对比 API
-        const response = await truthnetAPI.compareCompanies(codesParam);
+        const response = await truthnetAPI.compareCompanies(codesParam, undefined, DEFAULT_COMPARISON_RULES);
         const data = response.data;
         if (!data) {
           setError('无对比数据');
@@ -298,6 +408,13 @@ export default function ComparePage() {
     loadCompanies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  const ruleMatrix = useMemo(() => buildRuleMatrix(companies), [companies]);
+  const comparisonConclusions = useMemo(
+    () => buildComparisonConclusions(companies),
+    [companies],
+  );
+
 
   // 获取风险等级样式
   const getRiskLevelStyle = (level: string) => {
@@ -470,11 +587,54 @@ export default function ComparePage() {
                           {company.industry_l1}
                         </span>
                       </div>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <div className="rounded bg-muted/50 px-2 py-1">
+                            <span className="text-muted-foreground">综合评分 </span>
+                            <span className="font-medium">{(company.overall_score ?? 0).toFixed(3)}</span>
+                          </div>
+                          <div className="rounded bg-muted/50 px-2 py-1">
+                            <span className="text-muted-foreground">触发规则 </span>
+                            <span className="font-medium">{company.triggered_rules.length} 条</span>
+                          </div>
+                          <div className="rounded bg-muted/50 px-2 py-1">
+                            <span className="text-muted-foreground">风险模式 </span>
+                            <span className="font-medium">{company.pattern_matches?.length ?? 0} 个</span>
+                          </div>
+                          <div className="rounded bg-muted/50 px-2 py-1">
+                            <span className="text-muted-foreground">数据覆盖 </span>
+                            <span className="font-medium">{((company.coverage ?? 0) * 100).toFixed(0)}%</span>
+                          </div>
+                        </div>
                     </div>
                   ))}
                 </div>
               </CardContent>
             </Card>
+
+              {/* 对比结论：由后端返回的风险摘要/触发规则/模式匹配直接推导 */}
+              {comparisonConclusions.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4" />
+                      对比结论
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {comparisonConclusions.map((text, index) => (
+                      <div key={index} className="flex items-start gap-2 text-sm">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                        <p className="leading-relaxed text-muted-foreground">{text}</p>
+                      </div>
+                    ))}
+                    <p className="text-[11px] text-muted-foreground/70">
+                      结论仅由当前规则引擎评分、触发规则与模式匹配结果汇总，不构成投资建议。
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
 
             {/* 指标对比 */}
             <Card>
@@ -519,6 +679,21 @@ export default function ComparePage() {
                                     {displayValue}
                                   </span>
                                 )}
+
+                                  {!isRisk && ci.status && ci.status !== 'not_applicable' && (
+                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                      {ci.status === 'triggered'
+                                        ? '规则已触发'
+                                        : ci.status === 'insufficient_data'
+                                          ? '数据不足'
+                                          : ci.status}
+                                    </p>
+                                  )}
+                                  {!isRisk && ci.severity && ['red', 'orange', 'yellow', 'blue', 'green', 'unknown'].includes(ci.severity) && (
+                                    <Badge className={cn('mt-1 text-[10px]', getRiskLevelStyle(ci.severity))}>
+                                      {riskLevelConfig[ci.severity as RiskLevel]?.label}
+                                    </Badge>
+                                  )}
                               </div>
                             );
                           })}
@@ -531,6 +706,7 @@ export default function ComparePage() {
             </Card>
 
             {/* 触发规则对比 */}
+              {false && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -540,34 +716,170 @@ export default function ComparePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {companies.map((company) => (
-                    <div key={company.wind_code} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">{company.sec_name}</span>
-                        <Badge variant="secondary" className="text-xs">
-                          {company.triggered_rules.length} 条规则
-                        </Badge>
-                      </div>
-                      <div className="space-y-1">
-                        {company.triggered_rules.slice(0, 3).map((rule, index) => (
-                          <div
-                            key={index}
-                            className="flex items-center justify-between text-xs p-2 rounded bg-muted/50"
-                          >
-                            <span>{rule}</span>
+                  {companies.map((company) => {
+                    // #17（8/9 清单）：优先消费后端 triggered_rule_details（含指标值/方向/单位/证据），
+                    // 旧 triggered_rules（仅规则 ID）作降级兜底
+                    const details = company.triggered_rule_details || [];
+                    return (
+                      <div key={company.wind_code} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">{company.sec_name}</span>
+                          <Badge variant="secondary" className="text-xs">
+                            {details.length || company.triggered_rules.length} 条规则
+                          </Badge>
+                        </div>
+                        {details.length > 0 ? (
+                          <div className="space-y-2">
+                            {details.slice(0, 3).map(detail => (
+                              <div key={detail.rule_id} className="rounded-lg border border-border/60 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-medium">
+                                    {detail.label || detail.rule_id}
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {detail.as_of && (
+                                      <span className="text-[10px] text-muted-foreground">
+                                        {detail.as_of}
+                                      </span>
+                                    )}
+                                    <Badge className={cn('text-[10px]', getRiskLevelStyle(detail.severity))}>
+                                      {detail.severity === 'red' ? '高危'
+                                        : detail.severity === 'orange' ? '中高危'
+                                        : detail.severity === 'yellow' ? '中等'
+                                        : detail.severity === 'blue' ? '低风险' : detail.severity}
+                                    </Badge>
+                                  </div>
+                                </div>
+                                {detail.metrics.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {detail.metrics.map(m => (
+                                      <span
+                                        key={m.key}
+                                        className="rounded bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground"
+                                      >
+                                        {m.label || m.key}: {m.value != null ? `${m.value}${unitLabelMap[m.unit] ?? (m.unit || '')}` : '-'}
+                                        {m.risk_direction && m.risk_direction !== 'neutral'
+                                          ? `（${m.risk_direction === 'higher_is_riskier' ? '偏高为风险' : '偏低为风险'}）`
+                                          : ''}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {detail.explanation && (
+                                  <p className="mt-1.5 text-[11px] text-muted-foreground line-clamp-2">
+                                    {detail.explanation}
+                                  </p>
+                                )}
+                                {detail.evidence_ids.length > 0 && (
+                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                    {detail.evidence_ids.length} 条证据可回查
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                            {details.length > 3 && (
+                              <div className="text-xs text-muted-foreground text-center">
+                                +{details.length - 3} 条更多规则
+                              </div>
+                            )}
                           </div>
-                        ))}
-                        {company.triggered_rules.length > 3 && (
-                          <div className="text-xs text-muted-foreground text-center">
-                            +{company.triggered_rules.length - 3} 条更多规则
+                        ) : (
+                          <div className="space-y-1">
+                            {company.triggered_rules.slice(0, 3).map((rule, index) => (
+                              <div
+                                key={index}
+                                className="flex items-center justify-between text-xs p-2 rounded bg-muted/50"
+                              >
+                                <span>{rule}</span>
+                              </div>
+                            ))}
+                            {company.triggered_rules.length > 3 && (
+                              <div className="text-xs text-muted-foreground text-center">
+                                +{company.triggered_rules.length - 3} 条更多规则
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
+              )}
+
+              {/* 触发规则矩阵：同一规则横向对比各公司状态/指标，替代逐公司堆叠 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    触发规则矩阵
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    同一规则横向对比：绿色=未触发，彩色=触发严重度，附指标值与触发原因
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {ruleMatrix.length > 0 ? (
+                    <div className="space-y-3">
+                      {ruleMatrix.map(row => (
+                        <div key={row.ruleId} className="rounded-lg border border-border/60 p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-sm font-medium">{row.label}</span>
+                            <span className="text-xs text-muted-foreground">{row.ruleId}</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            {row.cells.map(cell => (
+                              <div
+                                key={cell.code}
+                                className={cn(
+                                  'rounded-md border p-2.5',
+                                  cell.triggered ? 'border-orange-500/30 bg-orange-500/5' : 'border-border/60 bg-muted/20',
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate text-xs font-medium">{cell.name}</span>
+                                  <Badge className={cn('shrink-0 text-[10px]', getRiskLevelStyle(cell.triggered ? cell.severity : 'green'))}>
+                                    {cell.triggered
+                                      ? (cell.severity === 'red' ? '高危'
+                                        : cell.severity === 'orange' ? '中高危'
+                                        : cell.severity === 'yellow' ? '中等'
+                                        : cell.severity === 'blue' ? '低风险'
+                                        : cell.severity)
+                                      : '未触发'}
+                                  </Badge>
+                                </div>
+                                {cell.metrics.length > 0 && (
+                                  <div className="mt-2 space-y-1">
+                                    {cell.metrics.map((m, mi) => (
+                                      <p key={mi} className="text-[11px] text-muted-foreground">
+                                        {m.label}：<span className="font-medium text-foreground">{m.text}</span>
+                                        {m.riskDirection && m.riskDirection !== 'neutral'
+                                          ? `（${m.riskDirection === 'higher_is_riskier' ? '偏高为风险' : '偏低为风险'}）`
+                                          : ''}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                                {cell.triggered && cell.explanation && (
+                                  <p className="mt-1.5 line-clamp-2 text-[11px] text-muted-foreground">
+                                    {cell.explanation}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      两家公司均无触发规则
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
 
             {/* 免责声明 */}
             <div className="text-center text-xs text-muted-foreground py-4">

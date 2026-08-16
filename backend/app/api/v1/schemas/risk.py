@@ -136,3 +136,17 @@ class RiskResponseData(BaseModel):
     # 证据
     evidence: list[RiskEvidence] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class FraudConclusionData(BaseModel):
+    """反欺诈结论（LLM 措辞层，数字由后端锁定，禁止 LLM 改数）。"""
+
+    wind_code: str
+    sec_name: str
+    risk_level: str
+    overall_score: float
+    as_of: str | None = Field(default=None)
+    conclusion: str = Field(default="", description="2-4 句人话结论")
+    method: str = Field(default="template", description="llm | template")
+    patterns: list[str] = Field(default_factory=list, description="命中的造假模式名")
+    evidence_count: int = Field(default=0, description="可溯源证据条数")

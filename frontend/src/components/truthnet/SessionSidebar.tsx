@@ -133,7 +133,7 @@ export function SessionSidebar({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 shrink-0 opacity-60 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                className="h-7 w-7 shrink-0 opacity-70 transition-opacity hover:opacity-100"
                 aria-label={`删除会话：${session.title}`}
                 title="删除会话"
                 disabled={isBusy}

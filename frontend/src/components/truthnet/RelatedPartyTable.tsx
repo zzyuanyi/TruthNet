@@ -39,6 +39,15 @@ const nodeTypeConfig = {
   },
 };
 
+// 缺口 #31：风险着色只消费后端 canonical node.risk_level，禁止前端按持股比例自判
+const nodeRiskConfig: Record<string, { label: string; className: string }> = {
+  red: { label: '高危', className: 'bg-red-500/10 text-red-600 border-red-500/20' },
+  orange: { label: '中高危', className: 'bg-orange-500/10 text-orange-600 border-orange-500/20' },
+  yellow: { label: '中等', className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20' },
+  blue: { label: '低风险', className: 'bg-blue-500/10 text-blue-600 border-blue-500/20' },
+  green: { label: '正常', className: 'bg-green-500/10 text-green-600 border-green-500/20' },
+};
+
 export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighlightPath }: RelatedPartyTableProps) {
   const { nodes, edges } = equityData;
 
@@ -77,7 +86,7 @@ export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighl
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <Network className="h-4 w-4" />
-            关联方关系
+            直接关联方（一层）
           </CardTitle>
           <Badge variant="secondary" className="text-xs">
             {nodes.length} 个节点
@@ -135,14 +144,14 @@ export function RelatedPartyTable({ equityData, eventsData, onNodeClick, onHighl
         </div>
 
         {/* 风险提示 */}
-        {hasRiskIndicators(equityData) && (
+        {hasChainRiskIndicators(equityData) && (
           <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
               <div className="text-xs text-red-600">
                 <div className="font-medium mb-1">风险提示</div>
                 <ul className="list-disc list-inside space-y-1">
-                  {getRiskIndicators(equityData).map((risk, index) => (
+                  {getChainRiskIndicators(equityData).map((risk, index) => (
                     <li key={index}>{risk}</li>
                   ))}
                 </ul>
@@ -223,14 +232,14 @@ function RelatedPartyRow({ node, link, isUpstream, sourceSystem, onNodeClick, on
           )}
         </div>
       </TableCell>
-      {/* 风险等级（阈值：>50 高、>20 中） */}
+      {/* 风险等级：后端 canonical node.risk_level */}
       <TableCell>
         <Badge variant="outline" className={cn('text-xs',
-          (link.ownership_pct ?? 0) > 50 ? 'bg-red-500/10 text-red-600' :
-          (link.ownership_pct ?? 0) > 20 ? 'bg-yellow-500/10 text-yellow-600' :
-          'bg-green-500/10 text-green-600'
+          nodeRiskConfig[node.risk_level || '']?.className ||
+          
+          'bg-gray-500/10 text-gray-600'
         )}>
-          {(link.ownership_pct ?? 0) > 50 ? '高' : (link.ownership_pct ?? 0) > 20 ? '中' : '低'}
+          {nodeRiskConfig[node.risk_level || '']?.label || '未评级'}
         </Badge>
       </TableCell>
       {/* 事件数 */}
@@ -273,6 +282,26 @@ const relationLabels: Record<string, string> = {
   supervisor: '监事',
   director: '董事',
 };
+
+// 缺口 #31：风险提示改消费后端 canonical equity_chains，不再按 >50%/>20% 自判
+function hasChainRiskIndicators(equityData: EquityResponseData): boolean {
+  return getChainRiskIndicators(equityData).length > 0;
+}
+
+function getChainRiskIndicators(equityData: EquityResponseData): string[] {
+  const chains = (equityData.equity_chains || []) as Array<Record<string, unknown>>;
+  const out: string[] = [];
+  for (const chain of chains) {
+    const level = String(chain.risk_level || 'green');
+    if (!['red', 'orange', 'yellow'].includes(level)) continue;
+    const reasons = Array.isArray(chain.risk_reasons) ? chain.risk_reasons : [];
+    for (const reason of reasons) {
+      const text = String(reason || '').trim();
+      if (text && !out.includes(text)) out.push(text);
+    }
+  }
+  return out.slice(0, 5);
+}
 
 // 最大穿透深度（从 paths 计算，节点无 depth 字段）
 function maxPathDepth(equityData: EquityResponseData): number {

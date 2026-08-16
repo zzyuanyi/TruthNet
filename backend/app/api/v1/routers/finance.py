@@ -118,10 +118,11 @@ async def get_company_finance(
         )
     entity_id, wind_code, sec_name, industry_l1 = resolved
 
-    # 2. as_of 规范化（YYYYQn → 季末日期）
+    # 2. as_of 规范化（YYYYQn → 季末日期）；未传时从库内真实期次推导（禁止硬编码默认）
+    from app.domain.finance.data_as_of import resolve_company_data_as_of
     from app.domain.finance.period import normalize_period
 
-    as_of_str = normalize_period(as_of) or settings.DEFAULT_AS_OF or "20260331"
+    as_of_str = normalize_period(as_of) or resolve_company_data_as_of(wind_code) or ""
 
     # 3. 运行规则引擎（异常 → unknown，不伪造）
     rules: list[FinanceRuleItem] = []

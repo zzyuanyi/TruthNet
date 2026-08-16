@@ -1,6 +1,29 @@
 """规则计算公共工具函数 — RULES_SPEC §1.2."""
 
 
+def fmt_period(period: str | None) -> str:
+    """YYYYMMDD → YYYY-MM-DD；非 8 位原样返回（用户可读期次）。"""
+    p = str(period or "")
+    if len(p) == 8 and p.isdigit():
+        return f"{p[:4]}-{p[4:6]}-{p[6:]}"
+    return p
+
+
+def fmt_pct(value: float | None, digits: int = 1) -> str:
+    """百分比格式化（无 None 保护：调用方保证非 None）。"""
+    return f"{float(value):.{digits}f}%"
+
+
+def fmt_gap_pct(value: float | None, digits: int = 1) -> str:
+    """增速差格式化：按演示口径用百分号表达（不再输出 pp）。"""
+    return f"{float(value):.{digits}f}%"
+
+
+def fmt_yi(value: float | None, digits: int = 1) -> str:
+    """元 → 亿元。"""
+    return f"{float(value or 0) / 1e8:.{digits}f}"
+
+
 def yoy_growth(current: float | None, base: float | None) -> float | None:
     """同比增长率 — RULES_SPEC §1.2.
 

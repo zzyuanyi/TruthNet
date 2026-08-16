@@ -334,7 +334,8 @@ def test_evidence_ids_unmapped_dropped_with_warning():
 def test_risk_label_mapping_single_source():
     """risk_label → risk_level 单一映射函数。"""
     assert map_risk_level("deep_chain") == "yellow"
-    assert map_risk_level("concentrated_control") == "orange"
+    # 2026-08-16 口径校准：集中持股降为 yellow（观察项，非独立中高危信号）
+    assert map_risk_level("concentrated_control") == "yellow"
     assert map_risk_level("multi_layer_entity") == "yellow"
     assert map_risk_level("insufficient_source") == "yellow"
     assert map_risk_level("ownership_mismatch") == "orange"

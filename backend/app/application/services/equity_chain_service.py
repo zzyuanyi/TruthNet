@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 # 复用仓库既有等级口径：red/orange/yellow/green/unknown
 _RISK_LABEL_TO_LEVEL: dict[str, str] = {
     "deep_chain": "yellow",  # 链路层级过深
-    "concentrated_control": "orange",  # 最终控制比例集中
+    # 2026-08-16 演示口径校准：持股比例集中本身是公司治理观察项，
+    # 不构成独立的中高危欺诈信号（曾为 orange，导致贵州茅台等无触发规则、
+    # 无负面舆情的健康公司被信号地板抬到"中高危"）；保留 yellow 提醒。
+    "concentrated_control": "yellow",  # 最终控制/持股比例集中
     "multi_layer_entity": "yellow",  # 多层中间实体
     "insufficient_source": "yellow",  # 来源覆盖不足
     "ownership_mismatch": "orange",  # 比例不一致（与 CV-NUM-02 呼应）

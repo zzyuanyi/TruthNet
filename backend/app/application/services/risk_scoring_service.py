@@ -59,10 +59,62 @@ _BM_PCT_ORANGE = 90.0
 _BM_PCT_YELLOW = 75.0
 
 
+_TABLE_LABELS: dict[str, str] = {
+    "income_statement": "利润表",
+    "balance_sheet": "资产负债表",
+    "cash_flow": "现金流量表",
+    "financial_statement": "财务报表",
+}
+
+_FIELD_LABELS: dict[str, str] = {
+    "acct_rcv": "应收账款",
+    "oper_rev": "营业收入",
+    "inventories": "存货",
+    "monetary_cap": "货币资金",
+    "st_borrow": "短期借款",
+    "lt_borrow": "长期借款",
+    "tot_assets": "总资产",
+    "oth_rcv": "其他应收款",
+    "net_profit": "净利润",
+    "oper": "经营活动现金流",
+    "net_cash_flows_oper_act": "经营活动现金流",
+    "net_profit_excl_min_int_inc": "净利润",
+    "net_profit_after_ded_nr_lp": "扣非净利润",
+    "less_oper_cost": "营业成本",
+    "oper_profit": "营业利润",
+    "tot_profit": "利润总额",
+    "core_profit": "核心利润",
+}
+
+
+def _evidence_context(ev, label: str) -> str:
+    """从 EvidenceRef 构造“指标 / 报表 / 期次 / 值”的可读上下文。"""
+    parts: list[str] = []
+    field = str(getattr(ev, "field_path", "") or "").strip()
+    if field:
+        parts.append(_FIELD_LABELS.get(field, field))
+    table = str(getattr(ev, "source_table", "") or "").strip()
+    if table:
+        parts.append(_TABLE_LABELS.get(table, table))
+    period = str(getattr(ev, "period", "") or "").strip()
+    if period:
+        parts.append(period)
+    value = getattr(ev, "value", None)
+    if value is not None and str(value).strip() != "":
+        unit = str(getattr(ev, "unit", "") or "").strip()
+        parts.append(f"{value}{unit}")
+    if parts:
+        return " · ".join(parts)
+    return f"{label} 模块证据"
+
+
 def _evidence_summary(ev, label: str) -> str:
     """真实摘要：source_title → source_excerpt → "字段 期次: 值" → 模块兜底。"""
     title = str(getattr(ev, "source_title", "") or "").strip()
     if title:
+        context = _evidence_context(ev, label)
+        if context and context != f"{label} 模块证据":
+            return f"{title}｜{context}"
         return title
     excerpt = str(getattr(ev, "source_excerpt", "") or "").strip()
     if excerpt:
@@ -112,7 +164,13 @@ async def assemble_and_score(
         # 与 V12 错误码契约一致（COMPANY_NOT_FOUND 已更名为 COMPANY_NOT_COVERED）
         raise ValueError(f"COMPANY_NOT_COVERED: {code}")
     wind_code = rec.wind_code
-    as_of_str = as_of or settings.DEFAULT_AS_OF or "20260331"
+    # 2026-08-16 口径整改：未传 as_of 时从库内真实期次推导，禁止硬编码默认期
+    if not as_of:
+        from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+        as_of_str = resolve_company_data_as_of(wind_code) or ""
+    else:
+        as_of_str = as_of
     company = CompanyRef(
         entity_id=rec.entity_id,
         wind_code=wind_code,

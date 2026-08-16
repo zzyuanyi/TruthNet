@@ -1,16 +1,20 @@
 // 织网鉴真 TruthNet - 舆情时间线组件
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 // Phase 2: 舆情时间线
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Calendar, ExternalLink, TrendingDown, TrendingUp, Minus } from 'lucide-react';
+import { Calendar, ExternalLink, FileText, Loader2, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import type { EventCluster, TimelineEvent } from '@/types/truthnet';
 import { cn } from '@/lib/utils';
+import { truthnetAPI } from '@/lib/api-client';
 
 interface RiskTimelineProps {
   events: TimelineEvent[];
   clusters?: EventCluster[];
+  /** 公司代码：生成公告 PDF 摘要时定位公告归属 */
+  companyCode?: string;
   onEventClick?: (event: TimelineEvent) => void;
 }
 
@@ -37,7 +41,7 @@ const sourceTypeIcons: Record<string, string> = {
   regulation: '监管',
 };
 
-export function RiskTimeline({ events, clusters, onEventClick }: RiskTimelineProps) {
+export function RiskTimeline({ events, clusters, companyCode, onEventClick }: RiskTimelineProps) {
   // 按日期排序（最新在前）
   const sortedEvents = [...events].sort((a, b) =>
     new Date(b.date).getTime() - new Date(a.date).getTime()
@@ -91,6 +95,7 @@ export function RiskTimeline({ events, clusters, onEventClick }: RiskTimelinePro
                     <TimelineItem
                       key={`${event.date}-${index}`}
                       event={event}
+                        companyCode={companyCode}
                       onClick={() => onEventClick?.(event)}
                     />
                   ))}
@@ -135,11 +140,29 @@ export function RiskTimeline({ events, clusters, onEventClick }: RiskTimelinePro
 // 时间线单项组件
 interface TimelineItemProps {
   event: TimelineEvent;
+  companyCode?: string;
   onClick?: () => void;
 }
 
-function TimelineItem({ event, onClick }: TimelineItemProps) {
+function TimelineItem({ event, companyCode, onClick }: TimelineItemProps) {
   const sentiment = event.sentiment as keyof typeof sentimentColors;
+  const [generatedSummary, setGeneratedSummary] = useState<string | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  const handleGenerateSummary = async () => {
+    if (!companyCode || !event.object_id || summaryLoading) return;
+    setSummaryLoading(true);
+    setSummaryError(null);
+    try {
+      const res = await truthnetAPI.getAnnouncementSummary(companyCode, event.object_id);
+      setGeneratedSummary(res.data?.summary || '');
+    } catch (err) {
+      setSummaryError(err instanceof Error ? err.message : '公告摘要生成失败');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
 
   return (
     <div
@@ -182,6 +205,30 @@ function TimelineItem({ event, onClick }: TimelineItemProps) {
             {event.summary}
           </div>
         )}
+
+          {/* PDF 公告摘要（按需生成） */}
+          {generatedSummary ? (
+            <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-1.5">
+              <p className="text-[10px] font-medium text-blue-600 dark:text-blue-400">公告摘要</p>
+              <p className="mt-0.5 text-xs leading-5 text-foreground/90">{generatedSummary}</p>
+            </div>
+          ) : event.object_id && companyCode ? (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                void handleGenerateSummary();
+              }}
+              disabled={summaryLoading}
+              className="inline-flex items-center gap-1 rounded border border-border/60 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:opacity-60"
+            >
+              {summaryLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+              {summaryLoading ? '正在解析公告原文…' : '生成公告摘要'}
+            </button>
+          ) : null}
+          {summaryError && (
+            <p className="text-[11px] text-destructive">{summaryError}</p>
+          )}
 
         {/* 情感标签 */}
         <div className="flex items-center gap-1 pt-1">

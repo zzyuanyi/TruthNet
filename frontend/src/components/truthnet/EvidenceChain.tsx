@@ -38,7 +38,10 @@ const categoryLabelsMap: Record<string, string> = {
 };
 
 export function EvidenceChain({ categories, onViewSource, onLinkToRule, filterEvidenceIds }: EvidenceChainProps) {
-  const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
+  // 2026-08-16 可读性：默认展开第一类证据，让用户在外面先看到基本介绍
+  const [openCategories, setOpenCategories] = useState<Set<string>>(
+    () => new Set(categories.length > 0 ? [categories[0].category] : []),
+  );
   const [listParent] = useAutoAnimate();
 
   // Task 8: 按 filterEvidenceIds 过滤
@@ -196,7 +199,7 @@ function RiskEvidenceCard({ item, onViewSource, onLinkToRule }: {
       </Badge>
 
       {/* 操作按钮 */}
-      <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex gap-2 mt-2 opacity-100 transition-opacity">
         {onViewSource && (
           <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
             onClick={() => onViewSource(item)}>

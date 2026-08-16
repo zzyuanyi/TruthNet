@@ -9,13 +9,100 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText } from 'lucide-react';
-import type { Message, RiskLevel, ComparisonNextStep } from '@/types/truthnet';
+import type { Message, RiskLevel, ComparisonNextStep, PendingCompanyCandidates } from '@/types/truthnet';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 
-interface CompanyCandidate {
-  wind_code: string;
-  sec_name: string;
+// 来源类型中文标签（与画像页 sourceTypeIcons 口径一致）
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  financial_statement: '母公司报表',
+  announcement: '公告',
+  research_report: '研报',
+  news: '新闻',
+  regulation: '监管',
+  equity: '股权',
+  event: '舆情',
+  risk: '风险',
+};
+
+interface AnswerSection {
+  title: string;
+  body: string;
+  tone: 'red' | 'blue' | 'orange' | 'gray';
 }
+
+function splitStructuredAnswer(content: string): {
+  preamble: string;
+  ruleDetails: string;
+  sections: AnswerSection[];
+} {
+  const chunks = content.split(/(?=【[^】]+】)/g).map(s => s.trim()).filter(Boolean);
+  const preamble = chunks[0] || '';
+  const ruleMarker = '触发规则明细：';
+  const ruleIndex = preamble.indexOf(ruleMarker);
+  const summary = ruleIndex >= 0 ? preamble.slice(0, ruleIndex).trim() : preamble;
+  const ruleDetails = ruleIndex >= 0 ? preamble.slice(ruleIndex + ruleMarker.length).trim() : '';
+
+  const toneFor = (title: string): AnswerSection['tone'] => {
+    if (title.includes('预警')) return 'red';
+    if (title.includes('数据对比')) return 'blue';
+    if (title.includes('可能模式')) return 'orange';
+    return 'gray';
+  };
+
+  const sections = chunks.slice(1).map(raw => {
+    const match = raw.match(/^【([^】]+)】/);
+    const title = match?.[1]?.trim() || '分段';
+    const body = raw.replace(/^【[^】]+】/, '').trim();
+    return { title, body, tone: toneFor(title) };
+  });
+
+  return { preamble: summary, ruleDetails, sections };
+}
+
+const SECTION_TONES: Record<AnswerSection['tone'], string> = {
+  red: 'border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400',
+  blue: 'border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-400',
+  orange: 'border-orange-500/30 bg-orange-500/5 text-orange-700 dark:text-orange-400',
+  gray: 'border-border bg-muted/40 text-muted-foreground',
+};
+
+function StructuredAnswer({ content }: { content: string }) {
+  if (!content.includes('【')) {
+    return <MarkdownRenderer content={content} />;
+  }
+  const { preamble, ruleDetails, sections } = splitStructuredAnswer(content);
+  return (
+    <div className="space-y-2 text-sm leading-relaxed">
+      {preamble && (
+        <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+          <p className="mb-1 text-xs font-semibold text-primary">分析概要</p>
+          <MarkdownRenderer content={preamble} />
+        </div>
+      )}
+      {ruleDetails && (
+        <details className="rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-medium text-foreground">
+            触发规则明细
+          </summary>
+          <div className="mt-2">
+            <MarkdownRenderer content={ruleDetails} />
+          </div>
+        </details>
+      )}
+      {sections.map((section, index) => (
+        <details key={`${section.title}-${index}`} open={index === 0} className="rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+          <summary className={`cursor-pointer text-xs font-semibold ${SECTION_TONES[section.tone]}`}>
+            {section.title}
+          </summary>
+          <div className="mt-2">
+            <MarkdownRenderer content={section.body} />
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 
 interface ChatInterfaceProps {
   messages: Message[];
@@ -25,8 +112,12 @@ interface ChatInterfaceProps {
   activeRuleName?: string | null;
   onClearEvidenceHighlight?: () => void;
   // 8.11：公司歧义候选确认（后端 company.candidates → 点选 → company.confirm 重跑）
-  pendingCandidates?: { turn_id: string; candidates: CompanyCandidate[] } | null;
-  onConfirmCompany?: (turnId: string, windCode: string) => void;
+  // 契约修复：v3.1 mention 分组协议（多候选在 mentions[]，带 mention_id+revision）
+  pendingCandidates?: PendingCompanyCandidates | null;
+  onConfirmCompany?: (turnId: string, mentionId: string, revision: number, windCode: string) => void;
+  // v3.3.1 §8.2 契约修复：分段歧义澄清提示（entity.clarification_required）
+  clarificationIssue?: string | null;
+  onDismissClarification?: () => void;
   // v3.3.4 收口复核清单 §5：结构化比较下一步导航
   onNavigateStep?: (step: ComparisonNextStep) => void;
 }
@@ -50,6 +141,8 @@ export function ChatInterface({
   onClearEvidenceHighlight,
   pendingCandidates,
   onConfirmCompany,
+  clarificationIssue,
+  onDismissClarification,
   onNavigateStep,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
@@ -57,17 +150,18 @@ export function ChatInterface({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [msgParent] = useAutoAnimate();
 
-  // 8.11 P0（审查）：新的候选轮次（turn_id 变化）重置确认状态，
-  // 避免第二次歧义时按钮全部被禁用
+  // 8.11 P0（审查）+ 契约修复：新候选轮次（turn_id 或 revision 变化）重置确认状态，
+  // 避免第二次歧义或同轮后续 mention 确认时按钮全部被禁用
   useEffect(() => {
     setConfirmingCode(null);
-  }, [pendingCandidates?.turn_id]);
+  }, [pendingCandidates?.turn_id, pendingCandidates?.revision]);
 
-  // 8.11：确认候选公司（点击后禁用重复选择，等待后端重跑原问题）
-  const handleConfirm = (windCode: string) => {
+  // 8.11/契约修复：确认候选公司（点击后禁用重复选择，等待后端重跑原问题）
+  // mention 分组协议：mention_id 原样回传（旧协议空 mention_id 走后端兼容路径）
+  const handleConfirm = (mentionId: string, windCode: string) => {
     if (!pendingCandidates || confirmingCode) return;
     setConfirmingCode(windCode);
-    onConfirmCompany?.(pendingCandidates.turn_id, windCode);
+    onConfirmCompany?.(pendingCandidates.turn_id, mentionId, pendingCandidates.revision, windCode);
   };
 
   // 自动滚动到底部
@@ -155,29 +249,52 @@ export function ChatInterface({
             );
           })}
 
-          {/* 8.11：公司歧义候选确认卡片 */}
-          {pendingCandidates && pendingCandidates.candidates.length > 0 && (
-            <div className="max-w-[70%] rounded-lg border border-primary/30 bg-primary/5 p-3">
-              <p className="text-sm font-medium text-foreground mb-2">
+          {/* v3.3.1 §8.2 契约修复：分段歧义澄清提示 */}
+          {clarificationIssue && (
+            <div className="max-w-[70%] rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3">
+              <p className="text-sm font-medium text-foreground mb-1">需要澄清</p>
+              <p className="text-xs text-muted-foreground">{clarificationIssue}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-7 px-2 text-xs"
+                onClick={onDismissClarification}
+              >
+                知道了
+              </Button>
+            </div>
+          )}
+
+          {/* 8.11 契约修复：公司歧义候选确认卡片（mention 分组协议） */}
+          {pendingCandidates && pendingCandidates.mentions.length > 0 && (
+            <div className="max-w-[70%] rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3">
+              <p className="text-sm font-medium text-foreground">
                 检测到多家公司，请选择您想问的是哪一家：
               </p>
-              <div className="flex flex-wrap gap-2">
-                {pendingCandidates.candidates.map(c => (
-                  <Button
-                    key={c.wind_code}
-                    variant={confirmingCode === c.wind_code ? 'default' : 'outline'}
-                    size="sm"
-                    className="h-auto py-1.5 text-xs"
-                    disabled={Boolean(confirmingCode)}
-                    onClick={() => handleConfirm(c.wind_code)}
-                  >
-                    {c.sec_name}
-                    <span className="ml-1 text-[10px] opacity-70">{c.wind_code}</span>
-                  </Button>
-                ))}
-              </div>
+              {pendingCandidates.mentions.map(mention => (
+                <div key={mention.mention_id || `flat-${mention.text || '0'}`} className="space-y-1.5">
+                  {mention.text && (
+                    <p className="text-xs text-muted-foreground">关于「{mention.text}」：</p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {mention.candidates.map(c => (
+                      <Button
+                        key={`${mention.mention_id || 'flat'}-${c.wind_code}`}
+                        variant={confirmingCode === c.wind_code ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-auto py-1.5 text-xs"
+                        disabled={Boolean(confirmingCode)}
+                        onClick={() => handleConfirm(mention.mention_id, c.wind_code)}
+                      >
+                        {c.sec_name}
+                        <span className="ml-1 text-[10px] opacity-70">{c.wind_code}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
               {confirmingCode && (
-                <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   已确认，正在重新分析该公司的数据...
                 </p>
@@ -278,7 +395,7 @@ function MessageBubble({
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none">
-            <MarkdownRenderer content={message.content} />
+            <StructuredAnswer content={message.content} />
           </div>
         )}
 
@@ -316,26 +433,35 @@ function MessageBubble({
           </div>
         )}
 
-        {/* 来源引用 */}
+        {/* 来源引用（演示整改：标题=规则名·期次，来源类型仅非财务类展示，避免整列同质化） */}
         {message.sources && message.sources.length > 0 && (
           <div className="mt-3 pt-3 border-t border-border/50">
             <p className="text-xs text-muted-foreground mb-1">来源：</p>
             <div className="space-y-1">
-              {message.sources.map(source => (
-                <div key={source.id} className="text-xs text-muted-foreground">
-                  • {source.title} - {source.source}
-                  {source.url && (
-                    <a
-                      href={source.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ml-1.5 text-blue-500 hover:underline"
-                    >
-                      查看原文
-                    </a>
-                  )}
-                </div>
-              ))}
+              {message.sources.map(source => {
+                const typeLabel = SOURCE_TYPE_LABELS[source.source] || '';
+                return (
+                  <div key={source.id} className="flex items-start gap-1 text-xs text-muted-foreground">
+                    <span className="shrink-0">•</span>
+                    <span className="min-w-0">
+                      <span className="text-foreground/80">{source.title}</span>
+                      {typeLabel && source.source !== 'financial_statement' && (
+                        <span className="ml-1.5 rounded bg-muted px-1 text-[10px]">{typeLabel}</span>
+                      )}
+                      {source.url && (
+                        <a
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-1.5 text-blue-500 hover:underline"
+                        >
+                          查看原文
+                        </a>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
