@@ -116,6 +116,12 @@ def _patch_fetch(monkeypatch, comp_type=1, industry="医药生物"):
 def test_triggered_rule_writes_similar_cases(monkeypatch):
     _patch_rule_engine(monkeypatch, triggered=True)
     _patch_fetch(monkeypatch, comp_type=1)
+    # 2026-08-16 口径整改：未传期次时 as_of 从库内真实期次推导（禁硬编码）；
+    # 单测锁定推导结果为固定期，保持本文件「不访问真实 DB」约束。
+    monkeypatch.setattr(
+        "app.domain.finance.data_as_of.resolve_company_data_as_of",
+        lambda code: "20260331",
+    )
     provider = FakeProvider()
     finance_node_module.set_similar_case_provider(provider)
 
