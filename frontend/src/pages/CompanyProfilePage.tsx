@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
 const sourceTypeIcons: Record<string, string> = {
   announcement: '公告',
@@ -104,6 +105,7 @@ export default function CompanyProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Company | null>(null);
+  useDocumentTitle(profile?.sec_name || '企业画像');
   const [financialAnomalies, setFinancialAnomalies] = useState<FinanceRuleItem[]>([]);
   const [equityData, setEquityData] = useState<EquityResponseData | null>(null);
   const [sentimentEvents, setSentimentEvents] = useState<TimelineEvent[]>([]);

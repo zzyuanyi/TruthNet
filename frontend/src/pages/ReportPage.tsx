@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { FileText, Download, AlertTriangle, CheckCircle, Clock, Loader2, ArrowLeft, Shield } from 'lucide-react';
 import truthnetAPI from '@/lib/api-client';
 
@@ -30,6 +31,7 @@ interface ReportDetail {
 }
 
 export default function ReportPage() {
+  useDocumentTitle('报告详情');
   const { reportId } = useParams<{ reportId: string }>();
   const [report, setReport] = useState<ReportDetail | null>(null);
   const [loading, setLoading] = useState(true);

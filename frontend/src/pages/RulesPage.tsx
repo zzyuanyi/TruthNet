@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { truthnetAPI } from '@/lib/api-client';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import type { RulesDefinitionsData, RuleDefinition } from '@/lib/api-client';
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -11,6 +12,7 @@ const LEVEL_COLORS: Record<string, string> = {
 };
 
 export default function RulesPage() {
+  useDocumentTitle('规则配置');
   const [rulesData, setRulesData] = useState<RulesDefinitionsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

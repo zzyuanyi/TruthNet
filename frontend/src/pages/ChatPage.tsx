@@ -10,6 +10,7 @@ import { ChatInterface } from '@/components/truthnet/ChatInterface';
 import { AnalysisPanel } from '@/components/truthnet/AnalysisPanel';
 import { apiClient, wsClient } from '@/lib/api-client';
 import { comparisonStepToUrl } from '@/lib/comparison-steps';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import type {
   Session,
   Message,
@@ -24,6 +25,7 @@ import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export default function ChatPage() {
+  useDocumentTitle('智能问答');
   const navigate = useNavigate();
   // 状态管理
   const [sessions, setSessions] = useState<Session[]>([]);

@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -221,6 +222,7 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
 };
 
 export default function ComparePage() {
+  useDocumentTitle('跨公司对比');
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [companies, setCompanies] = useState<CompanyRiskSummary[]>([]);

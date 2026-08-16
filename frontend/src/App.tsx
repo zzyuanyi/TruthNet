@@ -1,31 +1,53 @@
-// 织网鉴真 TruthNet - 应用入口
-// 路由配置
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Toaster } from '@/components/ui/sonner';
+import { ErrorBoundary } from '@/components/error-boundary';
+import { ScrollToTop } from '@/components/scroll-to-top';
+import Layout from '@/components/layout';
 
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import Layout from './components/layout';
-import ChatPage from './pages/ChatPage';
-import CompanyProfilePage from './pages/CompanyProfilePage';
-import ComparePage from './pages/ComparePage';
-import ReportPage from './pages/ReportPage';
-import SettingsPage from './pages/SettingsPage';
+// ── Lazy-loaded pages ──
+const ChatPage = lazy(() => import('@/pages/ChatPage'));
+const CompanyProfilePage = lazy(() => import('@/pages/CompanyProfilePage'));
+const ComparePage = lazy(() => import('@/pages/ComparePage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+const ReportPage = lazy(() => import('@/pages/ReportPage'));
+const RulesPage = lazy(() => import('@/pages/RulesPage'));
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
-export default function App() {
+// ── Suspense fallback ──
+function PageLoader() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* TruthNet 路由 */}
-        <Route element={<Layout />}>
-          <Route path="/" element={<ChatPage />} />
-          <Route path="/company/:code" element={<CompanyProfilePage />} />
-          <Route path="/compare" element={<ComparePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Route>
-
-        {/* 报告页独立布局（无 Header） */}
-        <Route path="/reports/:reportId" element={<ReportPage />} />
-
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="space-y-4 text-center">
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
+        <p className="text-sm text-muted-foreground">加载中...</p>
+      </div>
+    </div>
   );
 }
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <BrowserRouter>
+        <ScrollToTop />
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<ChatPage />} />
+              <Route path="company/:companyCode" element={<CompanyProfilePage />} />
+              <Route path="compare" element={<ComparePage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="reports/:reportId" element={<ReportPage />} />
+              <Route path="rules" element={<RulesPage />} />
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </Suspense>
+        <Toaster richColors position="top-center" />
+      </BrowserRouter>
+    </ErrorBoundary>
+  );
+}
+
+export default App;

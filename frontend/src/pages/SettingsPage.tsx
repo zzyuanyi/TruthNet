@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Badge } from '@/components/ui/badge';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import type { RiskLevel } from '@/types/truthnet';
 
 // ---------- 存储 key ----------
@@ -64,6 +65,7 @@ const RISK_LABELS: Record<RiskLevel, string> = {
 
 // ---------- 组件 ----------
 export default function SettingsPage() {
+  useDocumentTitle('设置');
   const navigate = useNavigate();
   const [settings, setSettings] = useState<Settings>(loadSettings);
 
