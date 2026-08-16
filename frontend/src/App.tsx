@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { ScrollToTop } from '@/components/scroll-to-top';
+import CommandPalette from '@/components/command-palette';
 import Layout from '@/components/layout';
 
 // ── Lazy-loaded pages ──
@@ -45,6 +46,7 @@ function App() {
           </Routes>
         </Suspense>
         <Toaster richColors position="top-center" />
+        <CommandPalette />
       </BrowserRouter>
     </ErrorBoundary>
   );
