@@ -452,8 +452,14 @@ def test_concurrent_tasks_do_not_queue_indefinitely(monkeypatch):
             time.sleep(0.02)
         assert finished["n"] == 2
 
-        # 无 permit 泄漏：信号量恢复到 in-flight 上限
+        # 无 permit 泄漏：信号量恢复到 in-flight 上限。
+        # 注意：release 经 future.add_done_callback 触发，发生在 asyncio.run
+        # 完全退出之后，晚于协程内部 finished 自增——存在事件循环清理时间窗，
+        # 必须轮询等待恢复，不能立即断言（8/17 CI macos 偶发 flaky 修复）。
         sem = events_mod._impact_semaphore()
+        deadline = time.monotonic() + 5.0
+        while sem._value < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
         assert sem._value == 2
 
         # 无 worker 线程泄漏：shutdown(wait=True) 后执行器 worker 线程全部退出
