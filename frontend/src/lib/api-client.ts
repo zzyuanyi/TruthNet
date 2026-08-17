@@ -415,6 +415,7 @@ export const wsClient = {
           }
         }
     ws.onmessage = (event) => {
+      if (closeRequested) return;  // 8/17：正常关闭后忽略迟到消息（防污染新会话）
       try {
             const msg: WSMessage = JSON.parse(event.data);
           if (typeof msg.sequence === 'number' && msg.sequence > 0) {
@@ -467,6 +468,10 @@ export const wsClient = {
 
     ws.onclose = (event) => {
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      // 8/17：主动关闭（切换会话/组件卸载）后绝不重连——closeRequested
+      // 已置位，异常断开（code≠1000/1001）也不得重建旧会话连接，
+      // 否则旧 turn 事件回流污染新会话面板。
+      if (closeRequested) return;
       if (event.code !== 1000 && event.code !== 1001) tryReconnect();
     };
 
