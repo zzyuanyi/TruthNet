@@ -40,7 +40,9 @@ def structured_llm(
     try:
         return run_llm_structured(messages, schema, timeout=timeout)
     except Exception:  # noqa: BLE001 — LLM 任意异常统一 fail-closed
-        logger.warning("llm_guard: LLM 调用异常（timeout=%ss），回退", timeout, exc_info=True)
+        logger.warning(
+            "llm_guard: LLM 调用异常（timeout=%ss），回退", timeout, exc_info=True
+        )
         return None
 
 
@@ -63,8 +65,6 @@ def llm_with_fallback(
     if validate is not None:
         ok, reason = validate(out)
         if not ok:
-            logger.warning(
-                "llm_guard: LLM 输出校验失败（%s），回退确定性结果", reason
-            )
+            logger.warning("llm_guard: LLM 输出校验失败（%s），回退确定性结果", reason)
             return fallback(), False
     return out, True

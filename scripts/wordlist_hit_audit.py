@@ -59,15 +59,17 @@ def _hit_count(questions: list[str], words: tuple[str, ...]) -> dict[str, int]:
     return counts
 
 
-def _report(title: str, words: tuple[str, ...], counts: dict[str, int], total: int) -> None:
+def _report(
+    title: str, words: tuple[str, ...], counts: dict[str, int], total: int
+) -> None:
     zero = [w for w in words if counts[w] == 0]
     low = [(w, counts[w]) for w in words if 0 < counts[w] <= 2]
     print(f"\n=== {title}（{len(words)} 词 / {total} 题）===")
     print(f"  零命中 {len(zero)} 词: {zero}")
     print(f"  低命中(≤2) {len(low)} 词: {sorted(low, key=lambda x: x[1])}")
-    hot = sorted(
-        ((w, counts[w]) for w in words if counts[w] > 2), key=lambda x: -x[1]
-    )[:10]
+    hot = sorted(((w, counts[w]) for w in words if counts[w] > 2), key=lambda x: -x[1])[
+        :10
+    ]
     print(f"  高命中 TOP10: {hot}")
 
 

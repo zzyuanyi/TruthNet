@@ -145,9 +145,7 @@ async def test_llm_invalid_falls_back(monkeypatch):
             return output, True
         return fallback(), False
 
-    monkeypatch.setattr(
-        "app.agents.llm_guard.llm_with_fallback", fake_with_fallback
-    )
+    monkeypatch.setattr("app.agents.llm_guard.llm_with_fallback", fake_with_fallback)
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "template"
     assert "综合风险等级" in result.overall_advice
