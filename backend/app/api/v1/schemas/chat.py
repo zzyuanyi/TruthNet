@@ -278,6 +278,11 @@ class ChatDataV1(BaseModel):
             "open_multi_company_comparison/choose_comparison_pair"
         ),
     )
+    # Phase E 会6：跨公司对比大模型整体分析段落（空串=未生成/降级，前端不渲染）
+    llm_analysis: str = Field(
+        default="",
+        description="跨公司对比大模型整体分析段落（只读，不覆盖结构化数据）",
+    )
     # B2 第二阶段（方案 §4.1）：舆情影响结论（与 REST /events 同构）；
     # 事件模块未执行/无结果 → 空列表。impact_warnings 为影响分析降级提示。
     impact_conclusions: list[ImpactConclusion] = Field(

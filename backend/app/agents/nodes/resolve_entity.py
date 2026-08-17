@@ -17,7 +17,13 @@ from app.application.models.company_resolution import (
     validate_finalized_relation_roles,
 )
 from app.application.services.company_entity_resolver import CompanyEntityResolver
+from app.application.services.company_mentionness_classifier import (
+    CompanyMentionnessClassifier,
+)
 from app.application.services.company_semantic_selector import CompanySemanticSelector
+from app.application.services.company_span_llm_service import (
+    CompanySpanLLMExtractor,
+)
 from app.application.services.company_resolver import get_company_repository
 from app.application.services.query_subject_interpreter import (
     QuerySubjectInterpreter,
@@ -87,6 +93,23 @@ def _derive_legacy_fields(result: EntityResolutionResult) -> dict:
         derived["entity_resolution_error"] = "too_many_candidates"
     elif result.intent == "no_company" and result.reason_code == "company_not_found":
         derived["entity_resolution_error"] = "company_not_found"
+
+    # 8/16 语义裁决启用（suggest 模式）：LLM 消歧推荐——disambiguation
+    # 文案展示"建议选择"（不自动绑定，用户确认兜底 fail-closed）
+    suggested_code = ""
+    suggestion = result.semantic_suggestion
+    if suggestion is not None and result.mentions:
+        select_map = {
+            d.mention_id: d.selected_wind_code
+            for d in suggestion.identity_decisions
+            if d.action == "select" and d.selected_wind_code
+        }
+        for m in result.mentions:
+            code = select_map.get(m.mention_id)
+            if code:
+                suggested_code = code
+                break
+    derived["suggested_company_code"] = suggested_code
     return derived
 
 
@@ -122,6 +145,13 @@ def resolve_entity_node(state: AgentState) -> dict:
     resolver = CompanyEntityResolver(
         get_company_repository(),
         selector=CompanySemanticSelector(),
+        # 8/16 语义裁决启用（队长拍板）：mentionness 随全局模式生效——
+        # off 零调用；suggest/auto 时 non_company_context 判定应用
+        mentionness=CompanyMentionnessClassifier(),
+        # 8/17 LLM-NER 子实体提取（业界 NER→链接 第三步）：长 not_found
+        # span（施事/介词句式）提取片段内公司名子串 → 二次链接；
+        # off 零调用，suggest/auto 启用，失败 fail-closed
+        span_extractor=CompanySpanLLMExtractor(),
         # v3.3.2-R1 §7：低置信主体语义解析器——模式读
         # ENTITY_QUERY_INTERPRETER_MODE（off 生产默认零调用；
         # shadow/fallback 经环境变量显式启用）

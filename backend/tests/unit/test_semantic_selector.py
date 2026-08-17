@@ -839,3 +839,52 @@ def test_suggest_authoritative_result_unchanged_except_audit(monkeypatch):
         assert m0.model_dump() == m1.model_dump()
     assert r.intent == r0.intent
     assert r.needs_confirmation == r0.needs_confirmation
+
+
+# ── 8/16 语义裁决启用：suggest 推荐派生（disambiguation 文案展示）───
+
+
+def test_derive_suggested_company_code_from_suggestion():
+    """_derive_legacy_fields 从 suggest 的 semantic_suggestion 派生
+    suggested_company_code（LLM 推荐展示，不自动绑定身份）。"""
+    from app.agents.nodes.resolve_entity import _derive_legacy_fields
+    from app.application.models.company_resolution import (
+        EntityResolutionResult,
+        IdentityDecision,
+        RoleAssignment,
+        SemanticDecision,
+    )
+
+    mid = "m_pingan"
+    m = _mention(mid, "平安", ["000001.SZ", "001359.SZ", "601318.SH"])
+    suggestion = SemanticDecision(
+        relation="single",
+        identity_decisions=[
+            IdentityDecision(
+                mention_id=mid, action="select", selected_wind_code="601318.SH"
+            )
+        ],
+        role_assignments=[RoleAssignment(mention_id=mid, role="primary")],
+    )
+    result = EntityResolutionResult(
+        intent="single",
+        mentions=[m],
+        needs_confirmation=True,
+        selector_status="completed",
+        semantic_suggestion=suggestion,
+    )
+    derived = _derive_legacy_fields(result)
+    assert derived["suggested_company_code"] == "601318.SH"
+    # 候选确认流程保留（3 家候选仍输出，用户最终确认）
+    assert len(derived["company_candidates"]) == 3
+
+
+def test_derive_suggested_company_code_empty_without_suggestion():
+    """无 suggestion（off/超时/高置信锁定）→ 空推荐，不影响默认路径。"""
+    from app.agents.nodes.resolve_entity import _derive_legacy_fields
+    from app.application.models.company_resolution import EntityResolutionResult
+
+    m = _mention("m1", "茅台", ["600519.SH"])
+    result = EntityResolutionResult(intent="single", mentions=[m])
+    derived = _derive_legacy_fields(result)
+    assert derived["suggested_company_code"] == ""

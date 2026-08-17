@@ -320,6 +320,8 @@ class EquityResult(BaseModel):
     chain_details: list[dict] = Field(default_factory=list)
     # Phase D #3C: 最新报告期主要股东（确定性回答 DTO）
     shareholders: list[dict] = Field(default_factory=list)
+    # Phase E 会2: 隐含关系解读（交叉持股/隐含持股链，EquityInsight dict 列表）
+    insights: list[dict] = Field(default_factory=list)
 
 
 class EventsResult(BaseModel):
@@ -375,6 +377,9 @@ class AgentState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
     company: CompanyRef | None
     company_candidates: list[CompanyRef]
+    # 8/17 语义裁决启用（suggest）：LLM 消歧推荐（disambiguation 文案
+    # 展示「建议选择」，不自动绑定身份，用户确认兜底 fail-closed）
+    suggested_company_code: str
     # 实体解析权威结果（v3.1 §4）：application/models/company_resolution.py
     # EntityResolutionResult。旧字段 company/company_candidates/
     # comparison_targets 均由 resolve_entity 节点返回时一次性派生，

@@ -150,3 +150,29 @@ class FraudConclusionData(BaseModel):
     method: str = Field(default="template", description="llm | template")
     patterns: list[str] = Field(default_factory=list, description="命中的造假模式名")
     evidence_count: int = Field(default=0, description="可溯源证据条数")
+
+
+class ImpactAdviceSegmentData(BaseModel):
+    """Phase E 会3：分模块影响/建议段落（可溯源）。"""
+
+    source_module: str = Field(
+        default="", description="finance | equity | events | overall"
+    )
+    title: str = Field(default="", description="段落标题")
+    detail: str = Field(default="", description="建议/结论（有数据依据）")
+    evidence_ids: list[str] = Field(default_factory=list, description="可回查证据 ID")
+
+
+class ImpactAdviceData(BaseModel):
+    """Phase E 会3：影响与建议聚合（画像页影响建议模块数据源）。"""
+
+    wind_code: str = Field(default="")
+    sec_name: str = Field(default="")
+    risk_level: str = Field(default="unknown")
+    overall_score: float | None = Field(default=None)
+    as_of: str = Field(default="")
+    overall_advice: str = Field(default="", description="整体建议（LLM 或模板）")
+    method: str = Field(default="template", description="llm | template")
+    segments: list[ImpactAdviceSegmentData] = Field(default_factory=list)
+    evidence_count: int = Field(default=0)
+    warnings: list[str] = Field(default_factory=list)

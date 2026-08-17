@@ -13,6 +13,7 @@ Router 禁止: 查四张表 / 重算规则 / new NetworkX / 硬编码 pattern / 
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -24,6 +25,8 @@ from app.api.v1.schemas.risk import (
     DataCoverage,
     DerivationChain,
     FraudConclusionData,
+    ImpactAdviceData,
+    ImpactAdviceSegmentData,
     MitigatingFactor,
     PatternMatch,
     RiskEvidence,
@@ -32,6 +35,8 @@ from app.api.v1.schemas.risk import (
     SubScore,
 )
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["risk"])
 
@@ -398,6 +403,70 @@ async def get_fraud_conclusion(
             method=method,
             patterns=patterns,
             evidence_count=ev_count,
+        ),
+        meta=ApiMeta(
+            request_id=trace_id,
+            trace_id=trace_id,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            data_as_of=as_of_ymd,
+        ),
+    )
+
+
+@router.get(
+    "/companies/{code}/impact-advice",
+    response_model=V12Response[ImpactAdviceData],
+)
+async def get_impact_advice(
+    code: str = Path(..., description="公司代码，如 600518.SH"),
+    as_of: str | None = Query(default=None, description="数据截止日期"),
+):
+    """Phase E 会3：影响与建议聚合端点（画像页影响建议模块数据源）。
+
+    综合财务规则信号 / 股权链路与隐含关系 / 舆情影响 / 综合风险评分
+    四路生成整体建议；每句建议可溯源（segments 携带 evidence_ids）；
+    LLM 只读锁定事实（不覆盖/不篡改结构化数据），失败回退模板兜底。
+    """
+    trace_id = str(uuid.uuid4())
+    from app.domain.finance.period import normalize_period
+
+    as_of_ymd = normalize_period(as_of) or ""
+    try:
+        from app.application.services.impact_advice_service import (
+            assemble_impact_advice,
+        )
+
+        result = await assemble_impact_advice(code, as_of_ymd or "")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Company not found: {code}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("impact-advice 聚合失败")
+        raise HTTPException(
+            status_code=500, detail=f"影响与建议聚合失败: {exc}"
+        ) from exc
+
+    return V12Response(
+        data=ImpactAdviceData(
+            wind_code=result.wind_code,
+            sec_name=result.sec_name,
+            risk_level=result.risk_level,
+            overall_score=result.overall_score,
+            as_of=result.as_of,
+            overall_advice=result.overall_advice,
+            method=result.method,
+            segments=[
+                ImpactAdviceSegmentData(
+                    source_module=s.source_module,
+                    title=s.title,
+                    detail=s.detail,
+                    evidence_ids=s.evidence_ids,
+                )
+                for s in result.segments
+            ],
+            evidence_count=result.evidence_count,
+            warnings=result.warnings,
         ),
         meta=ApiMeta(
             request_id=trace_id,

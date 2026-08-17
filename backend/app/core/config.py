@@ -93,9 +93,10 @@ class Settings(BaseSettings):
     # ===== 实体解析（v3.1 冻结方案）=====
     # 唯一命中自动锁定策略：exact_only | safe_reverse_contains | confirm_all_heuristic
     ENTITY_UNIQUE_MATCH_POLICY: str = "safe_reverse_contains"
-    # 语义选择发布模式：off（确定性）| suggest（离线影子评测专用，生产禁止）| auto（自动绑定）
-    # v3.3.1 §9.1：Literal 校验 + lifespan 拒绝非 off（suggest/auto 均不得
-    # 全局启动；单元测试与离线 runner 显式构造 selector/classifier）
+    # 语义选择发布模式：off（确定性，生产默认）| suggest（演示/答辩：
+    # mentionness 非公司判定生效 + selector LLM 推荐不自动绑定）| auto（自动绑定，仅离线）
+    # v3.3.1 §9.1：Literal 校验 + lifespan 校验（main._validate_release_mode：
+    # off/suggest 允许启动，auto 拒绝全局启动；离线 runner 显式构造 selector）
     ENTITY_SEMANTIC_SELECTION_MODE: Literal["off", "suggest", "auto"] = "off"
     # v3.3 批次 C：首次裁决 + repair 重试共享的总墙钟预算（离线 suggest/
     # auto 评测；生产在线 auto 必须另行按 P95 设置，不直接复用）。

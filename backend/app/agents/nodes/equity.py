@@ -311,6 +311,27 @@ def equity_node(state: AgentState) -> dict:
             top_shareholder_records=shareholder_records,
         )
 
+        # ── Phase E 会2：隐含关系解读（交叉持股/隐含持股链）──
+        # 纯确定性检测；失败不阻断主流程（insights 为空即可）。
+        insights: list[dict] = []
+        try:
+            from app.application.services.equity_insight_service import (
+                build_equity_insights,
+            )
+
+            insights = [
+                i.model_dump()
+                for i in build_equity_insights(
+                    graph=graph,
+                    node_name_map=node_name,
+                    edge_evidence_map=edge_evidence_map,
+                    company_code=company_code,
+                    target_name=company.sec_name or company_code,
+                )
+            ]
+        except Exception:  # noqa: BLE001 — 解读失败不影响股权主流程
+            logger.warning("equity: insights 构建失败，跳过", exc_info=True)
+
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         return {
             "module_status": {
@@ -323,6 +344,7 @@ def equity_node(state: AgentState) -> dict:
                     evidence=evidence,
                     chain_details=chain_details,
                     shareholders=shareholders,
+                    insights=insights,
                 )
             ),
         }

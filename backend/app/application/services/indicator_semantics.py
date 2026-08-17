@@ -44,10 +44,22 @@ _METRIC_PHRASES: list[tuple[str, str, str]] = [
 
 # 已知但暂不支持的精确短语：与指标短语同表竞争（方案 §4.3 第 5 层），
 # 不得先维护一张互相竞争的 unsupported 词表再被短词抢占。
+# 8/17 数据1 端到端（T02 等）：每股/股本类指标无数据字段支撑
+# （income_statement/balance_sheet 无 eps/share 列），显式 unsupported
+# 走诚实短答，不再落"未发现异常信号"综合诊断（答非所问）。
 _UNSUPPORTED_PHRASES: tuple[str, ...] = (
     "应收账款周转率",
     "存货周转率",
     "总资产周转率",
+    "基本每股收益",
+    "每股收益",
+    "每股净资产",
+    "每股经营现金流",
+    "加权净资产收益率",
+    "净资产收益率",
+    "总资产报酬率",
+    "总资产收益率",
+    "每股资本公积",
 )
 
 # 基础报表指标集合：与 indicator_query_service._INDICATORS 的键保持一致。
@@ -164,6 +176,146 @@ def resolve_indicator_semantics(user_query: str) -> IndicatorSemanticResult:
             executable=True,
             period_hint=period_hint,
         )
+    # 确定性 no_match → 受约束 LLM fallback（方案 §5.7 接线，8/17）。
+    # 治本机制：任意指标变体（每股收益/股息率/摊薄EPS…）由 LLM 判定，
+    # 不在能力集 → 诚实 unsupported，不再穷举词表；LLM 失败/关闭/非
+    # 指标问法 → 保持 no_match（走其他意图）。
+    llm_result = _indicator_llm_fallback(query)
+    if llm_result is not None:
+        return llm_result
     return IndicatorSemanticResult(
         confidence="none", reason="no_match", period_hint=period_hint
+    )
+
+
+# ── 方案 §5.7：受约束 LLM 指标 fallback（8/17 接线）────────────
+
+
+class _IndicatorLLMOutput(BaseModel):
+    """LLM 判定：查询是否包含财务指标问法 + 是否属于能力集。"""
+
+    is_indicator: bool = False
+    metric_phrase: str = Field(default="", description="识别到的指标短语")
+    reason: Literal["unsupported", "mapped", "not_indicator"] = "not_indicator"
+
+
+# 指标特征触发词（8/17 修订：收窄为"具体指标名特征"——泛化财务问法
+# 如"利润如何/业绩如何"不含这些特征 → 不触发 LLM，保持原有
+# finance/诊断路由，避免把核心财务问题误判为 unsupported 指标）。
+# 仅当查询带明显指标名形态（率/额/收益/周转/每股…）且确定性词表
+# 未命中时，才值得用 LLM 判定指标意图。
+_LLM_FALLBACK_TRIGGER_WORDS: tuple[str, ...] = (
+    "率",
+    "额",
+    "收益",
+    "周转",
+    "倍数",
+    "占比",
+    "天数",
+    "账期",
+    "每股",
+    "EPS",
+    "eps",
+    "ROE",
+    "roe",
+    "市盈率",
+    "市净率",
+    "股息",
+    "报酬",
+    "回报率",
+    "资产负债",
+    "净利",
+    "毛利",
+    "应收",
+    "应付",
+    "存货",
+    "现金流",
+)
+_LLM_FALLBACK_TIMEOUT_SECONDS = 8.0
+
+
+def _supported_canonical_ids() -> frozenset[str]:
+    """能力集（allowlist）：指标短语表 canonical ∪ 基础报表指标。"""
+    ids: set[str] = set(_BASE_INDICATORS)
+    for _phrase, canonical, _conf in _METRIC_PHRASES:
+        if canonical:
+            ids.add(canonical)
+    return frozenset(ids)
+
+
+def _indicator_llm_fallback(
+    user_query: str,
+) -> IndicatorSemanticResult | None:
+    """确定性 no_match 后的指标问法判定（方案 §5.7）。
+
+    Returns:
+        unsupported → IndicatorSemanticResult(executable=False, reason="unsupported")
+        mapped（变体命中 allowlist）→ 可执行结果
+        not_indicator / 未启用 / LLM 失败 → None（保持 no_match）
+    """
+    from app.core.config import settings
+
+    if settings.ENTITY_SEMANTIC_SELECTION_MODE not in ("suggest", "auto"):
+        return None
+    if settings.LLM_BACKEND in ("", "mock"):
+        return None
+    query = user_query or ""
+    if not any(word in query for word in _LLM_FALLBACK_TRIGGER_WORDS):
+        return None
+
+    supported = _supported_canonical_ids()
+    support_lines = "\n".join(f"- {cid}" for cid in sorted(supported))
+    system = (
+        "你是财报问答系统的指标语义判定器。给定用户问题，判断它是否在询问"
+        "某个财务指标（如每股收益、毛利率、资产负债率、周转天数、现金流、"
+        "营业收入、净利润等）：\n"
+        "1. 是指标问法但**不在下方能力集** → is_indicator=true, "
+        "reason=unsupported（如每股收益/股息率/每股净资产/ROE 等）；\n"
+        "2. 是指标问法且**属于能力集** → is_indicator=true, "
+        "reason=mapped（如'销售毛利率'命中 r5_gross_margin 等）；\n"
+        "3. 不是指标问法（寒暄/行情/交易/公司事实/对比无指标）→ "
+        "is_indicator=false, reason=not_indicator。\n"
+        "能力集（canonical ID）：\n" + support_lines + "\n"
+        "输出 JSON 必须严格符合给定 schema。"
+    )
+    try:
+        from app.agents.llm_sync import run_llm_structured
+
+        output = run_llm_structured(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"用户问题：{query}"},
+            ],
+            _IndicatorLLMOutput,
+            timeout=_LLM_FALLBACK_TIMEOUT_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 — LLM 失败保持 no_match
+        return None
+    if output is None:
+        return None
+    if not output.is_indicator or output.reason == "not_indicator":
+        return None
+    if output.reason == "unsupported":
+        return IndicatorSemanticResult(
+            matched_texts=[output.metric_phrase] if output.metric_phrase else [],
+            confidence="llm",
+            executable=False,
+            reason="unsupported",
+        )
+    # mapped：需回到 allowlist 判定实际 canonical（LLM 仅确认指标性，
+    # canonical 由确定性词表决定，防止 LLM 编造 ID）
+    for phrase, canonical, confidence in _ENTRIES:
+        if canonical and phrase in query:
+            return IndicatorSemanticResult(
+                metric_ids=[canonical],
+                matched_texts=[phrase],
+                confidence=confidence,
+                executable=True,
+            )
+    # LLM 说 mapped 但词表没命中（防御）→ 诚实 unsupported
+    return IndicatorSemanticResult(
+        matched_texts=[output.metric_phrase] if output.metric_phrase else [],
+        confidence="llm",
+        executable=False,
+        reason="unsupported",
     )

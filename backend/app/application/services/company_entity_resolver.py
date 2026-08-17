@@ -473,6 +473,9 @@ class CompanyEntityResolver:
         mentionness=None,
         lookup_limit: int | None = None,
         interpreter: QuerySubjectInterpreter | None = None,
+        # 8/17 LLM-NER 子实体提取（业界 NER→链接第三步）：长 not_found
+        # span（施事/介词结构）提取片段内公司名子串 → 二次链接
+        span_extractor=None,
     ) -> None:
         self._lookup = lookup
         self._policy = policy or settings.ENTITY_UNIQUE_MATCH_POLICY
@@ -480,6 +483,8 @@ class CompanyEntityResolver:
         # v3.3 批次 D：零候选 span 的 NIL 三态判定器（off 零调用；
         # 结果仅记录审计字段，第一阶段不改变权威行为）
         self._mentionness = mentionness
+        # 8/17 LLM-NER 子实体提取：长 not_found span 提取片段内公司子串
+        self._span_extractor = span_extractor
         # v3.3.2-R1 §7：低置信 query 主体语义解析器（off 零调用；
         # shadow 记录不应用；fallback 低置信路径应用）
         self._interpreter = interpreter
@@ -926,6 +931,74 @@ class CompanyEntityResolver:
         mention.status = "not_found"
         mention.resolution_source = None
         return [mention], []
+
+    def _extract_and_relink_spans(
+        self, user_query: str, mentions: list[EntityMention]
+    ) -> list[EntityMention] | None:
+        """8/17 LLM-NER 子实体提取与二次链接（业界 NER→链接 第三步）。
+
+        对长 not_found span（含施事/介词结构，如"证券机构对金百泽"）
+        提取片段内公司名子串后重新查库：
+        - 子实体命中候选 → 用子实体 mention 替换原整句（治本：库内
+          公司被"施事+介词"句式吞掉的场景）；
+        - 子实体仍无候选 → 用子实体替代原整句（报"金百泽"疑似而非
+          "证券机构对金百泽"）；
+        提取不到 / LLM 关闭 / 校验失败 → 返回 None（保持原逻辑）。
+        """
+        from app.application.services.company_span_llm_service import (
+            SPAN_EXTRACT_MIN_LEN,
+        )
+
+        long_nf = [
+            m
+            for m in mentions
+            if m.status == "not_found" and len(m.text or "") >= SPAN_EXTRACT_MIN_LEN
+        ]
+        if not long_nf or self._span_extractor is None:
+            return None
+        extracted = self._span_extractor.extract_many(
+            user_query=user_query, mentions=long_nf
+        )
+        if not extracted:
+            return None
+        q = user_query or ""
+        out: list[EntityMention] = []
+        changed = False
+        for m in mentions:
+            sub = extracted.get(m.mention_id)
+            if m.status != "not_found" or not sub or sub == m.text:
+                out.append(m)
+                continue
+            start = q.find(sub, m.start or 0, m.end or len(q))
+            if start < 0:
+                out.append(m)
+                continue
+            sub_mention = EntityMention(
+                mention_id=make_mention_id(start, start + len(sub), sub),
+                text=sub,
+                start=start,
+                end=start + len(sub),
+            )
+            sub_final, _alts = self._finalize_span(sub_mention, depth=1)
+            if not sub_final:
+                out.append(m)
+                continue
+            changed = True
+            if all(x.status in ("not_found", "needs_refinement") for x in sub_final):
+                # 子实体仍无候选 → 报子实体疑似（替代整句，坐标对齐原文）
+                out.append(
+                    m.model_copy(
+                        update={
+                            "text": sub,
+                            "start": start,
+                            "end": start + len(sub),
+                            "mention_id": sub_mention.mention_id,
+                        }
+                    )
+                )
+            else:
+                out.extend(sub_final)
+        return out if changed else None
 
     # ── 关系判定（P0-3 映射）────────────────────────────────
 
@@ -1374,21 +1447,28 @@ class CompanyEntityResolver:
                 resolution_issues=self._issues,
             )
 
-        # v3.3 批次 D：零候选 span 的 NIL 三态审计（suggest/auto 模式
-        # 记录；off 零调用；结果仅进审计字段，不改变权威行为——
-        # company_mention 保持 not_found、abstain 保持澄清、
-        # non_company_context 在 auto 发布前不改变路由）
+        # 8/17 LLM-NER 子实体提取（先于 mentionness）：长 not_found span
+        # 提取片段内公司名子串 → 二次链接；替换后不再按整句处理。
+        if self._span_extractor is not None:
+            relinked = self._extract_and_relink_spans(user_query, final_mentions)
+            if relinked is not None:
+                final_mentions = relinked
+
+        # v3.3 批次 D：零候选 span 的 NIL 三态判定。8/16 语义裁决启用
+        # （队长拍板，suggest/auto）：non_company_context 生效（下方
+        # 应用，移除不报"疑似公司"）；off 模式零调用、结果仅进审计。
+        # 调用条件：任一 not_found span 即批量判定（一次 LLM 调用），
+        # company_mention 保持 not_found、abstain 保持澄清。
         mentionness_verdicts: list[MentionnessVerdict] = []
-        if self._mentionness is not None and all(
-            m.status == "not_found" for m in final_mentions
-        ):
+        not_found_mentions = [m for m in final_mentions if m.status == "not_found"]
+        if self._mentionness is not None and not_found_mentions:
             # v3.3.1 §9.3：批量判定——一条 query 最多一次 mentionness
             # LLM 调用（classify_many 内程序校验 span 一一对应）
             status, decision = self._mentionness.classify_many(
                 user_query=user_query,
                 spans=[
                     {"span_id": m.mention_id, "span_text": m.text}
-                    for m in final_mentions
+                    for m in not_found_mentions
                 ],
             )
             if status == "completed" and decision is not None:
@@ -1515,6 +1595,49 @@ class CompanyEntityResolver:
             # v3.3.2-R1 批次 C（R6 Parallel Change）：旧金融词表延续
             # 路径已删除——off/shadow 模式此处落下文（relation 层
             # no_company），fallback 失败已在批次 A2 fail-closed。
+
+        # 8/16 语义裁决启用（队长拍板，suggest/auto）：mentionness 的
+        # non_company_context 判定生效——被判定为非公司上下文的零候选
+        # span 从候选集合移除，不再报"疑似公司"（根治停用词穷举：
+        # 评价/点评/聊聊等无需逐个进词表）。canonical 业务延续与
+        # Interpreter 已在上方优先处理，此处仅解释剩余未检索到候选
+        # 且被判定为非公司的 span；company_mention/abstain 保持原状
+        # （fail-closed：不猜测、不伪造主体）。
+        if self._mentionness is not None and self._mentionness.mode in (
+            "suggest",
+            "auto",
+        ):
+            non_company_ids = {
+                v.span_id
+                for v in mentionness_verdicts
+                if v.verdict == "non_company_context"
+            }
+            if non_company_ids:
+                remaining = [
+                    m for m in final_mentions if m.mention_id not in non_company_ids
+                ]
+                if not remaining:
+                    # 全部 span 均解释为非公司上下文 → 温和 no_company，
+                    # 不报"疑似公司"、不伪造主体（含无历史时可引导）。
+                    return EntityResolutionResult(
+                        intent="no_company",
+                        reason_code="non_company_context",
+                        mentions=final_mentions,
+                        selected_companies=[],
+                        unresolved_mentions=[],
+                        needs_confirmation=False,
+                        selector_status="not_needed",
+                        resolution_issues=self._issues,
+                        segmentation_alternatives=pending_alternatives,
+                        selected_alternative_ids={},
+                        subject_interpretation=self._interp_result,
+                        subject_interpreter_status=self._interp_status,
+                        semantic_suggestion=None,
+                        semantic_attempts=0,
+                        semantic_validation_error="",
+                        mentionness_verdicts=mentionness_verdicts,
+                    )
+                final_mentions = remaining
 
         relation, relation_status = self._decide_relation(
             user_query, final_mentions, memory

@@ -494,6 +494,19 @@ def _build_equity_overview(state: AgentState) -> str:
             # 8.09 三轮审查：十大股东链路是"持股路径"而非"控制链"——
             # 基金/少数持股不等于实际控制，不得过度断言
             parts.append(f"股权链：{chain_text}")
+
+    # ── Phase E 会2：隐含关系解读段（交叉持股/隐含持股链）──
+    # 确定性检测结果（可回查），"不只列链条、说明'说明了什么'"。
+    insights = equity.insights or []
+    if insights:
+        insight_parts: list[str] = []
+        for ins in insights[:5]:
+            detail = str(ins.get("detail") or "").strip()
+            if detail:
+                insight_parts.append(detail)
+        if insight_parts:
+            parts.append("隐含关系解读：" + "；".join(insight_parts))
+
     if not parts:
         return "股权数据覆盖不足，未取得可展示的股东或控制链记录。"
     # 8.09 审查：诚实覆盖说明——严格 4 跳+ 为 0 时如实说明数据源覆盖边界，
@@ -1364,12 +1377,15 @@ def _light_comparison_payload(
     *,
     comparison_mode: str,
     overview_rows: list | None = None,
+    llm_analysis: str = "",
 ) -> dict:
     """v3.3.4 方案 §3.3/§6.1：已执行比较的 light_comparison 载荷。
 
     next_steps 由程序按 requested_scope 生成（只提供导航动作，不改变任何
     数值、主体、证据或结论）；主体代码直接取已校验的 finalized targets
     （去重保序），禁止掺入未经校验的主体。
+    Phase E 会6：llm_analysis 为跨公司对比大模型整体分析段落（空串表示
+    未生成/降级，前端不渲染）。
     """
     from app.application.services.light_comparison_service import (
         build_preview_next_steps,
@@ -1386,6 +1402,7 @@ def _light_comparison_payload(
         "overview_rows": list(overview_rows or []),
         "requested_scope": scope,
         "next_steps": [s.model_dump() for s in build_preview_next_steps(scope, codes)],
+        "llm_analysis": llm_analysis,
     }
 
 
@@ -1527,6 +1544,26 @@ def _answer_cross_company_overview(state, targets, spec) -> dict:
             "「存货周转」或「风险等级」进行单项比较，完整对比请点击"
             "「查看完整对比」。"
         )
+
+    # ── Phase E 会6：跨公司对比大模型整体分析段落 ──
+    # 只读结构化数据做整体解读（不覆盖/不篡改）；失败/降级时模板兜底，
+    # 空串则前端不渲染该段。
+    llm_analysis = ""
+    try:
+        from app.application.services.comparison_analysis_service import (
+            build_comparison_analysis,
+        )
+
+        names_list = [str(getattr(t, "sec_name", "") or "") for t in targets[:2]]
+        llm_analysis, _analysis_warnings = build_comparison_analysis(
+            result=result,
+            company_names=names_list,
+        )
+        if llm_analysis:
+            answer += "\n\n大模型整体分析：" + llm_analysis
+    except Exception:  # noqa: BLE001 — 分析失败不影响结构化比较
+        logger.warning("comparison_analysis 失败，跳过 LLM 段落", exc_info=True)
+
     _emit_segment(state, answer)
     return {
         "claims": claims,
@@ -1546,6 +1583,7 @@ def _answer_cross_company_overview(state, targets, spec) -> dict:
             targets,
             comparison_mode=result.comparison_mode,
             overview_rows=[r.model_dump(mode="json") for r in result.overview_rows],
+            llm_analysis=llm_analysis,
         ),
     }
 
@@ -2072,7 +2110,17 @@ def generate_answer_node(state: AgentState) -> dict:
             options = "、".join(
                 f"{item.sec_name}（{item.wind_code}）" for item in candidates
             )
+            # 8/16 语义裁决启用（suggest）：LLM 消歧推荐展示，不自动绑定
+            suggested = state.get("suggested_company_code", "")
+            hint = ""
+            if suggested:
+                for item in candidates:
+                    if item.wind_code == suggested:
+                        hint = f"（建议选择：{item.sec_name} {item.wind_code}）"
+                        break
             answer = f"找到多个可能的公司：{options}。请选择一家后继续分析。"
+            if hint:
+                answer = f"找到多个可能的公司：{options}。{hint}请选择一家后继续分析。"
             _emit_segment(state, answer)
             return {
                 "final_response": FinalResponse(

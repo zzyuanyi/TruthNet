@@ -115,6 +115,26 @@ class EquityChainDTO(BaseModel):
     as_of: str = Field(default="", description="数据截止日期")
 
 
+class EquityInsightDTO(BaseModel):
+    """Phase E 会2：隐含关系解读（交叉持股/隐含持股链）。
+
+    每条含结构化检测结果 + 可回查证据；画像页/对话直接渲染 detail。
+    """
+
+    insight_id: str = Field(default="", description="洞察 ID")
+    insight_type: str = Field(default="", description="cross_holding | implicit_chain")
+    title: str = Field(default="", description="标题")
+    detail: str = Field(default="", description="解读文案（有数据依据）")
+    entity_ids: list[str] = Field(default_factory=list, description="涉及节点 ID")
+    entity_names: list[str] = Field(default_factory=list, description="涉及节点名称")
+    path: list[str] = Field(default_factory=list, description="节点路径（名称）")
+    edge_ids: list[str] = Field(default_factory=list, description="边 relationship_id")
+    evidence_ids: list[str] = Field(
+        default_factory=list, description="可回查 canonical 证据 ID"
+    )
+    risk_level: str = Field(default="green", description="风险等级")
+
+
 class EquityResponseData(BaseModel):
     """股权穿透响应数据."""
 
@@ -124,6 +144,8 @@ class EquityResponseData(BaseModel):
     paths: list[EquityPathDTO] = Field(default_factory=list)
     # Phase D #12: 正式链路载荷（含风险标签/证据/合并说明）
     equity_chains: list[EquityChainDTO] = Field(default_factory=list)
+    # Phase E 会2: 隐含关系解读（交叉持股/隐含持股链）
+    equity_insights: list[EquityInsightDTO] = Field(default_factory=list)
     as_of: str | None = Field(default=None, description="数据截止日期")
     graph_version: str = Field(default="", description="图数据版本")
     source_system: str = Field(

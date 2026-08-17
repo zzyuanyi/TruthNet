@@ -19,6 +19,7 @@ from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.api.v1.schemas.equity import (
     EquityChainDTO,
     EquityEdgeDTO,
+    EquityInsightDTO,
     EquityNodeDTO,
     EquityPathDTO,
     EquityResponseData,
@@ -296,6 +297,29 @@ async def get_company_equity(
         logger.warning("equity_chains 构建失败: %s", exc, exc_info=True)
         data_warnings.append(f"股权链路载荷构建失败: {exc}")
 
+    # ── Phase E 会2：隐含关系解读（交叉持股/隐含持股链）──
+    # 纯确定性检测（零 LLM）；失败不阻断基础图展示。
+    equity_insights: list[EquityInsightDTO] = []
+    try:
+        # 链路载荷失败时映射变量可能未定义 → 空映射防御（解读随图降级）
+        _nm = locals().get("node_name_map") or {}
+        _em = locals().get("edge_evidence_map") or {}
+        from app.application.services.equity_insight_service import (
+            build_equity_insights,
+        )
+
+        _insights = build_equity_insights(
+            graph=graph,
+            node_name_map=_nm,
+            edge_evidence_map=_em,
+            company_code=company.wind_code,
+            target_name=company.sec_name,
+        )
+        equity_insights = [EquityInsightDTO(**i.model_dump()) for i in _insights]
+    except Exception as exc:  # noqa: BLE001 — 解读失败不影响基础图
+        logger.warning("equity_insights 构建失败: %s", exc, exc_info=True)
+        data_warnings.append(f"股权隐含关系解读构建失败: {exc}")
+
     # 8.09 审查：路径截断时如实标记 partial + PATH_LIMIT_REACHED
     truncated = bool(getattr(graph, "truncated", False))
     if truncated:
@@ -322,6 +346,7 @@ async def get_company_equity(
             edges=edges,
             paths=paths,
             equity_chains=equity_chains,
+            equity_insights=equity_insights,
             as_of=norm_as_of or as_of,
             graph_version=getattr(graph, "graph_version", "") or settings.GRAPH_VERSION,
             source_system=getattr(graph, "source_system", "") or "unknown",

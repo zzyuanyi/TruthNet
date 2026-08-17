@@ -101,6 +101,11 @@ cd frontend && pnpm build
 ## Full Profile 验证
 
 ```bash
+# 一键启动开发/演示环境（MySQL/Neo4j + 后端 + 前端）
+powershell -ExecutionPolicy Bypass -File scripts/services/start_dev.ps1
+# 停止前后端（MySQL/Neo4j 保持运行）
+powershell -ExecutionPolicy Bypass -File scripts/services/stop_dev.ps1
+
 # 启动服务
 powershell -File scripts/services/start_full_stack_dev.ps1
 

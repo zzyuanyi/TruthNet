@@ -58,9 +58,13 @@ load_dotenv(env_path)
 
 
 def _validate_release_mode() -> None:
-    """v3.3.1 §9.1：生产发布闸门——全局非 off（suggest/auto）会同步
-    阻塞用户请求或自动绑定身份，必须拒绝启动；离线 suggest/auto 通过
-    显式构造 CompanySemanticSelector(mode=...) 运行，不经此处。
+    """v3.3.1 §9.1 + 8/16 语义裁决启用（队长拍板，演示/答辩环境）：
+    - off：确定性路径（生产默认，零 LLM）；
+    - suggest：演示/答辩环境启用——mentionness 的 non_company_context
+      判定生效（非公司词不再报"疑似公司"），selector 输出 LLM 推荐
+      （不自动绑定身份，用户确认兜底 fail-closed）；
+    - auto：自动绑定身份，仅限离线 runner 显式构造
+      CompanySemanticSelector(mode=...) 运行，生产/演示一律拒绝启动。
 
     最终续审 §6 C3：Interpreter 同步调用同样会增加在线延迟（shadow 不
     改变结果），生产只允许 off 或 fallback（5s fail-closed），shadow
@@ -68,11 +72,12 @@ def _validate_release_mode() -> None:
     """
     from app.core.config import settings as _settings
 
-    if _settings.ENTITY_SEMANTIC_SELECTION_MODE != "off":
+    if _settings.ENTITY_SEMANTIC_SELECTION_MODE not in ("off", "suggest"):
         raise RuntimeError(
             f"ENTITY_SEMANTIC_SELECTION_MODE="
-            f"{_settings.ENTITY_SEMANTIC_SELECTION_MODE} 仅限离线评测，"
-            "生产 REST/WS 必须保持 off；离线 runner 请显式构造 selector"
+            f"{_settings.ENTITY_SEMANTIC_SELECTION_MODE} 仅限离线评测；"
+            "生产/演示允许 off（确定性）或 suggest（LLM 建议不自动绑定）；"
+            "auto 自动绑定身份请离线 runner 显式构造 selector"
         )
     if _settings.ENTITY_QUERY_INTERPRETER_MODE not in ("off", "fallback"):
         raise RuntimeError(
