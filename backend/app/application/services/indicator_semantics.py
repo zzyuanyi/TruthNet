@@ -230,6 +230,16 @@ _LLM_FALLBACK_TRIGGER_WORDS: tuple[str, ...] = (
     "应付",
     "存货",
     "现金流",
+    # 8/17 词表优化方向 1：核心科目特征词（触发 LLM 判 unsupported，
+    # 非穷举科目）——商誉/减值/摊销 属资产减值类、质押/担保/诉讼 属
+    # 表外风险科目，确定性词表未命中时值得用 LLM 判定指标意图；
+    # LLM 判 not_indicator 时保持原路由，行为安全。
+    "商誉",
+    "减值",
+    "摊销",
+    "质押",
+    "担保",
+    "诉讼",
 )
 _LLM_FALLBACK_TIMEOUT_SECONDS = 8.0
 
