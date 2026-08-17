@@ -21,13 +21,7 @@ from app.application.services.company_mentionness_classifier import (
     CompanyMentionnessClassifier,
 )
 from app.application.services.company_semantic_selector import CompanySemanticSelector
-from app.application.services.company_span_llm_service import (
-    CompanySpanLLMExtractor,
-)
 from app.application.services.company_resolver import get_company_repository
-from app.application.services.query_subject_interpreter import (
-    QuerySubjectInterpreter,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -146,16 +140,12 @@ def resolve_entity_node(state: AgentState) -> dict:
         get_company_repository(),
         selector=CompanySemanticSelector(),
         # 8/16 语义裁决启用（队长拍板）：mentionness 随全局模式生效——
-        # off 零调用；suggest/auto 时 non_company_context 判定应用
+        # off 零调用；suggest/auto 时 non_company_context 判定 + sub_span
+        # 子实体提取（8/17 收敛 A：合并原独立 span_extractor 组件）应用
         mentionness=CompanyMentionnessClassifier(),
-        # 8/17 LLM-NER 子实体提取（业界 NER→链接 第三步）：长 not_found
-        # span（施事/介词句式）提取片段内公司名子串 → 二次链接；
-        # off 零调用，suggest/auto 启用，失败 fail-closed
-        span_extractor=CompanySpanLLMExtractor(),
-        # v3.3.2-R1 §7：低置信主体语义解析器——模式读
-        # ENTITY_QUERY_INTERPRETER_MODE（off 生产默认零调用；
-        # shadow/fallback 经环境变量显式启用）
-        interpreter=QuerySubjectInterpreter(),
+        # 8/17 收敛 B：QuerySubjectInterpreter 下线（从未被验证应用：
+        # fallback 实测不稳定，off 恒零调用）——不注入，resolver 内
+        # interpreter 分支成为死路径（保留代码待后续清理）
     )
     result = resolver.resolve(
         user_query,

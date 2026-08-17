@@ -170,7 +170,7 @@ def build_comparison_analysis(
         # 无任何可比较事实 → 不调用 LLM，直接诚实兜底
         return _template_analysis(result), []
 
-    from app.agents.llm_sync import run_llm_structured
+    from app.agents.llm_guard import llm_with_fallback
     from app.core.config import settings
 
     if settings.LLM_BACKEND == "mock":
@@ -183,24 +183,23 @@ def build_comparison_analysis(
     for p in getattr(result, "participants", None) or []:
         facts_metric_ids.add(p.metric_id)
 
+    def _validate(output) -> tuple[bool, str]:
+        return _validate_output(output, facts_metric_ids)
+
+    def _template_fallback() -> str:
+        warnings.append("LLM 分析降级，使用确定性模板")
+        return _template_analysis(result)
+
     started = time.perf_counter()
-    try:
-        output = run_llm_structured(
-            _build_messages(company_names, facts),
-            ComparisonAnalysisOutput,
-            timeout=_ANALYSIS_TIMEOUT_SECONDS,
-        )
-        if output is None:
-            warnings.append("LLM 分析超时/空，使用确定性模板")
-            return _template_analysis(result), warnings
-        ok, reason = _validate_output(output, facts_metric_ids)
-        if not ok:
-            warnings.append(f"LLM 分析校验失败（{reason}），使用确定性模板")
-            return _template_analysis(result), warnings
-    except Exception:  # noqa: BLE001 — 任何异常按确定性兜底
-        logger.warning("comparison_analysis: LLM 调用异常，模板兜底", exc_info=True)
-        warnings.append("LLM 分析异常，使用确定性模板")
-        return _template_analysis(result), warnings
+    output, used = llm_with_fallback(
+        _build_messages(company_names, facts),
+        ComparisonAnalysisOutput,
+        fallback=_template_fallback,
+        validate=_validate,
+        timeout=_ANALYSIS_TIMEOUT_SECONDS,
+    )
+    if not used:
+        return output, warnings  # output = 模板兜底
 
     elapsed = time.perf_counter() - started
     parts = [output.overall]

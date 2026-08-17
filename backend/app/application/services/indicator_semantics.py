@@ -278,19 +278,16 @@ def _indicator_llm_fallback(
         "能力集（canonical ID）：\n" + support_lines + "\n"
         "输出 JSON 必须严格符合给定 schema。"
     )
-    try:
-        from app.agents.llm_sync import run_llm_structured
+    from app.agents.llm_guard import structured_llm
 
-        output = run_llm_structured(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"用户问题：{query}"},
-            ],
-            _IndicatorLLMOutput,
-            timeout=_LLM_FALLBACK_TIMEOUT_SECONDS,
-        )
-    except Exception:  # noqa: BLE001 — LLM 失败保持 no_match
-        return None
+    output = structured_llm(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"用户问题：{query}"},
+        ],
+        _IndicatorLLMOutput,
+        timeout=_LLM_FALLBACK_TIMEOUT_SECONDS,
+    )
     if output is None:
         return None
     if not output.is_indicator or output.reason == "not_indicator":

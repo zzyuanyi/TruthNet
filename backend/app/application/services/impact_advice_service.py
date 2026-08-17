@@ -393,53 +393,55 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
     )
     method = "template"
 
-    # LLM 生成（受约束结构化输出；失败/校验失败 → 模板兜底）
-    from app.agents.llm_sync import run_llm_structured
+    # LLM 生成（受约束结构化输出；失败/校验失败 → 模板兜底，8/17 收敛 C）
+    from app.agents.llm_guard import llm_with_fallback
     from app.core.config import settings
 
     if settings.LLM_BACKEND not in ("", "mock") and all_segments:
-        try:
-            output = await asyncio_llm(
-                run_llm_structured,
-                _build_messages(out.sec_name, locked),
-                _ImpactAdviceOutput,
-            )
-            if output is not None:
-                valid_modules = {"finance", "equity", "events", "overall"}
-                if output.overall.strip() and output.suggestions:
-                    ok = all(
-                        s.source_module in valid_modules and s.text.strip()
-                        for s in output.suggestions
+        import asyncio
+
+        valid_modules = {"finance", "equity", "events", "overall"}
+
+        def _validate(output) -> tuple[bool, str]:
+            if not output.overall.strip() or not output.suggestions:
+                return False, "overall 或 suggestions 为空"
+            for s in output.suggestions:
+                if s.source_module not in valid_modules or not s.text.strip():
+                    return False, f"非法建议（{s.source_module}/{s.text[:20]!r}）"
+            return True, ""
+
+        def _fallback():
+            warnings.append("LLM 建议降级，使用模板兜底")
+            return overall_text
+
+        output, used = await asyncio.to_thread(
+            llm_with_fallback,
+            _build_messages(out.sec_name, locked),
+            _ImpactAdviceOutput,
+            fallback=_fallback,
+            validate=_validate,
+            timeout=_LLM_TIMEOUT_SECONDS,
+        )
+        if used:
+            overall_text = output.overall.strip()
+            method = "llm"
+            for s in output.suggestions:
+                all_segments.append(
+                    ImpactAdviceSegment(
+                        source_module=s.source_module,
+                        title=(
+                            "综合建议"
+                            if s.source_module == "overall"
+                            else {
+                                "finance": "财务建议",
+                                "equity": "股权建议",
+                                "events": "舆情建议",
+                            }.get(s.source_module, "建议")
+                        ),
+                        detail=s.text.strip(),
+                        evidence_ids=[],
                     )
-                    if ok:
-                        overall_text = output.overall.strip()
-                        method = "llm"
-                        for s in output.suggestions:
-                            all_segments.append(
-                                ImpactAdviceSegment(
-                                    source_module=s.source_module,
-                                    title=(
-                                        "综合建议"
-                                        if s.source_module == "overall"
-                                        else {
-                                            "finance": "财务建议",
-                                            "equity": "股权建议",
-                                            "events": "舆情建议",
-                                        }.get(s.source_module, "建议")
-                                    ),
-                                    detail=s.text.strip(),
-                                    evidence_ids=[],
-                                )
-                            )
-                    else:
-                        warnings.append(
-                            "LLM 建议校验失败（非法模块/空文本），使用模板兜底"
-                        )
-                else:
-                    warnings.append("LLM 建议为空，使用模板兜底")
-        except Exception:  # noqa: BLE001 — LLM 失败回退模板
-            logger.warning("impact_advice: LLM 生成失败，模板兜底", exc_info=True)
-            warnings.append("LLM 生成异常，使用模板兜底")
+                )
     elif not all_segments:
         overall_text = (
             f"{out.sec_name} 当前数据覆盖范围内未检出财务/股权/舆情显著信号，"
@@ -467,10 +469,3 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
         evidence_count=len(all_evidence),
         warnings=warnings,
     )
-
-
-async def asyncio_llm(fn, messages, schema):
-    """同步 LLM 调用的异步包装（与 fraud-conclusion 同款）。"""
-    import asyncio
-
-    return await asyncio.to_thread(fn, messages, schema, timeout=_LLM_TIMEOUT_SECONDS)

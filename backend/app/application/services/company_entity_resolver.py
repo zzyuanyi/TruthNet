@@ -473,9 +473,6 @@ class CompanyEntityResolver:
         mentionness=None,
         lookup_limit: int | None = None,
         interpreter: QuerySubjectInterpreter | None = None,
-        # 8/17 LLM-NER 子实体提取（业界 NER→链接第三步）：长 not_found
-        # span（施事/介词结构）提取片段内公司名子串 → 二次链接
-        span_extractor=None,
     ) -> None:
         self._lookup = lookup
         self._policy = policy or settings.ENTITY_UNIQUE_MATCH_POLICY
@@ -483,8 +480,6 @@ class CompanyEntityResolver:
         # v3.3 批次 D：零候选 span 的 NIL 三态判定器（off 零调用；
         # 结果仅记录审计字段，第一阶段不改变权威行为）
         self._mentionness = mentionness
-        # 8/17 LLM-NER 子实体提取：长 not_found span 提取片段内公司子串
-        self._span_extractor = span_extractor
         # v3.3.2-R1 §7：低置信 query 主体语义解析器（off 零调用；
         # shadow 记录不应用；fallback 低置信路径应用）
         self._interpreter = interpreter
@@ -932,40 +927,34 @@ class CompanyEntityResolver:
         mention.resolution_source = None
         return [mention], []
 
-    def _extract_and_relink_spans(
-        self, user_query: str, mentions: list[EntityMention]
+    def _relink_with_sub_spans(
+        self,
+        user_query: str,
+        mentions: list[EntityMention],
+        verdicts: list[MentionnessVerdict],
     ) -> list[EntityMention] | None:
-        """8/17 LLM-NER 子实体提取与二次链接（业界 NER→链接 第三步）。
+        """8/17 收敛 A：消费 mentionness 的 sub_span 做二次链接。
 
-        对长 not_found span（含施事/介词结构，如"证券机构对金百泽"）
-        提取片段内公司名子串后重新查库：
+        对 verdict=company_mention 且携带有效 sub_span（原文子串 ≠ 整句）
+        的 not_found mention：用子实体重新查库——
         - 子实体命中候选 → 用子实体 mention 替换原整句（治本：库内
           公司被"施事+介词"句式吞掉的场景）；
         - 子实体仍无候选 → 用子实体替代原整句（报"金百泽"疑似而非
-          "证券机构对金百泽"）；
-        提取不到 / LLM 关闭 / 校验失败 → 返回 None（保持原逻辑）。
+          "证券机构对金百泽"）。
+        无有效 sub_span → 返回 None（保持原逻辑）。
         """
-        from app.application.services.company_span_llm_service import (
-            SPAN_EXTRACT_MIN_LEN,
-        )
-
-        long_nf = [
-            m
-            for m in mentions
-            if m.status == "not_found" and len(m.text or "") >= SPAN_EXTRACT_MIN_LEN
-        ]
-        if not long_nf or self._span_extractor is None:
-            return None
-        extracted = self._span_extractor.extract_many(
-            user_query=user_query, mentions=long_nf
-        )
-        if not extracted:
+        sub_by_id: dict[str, str] = {}
+        for v in verdicts or []:
+            sub = (v.sub_span or "").strip()
+            if v.verdict == "company_mention" and len(sub) >= 2:
+                sub_by_id[v.span_id] = sub
+        if not sub_by_id:
             return None
         q = user_query or ""
         out: list[EntityMention] = []
         changed = False
         for m in mentions:
-            sub = extracted.get(m.mention_id)
+            sub = sub_by_id.get(m.mention_id)
             if m.status != "not_found" or not sub or sub == m.text:
                 out.append(m)
                 continue
@@ -1447,18 +1436,13 @@ class CompanyEntityResolver:
                 resolution_issues=self._issues,
             )
 
-        # 8/17 LLM-NER 子实体提取（先于 mentionness）：长 not_found span
-        # 提取片段内公司名子串 → 二次链接；替换后不再按整句处理。
-        if self._span_extractor is not None:
-            relinked = self._extract_and_relink_spans(user_query, final_mentions)
-            if relinked is not None:
-                final_mentions = relinked
-
         # v3.3 批次 D：零候选 span 的 NIL 三态判定。8/16 语义裁决启用
         # （队长拍板，suggest/auto）：non_company_context 生效（下方
         # 应用，移除不报"疑似公司"）；off 模式零调用、结果仅进审计。
         # 调用条件：任一 not_found span 即批量判定（一次 LLM 调用），
         # company_mention 保持 not_found、abstain 保持澄清。
+        # 8/17 收敛 A：mentionness 同时输出 sub_span（片段内公司名子串），
+        # 完成后立即消费做二次链接（合并原独立 span_extractor 组件）。
         mentionness_verdicts: list[MentionnessVerdict] = []
         not_found_mentions = [m for m in final_mentions if m.status == "not_found"]
         if self._mentionness is not None and not_found_mentions:
@@ -1473,6 +1457,14 @@ class CompanyEntityResolver:
             )
             if status == "completed" and decision is not None:
                 mentionness_verdicts = decision.verdicts
+                relinked = self._relink_with_sub_spans(
+                    user_query, final_mentions, decision.verdicts
+                )
+                if relinked is not None:
+                    final_mentions = relinked
+                    not_found_mentions = [
+                        m for m in final_mentions if m.status == "not_found"
+                    ]
         # v3.3.2 §6.3：有效公司 mention 为空 → 主体动作决策。历史延续
         # 是一等决策；疑似新公司（plausible/uncertain）阻断继承
         effective = [

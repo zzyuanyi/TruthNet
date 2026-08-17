@@ -103,7 +103,11 @@ async def test_llm_success_uses_llm_method(monkeypatch):
     async def fake_llm(messages, schema, timeout=None):
         return output
 
-    monkeypatch.setattr(svc, "asyncio_llm", fake_llm)
+    # 8/17 收敛 C：mock llm_guard.llm_with_fallback（LLM 成功，used=True）
+    monkeypatch.setattr(
+        "app.agents.llm_guard.llm_with_fallback",
+        lambda *a, **kw: (output, True),
+    )
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "llm"
     assert "去化压力" in result.overall_advice
@@ -134,7 +138,16 @@ async def test_llm_invalid_falls_back(monkeypatch):
     async def fake_llm(messages, schema, timeout=None):
         return output
 
-    monkeypatch.setattr(svc, "asyncio_llm", fake_llm)
+    # 8/17 收敛 C：mock llm_guard.llm_with_fallback（LLM 校验失败 → 回退）
+    def fake_with_fallback(messages, schema, fallback, validate=None, timeout=None):
+        ok, _ = validate(output)
+        if ok:
+            return output, True
+        return fallback(), False
+
+    monkeypatch.setattr(
+        "app.agents.llm_guard.llm_with_fallback", fake_with_fallback
+    )
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "template"
     assert "综合风险等级" in result.overall_advice
