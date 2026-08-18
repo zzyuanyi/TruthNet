@@ -66,8 +66,15 @@ def _receive(
 
 
 @_NEED_MYSQL
-def test_single_mention_new_protocol_resumes_exactly_once(ws_session_tracker):
-    """'分析平安'（多候选）：新协议确认 → confirm_ack → 恰好一个 T+1 重跑。"""
+def test_single_mention_new_protocol_resumes_exactly_once(
+    ws_session_tracker, monkeypatch
+):
+    """'分析平安'（多候选）：新协议确认 → confirm_ack → 恰好一个 T+1 重跑。
+
+    显式隔离语义裁决（off）：本测试只验证 WS 确认协议，不依赖 suggest 的
+    LLM 消歧（真机 LLM 波动会导致全量并行 flaky）。
+    """
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "off")
     client = TestClient(app)
     sid = _unique_sid()
     with client.websocket_connect("/api/v1/chat/ws") as ws:
@@ -171,7 +178,9 @@ def test_multi_mention_only_unconfirmed_needs_confirm(ws_session_tracker, monkey
 
     v3.2.1 批次 6：注入固定 repository（平安多候选 + 茅台唯一候选）
     确定性产生候选事件，强制断言；禁止静默 return / pytest.skip。
+    显式隔离语义裁决（off）：本测试只验证 WS 确认协议。
     """
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "off")
     import json as _json
 
     from sqlalchemy import create_engine as _ce

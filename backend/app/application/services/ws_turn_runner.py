@@ -777,6 +777,8 @@ def _light_comparison_payload(state: dict) -> dict:
         "overview_rows": lc.get("overview_rows", []),
         "requested_scope": lc.get("requested_scope", ""),
         "next_steps": lc.get("next_steps", []),
+        # Phase E 会6：跨公司对比大模型整体分析段落（空串=降级）
+        "llm_analysis": lc.get("llm_analysis", ""),
     }
 
 

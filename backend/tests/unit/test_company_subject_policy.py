@@ -732,6 +732,43 @@ def test_canonical_context_followup_zero_llm(monkeypatch):
     assert r.selected_companies[0].wind_code == "600518.SH"
 
 
+def test_canonical_continuation_priority_over_mentionness(monkeypatch):
+    """8/16 语义裁决启用：suggest 下 mentionness 判「存贷双高」
+    non_company_context，canonical 业务延续（历史康美）仍优先——
+    不降级 no_company（canonical 先于 mentionness 应用）。"""
+    import re as _re
+
+    from app.application.models.company_resolution import (
+        MentionnessDecision,
+        MentionnessVerdict,
+    )
+    from app.application.services.company_mentionness_classifier import (
+        CompanyMentionnessClassifier,
+    )
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+
+    def fake_llm(messages, schema, timeout=None):
+        user = messages[-1]["content"]
+        ids = _re.findall(r"span_id=([^\s'，]+)", user)
+        return MentionnessDecision(
+            verdicts=[
+                MentionnessVerdict(span_id=sid, verdict="non_company_context")
+                for sid in ids
+            ]
+        )
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    clf = CompanyMentionnessClassifier(mode="suggest")
+    resolver = CompanyEntityResolver(
+        _lookup(_REPO), mentionness=clf, interpreter=_spy_interpreter(monkeypatch)
+    )
+    r = resolver.resolve("有没有存贷双高的风险", memory=_kangmei_memory())
+    assert r.intent == "continuation"
+    assert r.selected_companies[0].wind_code == "600518.SH"
+
+
 def test_known_predicates_without_history_do_not_fabricate(monkeypatch):
     """B5：无历史 + 三条已知业务追问 → 不绑定公司、不伪造。"""
     resolver = CompanyEntityResolver(

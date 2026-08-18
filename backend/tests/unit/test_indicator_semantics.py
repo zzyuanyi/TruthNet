@@ -122,3 +122,116 @@ def test_latest_quarter_period_hint():
     result = resolve_indicator_semantics("最新季度毛利率")
     assert result.metric_ids == ["r5_gross_margin"]
     assert result.period_hint == "latest_quarter"
+
+
+# ── 8/17 方案 §5.7 接线：受约束 LLM 指标 fallback ─────────────
+
+
+def test_no_match_off_mode_zero_llm(monkeypatch):
+    """off 模式（生产默认）：LLM fallback 零调用，保持确定性。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "off")
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    calls: list = []
+
+    def fake_llm(messages, schema, timeout=None):
+        calls.append(messages)
+        return None
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    result = resolve_indicator_semantics("股息率是多少")
+    assert result.reason == "no_match"
+    assert calls == []
+
+
+def test_no_match_mock_backend_zero_llm(monkeypatch):
+    """mock 环境：LLM fallback 零调用。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "suggest")
+    monkeypatch.setattr(settings, "LLM_BACKEND", "mock")
+    calls: list = []
+
+    def fake_llm(messages, schema, timeout=None):
+        calls.append(messages)
+        return None
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    result = resolve_indicator_semantics("股息率是多少")
+    assert result.reason == "no_match"
+    assert calls == []
+
+
+def test_llm_unsupported_indicator_honest(monkeypatch):
+    """LLM 判定为指标但不在能力集 → 诚实 unsupported（任意变体覆盖）。"""
+    from app.application.services.indicator_semantics import _IndicatorLLMOutput
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "suggest")
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    output = _IndicatorLLMOutput(
+        is_indicator=True, metric_phrase="股息率", reason="unsupported"
+    )
+    monkeypatch.setattr(
+        "app.agents.llm_sync.run_llm_structured", lambda *a, **kw: output
+    )
+    result = resolve_indicator_semantics("贵州茅台股息率是多少")
+    assert result.executable is False
+    assert result.reason == "unsupported"
+    assert result.confidence == "llm"
+
+
+def test_llm_not_indicator_keeps_no_match(monkeypatch):
+    """LLM 判定非指标问法 → 保持 no_match（不误判）。"""
+    from app.application.services.indicator_semantics import _IndicatorLLMOutput
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "suggest")
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    output = _IndicatorLLMOutput(
+        is_indicator=False, metric_phrase="", reason="not_indicator"
+    )
+    monkeypatch.setattr(
+        "app.agents.llm_sync.run_llm_structured", lambda *a, **kw: output
+    )
+    result = resolve_indicator_semantics("今天天气怎么样")
+    assert result.reason == "no_match"
+    assert result.confidence == "none"
+
+
+def test_llm_mapped_uses_deterministic_canonical(monkeypatch):
+    """LLM 判 mapped：canonical 仍由确定性词表决定（防 LLM 编造 ID）。"""
+    from app.application.services.indicator_semantics import _IndicatorLLMOutput
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "suggest")
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    output = _IndicatorLLMOutput(
+        is_indicator=True, metric_phrase="销售毛利率", reason="mapped"
+    )
+    monkeypatch.setattr(
+        "app.agents.llm_sync.run_llm_structured", lambda *a, **kw: output
+    )
+    result = resolve_indicator_semantics("销售毛利率是多少")
+    assert result.executable is True
+    assert result.metric_ids == ["r5_gross_margin"]
+    assert result.confidence in ("exact", "alias")
+
+
+def test_llm_fallback_trigger_guard_zero_call(monkeypatch):
+    """触发守卫：无数值问法词（多少/率/额…）→ 不调 LLM。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "suggest")
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    calls: list = []
+
+    def fake_llm(messages, schema, timeout=None):
+        calls.append(messages)
+        return None
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    result = resolve_indicator_semantics("康美和茅台对比")
+    assert result.reason == "no_match"
+    assert calls == []

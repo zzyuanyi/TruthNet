@@ -5,8 +5,12 @@
 - span_id 不匹配/重复/遗漏 → invalid（批量完整覆盖校验）；
 - 超时/异常 → 确定性 not_found；
 - 一条 query 最多一次 mentionness LLM 调用（classify_many）；
-- resolver 集成：suggest 记录 verdicts、off 零记录、权威行为不变。
+- 8/16 语义裁决启用（suggest/auto）：non_company_context 生效——
+  全判非公司 → 温和 no_company；部分判定 → 移除该 span；verdicts
+  校验失败 → fail-closed 保持权威 not_found。
 """
+
+import re
 
 from app.application.models.company_resolution import (
     MentionnessDecision,
@@ -20,6 +24,18 @@ from app.core.config import settings
 from app.infrastructure.persistence.sqlite.company_repository import (
     SQLiteCompanyRepository,
 )
+
+
+def _non_company_llm(messages, schema, timeout=None):
+    """按消息中出现的 span_id 动态判定全部为非公司上下文。"""
+    user = messages[-1]["content"]
+    ids = re.findall(r"span_id=([^\s'，]+)", user)
+    return MentionnessDecision(
+        verdicts=[
+            MentionnessVerdict(span_id=sid, verdict="non_company_context")
+            for sid in ids
+        ]
+    )
 
 
 def test_off_mode_zero_calls(monkeypatch):
@@ -45,7 +61,8 @@ def test_off_mode_zero_calls(monkeypatch):
 def test_verdict_schema_has_no_wind_code_field():
     """输出 schema 不含 wind_code/补全文本字段（结构上不可能编造代码）。"""
     fields = set(MentionnessVerdict.model_fields.keys())
-    assert fields == {"span_id", "verdict", "evidence"}
+    # 8/17 收敛 A：company_mention 可携带 sub_span（片段内公司名子串）
+    assert fields == {"span_id", "verdict", "evidence", "sub_span"}
     decision_fields = set(MentionnessDecision.model_fields.keys())
     assert decision_fields == {"verdicts"}  # 批量外壳同样无 wind_code
 
@@ -147,9 +164,25 @@ def test_completed_records_verdict(monkeypatch):
     assert calls["n"] == 2
 
 
-def test_resolver_records_verdicts_in_suggest_authority_unchanged(monkeypatch):
-    """resolver 集成：suggest 下零候选 span 记录 verdicts，但权威行为
-    不变（not_found 阻断 + 不沿用历史）。"""
+def test_resolver_suggest_applies_non_company_context(monkeypatch):
+    """8/16 语义裁决启用：suggest 下 non_company_context 生效——全部
+    零候选 span 判为非公司上下文 → 温和 no_company（不再报"疑似公司"，
+    根治停用词穷举：评价/点评等无需逐个进词表）。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", _non_company_llm)
+    clf = CompanyMentionnessClassifier(mode="suggest")
+    resolver = CompanyEntityResolver(SQLiteCompanyRepository(), mentionness=clf)
+    r = resolver.resolve("评价一下火星科技怎么样")
+    assert r.intent == "no_company"
+    assert r.reason_code == "non_company_context"
+    assert r.unresolved_mentions == []
+    assert not r.selected_companies
+    assert r.mentionness_verdicts  # 审计字段仍记录判定
+
+
+def test_resolver_suggest_invalid_verdicts_authority_unchanged(monkeypatch):
+    """suggest 下 verdicts 校验失败（span 不匹配）→ 不生效，权威保持
+    not_found 阻断（fail-closed，不猜测）。"""
     monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
     decision = MentionnessDecision(
         verdicts=[MentionnessVerdict(span_id="__any__", verdict="non_company_context")]
@@ -160,11 +193,38 @@ def test_resolver_records_verdicts_in_suggest_authority_unchanged(monkeypatch):
     clf = CompanyMentionnessClassifier(mode="suggest")
     resolver = CompanyEntityResolver(SQLiteCompanyRepository(), mentionness=clf)
     r = resolver.resolve("火星科技行业风险")
-    # 权威行为不变：not_found 阻断（intent 保持确定性 single 路径）
     assert r.mentions[0].status == "not_found"
     assert not r.selected_companies
-    # verdicts 仅记录（span_id 校验不匹配 → invalid 不记录）
     assert r.mentionness_verdicts == []
+
+
+def test_resolver_suggest_removes_partial_non_company(monkeypatch):
+    """8/16：公司 span 有候选 + 零候选 span 判 non_company_context →
+    非公司 span 移除，公司正常解析（"康美药业怎么样，评价一下"→康美）。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+
+    def fake_llm(messages, schema, timeout=None):
+        user = messages[-1]["content"]
+        ids = re.findall(r"span_id=([^\s'，]+)", user)
+        return MentionnessDecision(
+            verdicts=[
+                MentionnessVerdict(
+                    span_id=sid,
+                    verdict=(
+                        "non_company_context" if "评价" in sid else "company_mention"
+                    ),
+                )
+                for sid in ids
+            ]
+        )
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    clf = CompanyMentionnessClassifier(mode="suggest")
+    resolver = CompanyEntityResolver(SQLiteCompanyRepository(), mentionness=clf)
+    r = resolver.resolve("康美药业怎么样，评价一下")
+    assert r.intent == "single"
+    assert r.selected_companies[0].wind_code == "600518.SH"
+    assert r.unresolved_mentions == []  # "评价"已被解释为非公司
 
 
 def test_resolver_off_does_not_call_classifier(monkeypatch):
@@ -181,3 +241,76 @@ def test_resolver_off_does_not_call_classifier(monkeypatch):
     r = resolver.resolve("火星科技行业风险")
     assert r.mentions[0].status == "not_found"
     assert calls == []  # off 零调用
+
+
+# ── 8/17 收敛 A：sub_span 子实体提取（合并原独立 span_extractor）────
+
+
+def test_sub_span_relink_reports_sub_entity(monkeypatch):
+    """sub_span 二次链接：长 not_found span 提取子实体 → 报子实体疑似
+    （"证券机构对金百泽" → "金百泽"，不再整句当公司；一次 LLM 调用）。"""
+    import re as _re
+
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    calls = {"n": 0}
+
+    def fake_llm(messages, schema, timeout=None):
+        calls["n"] += 1
+        user = messages[-1]["content"]
+        ids = _re.findall(r"span_id=([^\s'，]+)", user)
+        return MentionnessDecision(
+            verdicts=[
+                MentionnessVerdict(
+                    span_id=sid,
+                    verdict="company_mention",
+                    sub_span="金百泽",
+                )
+                for sid in ids
+            ]
+        )
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    clf = CompanyMentionnessClassifier(mode="suggest")
+    resolver = CompanyEntityResolver(SQLiteCompanyRepository(), mentionness=clf)
+    r = resolver.resolve("证券机构对金百泽的评价如何")
+    nf = [m for m in r.mentions if m.status == "not_found"]
+    assert nf, "应保留 not_found mention（子实体不在库）"
+    assert nf[0].text == "金百泽", f"应报子实体而非整句，实际 {nf[0].text!r}"
+    assert calls["n"] == 1  # 一次 mentionness 调用完成判定+提取
+
+
+def test_sub_span_relink_hits_real_company(monkeypatch):
+    """sub_span 命中库内公司 → 直接识别（治本：库内公司被句式吞掉）。"""
+    import re as _re
+
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+
+    def fake_llm(messages, schema, timeout=None):
+        user = messages[-1]["content"]
+        ids = _re.findall(r"span_id=([^\s'，]+)", user)
+        return MentionnessDecision(
+            verdicts=[
+                MentionnessVerdict(
+                    span_id=sid,
+                    verdict="company_mention",
+                    sub_span="康美药业",
+                )
+                for sid in ids
+            ]
+        )
+
+    monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
+    clf = CompanyMentionnessClassifier(mode="suggest")
+    resolver = CompanyEntityResolver(SQLiteCompanyRepository(), mentionness=clf)
+    r = resolver.resolve("研究员点评康美药业的风险")
+    assert r.selected_companies, "子实体应命中库内公司"
+    assert r.selected_companies[0].wind_code == "600518.SH"
+
+
+def test_sub_span_absent_keeps_whole_span(monkeypatch):
+    """无 sub_span（off 环境不注入 mentionness）→ 保持整句 not_found。"""
+    resolver = CompanyEntityResolver(SQLiteCompanyRepository())
+    r = resolver.resolve("证券机构对金百泽的评价如何")
+    nf = [m for m in r.mentions if m.status == "not_found"]
+    assert nf
+    assert nf[0].text == "证券机构对金百泽"

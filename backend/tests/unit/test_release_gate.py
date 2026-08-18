@@ -1,9 +1,10 @@
-"""v3.3.1 §9 批次 E：生产发布闸门与统一总预算口径.
+"""v3.3.1 §9 批次 E：生产发布闸门与统一总预算口径（8/16 修订）.
 
-反例（§9.5）：
+反例（§9.5 + 8/16 语义裁决启用）：
 - 全局 off 正常启动；
-- 全局 suggest 拒绝启动；
-- 全局 auto 拒绝启动；
+- 全局 suggest 允许启动（8/16 队长拍板：演示/答辩环境启用
+  mentionness 非公司判定 + selector LLM 推荐，不自动绑定）；
+- 全局 auto 拒绝启动（自动绑定身份仅限离线 runner）；
 - selector 两次尝试共享同一 deadline（单次不再被 5s 截断）；
 - repair 消耗的是剩余时间而非新 20 秒。
 """
@@ -13,19 +14,19 @@ import pytest
 from app.core.config import settings
 
 
-def test_release_gate_off_passes():
+def test_release_gate_off_passes(monkeypatch):
     from app.main import _validate_release_mode
 
-    assert settings.ENTITY_SEMANTIC_SELECTION_MODE == "off"
+    monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "off")
     _validate_release_mode()  # 不 raise
 
 
-def test_release_gate_suggest_rejected(monkeypatch):
+def test_release_gate_suggest_passes(monkeypatch):
+    """8/16 修订：suggest 允许全局启动（演示/答辩环境）。"""
     from app.main import _validate_release_mode
 
     monkeypatch.setattr(settings, "ENTITY_SEMANTIC_SELECTION_MODE", "suggest")
-    with pytest.raises(RuntimeError):
-        _validate_release_mode()
+    _validate_release_mode()  # 不 raise
 
 
 def test_release_gate_auto_rejected(monkeypatch):

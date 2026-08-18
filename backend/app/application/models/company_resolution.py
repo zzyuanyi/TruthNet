@@ -332,11 +332,17 @@ class MentionnessVerdict(BaseModel):
     """v3.3 批次 D：零候选 span 的三态 NIL 判定。
 
     不含 wind_code/补全文本字段——schema 即约束（LLM 无法输出代码）。
+    8/17 收敛 A：company_mention 时可选携带片段内公司名子串（sub_span，
+    LLM-NER 提取），供 Resolver 二次链接；原文切片校验在 Resolver。
     """
 
     span_id: str
     verdict: Literal["company_mention", "non_company_context", "abstain"]
     evidence: str = ""
+    sub_span: str = Field(
+        default="",
+        description="片段内公司名原文子串（company_mention 时可选；无则空）",
+    )
 
 
 class MentionnessDecision(BaseModel):

@@ -927,6 +927,68 @@ class CompanyEntityResolver:
         mention.resolution_source = None
         return [mention], []
 
+    def _relink_with_sub_spans(
+        self,
+        user_query: str,
+        mentions: list[EntityMention],
+        verdicts: list[MentionnessVerdict],
+    ) -> list[EntityMention] | None:
+        """8/17 收敛 A：消费 mentionness 的 sub_span 做二次链接。
+
+        对 verdict=company_mention 且携带有效 sub_span（原文子串 ≠ 整句）
+        的 not_found mention：用子实体重新查库——
+        - 子实体命中候选 → 用子实体 mention 替换原整句（治本：库内
+          公司被"施事+介词"句式吞掉的场景）；
+        - 子实体仍无候选 → 用子实体替代原整句（报"金百泽"疑似而非
+          "证券机构对金百泽"）。
+        无有效 sub_span → 返回 None（保持原逻辑）。
+        """
+        sub_by_id: dict[str, str] = {}
+        for v in verdicts or []:
+            sub = (v.sub_span or "").strip()
+            if v.verdict == "company_mention" and len(sub) >= 2:
+                sub_by_id[v.span_id] = sub
+        if not sub_by_id:
+            return None
+        q = user_query or ""
+        out: list[EntityMention] = []
+        changed = False
+        for m in mentions:
+            sub = sub_by_id.get(m.mention_id)
+            if m.status != "not_found" or not sub or sub == m.text:
+                out.append(m)
+                continue
+            start = q.find(sub, m.start or 0, m.end or len(q))
+            if start < 0:
+                out.append(m)
+                continue
+            sub_mention = EntityMention(
+                mention_id=make_mention_id(start, start + len(sub), sub),
+                text=sub,
+                start=start,
+                end=start + len(sub),
+            )
+            sub_final, _alts = self._finalize_span(sub_mention, depth=1)
+            if not sub_final:
+                out.append(m)
+                continue
+            changed = True
+            if all(x.status in ("not_found", "needs_refinement") for x in sub_final):
+                # 子实体仍无候选 → 报子实体疑似（替代整句，坐标对齐原文）
+                out.append(
+                    m.model_copy(
+                        update={
+                            "text": sub,
+                            "start": start,
+                            "end": start + len(sub),
+                            "mention_id": sub_mention.mention_id,
+                        }
+                    )
+                )
+            else:
+                out.extend(sub_final)
+        return out if changed else None
+
     # ── 关系判定（P0-3 映射）────────────────────────────────
 
     def _decide_relation(
@@ -1374,25 +1436,35 @@ class CompanyEntityResolver:
                 resolution_issues=self._issues,
             )
 
-        # v3.3 批次 D：零候选 span 的 NIL 三态审计（suggest/auto 模式
-        # 记录；off 零调用；结果仅进审计字段，不改变权威行为——
-        # company_mention 保持 not_found、abstain 保持澄清、
-        # non_company_context 在 auto 发布前不改变路由）
+        # v3.3 批次 D：零候选 span 的 NIL 三态判定。8/16 语义裁决启用
+        # （队长拍板，suggest/auto）：non_company_context 生效（下方
+        # 应用，移除不报"疑似公司"）；off 模式零调用、结果仅进审计。
+        # 调用条件：任一 not_found span 即批量判定（一次 LLM 调用），
+        # company_mention 保持 not_found、abstain 保持澄清。
+        # 8/17 收敛 A：mentionness 同时输出 sub_span（片段内公司名子串），
+        # 完成后立即消费做二次链接（合并原独立 span_extractor 组件）。
         mentionness_verdicts: list[MentionnessVerdict] = []
-        if self._mentionness is not None and all(
-            m.status == "not_found" for m in final_mentions
-        ):
+        not_found_mentions = [m for m in final_mentions if m.status == "not_found"]
+        if self._mentionness is not None and not_found_mentions:
             # v3.3.1 §9.3：批量判定——一条 query 最多一次 mentionness
             # LLM 调用（classify_many 内程序校验 span 一一对应）
             status, decision = self._mentionness.classify_many(
                 user_query=user_query,
                 spans=[
                     {"span_id": m.mention_id, "span_text": m.text}
-                    for m in final_mentions
+                    for m in not_found_mentions
                 ],
             )
             if status == "completed" and decision is not None:
                 mentionness_verdicts = decision.verdicts
+                relinked = self._relink_with_sub_spans(
+                    user_query, final_mentions, decision.verdicts
+                )
+                if relinked is not None:
+                    final_mentions = relinked
+                    not_found_mentions = [
+                        m for m in final_mentions if m.status == "not_found"
+                    ]
         # v3.3.2 §6.3：有效公司 mention 为空 → 主体动作决策。历史延续
         # 是一等决策；疑似新公司（plausible/uncertain）阻断继承
         effective = [
@@ -1515,6 +1587,49 @@ class CompanyEntityResolver:
             # v3.3.2-R1 批次 C（R6 Parallel Change）：旧金融词表延续
             # 路径已删除——off/shadow 模式此处落下文（relation 层
             # no_company），fallback 失败已在批次 A2 fail-closed。
+
+        # 8/16 语义裁决启用（队长拍板，suggest/auto）：mentionness 的
+        # non_company_context 判定生效——被判定为非公司上下文的零候选
+        # span 从候选集合移除，不再报"疑似公司"（根治停用词穷举：
+        # 评价/点评/聊聊等无需逐个进词表）。canonical 业务延续与
+        # Interpreter 已在上方优先处理，此处仅解释剩余未检索到候选
+        # 且被判定为非公司的 span；company_mention/abstain 保持原状
+        # （fail-closed：不猜测、不伪造主体）。
+        if self._mentionness is not None and self._mentionness.mode in (
+            "suggest",
+            "auto",
+        ):
+            non_company_ids = {
+                v.span_id
+                for v in mentionness_verdicts
+                if v.verdict == "non_company_context"
+            }
+            if non_company_ids:
+                remaining = [
+                    m for m in final_mentions if m.mention_id not in non_company_ids
+                ]
+                if not remaining:
+                    # 全部 span 均解释为非公司上下文 → 温和 no_company，
+                    # 不报"疑似公司"、不伪造主体（含无历史时可引导）。
+                    return EntityResolutionResult(
+                        intent="no_company",
+                        reason_code="non_company_context",
+                        mentions=final_mentions,
+                        selected_companies=[],
+                        unresolved_mentions=[],
+                        needs_confirmation=False,
+                        selector_status="not_needed",
+                        resolution_issues=self._issues,
+                        segmentation_alternatives=pending_alternatives,
+                        selected_alternative_ids={},
+                        subject_interpretation=self._interp_result,
+                        subject_interpreter_status=self._interp_status,
+                        semantic_suggestion=None,
+                        semantic_attempts=0,
+                        semantic_validation_error="",
+                        mentionness_verdicts=mentionness_verdicts,
+                    )
+                final_mentions = remaining
 
         relation, relation_status = self._decide_relation(
             user_query, final_mentions, memory

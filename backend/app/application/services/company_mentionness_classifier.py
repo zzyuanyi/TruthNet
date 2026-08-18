@@ -63,6 +63,10 @@ class CompanyMentionnessClassifier:
         校验：每个输入 span_id 恰好一个 verdict；无未知/重复/遗漏 ID。
         timeout/invalid 只记录失败，不改变确定性 not_found。
 
+        8/17 收敛 A：company_mention 时 LLM 可给出片段内公司名子串
+        （sub_span，原文逐字摘出），供 Resolver 二次链接——替代独立
+        span_extractor 组件（一次调用完成"整体判定 + 子实体提取"）。
+
         Returns:
             (status, decision|None)
             disabled（off/mock，零调用）| failed | timeout | invalid | completed
@@ -73,7 +77,7 @@ class CompanyMentionnessClassifier:
             return "disabled", None
         if not spans:
             return "disabled", None
-        from app.agents.llm_sync import run_llm_structured
+        from app.agents.llm_guard import structured_llm
 
         span_lines = "\n".join(
             f"- span_id={s['span_id']} 原文='{s['span_text']}'" for s in spans
@@ -85,7 +89,10 @@ class CompanyMentionnessClassifier:
                     "你是财报问答系统的公司片段判定器。给定用户问题和若干"
                     "未能在公司库中检索到任何候选的文本片段，判断每个片段：\n"
                     "- company_mention：疑似公司名但库内无记录（用户可能写了"
-                    "新公司/错别字/简称）；\n"
+                    "新公司/错别字/简称）；此时**若片段包含公司名子串**（如"
+                    "'证券机构对金百泽'→'金百泽'），sub_span 必须给出该原文"
+                    "子串（逐字摘出，不得改写/补全）；整体即公司名时 sub_span "
+                    "可为空；\n"
                     "- non_company_context：明确不是公司（行业/研报/报表/指标"
                     "等业务上下文）；\n"
                     "- abstain：无法确定。\n"
@@ -104,13 +111,7 @@ class CompanyMentionnessClassifier:
         if remaining <= 0:
             return "timeout", None
         self.last_attempts = 1
-        try:
-            decision = run_llm_structured(
-                messages, MentionnessDecision, timeout=remaining
-            )
-        except Exception:  # noqa: BLE001
-            logger.warning("Mentionness: LLM 调用异常，确定性 not_found", exc_info=True)
-            return "failed", None
+        decision = structured_llm(messages, MentionnessDecision, timeout=remaining)
         if decision is None:
             return "timeout", None
         # 程序校验：每个输入 span_id 恰好一个 verdict（无未知/重复/遗漏）
@@ -135,6 +136,9 @@ class CompanyMentionnessClassifier:
                 "abstain",
             ):
                 self.last_validation_error = f"非法 verdict: {v.verdict}"
+                return "invalid", None
+            if v.sub_span and len(v.sub_span) < 2:
+                self.last_validation_error = f"sub_span 过短: {v.sub_span!r}"
                 return "invalid", None
         return "completed", decision
 

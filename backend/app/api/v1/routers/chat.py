@@ -530,6 +530,8 @@ def _build_chat_response(
     overview_rows = light_comparison.get("overview_rows", []) or []
     requested_scope = light_comparison.get("requested_scope", "") or ""
     next_steps = light_comparison.get("next_steps", []) or []
+    # Phase E 会6：跨公司对比大模型整体分析段落（空串=降级，前端不渲染）
+    llm_analysis = str(light_comparison.get("llm_analysis", "") or "")
     company_candidates = [
         CompanyCandidateV1.from_company(item)
         for item in (result.get("company_candidates") or [])
@@ -589,6 +591,7 @@ def _build_chat_response(
             overview_rows=overview_rows,
             requested_scope=requested_scope,
             next_steps=next_steps,
+            llm_analysis=llm_analysis,
             impact_conclusions=impact_conclusions,
             impact_warnings=impact_warnings,
         ),

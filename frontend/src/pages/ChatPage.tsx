@@ -38,6 +38,9 @@ export default function ChatPage() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const wsRef = useRef<ReturnType<typeof wsClient.create> | null>(null);
+  // 8/17：WS 连接代数（epoch）——每次 create 递增；旧连接迟到的
+  // 事件（error/turn.failed）经 epoch 校验被丢弃，不污染新会话面板。
+  const wsEpochRef = useRef(0);
   // 8.11：待确认公司候选（后端 company.candidates 事件，选择后重跑原问题）
   // v3.1 mention 分组协议：多候选时后端 candidates 为空、候选在 mentions[] 中，
   // 每个 mention 携带 mention_id + revision，确认时需原样回传。
@@ -150,6 +153,8 @@ export default function ChatPage() {
       setMessages([]);
       setPanelData(null);
       setPanelState('empty');
+      // 8/17：分析中新建会话 → 旧请求作废（连接 epoch 隔离），复位加载态
+      setIsLoading(false);
       setCurrentCompanyCode(null);
       setInvolvedCompanies([]);
       setPendingCandidates(null);
@@ -161,7 +166,11 @@ export default function ChatPage() {
 
   // 切换会话
   const handleSelectSession = (sessionId: string) => {
-    if (isLoading && sessionId !== currentSessionId) return;
+    if (sessionId === currentSessionId) return;
+    // 8/17：允许在分析中切换——旧请求由连接 epoch 隔离（其结果不再
+    // 更新本页），此处立即复位加载态与面板，避免"本次请求未完成"。
+    setIsLoading(false);
+    setPanelState('empty');
     setCurrentSessionId(sessionId);
     // 切换会话时清空规则筛选（对齐审计 P1-3）、待确认候选（8.11）与澄清提示
     setActiveRuleId(null);
@@ -589,7 +598,13 @@ export default function ChatPage() {
   useEffect(() => {
     if (!currentSessionId) return;
 
-    wsRef.current = wsClient.create(currentSessionId, handleWSEvent);
+    // 8/17：连接代数隔离——每次会话切换/重连递增，旧连接的事件
+    // 回调（闭包捕获旧 epoch）在 epoch 不匹配时直接丢弃。
+    const epoch = ++wsEpochRef.current;
+    wsRef.current = wsClient.create(currentSessionId, (msg) => {
+      if (epoch !== wsEpochRef.current) return;  // 旧连接事件 → 忽略
+      handleWSEvent(msg);
+    });
 
     return () => {
       wsRef.current?.close();

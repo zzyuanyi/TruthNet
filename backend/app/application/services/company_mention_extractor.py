@@ -30,22 +30,29 @@ logger = logging.getLogger(__name__)
 # （"协和电子"不被切开；单字连接词由 Resolver 复合解析处理）。
 _SEGMENT_RE = re.compile(r"[，。、；！？,]|vs|以及|并且|对比|比较")
 
-# 多字停用词（v8 _MULTI_CHAR_STOPWORDS 平移：填充词，整词标记删除）
-_SUBJECT_CLEAN_WORDS: tuple[str, ...] = (
+# 请求动作词（单一来源，8/17 词表优化方向 3）：同时被
+# _SUBJECT_CLEAN_WORDS（全局填充词 mask）与 _REQUEST_WORDS（段首
+# 请求词删除）复用，避免两表各自维护同义词造成漂移。
+_REQUEST_ACTION_WORDS: tuple[str, ...] = (
     "分析",
     "查看",
-    "看下",
-    "查下",
     "看看",
     "评估",
     "总结",
     "帮我",
     "帮忙",
     "请问",
-    "给我",
     "说说",
     "介绍",
     "一下",
+)
+
+# 多字停用词（v8 _MULTI_CHAR_STOPWORDS 平移：填充词，整词标记删除）
+_SUBJECT_CLEAN_WORDS: tuple[str, ...] = _REQUEST_ACTION_WORDS + (
+    "看下",
+    "查下",
+    "评价",
+    "给我",
     "怎么样",
     "如何",
     "多少",
@@ -114,23 +121,14 @@ _BACK_REFERENCE_MARKERS: tuple[str, ...] = (
 
 
 # 请求词（v8 _REQUEST_WORDS 平移：只删主语区域开头，固定点、最长优先）
-_REQUEST_WORDS: tuple[str, ...] = (
+# 8/17 词表优化方向 3：动作部分复用 _REQUEST_ACTION_WORDS（与
+# _SUBJECT_CLEAN_WORDS 同源），此处只保留请求词独有项。
+_REQUEST_WORDS: tuple[str, ...] = _REQUEST_ACTION_WORDS + (
     "你认为",
     "你觉得",
-    "请问",
-    "帮我",
-    "帮忙",
     "麻烦",
     "能否",
     "可以",
-    "分析",
-    "查看",
-    "看看",
-    "介绍",
-    "说说",
-    "评估",
-    "总结",
-    "一下",
     "请",
     "看",
     "查",
@@ -151,7 +149,10 @@ _TIME_MODIFIER_RE = re.compile(
 
 # 主语槽终止符（v8 _SUBJECT_TERMINATORS 平移）：最早终止符之前才是
 # 疑似实体区域；**不含时间词及裸"年"**（时间词为主语区域内可删表达）。
-_SUBJECT_TERMINATORS: tuple[str, ...] = (
+# 8/17 词表优化方向 4：按语义分三类（财务科目词/事件舆情词/动词边界），
+# 最终展平为同一终止符集合——使用处取"最早终止符位置"（min 语义），
+# 分组不改行为，仅提升可维护性。
+_SUBJECT_TERMINATORS_FINANCE: tuple[str, ...] = (
     "资产负债率",
     "应收账款",
     "经营活动现金流",
@@ -175,9 +176,6 @@ _SUBJECT_TERMINATORS: tuple[str, ...] = (
     "资产",
     "股权",
     "股东",
-    "公告",
-    "舆情",
-    "评级",
     "增长",
     "增速",
     "变化",
@@ -203,6 +201,15 @@ _SUBJECT_TERMINATORS: tuple[str, ...] = (
     # v3.2.1 批次 2：公司事实问法边界（"小米属于什么行业"→"小米"）。
     # 注意：单字"的"不得加入（会破坏"美的"等名称内部字符）。
     "属于",
+)
+# 事件舆情词：与财务科目词同为"主语槽终止符"，但语义属于事件/公告域
+_SUBJECT_TERMINATORS_EVENTS: tuple[str, ...] = (
+    "公告",
+    "舆情",
+    "评级",
+)
+_SUBJECT_TERMINATORS: tuple[str, ...] = (
+    _SUBJECT_TERMINATORS_FINANCE + _SUBJECT_TERMINATORS_EVENTS
 )
 
 # 前导指代/动作（v8 _SINGLE_CHAR_PREFIX_RE 平移：段开头连续字符）。

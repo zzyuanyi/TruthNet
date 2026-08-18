@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host --port ${DEPLOY_RUN_PORT:-5000}",
+    "dev": "vite --host",
     "build": "vite build",
     "start": "npx server dist -l ${DEPLOY_RUN_PORT:-${PORT:-3000}} -s",
     "preview": "vite preview",

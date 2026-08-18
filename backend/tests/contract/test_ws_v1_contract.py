@@ -118,6 +118,7 @@ def test_ws_turn_completed_light_comparison_payload():
         "overview_rows": [],
         "requested_scope": "",
         "next_steps": [],
+        "llm_analysis": "",  # Phase E 会6：跨公司对比大模型分析段落（缺省空）
     }
     payload = _light_comparison_payload(
         {
@@ -136,6 +137,7 @@ def test_ws_turn_completed_light_comparison_payload():
                         "params": {},
                     }
                 ],
+                "llm_analysis": "贵州茅台盈利质量更优。",
             }
         }
     )
@@ -143,6 +145,7 @@ def test_ws_turn_completed_light_comparison_payload():
     assert payload["requested_scope"] == "full"
     assert payload["overview_rows"][0]["metric_id"] == "r5_gross_margin"
     assert payload["next_steps"][0]["kind"] == "open_full_comparison"
+    assert payload["llm_analysis"] == "贵州茅台盈利质量更优。"
     json.dumps(payload)  # _emit_terminal_once → send_json 必须可序列化
 
 
