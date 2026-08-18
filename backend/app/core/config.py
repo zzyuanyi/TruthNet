@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENCY: int = 4
     LLM_QUEUE_TIMEOUT_SECONDS: float = 5.0
 
+    # ===== Web Search Provider（Phase E 会5 B1 联网搜索）=====
+    # off（默认）= 关闭，行为与现状完全一致；mock = 本地测试/演示；
+    # bocha = 真实联网（数据源拍板后启用，未拍板保持 off）。
+    WEB_SEARCH_BACKEND: str = "off"  # off | mock | bocha
+    WEB_SEARCH_API_KEY: str = ""
+    WEB_SEARCH_BASE_URL: str = "https://api.bochaai.com/v1/web-search"
+    WEB_SEARCH_TIMEOUT_SECONDS: float = 10.0  # 单次联网墙钟预算（秒）
+    WEB_SEARCH_MAX_RESULTS: int = 5  # 每 query 最多返回命中数
+    WEB_SEARCH_RATE_LIMIT_RPM: int = 30  # 限流：每分钟最多请求数（fail-fast）
+
     # ===== 舆情影响分析（B2 批次 C）=====
     # 有界执行器 worker 数 + 有界信号量在途数上限。在途数（信号量）满时
     # 快速返回 impacts=[] + IMPACT_BUSY，不无限排队、不占用全局唯一 worker。

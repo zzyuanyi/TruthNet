@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-08-18 — Phase E 会5 B1 Web Search 联网搜索
+
+### Added
+- **配置**: 新增 `WEB_SEARCH_BACKEND`（off|mock|bocha，默认 off）、`WEB_SEARCH_API_KEY`、
+  `WEB_SEARCH_BASE_URL`、`WEB_SEARCH_TIMEOUT_SECONDS`、`WEB_SEARCH_MAX_RESULTS`、
+  `WEB_SEARCH_RATE_LIMIT_RPM`。
+- **Port**: 新增 `WebSearchProvider` Port（`application/ports/web_search_provider.py`）+ `SearchResult` 契约
+  （新增接口，未改既有 Port）。
+- **Agent 输出**: 公司事实回答（上市日期等）库内无值时，可触发联网检索并输出
+  `source_type="web_search"` 的 EvidenceRef（`source_uri`/`source_excerpt`/`retrieved_at` 标注来源）；
+  Claim `limitations` 追加「联网检索来源」。
+- **Agent 输出**: 舆情环节无公告时可触发联网，附 `source_type="web_search"` 证据
+  （模块状态仍诚实保持 `NO_ANNOUNCEMENT_DATA`）。
+- **REST companies**: 画像 `listing_date` 库内为空时可联网回填，并追加
+  `WarningItem(code="WEB_SEARCH_SOURCE")`（沿用 V12 `{data,meta,warnings}` envelope）。
+- **数据库/Schema**: 无变更（未改任何字段名/类型/必填）。
+
+### Breaking Changes
+- 是否有破坏性修改：无（默认 `off` 行为与现状完全一致；启用后才产生上述新输出，全为追加）
+- 是否已由项目负责人审阅：⏳ 待审阅（会5 实现待 PR 合并审阅）
+
+---
+
 ## 2026-08-07 — Phase D #5/#6/#8/#10/#12/#15/#16 契约更新
 
 ### Added

@@ -153,6 +153,11 @@ async def company_profile(code: str):
         )
     ]
 
+    # Phase E 会5：画像环节触发点——listing_date 库内无值 → 联网检索 + 来源标注
+    # （默认 off 时 web_search 返回 []，profile 保持现状）
+    if profile.get("listing_date") is None:
+        await _web_search_fill_profile_listing_date(company, profile, warnings)
+
     return V12Response(
         data=profile,
         meta=ApiMeta(
@@ -163,3 +168,39 @@ async def company_profile(code: str):
         ),
         warnings=warnings,
     )
+
+
+async def _web_search_fill_profile_listing_date(
+    company: CompanyRecord, profile: dict, warnings: list[WarningItem]
+) -> bool:
+    """会5：画像 listing_date 库内无值 → 联网检索并回填 + 来源 warning.
+
+    Returns:
+        True=已联网回填；False=未回填（保持现状）。
+        默认 off 时 web_search 返回 []，恒 False，行为与现状完全一致。
+    """
+    from app.application.services.web_search_fact_fill import (
+        extract_listing_date_from_hits,
+    )
+    from app.application.services.web_search_service import web_search_async
+
+    hits = await web_search_async(f"{company.sec_name} 上市日期")
+    if not hits:
+        return False
+    value = extract_listing_date_from_hits(hits)
+    if not value:
+        return False
+    hit = next((h for h in hits if (h.snippet or h.title)), None)
+    profile["listing_date"] = value
+    warnings.append(
+        WarningItem(
+            code="WEB_SEARCH_SOURCE",
+            message=(
+                f"{company.sec_name} 上市日期为联网检索结果：{value}（来源："
+                f"{hit.url if hit else ''}，建议以官方披露为准）"
+            ),
+            module="companies",
+            recoverable=True,
+        )
+    )
+    return True

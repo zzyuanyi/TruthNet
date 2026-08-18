@@ -23,6 +23,7 @@ NS_EVENT_CLUSTER = "evt"
 NS_REPORT = "report"
 NS_REGULATION = "reg"
 NS_COMPANY_REGISTRY = "cr"  # R11: 公司事实轻量查询证据
+NS_WEB_SEARCH = "ws"  # Phase E 会5: 联网搜索来源证据
 
 
 def _digest(*parts: Any, length: int = 16) -> str:
