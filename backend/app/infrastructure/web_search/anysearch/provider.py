@@ -156,12 +156,16 @@ class AnySearchWebSearchProvider:
                 "max_results": count,
             }
         elif any(cue in ql for cue in _LISTING_CUES):
+            # 上市日期：finance 域无结构化 listing_date 字段（8/19 探测结论），
+            # 改走中文快讯（flash）——快讯文本/官网内容可能含「上市/挂牌」信息，
+            # 由下游 extract_listing_date_from_hits 的语义关键字窗口解析；
+            # 解析不出 → None（诚实降级，不伪造）。
             tool_args = {
                 "query": query,
                 "domain": "finance",
-                "sub_domain": "finance.fundamental",
+                "sub_domain": "finance.news",
                 "sub_domain_params": {
-                    "type": "indicator",
+                    "type": "flash",
                     "symbol": "",
                     "cn_code": code,
                 },
@@ -313,12 +317,18 @@ def _parse_mcp_text_results(
                 out.append(sr)
                 continue
         if body.strip():
+            # 非结构化条目：从 Markdown 提取 URL（`- **URL**: https://...` 行，
+            # 公告/快讯实测格式），并清理 URL 行后作为 snippet
+            url = _extract_markdown_url(body)
+            snippet = "\n".join(
+                line for line in body.splitlines() if "**URL**" not in line
+            ).strip()
             out.append(
                 SearchResult(
                     title=title or query,
-                    url="",
-                    snippet=body.strip()[:_SNIPPET_MAX],
-                    domain="",
+                    url=url,
+                    snippet=snippet[:_SNIPPET_MAX],
+                    domain=_hostname(url),
                     published_at=None,
                     source="anysearch",
                 )
@@ -389,6 +399,23 @@ def _try_parse_json_line(body: str) -> dict | None:
     return None
 
 
+_URL_LINE_RE = re.compile(r"\*\*URL\*\*:\s*(https?://\S+)")
+
+
+def _extract_markdown_url(body: str) -> str:
+    """从 Markdown 条目提取 URL（`- **URL**: https://...` 行，公告/快讯实测）。
+
+    URL 行可能换行（`- **URL**: https://...\n- 摘要`），取首个 http(s) 链接。
+    """
+    m = _URL_LINE_RE.search(body or "")
+    if m:
+        return m.group(1).rstrip(".,;:)]}")
+    m2 = re.search(r"https?://\S+", body or "")
+    if m2:
+        return m2.group(0).rstrip(".,;:)]}")
+    return ""
+
+
 def _search_result_from_vertical_json(
     obj: dict, title: str, code: str
 ) -> SearchResult | None:
@@ -413,6 +440,7 @@ def _search_result_from_vertical_json(
     if not snippet:
         parts = []
         for key in (
+            # quote 行情
             "trade_date",
             "close",
             "pct_chg",
@@ -428,11 +456,32 @@ def _search_result_from_vertical_json(
             "circ_mv",
             "volume",
             "amount",
+            # income 利润表（8/19 探测实测字段）
+            "end_date",
+            "revenue",
+            "n_income",
+            "operate_profit",
+            "total_profit",
+            "basic_eps",
+            "diluted_eps",
+            "ann_date",
+            # balance 资产负债表
+            "total_assets",
+            "total_liab",
+            "total_hldr_eqy_exc_min_int",
+            # cashflow 现金流
+            "n_cashflow_act",
+            "n_cashflow_inv",
+            "n_cash_flows_fnc_act",
+            # indicator 指标
+            "roe",
+            "grossprofit_margin",
+            "netprofit_margin",
+            "debt_to_assets",
             "period",
             "eps",
-            "roe",
             "net_profit",
-            "revenue",
+            # news/公告通用
             "date",
             "content",
         ):
@@ -452,8 +501,14 @@ def _search_result_from_vertical_json(
 
 
 def _vertical_date(obj: dict) -> str | None:
-    """垂直域结构化日期 → 'YYYY-MM-DD'（trade_date=YYYYMMDD / date）。"""
-    raw = obj.get("trade_date") or obj.get("date") or obj.get("period") or ""
+    """垂直域结构化日期 → 'YYYY-MM-DD'（trade_date=YYYYMMDD / date / end_date）。"""
+    raw = (
+        obj.get("trade_date")
+        or obj.get("end_date")
+        or obj.get("date")
+        or obj.get("period")
+        or ""
+    )
     if not raw:
         return None
     s = str(raw).strip()

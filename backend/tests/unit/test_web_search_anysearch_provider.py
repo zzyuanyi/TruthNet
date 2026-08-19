@@ -11,6 +11,7 @@ from app.infrastructure.web_search import create_web_search_provider
 from app.infrastructure.web_search.anysearch.provider import (
     AnySearchWebSearchProvider,
     _extract_ashare_code,
+    _extract_markdown_url,
     _parse_mcp_text_results,
     _search_result_from_vertical_json,
 )
@@ -126,6 +127,48 @@ def test_parse_fundamental_markdown():
     assert len(hits) == 1
     assert "eps=58.36" in hits[0].snippet
     assert hits[0].published_at == "2024-12-31"
+
+
+def test_parse_income_markdown_full_fields():
+    """利润表实测 JSON：revenue/n_income/basic_eps 全字段进 snippet。"""
+    text = """## Search Results (1 results, 1424ms)
+
+### 1. 600519.SH 20260630 利润表
+- {"ann_date":"20260815","basic_eps":35.57,"end_date":"20260630","n_income":46033330566.78,"operate_profit":61411291686.27,"revenue":90703260964.48,"total_profit":61438419177.29,"ts_code":"600519.SH"}
+"""
+    hits = _parse_mcp_text_results(text, "贵州茅台 600519.SH 财报", "600519.SH")
+    assert len(hits) == 1
+    assert "revenue=90703260964.48" in hits[0].snippet
+    assert "n_income=46033330566.78" in hits[0].snippet
+    assert "basic_eps=35.57" in hits[0].snippet
+    assert hits[0].published_at == "2026-06-30"
+
+
+def test_parse_news_markdown_url_extracted():
+    """公告/快讯实测：URL 在 `- **URL**:` 行，须提取到 url 字段。"""
+    text = """## Search Results (1 results, 1974ms)
+
+### 1. 贵州茅台(SH600519)股票股价_股价行情_讨论
+- **URL**: https://xueqiu.com/S/SH600519
+- 【贵州茅台：上半年净利润同比下降1.95%】贵州茅台(600519.SH)发布2026年半年度报告，实现营业收入907.03亿元，同比增长1.47%。
+"""
+    hits = _parse_mcp_text_results(text, "贵州茅台 600519.SH 快讯", "600519.SH")
+    assert len(hits) == 1
+    assert hits[0].url == "https://xueqiu.com/S/SH600519"
+    assert hits[0].domain == "xueqiu.com"
+    assert "净利润同比下降" in hits[0].snippet
+    assert "**URL**" not in hits[0].snippet  # URL 行已从 snippet 清理
+
+
+def test_extract_markdown_url_direct():
+    assert (
+        _extract_markdown_url("- **URL**: https://xueqiu.com/S/SH600519\n- 摘要")
+        == "https://xueqiu.com/S/SH600519"
+    )
+    assert _extract_markdown_url("无 URL 文本") == ""
+    assert _extract_markdown_url("见 https://example.com/a?b=1 结尾") == (
+        "https://example.com/a?b=1"
+    )
 
 
 def test_parse_markdown_no_json_falls_back_to_text():
