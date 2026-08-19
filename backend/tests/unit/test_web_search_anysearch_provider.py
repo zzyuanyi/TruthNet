@@ -1,0 +1,235 @@
+"""AnySearch 垂类 Provider 单元测试 — Phase E 会5 B1（8/19 接入）.
+
+覆盖：工厂注册、A 股代码提取、MCP Markdown 解析（行情/公告/三表 JSON 行）、
+无代码不搜索（纯垂类定位）、HTTP/RPC 错误分类、垂直 JSON → SearchResult。
+"""
+
+from __future__ import annotations
+
+from app.core.config import settings
+from app.infrastructure.web_search import create_web_search_provider
+from app.infrastructure.web_search.anysearch.provider import (
+    AnySearchWebSearchProvider,
+    _extract_ashare_code,
+    _parse_mcp_text_results,
+    _search_result_from_vertical_json,
+)
+from app.infrastructure.web_search.mock.provider import MockWebSearchProvider
+
+
+def _run(coro):
+    """同步执行 async provider.search（测试便利）。"""
+    import asyncio
+
+    return asyncio.run(coro)
+
+
+# ── 工厂 ──────────────────────────────────────────────────
+
+
+def test_factory_anysearch(monkeypatch):
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "anysearch")
+    provider = create_web_search_provider("anysearch")
+    assert isinstance(provider, AnySearchWebSearchProvider)
+
+
+def test_factory_other_backends_unchanged(monkeypatch):
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "off")
+    assert create_web_search_provider("off") is None
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "mock")
+    assert isinstance(create_web_search_provider("mock"), MockWebSearchProvider)
+
+
+# ── A 股代码提取 ─────────────────────────────────────────
+
+
+def test_extract_code_with_exchange_suffix():
+    assert _extract_ashare_code("康美药业 600518.SH 上市日期 交易所") == "600518.SH"
+    assert _extract_ashare_code("贵州茅台 600519.SH 行情") == "600519.SH"
+    assert _extract_ashare_code("000001.SZ 股价") == "000001.SZ"
+    assert _extract_ashare_code("830799.BJ 公告") == "830799.BJ"
+    assert _extract_ashare_code("600519.sh 收盘") == "600519.SH"  # 小写后缀
+
+
+def test_extract_code_bare_requires_company_context():
+    # 裸 6 位 + 公司语境 → 提取（默认 SH）
+    assert _extract_ashare_code("分析 600519 这家公司") == "600519.SH"
+    # 裸 6 位无语境（年份/数量）→ 不提取
+    assert _extract_ashare_code("2025 年营收增长") == ""
+    assert _extract_ashare_code("大约 600519 是什么") == ""
+
+
+def test_extract_code_no_code():
+    assert _extract_ashare_code("茅台最近公告") == ""
+    assert _extract_ashare_code("康美药业怎么样") == ""
+
+
+# ── 纯垂类：无代码不搜索 ─────────────────────────────────
+
+
+def test_no_code_returns_empty_without_network(monkeypatch):
+    """无 A 股代码 → 直接 []，不发任何网络请求（纯垂类定位）。"""
+    provider = AnySearchWebSearchProvider()
+    calls = []
+
+    async def _boom(*a, **k):
+        calls.append(1)
+        raise AssertionError("不应发起网络请求")
+
+    monkeypatch.setattr(provider, "_vertical_search", _boom)
+    assert _run(provider.search("茅台最近有什么新闻")) == []
+    assert calls == []
+
+
+# ── MCP Markdown 解析 ─────────────────────────────────────
+
+
+def test_parse_quote_markdown():
+    text = """## Search Results (2 results, 3810ms)
+
+### 1. 600519.SH 20260818 日线行情
+- {"amount":5007014.692,"change":4.9,"close":1297.99,"pct_chg":0.3789,"pe":19.7108,"trade_date":"20260818","ts_code":"600519.SH"}
+
+### 2. 600519.SH 20260817 日线行情
+- {"close":1293.09,"trade_date":"20260817","ts_code":"600519.SH"}
+"""
+    hits = _parse_mcp_text_results(text, "贵州茅台 600519.SH 行情", "600519.SH")
+    assert len(hits) == 2
+    assert hits[0].title == "600519.SH 20260818 日线行情"
+    assert "close=1297.99" in hits[0].snippet
+    assert "pct_chg=0.3789" in hits[0].snippet
+    assert hits[0].published_at == "2026-08-18"
+    assert hits[0].source == "anysearch"
+
+
+def test_parse_news_markdown():
+    text = """## Search Results (1 results, 900ms)
+
+### 1. 康美药业关于股票复牌的公告
+- {"title":"康美药业关于股票复牌的公告","date":"2024-01-15","url":"https://static.cninfo.com.cn/xxx","content":"康美药业股份有限公司关于股票复牌的公告…"}
+"""
+    hits = _parse_mcp_text_results(text, "康美药业 600518.SH 公告", "600518.SH")
+    assert len(hits) == 1
+    assert "复牌" in hits[0].title
+    assert hits[0].url.startswith("https://")
+    assert hits[0].published_at == "2024-01-15"
+    assert hits[0].domain  # url 有域名
+
+
+def test_parse_fundamental_markdown():
+    text = """## Search Results (1 results, 1200ms)
+
+### 1. 600519.SH 主要指标
+- {"period":"2024-12-31","eps":58.36,"roe":30.41,"net_profit":86228240000,"ts_code":"600519.SH"}
+"""
+    hits = _parse_mcp_text_results(text, "600519.SH 财报 指标", "600519.SH")
+    assert len(hits) == 1
+    assert "eps=58.36" in hits[0].snippet
+    assert hits[0].published_at == "2024-12-31"
+
+
+def test_parse_markdown_no_json_falls_back_to_text():
+    text = "## Search Results (1 results)\n\n### 1. 无结构化数据\n- 只有纯文本摘要\n"
+    hits = _parse_mcp_text_results(text, "q", "600519.SH")
+    assert len(hits) == 1
+    assert "纯文本摘要" in hits[0].snippet
+
+
+def test_parse_empty_text():
+    assert _parse_mcp_text_results("", "q", "600519.SH") == []
+    assert _parse_mcp_text_results(None, "q", "600519.SH") == []
+
+
+# ── 垂直 JSON → SearchResult ──────────────────────────────
+
+
+def test_vertical_json_quote_fields():
+    obj = {
+        "close": 1297.99,
+        "pct_chg": 0.3789,
+        "pe": 19.7108,
+        "trade_date": "20260818",
+        "ts_code": "600519.SH",
+    }
+    sr = _search_result_from_vertical_json(obj, "行情", "600519.SH")
+    assert sr is not None
+    assert sr.published_at == "2026-08-18"
+    assert "close=1297.99" in sr.snippet
+
+
+def test_vertical_json_empty_obj():
+    assert _search_result_from_vertical_json({}, "t", "600519.SH") is None
+    assert _search_result_from_vertical_json(None, "t", "600519.SH") is None
+
+
+# ── HTTP / RPC 错误分类（经 monkeypatch httpx）─────────────
+
+
+def test_mcp_call_http_error_classified(monkeypatch):
+    """HTTP 401 → 分类到 http_401_403，返回 []（fail-closed）。"""
+
+    class _FakeResp:
+        status_code = 401
+
+        def json(self):
+            return {"error": {"message": "unauthorized"}}
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return _FakeResp()
+
+    monkeypatch.setattr(
+        "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
+        lambda timeout=None: _FakeClient(),
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_http_401_403"] == 1
+
+
+def test_mcp_rpc_error_returns_empty(monkeypatch):
+    """JSON-RPC error → fail-closed []。"""
+
+    class _FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "bad params"}}
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return _FakeResp()
+
+    monkeypatch.setattr(
+        "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
+        lambda timeout=None: _FakeClient(),
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_http_other_error"] == 1
+
+
+def test_report_stats_contract():
+    provider = AnySearchWebSearchProvider()
+    stats = provider.report_stats()
+    assert stats["web_search_provider"] == "anysearch"
+    assert "web_search_vertical_requests" in stats
+    assert "web_search_http_429" in stats

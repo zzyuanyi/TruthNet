@@ -86,9 +86,14 @@ class Settings(BaseSettings):
 
     # ===== Web Search Provider（Phase E 会5 B1 联网搜索）=====
     # off（默认）= 关闭，行为与现状完全一致；mock = 本地测试/演示；
-    # bocha = 真实联网（数据源拍板后启用，未拍板保持 off）。
-    WEB_SEARCH_BACKEND: str = "off"  # off | mock | bocha
-    WEB_SEARCH_API_KEY: str = ""
+    # bocha = 博查真实联网（中文通用搜索，未拍板保持 off）；
+    # anysearch = AnySearch A 股垂类（finance 垂直域：行情/公告/三表，
+    #   8/19 接入，队长拍板只做垂类不做通用；免费注册 Key 见
+    #   `竞赛管理/docs/reference/AnySearch-API规范.md` §2.4）。
+    WEB_SEARCH_BACKEND: str = "off"  # off | mock | bocha | anysearch
+    WEB_SEARCH_API_KEY: str = ""  # bocha/通用 Key（Bearer）
+    # AnySearch 专用 Key（as_sk_*，独立于 bocha；匿名可用但限流低）
+    ANYSEARCH_API_KEY: str = ""
     WEB_SEARCH_BASE_URL: str = "https://api.bochaai.com/v1/web-search"
     WEB_SEARCH_TIMEOUT_SECONDS: float = 10.0  # 单次联网墙钟预算（秒）
     WEB_SEARCH_MAX_RESULTS: int = 5  # 每 query 最多返回命中数
