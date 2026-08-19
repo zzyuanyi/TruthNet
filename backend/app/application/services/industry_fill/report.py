@@ -34,6 +34,10 @@ REPORT_METRIC_KEYS = [
     "provider_fallbacks",
     "provider_batch_requests",
     "provider_batch_misses",
+    # Task C C7：批量限流/熔断可诊断统计（report_stats 计算后经 build_report 白名单透出）
+    "provider_batch_throttled",
+    "provider_batch_circuit_opens",
+    "provider_batch_circuit_failfast",
     "provider_host_distribution",
     "effective_concurrency",
     "provider_pressure",
