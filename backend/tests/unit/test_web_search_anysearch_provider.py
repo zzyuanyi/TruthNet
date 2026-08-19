@@ -276,3 +276,292 @@ def test_report_stats_contract():
     assert stats["web_search_provider"] == "anysearch"
     assert "web_search_vertical_requests" in stats
     assert "web_search_http_429" in stats
+    # 默认零值（审查 P1-4：契约存在性断言强化）
+    assert stats["web_search_http_401_403"] == 0
+    assert stats["web_search_http_5xx"] == 0
+    assert stats["web_search_timeout"] == 0
+    assert stats["web_search_connection_error"] == 0
+    assert stats["web_search_empty_real_result"] == 0
+    assert stats["web_search_parse_empty"] == 0
+    assert stats["web_search_not_observable"] == 0
+
+
+# ── 审查 P1-4：错误路径与边界补测 ─────────────────────────
+
+
+class _FakeClient:
+    """可注入响应/异常的 httpx.AsyncClient 替身。"""
+
+    def __init__(self, resp=None, exc=None):
+        self._resp = resp
+        self._exc = exc
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, *a, **k):
+        if self._exc is not None:
+            raise self._exc
+        return self._resp
+
+
+class _FakeResp:
+    def __init__(self, status_code=200, payload=None):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("no json")
+        return self._payload
+
+
+def _patch_client(monkeypatch, resp=None, exc=None):
+    monkeypatch.setattr(
+        "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
+        lambda timeout=None: _FakeClient(resp=resp, exc=exc),
+    )
+
+
+def test_mcp_http_500_classified(monkeypatch):
+    _patch_client(monkeypatch, resp=_FakeResp(status_code=500, payload={}))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_http_5xx"] == 1
+
+
+def test_mcp_http_429_classified(monkeypatch):
+    _patch_client(monkeypatch, resp=_FakeResp(status_code=429, payload={}))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_http_429"] == 1
+
+
+def test_mcp_http_302_classified_as_other(monkeypatch):
+    """审查 P2-3：3xx 不再落到 not_observable。"""
+    _patch_client(monkeypatch, resp=_FakeResp(status_code=302, payload={}))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_http_other_error"] == 1
+    assert provider.report_stats()["web_search_not_observable"] == 0
+
+
+def test_mcp_timeout_classified(monkeypatch):
+    import httpx
+
+    _patch_client(monkeypatch, exc=httpx.ConnectTimeout("timeout"))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_timeout"] == 1
+
+
+def test_mcp_connect_error_classified(monkeypatch):
+    import httpx
+
+    _patch_client(monkeypatch, exc=httpx.ConnectError("refused"))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_connection_error"] == 1
+
+
+def test_mcp_network_error_classified(monkeypatch):
+    """审查 P2-2：NetworkError 子类（RemoteProtocolError）归 connection_error。"""
+    import httpx
+
+    _patch_client(monkeypatch, exc=httpx.RemoteProtocolError("reset"))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert provider.report_stats()["web_search_connection_error"] == 1
+
+
+def test_mcp_http_200_non_json_returns_empty(monkeypatch):
+    """HTTP 200 但 body 非 JSON → fail-closed [] + parse_empty 统计。"""
+    _patch_client(monkeypatch, resp=_FakeResp(status_code=200, payload="<html>"))
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+
+
+def test_mcp_empty_text_counts_real_empty(monkeypatch):
+    """MCP 返回空文本（真实空结果）→ empty_real_result 统计（审查 P1-1）。"""
+    _patch_client(
+        monkeypatch,
+        resp=_FakeResp(
+            status_code=200,
+            payload={"jsonrpc": "2.0", "result": {"content": [{"type": "text", "text": ""}]}},
+        ),
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    stats = provider.report_stats()
+    assert stats["web_search_empty_real_result"] == 1
+    assert stats["web_search_parse_empty"] == 0
+
+
+def test_mcp_text_no_parse_counts_parse_empty(monkeypatch):
+    """MCP 返回文本但解析不出 → parse_empty 统计（审查 P1-1）。"""
+    _patch_client(
+        monkeypatch,
+        resp=_FakeResp(
+            status_code=200,
+            payload={
+                "jsonrpc": "2.0",
+                "result": {"content": [{"type": "text", "text": "## Search Results (0)"}]},
+            },
+        ),
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    stats = provider.report_stats()
+    assert stats["web_search_parse_empty"] == 1
+    assert stats["web_search_empty_real_result"] == 0
+
+
+def test_search_results_truncated_to_count(monkeypatch):
+    """审查 P2-1：解析后防御性截断到 count。"""
+    text = "## Search Results (5 results)\n\n" + "\n".join(
+        f"### {i}. t{i}\n- {{\"close\":{i},\"trade_date\":\"2026081{i}\"}}" for i in range(1, 6)
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+
+    async def _fake_mcp_call(tool, args):
+        return text
+
+    monkeypatch.setattr(provider, "_mcp_call", _fake_mcp_call)
+    hits = _run(provider.search("贵州茅台 600519.SH 行情", max_results=2))
+    assert len(hits) == 2
+
+
+def test_search_none_query_returns_empty(monkeypatch):
+    """审查 P2-4：query=None 不抛异常，返回 []。"""
+    provider = AnySearchWebSearchProvider(api_key="")
+    monkeypatch.setattr(
+        provider, "_vertical_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError())
+    )
+    assert _run(provider.search(None)) == []
+
+
+def test_search_bad_max_results_defaults(monkeypatch):
+    """审查 P2-5：max_results 非数值 → 默认值不抛异常。"""
+    text = "## Search Results (1)\n\n### 1. t\n- {\"close\":1,\"trade_date\":\"20260818\"}"
+    provider = AnySearchWebSearchProvider(api_key="")
+
+    async def _fake_mcp_call(tool, args):
+        return text
+
+    monkeypatch.setattr(provider, "_mcp_call", _fake_mcp_call)
+    assert _run(provider.search("贵州茅台 600519.SH 行情", max_results="abc")) != []
+
+
+# ── 审查 P1-2：路由分支锁死 ────────────────────────────────
+
+
+def _route_sub_domain(provider, query, code="600519.SH"):
+    """直连 provider._vertical_search 拿工具参数（不联网，monkeypatch _mcp_call）。"""
+    import asyncio
+
+    seen = {}
+
+    async def _fake_mcp_call(tool, args):
+        seen["args"] = args
+        return "## Search Results (0)"
+
+    # 实例级替换：_vertical_search 内 self._mcp_call 走 fake
+    original = provider._mcp_call
+    provider._mcp_call = _fake_mcp_call  # type: ignore[method-assign]
+    try:
+        asyncio.run(provider._vertical_search(query, code, 3))
+    finally:
+        provider._mcp_call = original  # type: ignore[method-assign]
+    return seen.get("args")
+
+
+def test_route_quote_for_exchange_name(monkeypatch):
+    """'上交所/深交所'行情查询 → finance.quote（审查 P1-2 负向排除）。"""
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "贵州茅台 600519.SH 上交所收盘价")
+    assert args["sub_domain"] == "finance.quote"
+
+
+def test_route_listing_first_for_listing_announcement(monkeypatch):
+    """'上市公告书' → 上市日期 flash 分支，不被 announcement 抢占（审查 P1-2）。"""
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "康美药业 600518.SH 上市公告日期")
+    assert args["sub_domain"] == "finance.news"
+    assert args["sub_domain_params"]["type"] == "flash"
+    assert args["sub_domain_params"].get("period") == "1y"
+
+
+def test_route_announcement(monkeypatch):
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "康美药业 600518.SH 最新公告")
+    assert args["sub_domain"] == "finance.news"
+    assert args["sub_domain_params"]["type"] == "announcement"
+
+
+def test_route_fundamental_income(monkeypatch):
+    """'净利润/营收' → fundamental type=income（审查 P2-11）。"""
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "贵州茅台 600519.SH 净利润")
+    assert args["sub_domain"] == "finance.fundamental"
+    assert args["sub_domain_params"]["type"] == "income"
+
+
+def test_route_fundamental_holder(monkeypatch):
+    """'股东' → fundamental type=holder（审查 P2-11）。"""
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "贵州茅台 600519.SH 十大股东")
+    assert args["sub_domain"] == "finance.fundamental"
+    assert args["sub_domain_params"]["type"] == "holder"
+
+
+def test_route_quote_default(monkeypatch):
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "贵州茅台 600519.SH 今天股价")
+    assert args["sub_domain"] == "finance.quote"
+
+
+# ── 审查 P2-6/P2-7/P2-8/P2-9：解析边界 ─────────────────────
+
+
+def test_parse_json_multiple_objects_takes_first():
+    """P2-6：条目含多个 JSON 对象时取第一个，不整条丢失。"""
+    from app.infrastructure.web_search.anysearch.provider import _try_parse_json_line
+
+    body = '{"a":1} 摘要 {"b":2}'
+    obj = _try_parse_json_line(body)
+    assert obj == {"a": 1}
+
+
+def test_extract_url_with_fullwidth_punct():
+    """P2-7：URL 后跟全角逗号/中文不被吞入。"""
+    from app.infrastructure.web_search.anysearch.provider import _extract_markdown_url
+
+    assert (
+        _extract_markdown_url("- **URL**: https://xueqiu.com/S/SH600519，详情见下")
+        == "https://xueqiu.com/S/SH600519"
+    )
+
+
+def test_vertical_date_validates():
+    """P2-8：非法日期返回 None。"""
+    from app.infrastructure.web_search.anysearch.provider import _vertical_date
+
+    assert _vertical_date({"trade_date": "20260818"}) == "2026-08-18"
+    assert _vertical_date({"trade_date": "20261340"}) is None  # 月 13 非法
+    assert _vertical_date({"date": "2024-01-15"}) == "2024-01-15"
+    assert _vertical_date({"date": "not-a-date"}) is None
+    assert _vertical_date({}) is None
+
+
+def test_extract_code_excludes_yyyymm():
+    """P2-9：YYYYMM 年份月份不作为股票代码。"""
+    assert _extract_ashare_code("202501 这家公司上市了") == ""
+    assert _extract_ashare_code("2026 年 01 月公司上市") == ""
+
+
+def test_extract_code_suffix_not_followed_by_letter():
+    """P2-10：600519.SHX 之类不匹配。"""
+    assert _extract_ashare_code("600519.SHX 是什么") == ""
