@@ -124,6 +124,65 @@ def test_cache_keyed_by_query(monkeypatch):
     assert counting.calls == 2
 
 
+# ── 8/19 审查：空/失败结果缓存语义 ─────────────────────────
+
+
+def test_nonempty_result_cached_indefinitely(monkeypatch):
+    """非空结果进程内常驻：同 query 重复调用不再联网。"""
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "mock")
+    counting = _CountingProvider()
+    monkeypatch.setattr(web_search_service, "_create_provider", lambda: counting)
+    web_search("有结果查询")
+    assert counting.calls == 1
+    # 手动把缓存时间拨回很久之前，非空结果仍应命中缓存（常驻）
+    with web_search_service._cache_lock:
+        web_search_service._cache["有结果查询"] = (
+            web_search_service._cache["有结果查询"][0],
+            0.0,
+        )
+    web_search("有结果查询")
+    assert counting.calls == 1, "非空结果不应因时间过期而重新联网"
+
+
+class _EmptyCountingProvider:
+    """统计 search 调用次数，返回空列表（空缓存语义验证用）。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    @property
+    def provider_name(self) -> str:
+        return "empty-counting"
+
+    async def search(self, query: str, max_results: int | None = None) -> list:
+        self.calls += 1
+        return []
+
+
+def test_empty_result_expires_after_short_ttl(monkeypatch):
+    """空/失败结果短 TTL：过期后同 query 可重新联网（不永久污染缓存）。"""
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "mock")
+    counting = _EmptyCountingProvider()
+    monkeypatch.setattr(web_search_service, "_create_provider", lambda: counting)
+    assert web_search("空结果查询") == []
+    assert counting.calls == 1
+    # 空结果超过 TTL → 过期，重新联网
+    with web_search_service._cache_lock:
+        web_search_service._cache["空结果查询"] = ([], 0.0)
+    assert web_search("空结果查询") == []
+    assert counting.calls == 2, "空结果短 TTL 过期后应重新联网（不永久缓存失败）"
+
+
+def test_empty_result_cached_within_ttl(monkeypatch):
+    """空结果在短 TTL 窗口内 → 命中缓存，不重复联网（同 turn 防重复空搜）。"""
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "mock")
+    counting = _EmptyCountingProvider()
+    monkeypatch.setattr(web_search_service, "_create_provider", lambda: counting)
+    assert web_search("空结果查询") == []
+    assert web_search("空结果查询") == []  # TTL 内命中缓存
+    assert counting.calls == 1
+
+
 # ── 限流 ──────────────────────────────────────────────────
 
 

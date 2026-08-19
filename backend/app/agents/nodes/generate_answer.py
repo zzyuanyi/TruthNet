@@ -859,7 +859,10 @@ def _web_search_fill_company_fact(
     )
     from app.application.services.web_search_service import web_search
 
-    hits = web_search(f"{sec_name} {label}")
+    # 8/19 审查：query 带 wind_code + 交易所，提升同名公司消歧（如平安银行/
+    # 中国平安/平安电工）；库内已有值时不进入本函数（调用方 gate），不会把
+    # Web Search 变成每次问答都搜索。
+    hits = web_search(f"{sec_name} {wind_code} {label} 交易所")
     if not hits:
         return None, None
 

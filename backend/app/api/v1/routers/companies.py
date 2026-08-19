@@ -184,7 +184,9 @@ async def _web_search_fill_profile_listing_date(
     )
     from app.application.services.web_search_service import web_search_async
 
-    hits = await web_search_async(f"{company.sec_name} 上市日期")
+    hits = await web_search_async(
+        f"{company.sec_name} {company.wind_code} 上市日期 交易所"
+    )
     if not hits:
         return False
     value = extract_listing_date_from_hits(hits)

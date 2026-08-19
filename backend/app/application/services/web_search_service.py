@@ -32,9 +32,12 @@ logger = logging.getLogger(__name__)
 _loop: asyncio.AbstractEventLoop | None = None
 _loop_lock = threading.Lock()
 
-# ── 进程内缓存（query -> list[SearchResult]）───────────────
-_cache: dict[str, list] = {}
+# ── 进程内缓存（query -> (hits, cached_at)）────────────────
+# 8/19 审查：一次 timeout / provider 临时失败 / 5xx / 网络中断返回的 [] 不得
+# 永久污染缓存。非空结果进程内常驻；空结果短 TTL，过期后重新联网。
+_cache: dict[str, tuple[list, float]] = {}
 _cache_lock = threading.Lock()
+_EMPTY_CACHE_TTL = 30.0  # 空结果短缓存（秒），避免同 turn 反复空搜又不永久污染
 
 # ── 令牌桶（RPM 限流）──────────────────────────────────────
 _rate_meta = {"tokens": 0.0, "last_refill": 0.0}
@@ -121,10 +124,15 @@ def web_search(
         return []
 
     key = query.strip()
-    # 2. 缓存去重（命中不消耗限流令牌）
+    # 2. 缓存去重（命中不消耗限流令牌）。空结果超过短 TTL → 过期，重新联网，
+    #    避免一次瞬时失败/真实空结果在进程生命周期内永久拒绝重试（8/19 审查）。
+    now = time.monotonic()
     with _cache_lock:
         if key in _cache:
-            return list(_cache[key])
+            hits, cached_at = _cache[key]
+            if hits or now - cached_at < _EMPTY_CACHE_TTL:
+                return list(hits)
+            del _cache[key]
 
     # 3. 限流
     if not _rate_limited():
@@ -146,9 +154,10 @@ def web_search(
     )
     hits = _run_async(lambda: _search_async(provider, key, max_n), budget)
 
-    # 5. 缓存（含空结果——避免同 query 反复联网；off 路径不写缓存）
+    # 5. 缓存（非空进程内常驻；空结果短 TTL，避免同 query 反复联网又
+    #    不永久污染；off 路径不写缓存）
     with _cache_lock:
-        _cache[key] = list(hits)
+        _cache[key] = (list(hits), time.monotonic())
     return list(hits)
 
 

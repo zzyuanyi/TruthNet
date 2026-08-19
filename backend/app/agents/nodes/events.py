@@ -337,7 +337,7 @@ def _web_search_company_news(
     from app.application.services.web_search_service import web_search
     from app.domain.provenance.id_factory import NS_WEB_SEARCH, make_evidence_id
 
-    hits = web_search(f"{company.sec_name} 公告 舆情 最新")
+    hits = web_search(f"{company.sec_name} {company.wind_code} 公告 舆情 最新")
     if not hits:
         return []
     evidence: list[EvidenceRef] = []
