@@ -815,3 +815,208 @@ class TestAllHostsCooldownFailFast:
         with pytest.raises(akshare_provider._Push2Throttled):
             prov._fetch_batch(["600519"], max_retries=0, backoff_seconds=0.0)
         assert calls["n"] == 0
+
+
+class TestBatchThrottleAndCircuit:
+    """Task C C4/C5/C7：批量限流不转逐股（防风暴）+ 批量熔断 fail-fast + 统计。
+
+    mock HTTP（monkeypatch _session / _fetch_batch），不发真实请求。
+    """
+
+    # ── C5 限流分类：_Push2Throttled → 整块 throttled，不转逐股 ──────────
+    def test_batch_throttled_no_fanout_to_per_stock(self, monkeypatch):
+        """批量限流失败 → 整块 ERROR(throttled)，零逐股（风暴根因修复）。"""
+
+        def throttle_batch(self, bares, **kwargs):
+            self._stat_inc("requests")
+            with self._stats_lock:
+                self._stats["batch_requests"] = self._stats.get("batch_requests", 0) + 1
+            raise akshare_provider._Push2Throttled("push2 批量限流")
+
+        monkeypatch.setattr(AkShareProvider, "_fetch_batch", throttle_batch)
+
+        def boom(self, bare, **kwargs):  # pragma: no cover - 限流不得转逐股
+            raise AssertionError("限流时不得转逐股（1 个批量不得放大成 N 个逐股）")
+
+        monkeypatch.setattr(AkShareProvider, "_fetch_direct", boom)
+        prov = _provider()
+        results = prov.query_many(
+            ["600519.SH", "000001.SZ"], max_retries=1, backoff_seconds=0.01
+        )
+        assert [r.query_status for r in results] == [
+            QueryStatus.ERROR,
+            QueryStatus.ERROR,
+        ]
+        assert all(r.throttled for r in results)
+        assert all(r.provider_endpoint == "eastmoney.push2.batch" for r in results)
+        stats = prov.report_stats()
+        assert stats["provider_batch_throttled"] == 1
+        assert stats["provider_batch_misses"] == 0
+        assert stats["provider_fallbacks"] == 0
+
+    def test_batch_throttled_flag_on_success_does_not_fanout_all(self, monkeypatch):
+        """批量成功但块内个别 miss → 仅 miss 转逐股（限流 flag 不放大整块）。"""
+
+        # 与旧行为一致：批量成功返回部分覆盖，未覆盖代码走逐股（合法 miss）
+        def fake_batch(self, bares, **kwargs):
+            return {"600519": "白酒Ⅱ"}
+
+        monkeypatch.setattr(AkShareProvider, "_fetch_batch", fake_batch)
+        monkeypatch.setattr(
+            AkShareProvider,
+            "_fetch_direct",
+            lambda self, bare, **kwargs: {"f127": "银行"},
+        )
+        prov = _provider()
+        results = prov.query_many(
+            ["600519.SH", "000001.SZ"], max_retries=1, backoff_seconds=0.01
+        )
+        assert results[0].provider_endpoint == "eastmoney.push2.batch"
+        assert results[1].provider_endpoint == "eastmoney.push2.direct"
+        assert prov.report_stats()["provider_batch_misses"] == 1
+
+    def test_batch_connection_error_still_falls_back_to_per_stock(self, monkeypatch):
+        """连接/网络失败（非限流）→ 整块转逐股（换源恢复合理，非风暴）。"""
+        monkeypatch.setattr(
+            AkShareProvider,
+            "_fetch_batch",
+            lambda self, bares, **kwargs: (_ for _ in ()).throw(
+                ConnectionError("push2 批量全部主机失败")
+            ),
+        )
+        monkeypatch.setattr(
+            AkShareProvider,
+            "_fetch_direct",
+            lambda self, bare, **kwargs: {"f127": "白酒Ⅱ"},
+        )
+        prov = _provider()
+        results = prov.query_many(
+            ["600519.SH", "000001.SZ"], max_retries=1, backoff_seconds=0.01
+        )
+        assert [r.query_status for r in results] == [
+            QueryStatus.SUCCESS,
+            QueryStatus.SUCCESS,
+        ]
+        assert all(r.provider_endpoint == "eastmoney.push2.direct" for r in results)
+        assert prov.report_stats()["provider_batch_throttled"] == 0
+
+    # ── C11 resume 恢复语义：ERROR(throttled) 重查 → 收敛 ─────────────────
+    def test_resume_recovery_loop_throttled_error(self, monkeypatch):
+        """C11 恢复语义（--resume 重算收敛）：
+        Phase1 批量限流 → 整块 ERROR(throttled) 零逐股；
+        Phase2 以该批为 cached 再 resume（仍限流）→ 保持 ERROR(throttled)
+          且零逐股（风暴根因不复发）；
+        Phase3 上游恢复 → 收敛为 SUCCESS。
+        cached_skip 对 ERROR 不跳过（档案 §6.1 重试契约），与熔断计数
+        （跨 query_many 不重置）共同保证"限流风暴后可安全恢复"。"""
+        state = {"call": 0}
+
+        def flaky_batch(self, bares, **kwargs):
+            self._stat_inc("requests")
+            with self._stats_lock:
+                self._stats["batch_requests"] = self._stats.get("batch_requests", 0) + 1
+            state["call"] += 1
+            if state["call"] in (1, 2):
+                raise akshare_provider._Push2Throttled("push2 批量限流")
+            return {"600519": "白酒Ⅱ", "000001": "银行"}
+
+        monkeypatch.setattr(AkShareProvider, "_fetch_batch", flaky_batch)
+
+        def boom(self, bare, **kwargs):  # pragma: no cover - 限流不得转逐股
+            raise AssertionError("限流路径不得转逐股（1 个批量不得放大成 N 个逐股）")
+
+        monkeypatch.setattr(AkShareProvider, "_fetch_direct", boom)
+        prov = _provider()
+        codes = ["600519.SH", "000001.SZ"]
+
+        # Phase 1：批量限流 → 整块 ERROR(throttled)，零逐股
+        r1 = prov.query_many(codes, max_retries=1, backoff_seconds=0.01)
+        assert [r.query_status for r in r1] == [
+            QueryStatus.ERROR,
+            QueryStatus.ERROR,
+        ]
+        assert all(r.throttled for r in r1)
+        assert prov.report_stats()["provider_batch_throttled"] == 1
+        assert prov.report_stats()["provider_fallbacks"] == 0
+
+        # Phase 2（--resume）：cached 为 Phase1 的 ERROR(throttled)，仍限流
+        r2 = prov.query_many(
+            codes,
+            cached={c: r for c, r in zip(codes, r1)},
+            max_retries=1,
+            backoff_seconds=0.01,
+        )
+        assert [r.query_status for r in r2] == [
+            QueryStatus.ERROR,
+            QueryStatus.ERROR,
+        ]
+        assert all(r.throttled for r in r2)
+        # 每 run 统计独立（_stats_reset），本 run 仍计 1 次批量限流
+        assert prov.report_stats()["provider_batch_throttled"] == 1
+        assert prov.report_stats()["provider_fallbacks"] == 0
+
+        # Phase 3（上游恢复）：再 resume → 收敛为 SUCCESS（cached error 重查契约）
+        r3 = prov.query_many(
+            codes,
+            cached={c: r for c, r in zip(codes, r1)},
+            max_retries=1,
+            backoff_seconds=0.01,
+        )
+        assert [r.query_status for r in r3] == [
+            QueryStatus.SUCCESS,
+            QueryStatus.SUCCESS,
+        ]
+        assert prov.report_stats()["provider_batch_throttled"] == 0
+        assert prov.report_stats()["provider_batch_circuit_opens"] == 0
+
+    # ── C4 批量熔断：连续失败 → 打开 → fail-fast 零网络 → half-open 恢复 ──
+    def test_circuit_opens_and_fail_fast_zero_network(self, monkeypatch):
+        """真实 _fetch_batch 路径：连续 3 次批量限流 → 熔断打开；
+        后续 chunk fail-fast，不发任何网络请求（请求计数冻结）。"""
+        calls = {"n": 0}
+
+        class _SessionStub:
+            def get(self, *a, **k):
+                calls["n"] += 1
+                return _PayloadResp('{"rc": -1, "data": null}')
+
+        monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
+        prov = _provider()
+        codes = [f"6005{i:02d}.SH" for i in range(190)]  # 4 chunks（3×60 → 熔断）
+        prov.query_many(codes, max_retries=0, backoff_seconds=0.0, concurrency=2)
+        # 前 3 chunk × 3 主机 = 9 次请求；第 4 chunk 熔断 fail-fast 零网络
+        assert prov._batch_open_until > 0
+        assert calls["n"] == 9
+        stats = prov.report_stats()
+        assert stats["provider_batch_circuit_opens"] == 1
+        assert stats["provider_batch_circuit_failfast"] == 1
+
+    def test_circuit_state_machine(self):
+        """白盒：3 次失败打开；打开期间 fail-fast；成功清零；冷却后恢复。"""
+        prov = _provider()
+        prov._record_batch_failure()
+        prov._record_batch_failure()
+        assert not prov._batch_circuit_fail_fast()  # 未达阈值，不 fail-fast
+        prov._record_batch_failure()  # 第 3 次 → 打开
+        assert prov._batch_open_until > 0
+        assert prov._batch_circuit_fail_fast()  # 打开期间 fail-fast
+        assert prov.report_stats()["provider_batch_circuit_opens"] == 1
+        # 冷却后半开：重新允许一次尝试
+        prov._batch_open_until = 0.0
+        assert not prov._batch_circuit_fail_fast()
+        # 失败后成功 → 计数归零、熔断关闭
+        prov._record_batch_failure()
+        prov._record_batch_success()
+        assert prov._batch_failures == 0
+        assert prov._batch_open_until == 0.0
+
+    # ── C7 统计可诊断 ──────────────────────────────────────
+    def test_report_stats_includes_throttle_diagnostics(self):
+        stats = _provider().report_stats()
+        for key in (
+            "provider_batch_throttled",
+            "provider_batch_circuit_opens",
+            "provider_batch_circuit_failfast",
+        ):
+            assert key in stats
+            assert stats[key] == 0

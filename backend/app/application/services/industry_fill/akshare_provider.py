@@ -59,6 +59,10 @@ _PUSH2_URL = "https://push2.eastmoney.com/api/qt/stock/get"
 _BATCH_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 # 批量请求单次证券数上限（口径认证实验同款 60；push2delay 实测可承载）
 _BATCH_CHUNK = 60
+# 批量熔断（Task C C4）：连续批量失败达到阈值 → 熔断打开，期间批量 fail-fast
+# 零网络；冷却后半开重试一次。防止"全量缺失数千码 × 每块都失败"把上游打死。
+_BATCH_CIRCUIT_FAIL_LIMIT = 3
+_BATCH_CIRCUIT_COOLDOWN = 60.0
 # 东财行情主机轮换：主站可能瞬时重置（RemoteDisconnected），按序回退镜像。
 # 2026-08-15 实测：push2/82.push2 被远端断连，push2delay 稳定返回 f127/f100。
 _PUSH2_HOSTS = [
@@ -114,6 +118,10 @@ class AkShareProvider:
         self._controller = RateController(4)
         self._stats_lock = threading.Lock()
         self._stats: dict = self._fresh_stats()
+        # 批量熔断状态（Task C C4）：连续批量失败计数 + 熔断打开截止时刻
+        # （0.0 = 未打开）。批量主路径串行执行，无需额外锁。
+        self._batch_failures = 0
+        self._batch_open_until = 0.0
 
     @staticmethod
     def _fresh_stats() -> dict:
@@ -124,6 +132,10 @@ class AkShareProvider:
             "fallbacks": 0,
             "batch_requests": 0,
             "batch_misses": 0,
+            # Task C C7：批量限流/熔断可诊断统计
+            "batch_throttled": 0,
+            "batch_circuit_opens": 0,
+            "batch_circuit_failfast": 0,
             "host_hits": {},
         }
 
@@ -145,6 +157,12 @@ class AkShareProvider:
                 "provider_fallbacks": self._stats["fallbacks"],
                 "provider_batch_requests": self._stats["batch_requests"],
                 "provider_batch_misses": self._stats["batch_misses"],
+                # Task C C7：批量限流/熔断可诊断
+                "provider_batch_throttled": self._stats["batch_throttled"],
+                "provider_batch_circuit_opens": self._stats["batch_circuit_opens"],
+                "provider_batch_circuit_failfast": self._stats[
+                    "batch_circuit_failfast"
+                ],
                 "provider_host_distribution": dict(self._stats["host_hits"]),
             }
         snap = self._controller.snapshot()
@@ -505,6 +523,9 @@ class AkShareProvider:
         self._stat_inc("requests")
         with self._stats_lock:
             self._stats["batch_requests"] = self._stats.get("batch_requests", 0) + 1
+        # 熔断打开期间：不打网络，fail-fast（Task C C4，防限流风暴）
+        if self._batch_circuit_fail_fast():
+            raise _Push2Throttled("push2 批量熔断打开，fail-fast（resume 会重试）")
         secids = []
         for bare in bare_codes:
             market = "1" if bare.startswith(("6", "9")) else "0"
@@ -570,13 +591,14 @@ class AkShareProvider:
                         f"{host} 批量响应空 diff（{len(bare_codes)} 码全缺）"
                     )
                     continue
-                # 真成功才记账（_last_host 加锁，H6）
+                # 真成功才记账（_last_host 加锁，H6）；批量恢复 → 清零熔断
                 self._controller.host_ok(host)
                 with self._stats_lock:
                     self._last_host = host
                     self._stats["host_hits"][host] = (
                         self._stats["host_hits"].get(host, 0) + 1
                     )
+                self._record_batch_success()
                 items = diff.values() if isinstance(diff, dict) else diff
                 out: dict[str, str] = {}
                 for item in items:
@@ -593,6 +615,39 @@ class AkShareProvider:
             if last_exc is not None
             else ConnectionError("push2 批量全部主机失败")
         )
+
+    # ── 批量熔断（Task C C4）───────────────────────────────
+    def _record_batch_success(self) -> None:
+        """批量请求成功（即使块内有个别 miss/降级）→ 清零熔断计数。"""
+        self._batch_failures = 0
+        self._batch_open_until = 0.0
+
+    def _record_batch_failure(self) -> None:
+        """批量请求失败（限流）→ 累计；达到阈值打开熔断（冷却后 half-open）。
+
+        熔断已打开期间（fail-fast 抛出的失败）不再重复累计——否则每次
+        fail-fast 都会把 opens 计数刷爆且重置冷却窗口（Task C C4 语义）。
+        冷却后 half-open 的一次尝试失败会重新累计并二次熔断（opens 递增合理）。
+        """
+        if time.monotonic() < self._batch_open_until:
+            return  # 熔断保护期间：不重复累计，保持 opens=1
+        self._batch_failures += 1
+        if self._batch_failures >= _BATCH_CIRCUIT_FAIL_LIMIT:
+            self._batch_open_until = time.monotonic() + _BATCH_CIRCUIT_COOLDOWN
+            self._stat_inc("batch_circuit_opens")
+            log.warning(
+                "批量熔断打开：连续 %d 次批量失败，%.0fs 内批量 fail-fast",
+                _BATCH_CIRCUIT_FAIL_LIMIT,
+                _BATCH_CIRCUIT_COOLDOWN,
+            )
+
+    def _batch_circuit_fail_fast(self) -> bool:
+        """熔断打开期间 → 批量请求不打网络，直接判限流（resume 重试）。"""
+        if time.monotonic() < self._batch_open_until:
+            self._stat_inc("throttles")
+            self._stat_inc("batch_circuit_failfast")
+            return True
+        return False
 
     # ── 统一入口 ───────────────────────────────────────────
     def query_many(
@@ -678,6 +733,8 @@ class AkShareProvider:
         need = [c for c in codes if not cached_skip(c)]
         batch_results: dict[str, ProviderResult] = {}
         batch_miss: list[str] = []
+        # Task C C5：批量限流失败整块——标记 throttled，不转逐股（防风暴）
+        batch_throttled: list[str] = []
         for start in range(0, len(need), _BATCH_CHUNK):
             chunk = need[start : start + _BATCH_CHUNK]
             bares = [_bare_number(c) for c in chunk]
@@ -711,13 +768,35 @@ class AkShareProvider:
                     controller.on_throttle()
                 else:
                     controller.on_success()
+                # 批量请求成功（即使块内个别 miss/降级）→ 清零熔断计数
+                self._record_batch_success()
             except Exception as batch_exc:  # noqa: BLE001
-                log.warning(
-                    "批量请求失败（%s）：%d 码整块退回逐股",
-                    type(batch_exc).__name__,
-                    len(chunk),
+                # Task C C5 限流分类：_Push2Throttled / throttled_flag → 限流
+                is_throttle = (
+                    isinstance(batch_exc, _Push2Throttled) or throttled_flag[0]
                 )
-                batch_miss.extend(chunk)
+                if is_throttle:
+                    # 限流：整块标记 throttled，不转逐股（风暴根因修复）。
+                    # 逐股会把 1 个批量请求放大成 60 个逐股请求，在限流时
+                    # 等于重锤正在保护自己的上游——宁可标记 ERROR 由 resume 重试。
+                    self._stat_inc("throttles")
+                    self._stat_inc("batch_throttled")
+                    self._record_batch_failure()
+                    batch_throttled.extend(chunk)
+                    log.warning(
+                        "批量限流（%s）：%d 码整块标记 throttled，不转逐股"
+                        "（resume 重试）",
+                        type(batch_exc).__name__,
+                        len(chunk),
+                    )
+                else:
+                    # 连接/网络失败：整块转逐股（换源恢复合理，非限流）
+                    batch_miss.extend(chunk)
+                    log.warning(
+                        "批量网络失败（%s）：%d 码整块退回逐股",
+                        type(batch_exc).__name__,
+                        len(chunk),
+                    )
                 controller.on_throttle()
             finally:
                 controller.exit()
@@ -741,12 +820,28 @@ class AkShareProvider:
                         _c, res, _w = fut.result()
                         fallback_results[_c] = res
 
-        # 3) 按输入序装配（缓存直出 / 批量 / 逐股）
+        # 3) 限流整块 → ERROR(throttled) 结果（不逐股，resume 会重试）
+        throttled_results: dict[str, ProviderResult] = {}
+        for code in batch_throttled:
+            res = ProviderResult(
+                wind_code=code,
+                security_number=_bare_number(code),
+                query_status=QueryStatus.ERROR,
+                provider=self.name,
+                provider_endpoint="eastmoney.push2.batch",
+            )
+            res.throttled = True
+            res.last_error = "批量限流，整块未转逐股（防风暴，resume 重试）"
+            throttled_results[code] = res
+
+        # 4) 按输入序装配（缓存直出 / 批量 / 限流整块 / 逐股）
         done = 0
         for code in codes:
             done += 1
             if code in batch_results:
                 emit(code, batch_results[code], was_cached=False, done=done)
+            elif code in throttled_results:
+                emit(code, throttled_results[code], was_cached=False, done=done)
             elif code in fallback_results:
                 emit(code, fallback_results[code], was_cached=False, done=done)
             else:

@@ -1,0 +1,92 @@
+{
+  "wordlist": {
+    "sec_names": 6160,
+    "aliases": 1
+  },
+  "bank": {
+    "questions": 1410,
+    "sessions": 35,
+    "multi_turn_sessions": 35,
+    "think_flag": {
+      "": 1333,
+      "True": 77
+    },
+    "len_min": 2,
+    "len_p50": 12,
+    "len_max": 38
+  },
+  "coverage": {
+    "mentioned_any": 506,
+    "total": 1410,
+    "coverage_ratio": 0.3589,
+    "uncov_count": 904,
+    "uncov_ratio": 0.6411
+  },
+  "multi_sense_aliases_used": {},
+  "top_companies": [
+    {
+      "name": "金山办公",
+      "wind_code": "688111.SH",
+      "hits": 45
+    },
+    {
+      "name": "贵州茅台",
+      "wind_code": "600519.SH",
+      "hits": 35
+    },
+    {
+      "name": "东方国信",
+      "wind_code": "300166.SZ",
+      "hits": 32
+    },
+    {
+      "name": "东吴证券",
+      "wind_code": "601555.SH",
+      "hits": 25
+    },
+    {
+      "name": "当虹科技",
+      "wind_code": "688039.SH",
+      "hits": 21
+    },
+    {
+      "name": "金奥博",
+      "wind_code": "002917.SZ",
+      "hits": 16
+    },
+    {
+      "name": "联得装备",
+      "wind_code": "300545.SZ",
+      "hits": 16
+    },
+    {
+      "name": "金杯汽车",
+      "wind_code": "600609.SH",
+      "hits": 16
+    },
+    {
+      "name": "平安银行",
+      "wind_code": "000001.SZ",
+      "hits": 15
+    },
+    {
+      "name": "通威股份",
+      "wind_code": "600438.SH",
+      "hits": 13
+    }
+  ],
+  "uncov_samples": [
+    "今天市场上有哪些涨停的股票",
+    "今天跑赢大盘了吗",
+    "今天跑赢大盘了吗",
+    "今天自选股涨最多？",
+    "跌最狠的是哪一只",
+    "今天自选股涨最多？",
+    "市场最新研报有哪些？",
+    "市场最新研报有哪些？",
+    "跌最狠的是哪一只",
+    "告诉我今天市场整体状况如何？",
+    "今天自选股涨最多？",
+    "推买入哪些证券股票"
+  ]
+}

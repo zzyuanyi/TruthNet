@@ -10,11 +10,20 @@
 - 不写 sessions/turns/evidence。
 
 用法:
+  # Phase E B0：确定性基线回归（对基线评分）
+  python scripts/evaluate_company_entity_linking.py `
+    --input data/evaluation/company_entity_linking.jsonl `
+    --output data/reports/company_entity_linking_baseline.jsonl `
+    --db truthnet_test `
+    --selector-mode off --score-target deterministic
+
+  # Phase E B1：suggest 语义识别（对被测 result 评分，零越权安全门禁）
   python scripts/evaluate_company_entity_linking.py `
     --input data/evaluation/company_entity_linking.jsonl `
     --output data/reports/company_entity_linking_suggest.jsonl `
     --db truthnet_test `
-    --mode suggest
+    --selector-mode suggest --interpreter-mode off `
+    --score-target result --authority-strict off
 """
 
 from __future__ import annotations
@@ -107,6 +116,52 @@ def _authority_signature(result) -> dict:
     }
 
 
+def _authority_diff_keys(baseline, result) -> list[str]:
+    """Phase E B1：权威签名差异的顶层字段列表（诊断，不判失败）。
+
+    suggest 新模式中 mentionness 的 non_company 删除/子实体重链会产生
+    合法差异；差异字段逐个记录供人工核对，而非把样本标 authority_mismatch。
+    """
+    if result is None:
+        return ["<no-result>"]
+    b = _authority_signature(baseline)
+    r = _authority_signature(result)
+    return sorted(k for k in b if b[k] != r[k])
+
+
+def _safety(result, baseline, expected) -> dict:
+    """Phase E B2：suggest 新模式安全维度（必须可证明零越权）。
+
+    - fabricated_code：result 任一绑定 wind_code 不在其 mention 候选集内
+      （结构上不允许，检测回归）；
+    - auto_bind_on_ambiguity：expected.requires_confirmation=True 时，
+      结果不得产生确定性基线之外的新绑定——语义层（suggest/auto/
+      mentionness 子实体重链）不得在歧义样本上自动绑定公司身份。
+      （零绑定的 no_company/needs_confirmation 均属安全——不过度确认
+      不算越权；基线已确认的绑定也安全。）
+    """
+    out = {"fabricated_code": False, "auto_bind_on_ambiguity": False, "detail": ""}
+    if result is None:
+        out["detail"] = "no result"
+        return out
+    for m in result.mentions:
+        if m.selected_wind_code and m.candidates:
+            allowed = {c.company.wind_code for c in m.candidates}
+            if m.selected_wind_code not in allowed:
+                out["fabricated_code"] = True
+                out["detail"] += f"fabricated {m.selected_wind_code}@{m.text}; "
+    if expected.get("requires_confirmation"):
+        base_codes = {str(c.wind_code) for c in baseline.selected_companies}
+        res_codes = {str(c.wind_code) for c in result.selected_companies}
+        if res_codes - base_codes:
+            out["auto_bind_on_ambiguity"] = True
+            out["detail"] += (
+                f"new bindings {sorted(res_codes - base_codes)} "
+                "beyond deterministic on ambiguous sample; "
+            )
+    return out
+
+
 def _confirm_database(target_db: str, settings) -> None:
     """启动后 SELECT DATABASE() 二次确认（v3.3.1 §9.2 / 测试库铁律）。
 
@@ -156,6 +211,24 @@ def main() -> int:
         default="off",
         choices=["off", "shadow", "fallback"],
         help="Interpreter 模式（实际注入 QuerySubjectInterpreter）",
+    )
+    parser.add_argument(
+        "--score-target",
+        default="result",
+        choices=["result", "deterministic", "auto"],
+        help="评分对象（Phase E B1/B2）：result=对被测 resolver 输出评分"
+        "（suggest 新模式——mentionness 允许合法删除 non_company、子实体"
+        "重链，result 可与确定性基线不同，按人工期望评）；deterministic="
+        "对确定性基线评分（B0 回归比较）；auto=旧语义（仅 auto/fallback "
+        "模式评 result，其余评基线）",
+    )
+    parser.add_argument(
+        "--authority-strict",
+        default="off",
+        choices=["off", "on"],
+        help="authority 差异处理（Phase E B1）：off=记录 authority_diff "
+        "但样本不判失败（suggest 只读验证 + mentionness 合法差异）；on=旧"
+        "语义：任何非 audit 差异 → authority_mismatch",
     )
     parser.add_argument(
         "--selector-budget-seconds",
@@ -243,15 +316,19 @@ def main() -> int:
         repo, selector=selector, mentionness=mentionness, interpreter=interpreter
     )
 
-    # 最终续审 §7 D2：authority 比较语义——suggest/shadow 只读模式
-    # 必须深一致；fallback/auto 允许按已验证决策变化
-    authority_strict = args.selector_mode in ("off", "suggest") and (
-        args.interpreter_mode in ("off", "shadow")
-    )
-    # 评分对象：fallback/auto 的准确率直接对 result 评分
-    score_target_is_result = args.selector_mode == "auto" or (
-        args.interpreter_mode == "fallback"
-    )
+    # 最终续审 §7 D2 + Phase E B1/B2：authority 差异处理——默认 off
+    # （suggest 新模式允许 mentionness 合法差异，差异记录 authority_diff
+    # 但不判样本失败）；--authority-strict on 恢复旧语义（任何非 audit
+    # 差异 → authority_mismatch）。
+    authority_strict = args.authority_strict == "on"
+    # 评分对象（Phase E B1）：suggest 新模式对被测 result 评分
+    # （mentionness 删除/子实体重链属合法差异，按人工期望评）；B0 回归
+    # 用 --score-target deterministic 对基线评分；auto 保留旧语义。
+    score_target_is_result = {
+        "result": True,
+        "deterministic": False,
+        "auto": args.selector_mode == "auto" or args.interpreter_mode == "fallback",
+    }[args.score_target]
 
     rows: list[dict] = []
     stats: dict = {
@@ -263,6 +340,7 @@ def main() -> int:
         "dims": {},
         "unsupported_expected": 0,
         "llm_calls": 0,
+        "safety": {"fabricated_code": 0, "auto_bind_on_ambiguity": 0},
         "elapsed_samples": [],
     }
 
@@ -324,11 +402,12 @@ def main() -> int:
         stats["total_ms"] += elapsed_ms
         stats["elapsed_samples"].append(elapsed_ms)
 
+        authority_diff: list[str] = []
         if result is not None:
-            mismatch = _authority_signature(baseline) != _authority_signature(result)
-            if authority_strict and mismatch:
+            authority_diff = _authority_diff_keys(baseline, result)
+            if authority_strict and authority_diff:
                 status = "authority_mismatch"
-            elif authority_strict:
+            else:
                 stats["ok"] += 1
             if session_id:
                 active = _active_after(result)
@@ -374,6 +453,13 @@ def main() -> int:
             stats["selector"].get(selector_status, 0) + 1
         )
 
+        # Phase E B2：安全维度（suggest 不得越权自动绑定/不得伪造代码）
+        safety = _safety(result, baseline, expected)
+        for flag in ("fabricated_code", "auto_bind_on_ambiguity"):
+            if safety[flag]:
+                db = stats["safety"].setdefault(flag, 0)
+                stats["safety"][flag] = db + 1
+
         rows.append(
             {
                 "session_id": session_id or None,
@@ -381,6 +467,9 @@ def main() -> int:
                 "current_company_before": current_before or None,
                 "query": query,
                 "status": status,
+                "authority_diff": authority_diff,
+                "safety": safety,
+                "score_target": "result" if score_target_is_result else "deterministic",
                 "elapsed_ms": round(elapsed_ms, 1),
                 "expected": expected,
                 "expected_overall": comparison["overall"],
@@ -484,6 +573,8 @@ def main() -> int:
         - stats["dims"].get("comparison_participants", {}).get("pass", 0),
         "unsupported_expected_samples": stats["unsupported_expected"],
         "llm_call_sample_rate": round(stats["llm_calls"] / max(len(rows), 1), 4),
+        # Phase E B2：安全维度计数（suggest 零越权门禁）
+        "safety_violations": stats["safety"],
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
