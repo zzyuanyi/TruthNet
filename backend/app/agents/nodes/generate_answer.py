@@ -24,6 +24,7 @@ Phase D #10（真流式）：
 
 import logging
 import re
+from datetime import datetime, timezone
 
 from app.agents.delta_sink import get_sink
 from app.agents.llm_sync import run_llm_chat
@@ -44,6 +45,7 @@ from app.domain.provenance.id_factory import (
     NS_COMPANY_REGISTRY,
     NS_FINANCE,
     NS_REPORT,
+    NS_WEB_SEARCH,
     make_claim_id,
     make_evidence_id,
 )
@@ -830,6 +832,71 @@ _FACT_KEYS: dict[str, tuple[str, str, str]] = {
     "total_shares": ("总股本", "total_shares", "total_shares"),
 }
 
+# Phase E 会5：可联网回填的公司事实键（首个示范触发点 = listing_date）。
+# 仅库内无值时触发；默认 off 时 web_search 返回 []，行为与现状完全一致。
+_WEB_SEARCHABLE_FACTS: frozenset[str] = frozenset({"listing_date"})
+
+
+def _web_search_fill_company_fact(
+    *,
+    sec_name: str,
+    wind_code: str,
+    fact_key: str,
+    label: str,
+    turn_id: str,
+    trace_id: str,
+) -> tuple[str | None, EvidenceRef | None]:
+    """会5：公司事实库内无值 → 联网检索 → 解析 → 构建来源标注证据.
+
+    Returns:
+        (value, evidence)：value 为解析出的值（无命中/解析失败 → None）；
+        evidence 为 source_type="web_search" 的 EvidenceRef（同上 → None）。
+        默认 off 时 web_search 返回 []，本函数返回 (None, None)——
+        调用方走原「未覆盖」分支，行为与现状完全一致。
+    """
+    from app.application.services.web_search_fact_fill import (
+        extract_listing_date_from_hits,
+    )
+    from app.application.services.web_search_service import web_search
+
+    hits = web_search(f"{sec_name} {label}")
+    if not hits:
+        return None, None
+
+    value: str | None = None
+    field = ""
+    if fact_key == "listing_date":
+        value = extract_listing_date_from_hits(hits)
+        field = "listing_date"
+    if not value:
+        return None, None
+
+    hit = next((h for h in hits if (h.snippet or h.title)), None)
+    evidence = EvidenceRef(
+        evidence_id=make_evidence_id(
+            source_namespace=NS_WEB_SEARCH,
+            source_type="web_search",
+            source_record_id=wind_code,
+            field_path=field,
+            company_code=wind_code,
+        ),
+        source_type="web_search",
+        source_record_id=wind_code,
+        field_path=field,
+        value=value,
+        source_title=(
+            (hit.title or f"联网检索 · {label}") if hit else f"联网检索 · {label}"
+        ),
+        source_uri=hit.url if hit else None,
+        source_excerpt=(hit.snippet or "") if hit else "",
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=wind_code,
+        module="company_fact",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+    )
+    return value, evidence
+
 
 def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
     """R9/R11：公司事实轻量回答（精确模板命中，不跑三大模块）。
@@ -868,8 +935,27 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
     else:  # business / total_shares：无结构化字段
         value = None
 
+    # Phase E 会5：公司事实库内无值 → 触发联网检索（首个示范触发点：
+    # 上市日期等公司事实；默认 off 时 web_search 返回 []，走原分支）
+    web_evidence: EvidenceRef | None = None
+    if not value and fact_key in _WEB_SEARCHABLE_FACTS:
+        value, web_evidence = _web_search_fill_company_fact(
+            sec_name=sec_name,
+            wind_code=wind_code,
+            fact_key=fact_key,
+            label=label,
+            turn_id=turn_id,
+            trace_id=trace_id,
+        )
+
     if value:
-        answer = f"{sec_name}（{wind_code}）的{label}为：{value}。"
+        if web_evidence is not None:
+            answer = (
+                f"{sec_name}（{wind_code}）的{label}为：{value}。"
+                "（该信息来自联网检索，来源链接见证据，建议以官方披露为准。）"
+            )
+        else:
+            answer = f"{sec_name}（{wind_code}）的{label}为：{value}。"
     else:
         answer = (
             f"{sec_name}（{wind_code}）的{label}：当前结构化数据范围未覆盖。"
@@ -891,25 +977,30 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
             ),
         }
 
-    evidence_id = make_evidence_id(
-        source_namespace=NS_COMPANY_REGISTRY,
-        source_type="company_registry",
-        source_record_id=wind_code,
-        field_path=registry_field,
-        company_code=wind_code,
-    )
-    registry_evidence = EvidenceRef(
-        evidence_id=evidence_id,
-        source_type="company_registry",
-        source_record_id=wind_code,
-        field_path=registry_field,
-        value=value,
-        source_title=f"{sec_name} · 公司注册信息",
-        turn_id=turn_id,
-        trace_id=trace_id,
-        company_code=wind_code,
-        module="company_fact",
-    )
+    if web_evidence is not None:
+        source_evidence = web_evidence
+        limitations = ["联网检索来源，建议以官方披露为准核验"]
+    else:
+        evidence_id = make_evidence_id(
+            source_namespace=NS_COMPANY_REGISTRY,
+            source_type="company_registry",
+            source_record_id=wind_code,
+            field_path=registry_field,
+            company_code=wind_code,
+        )
+        source_evidence = EvidenceRef(
+            evidence_id=evidence_id,
+            source_type="company_registry",
+            source_record_id=wind_code,
+            field_path=registry_field,
+            value=value,
+            source_title=f"{sec_name} · 公司注册信息",
+            turn_id=turn_id,
+            trace_id=trace_id,
+            company_code=wind_code,
+            module="company_fact",
+        )
+        limitations = ["公司注册信息（证券主表）"]
     fact_claim = Claim(
         claim_id=make_claim_id(
             turn_id=turn_id,
@@ -921,9 +1012,9 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
         text=f"{label}为：{value}",
         claim_type="company_fact",
         severity="unknown",
-        evidence_ids=[evidence_id],
-        verification_status="verified",  # P2-1：注册信息确定性事实
-        limitations=["公司注册信息（证券主表）"],
+        evidence_ids=[source_evidence.evidence_id],
+        verification_status="verified",  # 真实值；来源类型见 source_type/limitations
+        limitations=limitations,
         turn_id=turn_id,
         trace_id=trace_id,
         company_code=wind_code,
@@ -931,12 +1022,12 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
     )
     return {
         "claims": [fact_claim],
-        "evidence": [registry_evidence],
+        "evidence": [source_evidence],
         "final_response": FinalResponse(
             answer=answer,
             risk_level="unknown",
             claims=[fact_claim],
-            evidence=[registry_evidence],
+            evidence=[source_evidence],
         ),
     }
 

@@ -11,6 +11,7 @@ import concurrent.futures
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -324,6 +325,48 @@ def _fetch_rating_changes(wind_code: str, as_of: str = "") -> list[dict]:
         return []
 
 
+def _web_search_company_news(
+    *, company, turn_id: str, trace_id: str
+) -> list[EvidenceRef]:
+    """会5：舆情环节库内无公告 → 联网检索新闻/公告并构建来源标注证据.
+
+    Returns:
+        list[EvidenceRef]（source_type="web_search"），无命中 → []。
+        默认 off 时 web_search 返回 []，恒 []，行为与现状完全一致。
+    """
+    from app.application.services.web_search_service import web_search
+    from app.domain.provenance.id_factory import NS_WEB_SEARCH, make_evidence_id
+
+    hits = web_search(f"{company.sec_name} 公告 舆情 最新")
+    if not hits:
+        return []
+    evidence: list[EvidenceRef] = []
+    for i, hit in enumerate(hits[:3]):
+        evidence.append(
+            EvidenceRef(
+                evidence_id=make_evidence_id(
+                    source_namespace=NS_WEB_SEARCH,
+                    source_type="web_search",
+                    source_record_id=company.wind_code,
+                    field_path=f"news_{i}",
+                    company_code=company.wind_code,
+                ),
+                source_type="web_search",
+                source_record_id=company.wind_code,
+                field_path=f"news_{i}",
+                source_title=(hit.title or "")[:120],
+                source_uri=hit.url or None,
+                source_excerpt=(hit.snippet or "")[:200],
+                turn_id=turn_id,
+                trace_id=trace_id,
+                company_code=company.wind_code,
+                module="events",
+                retrieved_at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+    return evidence
+
+
 def events_node(state: AgentState) -> dict:
     t0 = time.perf_counter()
 
@@ -572,6 +615,15 @@ def events_node(state: AgentState) -> dict:
     elif plan is not None and plan.impact_requested and not has_facts:
         impact_warnings.append(
             "IMPACT_SKIPPED_NO_FACTS: 无公告/事件簇/评级变化，跳过影响分析"
+        )
+
+    # Phase E 会5：舆情环节触发点——库内无公告且非查询异常 → 联网检索 + 来源标注
+    # （默认 off 时 web_search 返回 []，无任何副作用，行为与现状完全一致）
+    if no_announcement and not announcement_error:
+        evidence_list.extend(
+            _web_search_company_news(
+                company=company, turn_id=turn_id, trace_id=trace_id
+            )
         )
 
     return {
