@@ -1,0 +1,50 @@
+{"query": "分析康美药业的财务状况", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "分析贵州茅台的盈利能力", "expected": {"expected_selected_codes": ["600519.SH"], "expected_relation": "single", "expected_roles": {"600519.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "宁德时代的电池技术怎么样", "expected": {"expected_selected_codes": ["300750.SZ"], "expected_relation": "single", "expected_roles": {"300750.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "中国平安的保险业务怎么样", "expected": {"expected_selected_codes": ["601318.SH"], "expected_relation": "single", "expected_roles": {"601318.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "泸州老窖的净利润", "expected": {"expected_selected_codes": ["000568.SZ"], "expected_relation": "single", "expected_roles": {"000568.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "比亚迪的销量数据", "expected": {"expected_selected_codes": ["002594.SZ"], "expected_relation": "single", "expected_roles": {"002594.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "看看平安银行的估值", "expected": {"expected_selected_codes": ["000001.SZ"], "expected_relation": "single", "expected_roles": {"000001.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "分析茅台", "expected": {"expected_selected_codes": ["600519.SH"], "expected_relation": "single", "expected_roles": {"600519.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "分析康美", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "康美的现金分红", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "茅台的一季度营收", "expected": {"expected_selected_codes": ["600519.SH"], "expected_relation": "single", "expected_roles": {"600519.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "证券机构对金百泽的业绩点评", "expected": {"expected_selected_codes": ["301041.SZ"], "expected_relation": "single", "expected_roles": {"301041.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "券商对金百泽的业绩点评", "expected": {"expected_selected_codes": ["301041.SZ"], "expected_relation": "single", "expected_roles": {"301041.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "机构对宁德时代的业绩点评", "expected": {"expected_selected_codes": ["300750.SZ"], "expected_relation": "single", "expected_roles": {"300750.SZ": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "分析平安", "expected": {"expected_relation": "single", "expected_nil": true, "requires_confirmation": true}}
+{"query": "聊聊平安", "expected": {"expected_relation": "single", "expected_nil": true, "requires_confirmation": true}}
+{"query": "平安的股价怎么样", "expected": {"expected_relation": "single", "expected_nil": true, "requires_confirmation": true}}
+{"query": "对比平安和茅台", "expected": {"expected_relation": "comparison", "expected_nil": true, "requires_confirmation": true}}
+{"query": "聊聊今天的市场情绪", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "看下最新的研报", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "白酒行业景气度如何", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "存贷双高是什么意思", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "应收账款周转率怎么算", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "帮我查一下最新的财报数据", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "帮我看看今天的金融板块", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "分析飞天科技公司的财务状况", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "看一下星尘科技", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "帮我分析一下紫微科技", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "对比贵州茅台和五粮液的毛利率", "expected": {"expected_selected_codes": ["600519.SH", "000858.SZ"], "expected_relation": "comparison", "expected_roles": {"600519.SH": "primary", "000858.SZ": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "贵州茅台和五粮液谁更赚钱", "expected": {"expected_selected_codes": ["600519.SH", "000858.SZ"], "expected_relation": "comparison", "expected_roles": {"600519.SH": "primary", "000858.SZ": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "康美药业与贵州茅台的营业收入对比", "expected": {"expected_selected_codes": ["600518.SH", "600519.SH"], "expected_relation": "comparison", "expected_roles": {"600518.SH": "primary", "600519.SH": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "泸州老窖和五粮液哪个好", "expected": {"expected_selected_codes": ["000568.SZ", "000858.SZ"], "expected_relation": "comparison", "expected_roles": {"000568.SZ": "primary", "000858.SZ": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "分析宁德时代和比亚迪的竞争关系", "expected": {"expected_selected_codes": ["300750.SZ", "002594.SZ"], "expected_relation": "comparison", "expected_roles": {"300750.SZ": "primary", "002594.SZ": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "康美药业和贵州茅台的最新动态", "expected": {"expected_selected_codes": ["600518.SH", "600519.SH"], "expected_relation": "comparison", "expected_roles": {"600518.SH": "primary", "600519.SH": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "康美的存货周转率", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "看看康美的资产负债率", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "康美的现金流怎么样", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "分析康美的存贷比", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "贵州茅台的毛利率是多少", "expected": {"expected_selected_codes": ["600519.SH"], "expected_relation": "single", "expected_roles": {"600519.SH": "primary"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "茅台镇的酒企表现怎么样", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "分析茅台不是茅台镇", "expected": {"expected_relation": "no_company", "expected_nil": true, "requires_confirmation": false}}
+{"query": "康美和茅台谁更赚钱", "expected": {"expected_selected_codes": ["600518.SH", "600519.SH"], "expected_relation": "comparison", "expected_roles": {"600518.SH": "primary", "600519.SH": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "茅台和康美的股价，谁先跌的", "expected": {"expected_selected_codes": ["600519.SH", "600518.SH"], "expected_relation": "comparison", "expected_roles": {"600519.SH": "primary", "600518.SH": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false}}
+{"query": "为什么星尘科技和茅台都跌了", "expected": {"expected_relation": "ambiguous", "expected_nil": true, "requires_confirmation": true}}
+{"query": "康美和茅台，先看康美", "expected": {"expected_selected_codes": ["600518.SH", "600519.SH"], "expected_relation": "ambiguous", "expected_roles": {"600518.SH": "primary", "600519.SH": "comparison_peer"}, "expected_nil": false, "requires_confirmation": true}}
+{"session_id": "sess_sem_1", "turn_index": 0, "query": "分析康美药业的财务状况", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false, "expected_active_after": "600518.SH"}}
+{"session_id": "sess_sem_1", "turn_index": 1, "query": "它今年的营收是多少", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "continuation", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false, "expected_active_after": "600518.SH"}}
+{"session_id": "sess_sem_1", "turn_index": 2, "query": "那它的现金流呢", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "continuation", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false, "expected_active_after": "600518.SH"}}
+{"session_id": "sess_sem_1", "turn_index": 3, "query": "对比一下五粮液", "expected": {"expected_selected_codes": ["000858.SZ", "600518.SH"], "expected_relation": "comparison", "expected_roles": {"000858.SZ": "primary", "600518.SH": "comparison_peer"}, "expected_nil": false, "requires_confirmation": false, "expected_active_after": "000858.SZ"}}
+{"session_id": "sess_sem_1", "turn_index": 4, "query": "那康美呢", "expected": {"expected_selected_codes": ["600518.SH"], "expected_relation": "single", "expected_roles": {"600518.SH": "primary"}, "expected_nil": false, "requires_confirmation": false, "expected_active_after": "600518.SH"}}
