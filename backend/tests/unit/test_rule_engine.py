@@ -894,6 +894,41 @@ def test_align_by_period_offsets():
     assert aligned["20250630"] == {"cash": None, "assets": None}  # 该期无现金
 
 
+def test_r1_history_uses_aligned_revenue_key(rule_db):
+    """R1 历史趋势应读取 align_by_period 的 ``or_`` 营收键。"""
+    periods = [
+        "20240331",
+        "20240630",
+        "20240930",
+        "20241231",
+        "20250331",
+        "20250630",
+        "20250930",
+        "20251231",
+        "20260331",
+    ]
+    _insert_company(rule_db, "R1_HISTORY", comp_type=1)
+    _insert_bs(
+        rule_db,
+        "R1_HISTORY",
+        PARENT,
+        {"acct_rcv": [100e6 + i * 10e6 for i in range(len(periods))]},
+        periods=periods,
+    )
+    _insert_is(
+        rule_db,
+        "R1_HISTORY",
+        PARENT,
+        {"oper_rev": [200e6 + i * 10e6 for i in range(len(periods))]},
+        periods=periods,
+    )
+
+    result = evaluate_r1("R1_HISTORY", "20260331", periods=8)
+
+    assert len(result.history or []) >= 2
+    assert all(point["period"].isdigit() for point in result.history)
+
+
 def test_r3_aligned_history_no_fake_zero(monkeypatch, rule_db):
     """P2-3：R3 history——分母缺失跳过、不制造零值、升序真实期次。
 

@@ -123,7 +123,7 @@ def _compute_r1_gap(series: dict[str, list]) -> float | None:
 def _compute_r2_cf_ratio(series: dict[str, list]) -> float | None:
     profit = (series.get("net_profit_excl_min_int_inc") or [None])[-1]
     cf = (series.get("net_cash_flows_oper_act") or [None])[-1]
-    return _safe_div(cf, profit)
+    return _safe_div(cf, abs(profit) if profit is not None else None)
 
 
 def _compute_r3_cash_to_assets(series: dict[str, list]) -> float | None:
@@ -306,9 +306,15 @@ def _compute_r5_expense_ratio(series: dict[str, list]) -> float | None:
     selling = (series.get("less_selling_dist_exp") or [None])[-1]
     admin = (series.get("less_gerl_admin_exp") or [None])[-1]
     fin = (series.get("less_fin_exp") or [None])[-1]
-    if rev is None or rev <= 0:
+    if (
+        rev is None
+        or rev <= 0
+        or selling is None
+        or admin is None
+        or fin is None
+    ):
         return None
-    expense = sum(x for x in (selling, admin, fin) if x is not None)
+    expense = selling + admin + fin
     return round(expense / rev, 4)
 
 

@@ -313,7 +313,9 @@ def _compute_metric(
         if assets is None or assets <= 0:
             return {"cash_to_assets": None, "debt_to_assets": None}
         cash_to_assets = cash / assets * 100 if cash is not None else None
-        debt_to_assets = ((st or 0) + (lt or 0)) / assets * 100
+        if st is None or lt is None:
+            return {"cash_to_assets": cash_to_assets, "debt_to_assets": None}
+        debt_to_assets = (st + lt) / assets * 100
         return {"cash_to_assets": cash_to_assets, "debt_to_assets": debt_to_assets}
     if rule_id == "R4":
         inv_yoy = yoy_growth(
@@ -332,7 +334,9 @@ def _compute_metric(
         cost = _field(cur_rows, "income_statement", wind_code, "less_oper_cost")
         if rev is None or rev <= 0:
             return {"gross_margin": None}
-        return {"gross_margin": (rev - (cost or 0)) / rev * 100}
+        if cost is None:
+            return {"gross_margin": None}
+        return {"gross_margin": (rev - cost) / rev * 100}
     if rule_id == "R6":
         oth = _field(cur_rows, "balance_sheet", wind_code, "oth_rcv")
         assets = _field(cur_rows, "balance_sheet", wind_code, "tot_assets")

@@ -172,8 +172,12 @@ class ExecutionPlan(BaseModel):
     cross_checks: list[str] = Field(default_factory=list)
     # 公司事实轻量查询键（R9）：industry/exchange/listing_date/comp_type/business/total_shares
     fact_key: str = ""
+    # 无公司行业统计问题的规范行业名（如“家电”→“家用电器”）。
+    industry_l1: str = ""
     # 财务指标短答键（Phase D #3A）
     indicator: str = ""
+    # AnySearch finance.quote 行情字段（如 close/turnover_rate/total_mv）。
+    market_field: str = ""
     # 结构化回答目标（Phase D #3B，如 risk_level）
     answer_target: str = ""
     # v3.3.3 收口批次 D（方案 §3.6）：指标回答语义操作——
@@ -190,6 +194,10 @@ class ExecutionPlan(BaseModel):
     # 双条件（事件指代 cue + 影响/风险 cue）命中才置 True；综合诊断/
     # 宽泛风险/仅公告查询/LLM events=True 一律 False（加性字段，默认 False）。
     impact_requested: bool = False
+    # 事件列表方向：all / positive / negative / neutral。
+    event_sentiment: str = "all"
+    # 是否要求直接列出公告/事件，不进入综合风险模板。
+    event_list_requested: bool = False
     # v3.3.3 批次 C（方案 §5.1）：结构化比较规格（唯一比较入口，
     # 禁止散装字段形成非法组合）
     comparison: ComparisonSpec | None = None

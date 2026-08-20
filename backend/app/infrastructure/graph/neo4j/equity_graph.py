@@ -14,6 +14,7 @@
 """
 
 import hashlib
+import asyncio
 import logging
 import threading
 import time
@@ -115,9 +116,9 @@ def _pct_to_neo4j(value: Decimal | float | None) -> str | None:
     return f"{d:.6f}"
 
 
-def _pct_from_neo4j(raw: str | float | int | None) -> Decimal:
+def _pct_from_neo4j(raw: str | float | int | None) -> Decimal | None:
     if raw is None:
-        return Decimal("0")
+        return None
     return Decimal(str(raw))
 
 
@@ -246,7 +247,7 @@ class Neo4jEquityGraph:
             return False
 
     async def check_connection(self) -> bool:
-        return self._check_connection_sync()
+        return await asyncio.to_thread(self._check_connection_sync)
 
     def _execute_query(self, query: str, parameters: dict | None = None, **kwargs):
         """执行 Neo4j 查询并统一施加事务超时。"""
@@ -309,7 +310,8 @@ class Neo4jEquityGraph:
     ) -> EquityGraph:
         """获取股权穿透图谱（真实 Neo4j 查询）— 异步入口."""
         if True:  # cached entry guard
-            return _cached_get_graph(
+            return await asyncio.to_thread(
+                _cached_get_graph,
                 self,
                 company_code=company_code,
                 depth=depth,
@@ -487,6 +489,12 @@ class Neo4jEquityGraph:
                 tgt_id = rel.end_node.get("entity_id", "")
                 rel_id = rel.get("relationship_id") or ""
                 pct = _pct_from_neo4j(rel.get("ownership_pct"))
+                if pct is None:
+                    logger.warning(
+                        "equity: 持股比例缺失，丢弃不可计算路径 %s", path_node_ids
+                    )
+                    path_consistent = False
+                    break
                 pct_100 = float(pct)
                 rel_period = _clean_period(rel.get("report_period"))
 
@@ -596,7 +604,9 @@ class Neo4jEquityGraph:
 
     async def get_relationship_by_id(self, relationship_id: str) -> dict | None:
         """按 relationship_id 查找原关系（Evidence 来源定位用）— 异步入口."""
-        return self.get_relationship_by_id_sync(relationship_id)
+        return await asyncio.to_thread(
+            self.get_relationship_by_id_sync, relationship_id
+        )
 
     def get_relationship_by_id_sync(self, relationship_id: str) -> dict | None:
         """按 relationship_id 查找原关系（Evidence 来源定位用）.

@@ -6,13 +6,17 @@
 
 from __future__ import annotations
 
+from app.application.ports.web_search_provider import SearchResult
 from app.core.config import settings
 from app.infrastructure.web_search import create_web_search_provider
 from app.infrastructure.web_search.anysearch.provider import (
     AnySearchWebSearchProvider,
     _extract_ashare_code,
     _extract_markdown_url,
+    _filter_relevant_results,
     _parse_mcp_text_results,
+    _parse_rest_results,
+    _query_relevance_terms,
     _search_result_from_vertical_json,
 )
 from app.infrastructure.web_search.mock.provider import MockWebSearchProvider
@@ -65,21 +69,21 @@ def test_extract_code_no_code():
     assert _extract_ashare_code("康美药业怎么样") == ""
 
 
-# ── 纯垂类：无代码不搜索 ─────────────────────────────────
+# ── 无代码：REST 通用搜索 + 相关性 Gate ─────────────────────
 
 
-def test_no_code_returns_empty_without_network(monkeypatch):
-    """无 A 股代码 → 直接 []，不发任何网络请求（纯垂类定位）。"""
+def test_no_code_uses_general_search(monkeypatch):
+    """无 A 股代码 → REST 通用搜索分支（由相关性 Gate 再决定是否返回）。"""
     provider = AnySearchWebSearchProvider()
     calls = []
 
-    async def _boom(*a, **k):
-        calls.append(1)
-        raise AssertionError("不应发起网络请求")
+    async def _fake_general(query, count):
+        calls.append((query, count))
+        return []
 
-    monkeypatch.setattr(provider, "_vertical_search", _boom)
-    assert _run(provider.search("茅台最近有什么新闻")) == []
-    assert calls == []
+    monkeypatch.setattr(provider, "_general_search", _fake_general)
+    assert _run(provider.search("医疗器械行业技术趋势", max_results=3)) == []
+    assert calls == [("医疗器械行业技术趋势", 3)]
 
 
 # ── MCP Markdown 解析 ─────────────────────────────────────
@@ -101,6 +105,16 @@ def test_parse_quote_markdown():
     assert "pct_chg=0.3789" in hits[0].snippet
     assert hits[0].published_at == "2026-08-18"
     assert hits[0].source == "anysearch"
+
+
+def test_parse_quote_keeps_anysearch_vol_field():
+    text = """## Search Results (1 results)
+
+### 1. 601555.SH 20260820 日线行情
+- {"trade_date":"20260820","vol":230690.17,"amount":3280474.226}
+"""
+    hits = _parse_mcp_text_results(text, "东吴证券 601555.SH 成交量", "601555.SH")
+    assert "vol=230690.17" in hits[0].snippet
 
 
 def test_parse_news_markdown():
@@ -275,6 +289,7 @@ def test_report_stats_contract():
     stats = provider.report_stats()
     assert stats["web_search_provider"] == "anysearch"
     assert "web_search_vertical_requests" in stats
+    assert "web_search_general_requests" in stats
     assert "web_search_http_429" in stats
     # 默认零值（审查 P1-4：契约存在性断言强化）
     assert stats["web_search_http_401_403"] == 0
@@ -283,6 +298,7 @@ def test_report_stats_contract():
     assert stats["web_search_connection_error"] == 0
     assert stats["web_search_empty_real_result"] == 0
     assert stats["web_search_parse_empty"] == 0
+    assert stats["web_search_relevance_filtered"] == 0
     assert stats["web_search_not_observable"] == 0
 
 
@@ -324,6 +340,107 @@ def _patch_client(monkeypatch, resp=None, exc=None):
         "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
         lambda timeout=None: _FakeClient(resp=resp, exc=exc),
     )
+
+
+def test_general_search_sends_rest_request_with_same_key(monkeypatch):
+    """无代码 query 走 /v1/search；鉴权复用 ANYSEARCH_API_KEY，不泄露到日志断言。"""
+    payload = {
+        "code": 0,
+        "data": {
+            "results": [
+                {
+                    "title": "医疗器械行业技术趋势报告",
+                    "url": "https://example.com/medical-device",
+                    "snippet": "医疗器械行业正在加速智能化和国产替代。",
+                }
+            ]
+        },
+    }
+    seen = {}
+
+    class _CaptureClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            seen.update({"url": url, "headers": headers, "json": json})
+            return _FakeResp(status_code=200, payload=payload)
+
+    monkeypatch.setattr(
+        "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
+        lambda timeout=None: _CaptureClient(),
+    )
+    provider = AnySearchWebSearchProvider(api_key="test-key")
+    hits = _run(provider.search("医疗器械行业技术趋势", max_results=2))
+    assert len(hits) == 1
+    assert seen["url"] == "https://api.anysearch.com/v1/search"
+    assert seen["headers"]["Authorization"] == "Bearer test-key"
+    assert seen["json"]["query"] == "医疗器械行业技术趋势"
+    assert seen["json"]["format"] == "json"
+    assert seen["json"]["max_results"] == 2
+    assert seen["json"]["zone"] == "cn"
+    assert seen["json"]["language"] == "zh"
+
+
+def test_parse_rest_results_contract():
+    payload = {
+        "code": 0,
+        "data": {
+            "results": [
+                {
+                    "title": "医疗器械行业技术趋势报告",
+                    "url": "https://example.com/a",
+                    "snippet": "医疗器械行业趋势摘要",
+                    "content": "长正文",
+                },
+                {"name": "备用标题", "link": "https://example.com/b", "content": "正文"},
+            ]
+        },
+    }
+    hits = _parse_rest_results(payload)
+    assert len(hits) == 2
+    assert hits[0].title == "医疗器械行业技术趋势报告"
+    assert hits[0].domain == "example.com"
+    assert hits[0].source == "anysearch"
+    assert hits[1].title == "备用标题"
+    assert hits[1].snippet == "正文"
+
+
+def test_general_search_filters_low_relevance(monkeypatch):
+    """中文通用搜索跑偏时，不把无关命中接入回答链。"""
+    payload = {
+        "code": 0,
+        "data": {
+            "results": [
+                {
+                    "title": "Turkey tourism news",
+                    "url": "https://example.com/turkey",
+                    "snippet": "A travel story unrelated to the query.",
+                }
+            ]
+        },
+    }
+    _patch_client(monkeypatch, resp=_FakeResp(status_code=200, payload=payload))
+    provider = AnySearchWebSearchProvider(api_key="test-key")
+    assert _run(provider.search("医疗器械行业技术趋势")) == []
+    assert provider.report_stats()["web_search_relevance_filtered"] == 1
+
+
+def test_relevance_terms_keep_subject_drop_generic_words():
+    assert _query_relevance_terms("医疗器械行业技术趋势") == ["医疗器械"]
+    assert _query_relevance_terms("OpenAI latest news") == ["openai", "latest", "news"]
+
+
+def test_relevance_filter_accepts_subject_hit():
+    hits = [
+        SearchResult(title="医疗器械行业观察", snippet="智能化趋势", source="anysearch"),
+        SearchResult(title="无关新闻", snippet="旅游与体育", source="anysearch"),
+    ]
+    out = _filter_relevant_results("医疗器械行业技术趋势", hits)
+    assert out == [hits[0]]
 
 
 def test_mcp_http_500_classified(monkeypatch):
@@ -523,6 +640,12 @@ def test_route_quote_default(monkeypatch):
     assert args["sub_domain"] == "finance.quote"
 
 
+def test_route_quote_history_period():
+    provider = AnySearchWebSearchProvider(api_key="")
+    args = _route_sub_domain(provider, "中兴通讯 000063.SZ 近一月涨跌幅 period=30d")
+    assert args["sub_domain_params"]["period"] == "30d"
+
+
 # ── 审查 P2-6/P2-7/P2-8/P2-9：解析边界 ─────────────────────
 
 
@@ -552,6 +675,7 @@ def test_vertical_date_validates():
     assert _vertical_date({"trade_date": "20260818"}) == "2026-08-18"
     assert _vertical_date({"trade_date": "20261340"}) is None  # 月 13 非法
     assert _vertical_date({"date": "2024-01-15"}) == "2024-01-15"
+    assert _vertical_date({"ann_date": "20260815"}) == "2026-08-15"
     assert _vertical_date({"date": "not-a-date"}) is None
     assert _vertical_date({}) is None
 

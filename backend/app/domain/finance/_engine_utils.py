@@ -25,7 +25,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import URL, create_engine
 from sqlalchemy.engine import Engine
 
 _lock = threading.Lock()
@@ -75,10 +75,14 @@ def get_engine(settings=None):
 
         backend = settings.SQL_BACKEND
         if backend == "mysql":
-            url = (
-                f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-                f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}"
-                f"/{settings.MYSQL_DATABASE}?charset=utf8mb4"
+            url = URL.create(
+                "mysql+pymysql",
+                username=settings.MYSQL_USER,
+                password=settings.MYSQL_PASSWORD,
+                host=settings.MYSQL_HOST,
+                port=settings.MYSQL_PORT,
+                database=settings.MYSQL_DATABASE,
+                query={"charset": "utf8mb4"},
             )
             _ENGINES[key] = create_engine(url, echo=False, pool_pre_ping=True)
         else:  # sqlite

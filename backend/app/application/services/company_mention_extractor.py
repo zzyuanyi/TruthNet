@@ -62,9 +62,13 @@ _SUBJECT_CLEAN_WORDS: tuple[str, ...] = _REQUEST_ACTION_WORDS + (
     "问题",
     "哪家",
     "哪个",
+    "有哪些",
+    "哪些",
     "会不会",
     "是否",
+    "存在",
     "为什么",
+    "简单",
     "综合",
     "结论",
     "一个",
@@ -84,6 +88,10 @@ _SUBJECT_CLEAN_WORDS: tuple[str, ...] = _REQUEST_ACTION_WORDS + (
     "表现",
     "波动",
     "差距",
+    "近期",
+    "怎样",
+    "提炼",
+    "推荐",
     # v3.3.2 §5.1：回指短语整体 mask（最长优先排序保证先于"这家/
     # 那家/该公司"短词命中，避免残留"公司"被误召回库）
     "这家公司",
@@ -99,6 +107,39 @@ _SUBJECT_CLEAN_WORDS: tuple[str, ...] = _REQUEST_ACTION_WORDS + (
     "前面提到的",
     "刚刚说的",
     "上面说的",
+    "单季度",
+    # 报表问法中的结构词，不应作为疑似公司名称提交给 Resolver。
+    "合并口径",
+    "母公司口径",
+    "年末",
+    "最近一个报告期",
+    "报告期",
+    "每股",
+    "平均",
+    "整体",
+    "最新",
+    "连续",
+    "最大",
+    "个股",
+    "下",
+    "净资产",
+    # 裸行情字段是多轮追问（如上一轮公司后问“换手率”）的业务谓词，
+    # 不应被当成疑似公司文本；Resolver 通过 had_subject_terminator 延续主体。
+    "涨跌幅",
+    "成交量",
+    "成交额",
+    "换手率",
+    "市值",
+    "最高价",
+    "最低价",
+    "开盘价",
+    "昨收价",
+    "当前市价",
+    "最新价",
+    "股价",
+    "行情",
+    "外盘",
+    "操盘",
 )
 
 # 最终续审 §5 B1：回指短语 / 句首回指框架的语义子集标记（词本身
@@ -138,14 +179,19 @@ _REQUEST_WORDS: tuple[str, ...] = _REQUEST_ACTION_WORDS + (
 # 时间词（v8 _TIME_MODIFIER_RE 平移；年份修正为通用 (?:19|20)\\d{2}）
 _TIME_MODIFIER_RE = re.compile(
     r"(?:"
-    r"近三年|过去三年|最近三年"
-    r"|(?:(?:19|20)\d{2})年(?:第一季度|上半年|下半年|年度|的)?"
+    r"近三年|过去三年|最近三年|连续(?:[一二三四五六七八九十\d]+)年"
+    r"|(?:近|过去|最近)(?:一|二|三|四|五|六|七|八|九|十|半|\d+)"
+    r"(?:个)?(?:交易日|日|天|周|月|季度|年)"
+    r"|的?最近一个报告期|的?最近季度|的?最新季度|的?最新季|单季度"
+    r"|(?:(?:19|20)\d{2})(?:(?:年?财年)|年)(?:第?[一二三四]季度|第?[1-4]季度|上半年|下半年|年度|年报|的)?"
     r"|截至(?:(?:19|20)\d{2})年|截止(?:(?:19|20)\d{2})年"
-    r"|去年(?:的)?|今年|前年|最近(?:的)?|现在"
-    r"|上半年|下半年|第一季度|一季度|Q1"
+    r"|(?:去年|今年|前年)以来|去年(?:的)?|今年|前年|最近(?:的)?|现在"
+    r"|上半年|下半年|第一季度|一季度|第[1-4]季度|Q[1-4]"
     r"|同比|环比"
     r")"
 )
+
+_INDUSTRY_PREFIX_RE = re.compile(r"^[\u4e00-\u9fff]{2,8}行业")
 
 # 主语槽终止符（v8 _SUBJECT_TERMINATORS 平移）：最早终止符之前才是
 # 疑似实体区域；**不含时间词及裸"年"**（时间词为主语区域内可删表达）。
@@ -160,6 +206,17 @@ _SUBJECT_TERMINATORS_FINANCE: tuple[str, ...] = (
     "何时上市",
     "哪天上市",
     "上市",
+    "市场表现",
+    "近期走势",
+    "近期表现",
+    "涨跌幅排名",
+    "区间涨跌幅",
+    "多晶硅价格上涨",
+    "主力增仓占比",
+    "做芯片的公司",
+    "旗下",
+    "收到",
+    "销售毛利率",
     "资产负债率",
     "应收账款",
     "经营活动现金流",
@@ -168,6 +225,15 @@ _SUBJECT_TERMINATORS_FINANCE: tuple[str, ...] = (
     "总资产",
     "总负债",
     "净利润",
+    "净资产",
+    "总股本",
+    "高管薪酬",
+    "首发价格",
+    "发行价格",
+    "发行价",
+    "收盘价",
+    "EPS",
+    "eps",
     "存货",
     "财务",
     "财报",
@@ -198,6 +264,24 @@ _SUBJECT_TERMINATORS_FINANCE: tuple[str, ...] = (
     "业绩",
     "经营",
     "现金",
+    "亏损了几年",
+    "连续亏损",
+    # 裸行情字段是多轮追问的业务谓词；与清理词配对后，
+    # Resolver 可据此延续结构化当前主体。
+    "涨跌幅",
+    "成交量",
+    "成交额",
+    "换手率",
+    "市值",
+    "最高价",
+    "最低价",
+    "开盘价",
+    "昨收价",
+    "当前市价",
+    "最新价",
+    "股价",
+    "行情",
+    "外盘",
     "风险",
     "异常",
     "造假",
@@ -205,6 +289,11 @@ _SUBJECT_TERMINATORS_FINANCE: tuple[str, ...] = (
     "诊断",
     "有问题",
     "原因",
+    # 研报/公告问法中的意图词，不应在公司名后形成第二个疑似主体。
+    "研报",
+    "市场动态",
+    "最新动态",
+    "动态",
     # v3.2.1 批次 2：公司事实问法边界（"小米属于什么行业"→"小米"）。
     # 注意：单字"的"不得加入（会破坏"美的"等名称内部字符）。
     "属于",
@@ -214,6 +303,19 @@ _SUBJECT_TERMINATORS_EVENTS: tuple[str, ...] = (
     "公告",
     "舆情",
     "评级",
+    "事件",
+    "利好",
+    "利空",
+    "新闻",
+    "处罚",
+    "调查",
+    "立案",
+    "热点",
+    "还可以",
+    "可以买入",
+    "可以买",
+    "买入",
+    "卖出",
 )
 _SUBJECT_TERMINATORS: tuple[str, ...] = (
     _SUBJECT_TERMINATORS_FINANCE + _SUBJECT_TERMINATORS_EVENTS
@@ -236,6 +338,7 @@ _SWITCH_PREFIXES: tuple[str, ...] = ("再回到", "回到", "换回")
 _WIND_CODE_RE = re.compile(
     r"(?<!\d)(\d{6}(?:\.(?:S[HZ]|BJ|XSHG|XSHE))?)(?!\d)", re.IGNORECASE
 )
+_SPECIAL_STATUS_NAME_RE = re.compile(r"(?i)(?:\*?ST)[一-龥]{2,8}")
 
 
 def _is_cn(ch: str) -> bool:
@@ -327,6 +430,14 @@ def extract_company_mention_result(
 
     # 3. 每段：主语槽截断 + 段开头请求词/切换前缀 + 前导指代
     for seg_start, seg_end in seg_bounds:
+        # 无公司行业问法（如“家电行业平均毛利率”）的行业名称不是公司。
+        # 只处理段首连续的“X行业”，公司名后的“行业对比”仍保留。
+        industry_match = _INDUSTRY_PREFIX_RE.match(q[seg_start:seg_end])
+        industry_tail = q[seg_start + industry_match.end() : seg_end] if industry_match else ""
+        if industry_match and any(
+            cue in industry_tail for cue in ("平均", "对比", "高于", "低于", "水平", "趋势", "变化", "增速", "最大")
+        ):
+            _mask_out(mask, seg_start, seg_start + industry_match.end())
         slot_end = _subject_slot_start(q[seg_start:seg_end], seg_start)
         if slot_end < seg_end:
             result.had_subject_terminator = True
@@ -370,6 +481,29 @@ def extract_company_mention_result(
             )
             # 代码位置从中文扫描中剔除，避免重复提取
             _mask_out(mask, cm.start(), cm.end())
+        # ST/*ST 公司名包含拉丁字母，不能由下面的中文连续块扫描发现。
+        # 先提出完整 span 并 mask，Resolver 再按完整名称/变体查询。
+        for sm in _SPECIAL_STATUS_NAME_RE.finditer(q, seg_start, seg_end):
+            prefix_len = 3 if sm.group(0).startswith("*") else 2
+            name_end = sm.start() + prefix_len
+            while (
+                name_end < sm.end()
+                and mask[name_end]
+                and _is_cn(q[name_end])
+            ):
+                name_end += 1
+            if name_end - sm.start() < prefix_len + 2:
+                continue
+            text = q[sm.start() : name_end]
+            mentions.append(
+                EntityMention(
+                    mention_id=make_mention_id(sm.start(), name_end, text),
+                    text=text,
+                    start=sm.start(),
+                    end=name_end,
+                )
+            )
+            _mask_out(mask, sm.start(), name_end)
         i = seg_start
         while i < seg_end:
             if not mask[i] or not _is_cn(q[i]):
@@ -412,7 +546,9 @@ def extract_company_mention_result(
                 and not any(s <= j < e for s, e in mention_ranges)
             ):
                 j += 1
-            residual_parts.append(q[i:j])
+            residual = q[i:j]
+            if residual not in {"的", "了", "是", "呢", "吗"}:
+                residual_parts.append(residual)
             i = j
         else:
             i += 1

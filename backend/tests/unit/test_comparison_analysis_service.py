@@ -154,6 +154,31 @@ def test_llm_unknown_metric_id_falls_back(monkeypatch):
     assert "fake_metric_xyz" not in text  # 模板兜底不含伪造指标
 
 
+def test_llm_new_number_falls_back(monkeypatch):
+    """LLM 新增事实外数字时，必须回到确定性模板。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    output = ComparisonAnalysisOutput(
+        overall="贵州茅台毛利率为90.00%，明显更高。",
+        paragraphs=[
+            ComparisonAnalysisParagraph(
+                text="毛利率为90.00%，反映盈利能力更强。",
+                metric_ids=["r5_gross_margin"],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "app.agents.llm_sync.run_llm_structured", lambda *a, **kw: output
+    )
+    result = _result(
+        [_row("r5_gross_margin", "毛利率", Decimal("83.68"), Decimal("17.54"))]
+    )
+    text, warnings = build_comparison_analysis(
+        result=result, company_names=["贵州茅台", "康美药业"]
+    )
+    assert warnings
+    assert "90.00" not in text
+
+
 def test_llm_exception_falls_back(monkeypatch):
     """LLM 异常 → 确定性模板兜底，不阻塞结构化比较。"""
     monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")

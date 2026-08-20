@@ -198,6 +198,15 @@ def test_r2_cf_ratio_zero_profit_none():
     assert m.compute_from_series(series) is None
 
 
+def test_r2_cf_ratio_uses_absolute_loss():
+    m = get_metric("r2_cf_ratio")
+    series = {
+        "net_profit_excl_min_int_inc": [-1e8],
+        "net_cash_flows_oper_act": [3e7],
+    }
+    assert m.compute_from_series(series) == pytest.approx(0.3)
+
+
 def test_r3_debt_to_assets():
     m = get_metric("r3_debt_to_assets")
     series = {
@@ -219,6 +228,17 @@ def test_r5_gross_margin():
 def test_r5_gross_margin_zero_rev_none():
     m = get_metric("r5_gross_margin")
     series = {"oper_rev": [0.0], "less_oper_cost": [60.0]}
+    assert m.compute_from_series(series) is None
+
+
+def test_r5_expense_ratio_requires_all_expenses():
+    m = get_metric("r5_expense_ratio")
+    series = {
+        "oper_rev": [100.0],
+        "less_selling_dist_exp": [10.0],
+        "less_gerl_admin_exp": [None],
+        "less_fin_exp": [5.0],
+    }
     assert m.compute_from_series(series) is None
 
 

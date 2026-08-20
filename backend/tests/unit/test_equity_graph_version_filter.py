@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import threading
 
 import pytest
 
@@ -65,6 +66,35 @@ def test_async_get_graph_forwards_version(monkeypatch):
     monkeypatch.setattr(adapter, "_get_graph_sync", fake_sync)
     asyncio.run(adapter.get_graph("600518.SH", graph_version="equity-2026Q2"))
     assert captured["graph_version"] == "equity-2026Q2"
+
+
+def test_async_get_graph_runs_sync_query_off_event_loop(monkeypatch):
+    adapter = _adapter(_Driver())
+    main_thread = threading.get_ident()
+    observed = {}
+
+    def fake_sync(company_code, **kwargs):
+        observed["thread"] = threading.get_ident()
+        from app.domain.equity.models import EquityGraph
+
+        return EquityGraph(company_id=company_code)
+
+    monkeypatch.setattr(adapter, "_get_graph_sync", fake_sync)
+    asyncio.run(adapter.get_graph("600518.SH"))
+    assert observed["thread"] != main_thread
+
+
+def test_missing_ownership_pct_drops_control_path(monkeypatch):
+    rel = _FakeRel("rel_missing", "S", "T", "20251231")
+    rel._props["ownership_pct"] = None
+    adapter = _adapter(
+        _Driver([{"target": {"entity_id": "T"}, "path": _FakePath([rel])}])
+    )
+    monkeypatch.setattr(adapter, "_resolve_wind_code", lambda code: "600518.SH")
+
+    graph = adapter._get_graph_sync("600518.SH", depth=1)
+
+    assert graph.control_chains == []
 
 
 # ── 8.09 审查：as_of 快照分支（整体快照语义，过滤在 Cypher 层） ──

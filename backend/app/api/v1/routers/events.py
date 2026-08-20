@@ -331,7 +331,9 @@ async def get_company_events(
     # 事件簇（按日期过滤）
     event_clusters: list[EventCluster] = []
     try:
-        event_clusters = _fetch_event_clusters(wind_code, cutoff)
+        event_clusters = await asyncio.to_thread(
+            _fetch_event_clusters, wind_code, cutoff
+        )
     except Exception as exc:  # noqa: BLE001
         warnings.append(
             WarningItem(
@@ -362,7 +364,7 @@ async def get_company_events(
     timeline_evidence_ids: list[str] = []
 
     try:
-        rows = _fetch_announcements(wind_code, cutoff_str)
+        rows = await asyncio.to_thread(_fetch_announcements, wind_code, cutoff_str)
     except Exception as exc:  # noqa: BLE001
         warnings.append(
             WarningItem(
@@ -442,7 +444,9 @@ async def get_company_events(
     # 评级拐点（真实）
     rating_changes: list[RatingChange] = []
     try:
-        rating_changes = _fetch_rating_changes(wind_code, cutoff_str)
+        rating_changes = await asyncio.to_thread(
+            _fetch_rating_changes, wind_code, cutoff_str
+        )
     except Exception as exc:  # noqa: BLE001
         warnings.append(
             WarningItem(

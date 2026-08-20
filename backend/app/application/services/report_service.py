@@ -158,7 +158,8 @@ def get_report_job(report_id: str) -> dict | None:
                 text(
                     "SELECT report_id, session_id, company_code, status, progress, "
                     "idempotency_key, file_path, file_sha256, error_code, "
-                    "error_message, trace_id, created_at, started_at, completed_at "
+                    "error_message, trace_id, request_payload, created_at, "
+                    "started_at, completed_at "
                     "FROM report_jobs WHERE report_id = :rid"
                 ),
                 {"rid": report_id},
@@ -168,7 +169,14 @@ def get_report_job(report_id: str) -> dict | None:
         )
     if row is None:
         return None
-    return dict(row)
+    result = dict(row)
+    payload = result.get("request_payload")
+    if isinstance(payload, str):
+        try:
+            result["request_payload"] = json.loads(payload)
+        except json.JSONDecodeError:
+            result["request_payload"] = {}
+    return result
 
 
 def _update_status(
@@ -178,7 +186,7 @@ def _update_status(
     progress: int = None,
     expected_status: str | tuple[str, ...] | None = None,
     **extra,
-) -> None:
+) -> bool:
     """更新任务状态（持久化）。
 
     时间戳字段直接内联 SQL 字面量（CURRENT_TIMESTAMP），不绑定参数——
@@ -212,7 +220,10 @@ def _update_status(
             params[key] = value
         where += f" AND status IN ({', '.join(placeholders)})"
     with _get_engine().begin() as conn:
-        conn.execute(text(f"UPDATE report_jobs SET {', '.join(sets)} {where}"), params)
+        result = conn.execute(
+            text(f"UPDATE report_jobs SET {', '.join(sets)} {where}"), params
+        )
+    return (result.rowcount or 0) == 1
 
 
 # ── 后台执行 ────────────────────────────────────────────────
@@ -238,13 +249,15 @@ async def _run_report_job(report_id: str) -> None:
         job = get_report_job(report_id)
         if job is None:
             return
-        _update_status(
+        claimed = _update_status(
             report_id,
             status="running",
             progress=5,
             started_at=None,
             expected_status="queued",
         )
+        if not claimed:
+            return
         try:
             # 计时：queue_wait → generation → file_write
             t0 = _perf()

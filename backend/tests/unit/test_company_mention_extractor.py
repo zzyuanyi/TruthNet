@@ -6,7 +6,10 @@
 - 复合片段（"茅台和协和"）作为一个 span 提出（切分交给 Resolver）。
 """
 
-from app.application.services.company_mention_extractor import extract_company_mentions
+from app.application.services.company_mention_extractor import (
+    extract_company_mention_result,
+    extract_company_mentions,
+)
 
 
 def _spans(query: str) -> list[tuple[str, int, int]]:
@@ -82,6 +85,11 @@ def test_subject_slot_truncates_at_terminator():
     assert _spans("台泥的营收") == [("台泥", 0, 2)]
 
 
+def test_subject_slot_truncates_company_fact_queries():
+    assert _spans("平安集团的高管薪酬") == [("平安集团", 0, 4)]
+    assert _spans("波长光电的首发价格是多少") == [("波长光电", 0, 4)]
+
+
 def test_empty_subject_slot_no_mention():
     """ "营收高吗"：主语槽为空 → 无 span（放行延续历史主体）。"""
     assert _spans("营收高吗") == []
@@ -129,6 +137,11 @@ def test_belong_boundary_terminates_subject():
 def test_listing_question_predicate_is_not_a_company_mention():
     assert _spans("康美药业什么时候上市的") == [("康美药业", 0, 4)]
     assert _spans("贵州茅台何时上市") == [("贵州茅台", 0, 4)]
+
+
+def test_existence_predicate_is_not_part_of_company_name():
+    assert _spans("浪潮信息是否存在风险") == [("浪潮信息", 0, 4)]
+    assert _spans("ST尔雅存在哪些风险") == [("ST尔雅", 0, 4)]
 
 
 def test_request_frame_does_not_hide_company_starting_with_you_opinion():
@@ -187,3 +200,32 @@ def test_existing_cases_no_regression():
     assert [m.text for m in extract_company_mentions("和邦的营收")] == ["和邦"]
     assert [m.text for m in extract_company_mentions("协和电子")] == ["协和电子"]
     assert [m.text for m in extract_company_mentions("美的营收")] == ["美的"]
+
+
+def test_research_and_event_words_are_not_second_company_mentions():
+    assert [m.text for m in extract_company_mentions("东吴证券的最新研报")] == ["东吴证券"]
+    assert [m.text for m in extract_company_mentions("双良节能最新的市场动态是什么")] == ["双良节能"]
+
+
+def test_continuous_loss_years_does_not_become_company_mention():
+    assert [m.text for m in extract_company_mentions("通威股份连续亏损了几年")] == [
+        "通威股份"
+    ]
+
+
+def test_market_and_research_fillers_do_not_become_company_mentions():
+    assert [m.text for m in extract_company_mentions("新光制药最近的市场表现如何")] == [
+        "新光制药"
+    ]
+    assert [m.text for m in extract_company_mentions("贵州茅台最近研报的提炼")] == [
+        "贵州茅台"
+    ]
+
+
+def test_market_followup_fields_are_not_company_mentions():
+    assert extract_company_mentions("换手率") == []
+    assert extract_company_mention_result("换手率").had_subject_terminator
+    assert extract_company_mentions("汤姆猫是哪个板块，近期表现如何")[0].text == "汤姆猫"
+    assert [m.text for m in extract_company_mentions("今年以来，贵州茅台的最高价是多少？")] == [
+        "贵州茅台"
+    ]

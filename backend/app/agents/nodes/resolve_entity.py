@@ -10,6 +10,7 @@ CompanySemanticSelector，复合分段与历史防串在 Resolver。
 from __future__ import annotations
 
 import logging
+import re
 
 from app.agents.state import AgentState
 from app.application.models.company_resolution import (
@@ -123,11 +124,8 @@ def resolve_entity_node(state: AgentState) -> dict:
     # 高置信寒暄/引导/范围外短路（复用现有检测器，不进实体解析）
     from app.agents.nodes.plan_modules import detect_chitchat_intent
 
-    if not explicit_company_code and detect_chitchat_intent(user_query) in {
-        "chitchat",
-        "guide",
-        "unsupported",
-    }:
+    pre_intent = detect_chitchat_intent(user_query)
+    if not explicit_company_code and pre_intent in {"chitchat", "guide"}:
         return {
             "company": None,
             "company_candidates": [],
@@ -135,6 +133,99 @@ def resolve_entity_node(state: AgentState) -> dict:
                 intent="no_company", reason_code="chitchat"
             ),
         }
+
+    from app.application.services.market_quote_service import (
+        detect_market_quote_field,
+    )
+
+    market_field = detect_market_quote_field(user_query)
+    unsupported_market_query = pre_intent == "unsupported"
+    memory_context = state.get("memory_context")
+    has_current_company = bool(
+        getattr(memory_context, "current_company_code", "")
+        or getattr(memory_context, "resolved_company_code", "")
+        or (getattr(memory_context, "previous_company_codes", None) or [])
+    )
+    has_exact_company = False
+    if (unsupported_market_query or market_field) and not explicit_company_code:
+        # 无主体的市场级问题可以直接拒答；含明确公司名时仍需先解析主体，
+        # 例如“商品价格对某公司业绩影响”不能被市场级词提前吞掉。
+        from app.application.services.exact_company_spotter import (
+            spot_exact_company_spans,
+        )
+
+        has_exact_company = bool(spot_exact_company_spans(user_query))
+    has_explicit_code = bool(re.search(r"(?<!\d)\d{6}(?:\.[A-Za-z]{2})?(?!\d)", user_query))
+    if (
+        not explicit_company_code
+        and not has_exact_company
+        and not has_explicit_code
+        and not has_current_company
+    ):
+        # 无主体的行情字段不能进入实体召回，否则整句会被当成疑似公司。
+        if market_field:
+            return {
+                "company": None,
+                "company_candidates": [],
+                "entity_resolution_result": EntityResolutionResult(
+                    intent="no_company", reason_code="company_not_found"
+                ),
+            }
+    if not explicit_company_code and not has_exact_company and not has_explicit_code:
+        from app.application.services.market_quote_service import (
+            detect_market_quote_field,
+        )
+
+        # 无主体的行情字段不能进入实体召回，否则整句会被当成疑似公司。
+        # 但有结构化当前主体时，允许裸字段追问进入 resolver 的延续逻辑。
+        if detect_market_quote_field(user_query) and not has_current_company:
+            return {
+                "company": None,
+                "company_candidates": [],
+                "entity_resolution_result": EntityResolutionResult(
+                    intent="no_company", reason_code="company_not_found"
+                ),
+            }
+    if not explicit_company_code and unsupported_market_query and not has_exact_company:
+        return {
+            "company": None,
+            "company_candidates": [],
+            "entity_resolution_result": EntityResolutionResult(
+                intent="no_company", reason_code="chitchat"
+            ),
+        }
+
+    # 行业/板块/产业主题没有显式公司名时，不继承上一轮主体，也不把主题词
+    # 当公司候选。精确公司名仍由同一名称索引判断。
+    if any(
+        marker in user_query
+        for marker in (
+            "行业",
+            "板块",
+            "产业",
+            "概念",
+            "题材",
+            "政策",
+            "技术",
+            "研发",
+            "工艺",
+            "应用领域",
+        )
+    ) and not any(
+        marker in user_query for marker in ("所属", "所在")
+    ):
+        from app.application.services.exact_company_spotter import (
+            spot_exact_company_spans,
+        )
+
+        if not spot_exact_company_spans(user_query):
+            return {
+                "company": None,
+                "company_candidates": [],
+                "entity_resolution_result": EntityResolutionResult(
+                    intent="no_company", reason_code="industry_context"
+                ),
+            }
 
     resolver = CompanyEntityResolver(
         get_company_repository(),

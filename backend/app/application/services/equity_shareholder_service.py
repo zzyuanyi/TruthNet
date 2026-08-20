@@ -178,7 +178,12 @@ def materialize_equity_evidence(
                         continue  # 同内容幂等复用
                     conflicts.append(eid)
                     continue
-                conn.execute(
+                conflict_clause = (
+                    "ON DUPLICATE KEY UPDATE evidence_id = evidence_id"
+                    if conn.engine.dialect.name == "mysql"
+                    else "ON CONFLICT(evidence_id) DO NOTHING"
+                )
+                result = conn.execute(
                     text(
                         "INSERT INTO evidence_refs "
                         "(evidence_id, source_type, source_record_id, company_code, "
@@ -189,7 +194,8 @@ def materialize_equity_evidence(
                         "VALUES (:eid, 'neo4j_relationship', :srid, :cc, "
                         " 'ownership_pct', :per, :val, NULL, 'ownership_record', "
                         " :title, NULL, NULL, NULL, :dv, :retrieved, "
-                        " :turn, :trace, 'equity', 'neo4j:OWNS')"
+                        " :turn, :trace, 'equity', 'neo4j:OWNS') "
+                        f"{conflict_clause}"
                     ),
                     {
                         "eid": eid,
@@ -204,7 +210,19 @@ def materialize_equity_evidence(
                         "trace": trace,
                     },
                 )
-                added += 1
+                # 无论本请求插入还是并发命中，均复读并验证 canonical 内容。
+                existing = conn.execute(
+                    text(
+                        "SELECT source_record_id, period, value "
+                        "FROM evidence_refs WHERE evidence_id = :eid LIMIT 1"
+                    ),
+                    {"eid": eid},
+                ).first()
+                if existing is not None and existing[0] == rel_id and str(existing[2] or "") == value:
+                    if result.rowcount:
+                        added += 1
+                    continue
+                conflicts.append(eid)
         if added or conflicts:
             logger.info(
                 "materialize_equity_evidence: company=%s added=%d conflicts=%d",

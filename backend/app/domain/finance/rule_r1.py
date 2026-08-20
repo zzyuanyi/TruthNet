@@ -205,7 +205,7 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
             if t4 is None:
                 continue
             ar_y = yoy_growth(aligned[p].get("ar"), aligned[t4].get("ar"))
-            or_y = yoy_growth(aligned[p].get("or"), aligned[t4].get("or"))
+            or_y = yoy_growth(aligned[p].get("or_"), aligned[t4].get("or_"))
             if ar_y is None or or_y is None:
                 continue
             series.append({"period": p, "gap": round((ar_y - or_y) * 100, 1)})

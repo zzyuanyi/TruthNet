@@ -6,6 +6,7 @@
 
 import pytest
 
+from app.domain.company.models import CompanyRecord
 from app.application.services.company_resolver import (
     CompanyResolver,
     get_company_repository,
@@ -18,6 +19,26 @@ from app.infrastructure.persistence.sqlite.company_repository import (
 @pytest.fixture
 def resolver():
     return CompanyResolver(repo=SQLiteCompanyRepository())
+
+
+class _AliasRepository:
+    """最小仓库夹具：验证别名归一化后按规范名查询。"""
+
+    def __init__(self):
+        self.record = CompanyRecord(
+            entity_id="company_601601_SH",
+            wind_code="601601.SH",
+            sec_name="中国太保",
+        )
+
+    async def get_by_code(self, code):
+        return self.record if code == "中国太保" else None
+
+    async def get_by_entity_id(self, entity_id):
+        return None
+
+    async def search(self, query, limit=10):
+        raise AssertionError("精确俗称应在 search 前归一化")
 
 
 def test_factory_caches_repository_by_backend(monkeypatch):
@@ -73,6 +94,14 @@ async def test_resolve_by_name(resolver):
     c = await resolver.resolve("贵州茅台")
     assert c is not None
     assert c.wind_code == "600519.SH"
+
+
+@pytest.mark.asyncio
+async def test_resolve_by_market_alias():
+    c = await CompanyResolver(repo=_AliasRepository()).resolve("太平洋保险")
+    assert c is not None
+    assert c.sec_name == "中国太保"
+    assert c.wind_code == "601601.SH"
 
 
 @pytest.mark.asyncio

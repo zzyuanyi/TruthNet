@@ -21,6 +21,7 @@ from typing import Literal
 from app.agents.state import CompanyRef, MemoryContext, RequestContext
 from app.application.models.company_resolution import (
     CandidateMatch,
+    CandidateLookupResult,
     EntityMention,
     EntityResolutionIssue,
     EntityResolutionResult,
@@ -74,9 +75,27 @@ _COMPARISON_OPERATOR_WORDS = frozenset(COMPARISON_FULL_SCOPE_WORDS)
 _COMPARISON_OPERATOR_CUES = ("对比", "比较")
 
 # v3.2.1 批次 2：明确无公司行业研究主题模板（窄规则，无法确定按 not_found）
-_RESEARCH_STRONG_CUES = ("研报",)
-_RESEARCH_TOPIC_CUES = ("行业", "板块")
-_RESEARCH_VIEW_CUES = ("观点", "趋势", "前景", "景气")
+_RESEARCH_STRONG_CUES = (
+    "研报",
+    "技术",
+    "研发中",
+    "市场规模",
+    "竞争者",
+    "挑战",
+    "创新",
+    "热点资讯",
+)
+_RESEARCH_TOPIC_CUES = ("行业", "板块", "领域")
+_RESEARCH_VIEW_CUES = (
+    "观点",
+    "趋势",
+    "前景",
+    "景气",
+    "表现",
+    "个股",
+    "有哪些",
+    "哪些",
+)
 # 公司形态后缀：出现即视为疑似公司语境，不得放行 research
 _COMPANY_FORM_SUFFIXES = (
     "公司",
@@ -523,7 +542,50 @@ class CompanyEntityResolver:
         Outcome，调用方降级 needs_refinement，不得访问 result）。"""
         if self._budget is None:
             self._budget = ProposalLookupBudget(self._lookup)
-        return self._budget.lookup(text)
+        from app.application.services.company_name_aliases import (
+            is_company_name_alias,
+            normalize_company_name,
+        )
+
+        original = (text or "").strip()
+        normalized = normalize_company_name(original)
+        outcome = self._budget.lookup(normalized)
+        # 显式别名只在规范名称可召回时生效；召回为空时保留原文本
+        # 的 contains/prefix 行为，避免别名遮蔽同前缀候选。
+        if (
+            is_company_name_alias(original)
+            and normalized != original
+            and outcome.result is not None
+            and not outcome.result.matches
+            and not outcome.budget_exhausted
+        ):
+            outcome = self._budget.lookup(original)
+        if not is_company_name_alias(original) or outcome.budget_exhausted:
+            return outcome
+        result = outcome.result
+        if result is None:
+            return outcome
+        # Keep the original span in the audit payload while recording that the
+        # candidate was found through an explicit market alias.
+        return BudgetedLookupOutcome(
+            result=CandidateLookupResult(
+                matches=[
+                    match.model_copy(
+                        update={
+                            "match_kind": "exact_alias",
+                            "matched_text": original,
+                            "company": (
+                                match.company.model_copy(update={"sec_name": original})
+                                if match.company.sec_name == match.company.wind_code
+                                else match.company
+                            ),
+                        }
+                    )
+                    for match in result.matches
+                ],
+                truncated=result.truncated,
+            )
+        )
 
     # ── 锁定判定（P1-2 六项安全条件）─────────────────────────
 
