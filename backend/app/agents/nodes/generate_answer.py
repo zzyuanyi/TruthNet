@@ -68,6 +68,25 @@ _CAPABILITY_KW = (
     "如何开始",
 )
 _CONTEXT_REQUEST_KW = ("它", "该公司", "这家公司", "继续", "再看", "刚才", "前面")
+_CONSOLIDATED_SCOPE_KW = ("合并口径", "合并报表")
+_UNSUPPORTED_MARKET_CUES = (
+    "买入",
+    "买",
+    "涨跌",
+    "涨幅",
+    "上涨",
+    "下跌",
+    "成交量",
+    "市值",
+    "资金流",
+    "走势",
+    "预测",
+    "换手率",
+    "股息率",
+    "最高价",
+    "最低价",
+    "港股通",
+)
 _MODULE_LABELS = {
     "finance": "财务",
     "equity": "股权",
@@ -114,6 +133,10 @@ def _highest_severity(claims: list) -> str:
         if any(c.severity == sev for c in claims):
             return sev
     return "green"
+
+
+def _is_unsupported_market_query(query: str) -> bool:
+    return any(cue in (query or "") for cue in _UNSUPPORTED_MARKET_CUES)
 
 
 def _leaf_risk_claims(claims: list) -> list:
@@ -270,6 +293,40 @@ def _build_signal_summary(claims: list, results=None, risk_output=None) -> str:
 
             parts.append(f"综合风险等级：{risk_level_label(rl)}")
     return "；".join(parts)
+
+
+def _build_cross_module_observation(state: AgentState, claims: list) -> str:
+    """把多模块信号收敛为可行动的核验优先级，不推导未经验证的因果。"""
+    plan = state.get("plan")
+    if plan is None or len(getattr(plan, "requested_modules", []) or []) < 2:
+        return ""
+    financial = [c for c in claims if c.claim_type == "financial" and c.severity in _RISK_SEVERITIES]
+    equity = [c for c in claims if c.claim_type == "equity" and c.severity in _RISK_SEVERITIES]
+    events = [c for c in claims if c.claim_type == "event" and c.severity in _RISK_SEVERITIES]
+    cross = [c for c in claims if c.claim_type == "cross_validation"]
+    observations: list[str] = []
+    if financial and events:
+        observations.append(
+            "财务规则信号与负面事件同时出现，应优先核对事件日期是否覆盖财务异常期；"
+            "[推断] 当前只能确认共现，不能确认因果"
+        )
+    if financial and equity:
+        observations.append(
+            "财务与股权维度同时出现风险信号，建议把控制关系、关联方和异常科目放在同一证据链中复核"
+        )
+    if cross:
+        observations.append(f"已有 {len(cross)} 项跨模块不一致，结论应以原始披露核验为先")
+    if not observations:
+        active = [
+            label
+            for label, items in (("财务", financial), ("股权", equity), ("事件", events))
+            if items
+        ]
+        if active:
+            observations.append(
+                f"当前可确认信号主要集中在{'、'.join(active)}维度，尚未形成多模块一致指向"
+            )
+    return "【综合观察】" + "；".join(observations) + "。" if observations else ""
 
 
 def _dedup(items: list[str]) -> list[str]:
@@ -860,16 +917,27 @@ _EXCHANGE_LABELS = {
 # （industry_l1 / comp_type_code），字段级定位才能命中。
 _FACT_KEYS: dict[str, tuple[str, str, str]] = {
     "industry": ("所属行业", "industry", "industry_l1"),
+    "subsidiary": ("旗下公司", "subsidiary", "subsidiary"),
+    "project": ("项目事实", "project", "project"),
     "exchange": ("上市交易所", "exchange", "exchange_code"),
     "listing_date": ("上市日期", "listing_date", "listing_date"),
+    "listing_status": ("上市状态", "listing_status", "listing_status"),
     "comp_type": ("企业类型", "comp_type", "comp_type_code"),
     "business": ("主营业务", "business", "business"),
     "total_shares": ("总股本", "total_shares", "total_shares"),
+    "executive_compensation": (
+        "高管薪酬",
+        "executive_compensation",
+        "executive_compensation",
+    ),
+    "ipo_price": ("首发价格", "ipo_price", "ipo_price"),
 }
 
 # Phase E 会5：可联网回填的公司事实键（首个示范触发点 = listing_date）。
 # 仅库内无值时触发；默认 off 时 web_search 返回 []，行为与现状完全一致。
-_WEB_SEARCHABLE_FACTS: frozenset[str] = frozenset({"listing_date"})
+_WEB_SEARCHABLE_FACTS: frozenset[str] = frozenset(
+    {"listing_date", "executive_compensation", "ipo_price"}
+)
 
 
 def _web_search_fill_company_fact(
@@ -890,14 +958,21 @@ def _web_search_fill_company_fact(
         调用方走原「未覆盖」分支，行为与现状完全一致。
     """
     from app.application.services.web_search_fact_fill import (
+        extract_executive_compensation_excerpt,
+        extract_ipo_price_from_hits,
         extract_listing_date_from_hits,
     )
     from app.application.services.web_search_service import web_search
 
-    # 8/19 审查：query 带 wind_code + 交易所，提升同名公司消歧（如平安银行/
-    # 中国平安/平安电工）；库内已有值时不进入本函数（调用方 gate），不会把
-    # Web Search 变成每次问答都搜索。
-    hits = web_search(f"{sec_name} {wind_code} {label} 交易所")
+    # 8/19 审查：先用带 wind_code 的 query 提升同名公司消歧（如平安银行/
+    # 中国平安/平安电工）；若垂直域没有命中，再退到不带代码的通用检索。
+    # 这样既保留精确路由，又给 IPO 价格/高管薪酬这类公告事实一个第二机会。
+    queries = _company_fact_search_queries(sec_name, wind_code, fact_key, label)
+    hits = []
+    for query in queries:
+        hits = web_search(query)
+        if hits:
+            break
     if not hits:
         return None, None
 
@@ -906,6 +981,12 @@ def _web_search_fill_company_fact(
     if fact_key == "listing_date":
         value = extract_listing_date_from_hits(hits)
         field = "listing_date"
+    elif fact_key == "ipo_price":
+        value = extract_ipo_price_from_hits(hits)
+        field = "ipo_price"
+    elif fact_key == "executive_compensation":
+        value = extract_executive_compensation_excerpt(hits)
+        field = "executive_compensation"
     if not value:
         return None, None
 
@@ -921,7 +1002,7 @@ def _web_search_fill_company_fact(
         source_type="web_search",
         source_record_id=wind_code,
         field_path=field,
-        value=value,
+        value=_clip_evidence_value(value),
         source_title=(
             (hit.title or f"联网检索 · {label}") if hit else f"联网检索 · {label}"
         ),
@@ -934,6 +1015,39 @@ def _web_search_fill_company_fact(
         retrieved_at=datetime.now(timezone.utc).isoformat(),
     )
     return value, evidence
+
+
+def _clip_evidence_value(value: str | None, limit: int = 220) -> str | None:
+    """证据值入库前做短截断，避免落库字段过长。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:limit] if text else None
+
+
+def _company_fact_search_queries(
+    sec_name: str, wind_code: str, fact_key: str, label: str
+) -> list[str]:
+    """公司事实联网检索 query 列表。
+
+    先走带代码的精确检索，再走不带代码的通用检索兜底。
+    对于 IPO 价格/高管薪酬，第二条 query 显式补公告语义，避免只命中垂直
+    行情/空结果。
+    """
+    base = f"{sec_name} {wind_code} {label} 交易所"
+    if fact_key == "listing_date":
+        return [base, f"{sec_name} 上市日期 上市公告书", f"{sec_name} 上市公告 上市日期"]
+    if fact_key == "ipo_price":
+        return [
+            f"{sec_name} {wind_code} 首发价格 发行价 公告",
+            f"{sec_name} 首发价格 发行价 公告",
+        ]
+    if fact_key == "executive_compensation":
+        return [
+            f"{sec_name} {wind_code} 高管薪酬 董监高薪酬 公告",
+            f"{sec_name} 高管薪酬 董监高薪酬 公告",
+        ]
+    return [base]
 
 
 def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
@@ -988,10 +1102,16 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
 
     if value:
         if web_evidence is not None:
-            answer = (
-                f"{sec_name}（{wind_code}）的{label}为：{value}。"
-                "（该信息来自联网检索，来源链接见证据，建议以官方披露为准。）"
-            )
+            if fact_key == "executive_compensation":
+                answer = (
+                    f"{sec_name}（{wind_code}）检索到高管薪酬相关公告摘要：{value}。"
+                    "（来源链接见证据，具体人员和年度请以公告原文为准。）"
+                )
+            else:
+                answer = (
+                    f"{sec_name}（{wind_code}）的{label}为：{value}。"
+                    "（该信息来自联网检索，来源链接见证据，建议以官方披露为准。）"
+                )
         else:
             answer = f"{sec_name}（{wind_code}）的{label}为：{value}。"
     else:
@@ -1070,6 +1190,372 @@ def _answer_company_fact(state: AgentState, fact_key: str) -> dict:
     }
 
 
+def _answer_market_quote(state: AgentState, field: str) -> dict:
+    """回答单个 AnySearch 行情字段，缺失时按字段诚实降级。"""
+    from app.application.services.market_quote_service import (
+        MARKET_FIELD_LABELS,
+        format_market_value,
+        query_market_quote,
+    )
+
+    company = state.get("company")
+    label = MARKET_FIELD_LABELS.get(field, "行情字段")
+    if company is None:
+        answer = f"查询{label}需要先指定上市公司或股票代码。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    result = query_market_quote(
+        sec_name=company.sec_name,
+        wind_code=company.wind_code,
+        field=field,
+        user_query=state.get("user_query", ""),
+    )
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+    if result.status == "history_required":
+        answer = (
+            f"当前行情接口缺少回答{name_code}{label}所需的完整历史序列，"
+            "无法用单日快照可靠替代。"
+        )
+    elif result.status == "field_missing":
+        date_text = f" {result.trade_date}" if result.trade_date else ""
+        answer = (
+            f"已获取{name_code}{date_text}的行情快照，但数据源未返回{label}字段，"
+            "无法可靠回答。"
+        )
+    elif result.status != "ok" or result.value is None:
+        answer = f"当前未获取到{name_code}可回查的行情数据，无法可靠回答{label}。"
+    else:
+        rendered = format_market_value(field, result.value)
+        date_text = result.trade_date
+        if result.period_start:
+            date_text = f"{result.period_start}至{result.trade_date}"
+        if field in ("amount", "volume"):
+            answer = (
+                f"{name_code} {date_text} 的{label}数据源原始值为{rendered}；"
+                "接口规范未标明该字段单位。"
+            )
+        else:
+            answer = f"{name_code} {date_text} 的{label}为{rendered}。"
+
+    _emit_segment(state, answer)
+    if result.status != "ok" or result.value is None or result.hit is None:
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    evidence_id = make_evidence_id(
+        source_namespace=NS_WEB_SEARCH,
+        source_type="web_search",
+        source_record_id=f"{company.wind_code}:{result.trade_date}",
+        field_path=f"market_quote.{field}",
+        period=result.trade_date,
+        company_code=company.wind_code,
+    )
+    quote_evidence = EvidenceRef(
+        evidence_id=evidence_id,
+        source_type="web_search",
+        source_record_id=f"{company.wind_code}:{result.trade_date}",
+        field_path=f"market_quote.{field}",
+        period=result.trade_date,
+        value=result.raw_value,
+        source_title=result.hit.title or f"{company.sec_name} · AnySearch 行情",
+        source_uri=result.hit.url or None,
+        source_excerpt=result.hit.snippet or "",
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=company.wind_code,
+        module="market_quote",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+    )
+    quote_claim = Claim(
+        claim_id=make_claim_id(
+            turn_id=turn_id,
+            company_code=company.wind_code,
+            claim_type="market_quote",
+            claim_text=answer,
+        ),
+        text=answer,
+        claim_type="market_quote",
+        severity="unknown",
+        evidence_ids=[evidence_id],
+        verification_status="verified",
+        limitations=["联网行情快照；交易日以数据源返回日期为准"],
+        turn_id=turn_id,
+        trace_id=trace_id,
+        company_code=company.wind_code,
+        module="market_quote",
+    )
+    return {
+        "claims": [quote_claim],
+        "evidence": [quote_evidence],
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=[quote_claim],
+            evidence=[quote_evidence],
+        ),
+    }
+
+
+def _answer_multi_metric(state: AgentState) -> dict:
+    """一次返回并列指标，缺失字段逐项说明，不把问题强制拆开。"""
+    company = state.get("company")
+    plan = state.get("plan")
+    if company is None:
+        return {}
+    query = state.get("user_query", "")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    require_exact = bool(plan and plan.as_of_kind == "report_period")
+    requested: list[tuple[str, str]] = []
+    if "总股本" in query:
+        requested.append(("总股本", "unsupported"))
+    if "营业收入" in query or "营收" in query:
+        requested.append(("营业收入", "operating_revenue"))
+    if "净资产" in query:
+        requested.append(("净资产", "unsupported"))
+    if "收盘价" in query or "收盘" in query:
+        requested.append(("收盘价", "unsupported"))
+    if "eps" in query.lower() or "每股收益" in query:
+        requested.append(("EPS", "unsupported"))
+    if not requested:
+        answer = "未能识别并列指标，请补充具体财务指标名称。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
+    from app.application.services.indicator_query_service import query_metric
+
+    lines = [
+        f"{company.sec_name}（{company.wind_code}）并列指标结果：",
+        "",
+        "| 指标 | 数值 | 数据期与口径 |",
+        "|---|---:|---|",
+    ]
+    all_evidence: list[EvidenceRef] = []
+    for label, indicator in requested:
+        if indicator == "unsupported":
+            lines.append(f"| {label} | 暂无数据 | 当前数据范围未覆盖 |")
+            continue
+        result = query_metric(
+            company.wind_code,
+            indicator,
+            as_of=as_of,
+            require_exact_period=require_exact,
+        )
+        if result.status != "ok" or result.value is None:
+            lines.append(f"| {label} | 暂无数据 | 母公司口径 |")
+            continue
+        period = result.period
+        lines.append(
+            f"| {label} | {_format_indicator_value(result.value, result.unit)} | "
+            f"{period[:4]}-{period[4:6]}-{period[6:]}，母公司口径 |"
+        )
+        all_evidence.extend(
+            _evidence_for_observations(state, company, result.observations)
+        )
+    answer = "\n".join(lines)
+    _emit_segment(state, answer)
+    return {
+        "claims": [],
+        "evidence": all_evidence,
+        "final_response": FinalResponse(
+            answer=answer, risk_level="unknown", evidence=all_evidence
+        ),
+    }
+
+
+def _answer_directional_events(state: AgentState) -> dict | None:
+    """只渲染用户请求方向的事件，避免混入相反情绪。"""
+    plan = state.get("plan")
+    direction = getattr(plan, "event_sentiment", "all") if plan else "all"
+    list_requested = bool(getattr(plan, "event_list_requested", False)) if plan else False
+    if direction == "all" and not list_requested:
+        return None
+    results = state.get("results")
+    events = results.events if results else None
+    if events is None:
+        return None
+    selected = sorted(
+        (
+            item
+            for item in (events.timeline or [])
+            if direction == "all"
+            or str(item.get("sentiment", "") or "") == direction
+        ),
+        key=lambda item: str(item.get("date") or ""),
+        reverse=True,
+    )
+    company = state.get("company")
+    if company is None:
+        return None
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+    direction_label = {"positive": "利好", "negative": "利空"}.get(direction, "")
+    if not selected:
+        label = f"{direction_label}事件" if direction_label else "公告或事件"
+        answer = f"{name_code}近期未检出可回查的{label}。"
+    else:
+        rows = []
+        for item in selected[:5]:
+            date_text = str(item.get("date") or "")
+            title = str(item.get("title") or item.get("category") or "公告")
+            category = str(item.get("category") or "")
+            evidence_id = ", ".join(str(i) for i in (item.get("evidence_ids") or []) if i)
+            detail = f"{date_text} {title}".strip()
+            if category and category not in title:
+                detail += f"（{category}）"
+            if evidence_id:
+                detail += f" [证据: {evidence_id}]"
+            rows.append(f"- {detail}")
+        label = f"{direction_label}事件" if direction_label else "公告或事件"
+        answer = f"{name_code}近期可回查的{label}：\n" + "\n".join(rows)
+    _emit_segment(state, answer)
+    return {
+        "claims": [],
+        "evidence": list(events.evidence or []),
+        "final_response": FinalResponse(
+            answer=answer, risk_level="unknown", evidence=list(events.evidence or [])
+        ),
+    }
+
+
+def _format_research_insights(query: str, insights: list[dict]) -> str:
+    """按问题类型整理研报结果，避免只拼接截断段落。"""
+    if any(
+        cue in query
+        for cue in (
+            "哪些个股",
+            "竞争者",
+            "竞争对手",
+            "新兴公司",
+            "新兴企业",
+            "有哪些公司",
+            "公司有哪些",
+            "板块有哪些",
+            "行业有哪些",
+        )
+    ):
+        names: list[str] = []
+        for item in insights:
+            name = str(item.get("sec_name") or "").strip()
+            if name and name not in names:
+                names.append(name)
+        if names:
+            basic = "相关研报涉及的公司包括：" + "、".join(names[:8]) + "。"
+            # 只有带可回查报告信息时才展开摘要；纯名称输入保持兼容，
+            # 避免把没有来源的公司名包装成竞争关系或事实结论。
+            rich_items = [
+                item
+                for item in insights
+                if item.get("source_title") or item.get("report_id")
+            ]
+            if not rich_items:
+                return basic
+            rows = ["| 公司 | 研报依据 | 摘要 |", "|---|---|---|"]
+            for item in rich_items[:8]:
+                name = str(item.get("sec_name") or "暂无明确公司")
+                source = str(item.get("source_title") or "研报").replace("|", "｜")
+                content = " ".join(str(item.get("content") or "暂无摘要").split())
+                rows.append(
+                    f"| {name} | {source[:80]} | {content[:160].replace('|', '｜')} |"
+                )
+            return basic + "\n\n" + "\n".join(rows)
+    if any(cue in query for cue in ("研报", "机构评级", "券商评级")):
+        rows = ["| 日期 | 机构 / 研报 | 核心观点 |", "|---|---|---|"]
+        for item in insights[:5]:
+            date_text = str(item.get("source_date") or "暂无数据")[:10]
+            org = str(item.get("source_org") or "").strip()
+            title = str(item.get("source_title") or "研报").strip()
+            source = f"{org} · {title}" if org else title
+            content = (
+                str(item.get("content") or title)
+                .replace("\n", " ")
+                .replace("|", "｜")
+            )
+            rows.append(
+                f"| {date_text} | {source.replace('|', '｜')} | {content[:140]} |"
+            )
+        return "\n".join(rows)
+    parts = []
+    for item in insights[:3]:
+        src = item.get("source_title") or "研报"
+        org = item.get("source_org", "")
+        label = f"{org}·{src}" if org else src
+        content = " ".join(str(item.get("content") or "").split())[:160].strip("。；; ")
+        if not content:
+            content = str(item.get("source_title") or "暂无摘要").strip("。；; ")
+        parts.append(f"{content}（来源：{label}）")
+    return "；".join(parts)
+
+
+def _answer_company_research(state: AgentState) -> dict:
+    """直接回答单公司研报/评级问题，不先输出无关的综合风险模板。"""
+    company = state.get("company")
+    if company is None:
+        return {}
+    plan = state.get("plan")
+    query = state.get("user_query", "")
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    runtime = state.get("runtime")
+    turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+    trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+    try:
+        from app.application.services.research_search import (
+            report_insights_enabled,
+            search_research_insights_sync,
+        )
+
+        insights = (
+            search_research_insights_sync(
+                f"{company.sec_name} {company.wind_code} {query}",
+                top_k=5,
+                as_of=as_of,
+            )
+            if report_insights_enabled()
+            else []
+        )
+        evidence, claims, valid = _research_evidence_and_claims(
+            insights,
+            company_code=company.wind_code,
+            turn_id=turn_id,
+            trace_id=trace_id,
+        )
+    except Exception:  # noqa: BLE001 - 检索失败按无可回查数据降级
+        logger.warning("generate_answer: 单公司研报检索失败", exc_info=True)
+        evidence, claims, valid = [], [], []
+
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+    if valid:
+        answer = f"{name_code}可回查的近期研报/评级：\n\n" + _format_research_insights(
+            query, valid
+        )
+    else:
+        answer = f"当前数据覆盖范围内未找到{name_code}可回查的近期研报或评级记录。"
+    _emit_segment(state, answer)
+    return {
+        "claims": claims,
+        "evidence": evidence,
+        "final_response": FinalResponse(
+            answer=answer,
+            risk_level="unknown",
+            claims=claims,
+            evidence=evidence,
+        ),
+    }
+
+
 def _evidence_for_observations(
     state: AgentState, company, observations: list
 ) -> list[EvidenceRef]:
@@ -1122,6 +1608,8 @@ def _evidence_for_observations(
 def _format_indicator_value(value: float, unit: str) -> str:
     if unit == "percent":
         return f"{value:.2f}%"
+    if unit == "ratio":
+        return f"{value * 100:.2f}%"
     if unit == "days":
         return f"{value:.2f}天"
     absolute = abs(value)
@@ -1144,6 +1632,33 @@ def _format_growth(growth: float) -> str:
     return f"同比下降 {abs(growth):.2f}%"
 
 
+def _indicator_impact_text(
+    *, base_indicator: str, query: str, trend_rows: list, name_code: str
+) -> str:
+    """为影响类指标问题验证前提，再给出有限的财务解释。"""
+    if base_indicator == "operating_cash_flow":
+        return "问题未说明具体影响事件，当前数据无法建立该事件与现金流之间的因果关系。"
+    if base_indicator != "accounts_receivable":
+        return "仅凭该指标当前值无法确认实际影响，需要结合变化趋势和公告证据。"
+
+    if len(trend_rows) >= 2 and trend_rows[-2].value:
+        previous, current = trend_rows[-2], trend_rows[-1]
+        growth = (current.value / abs(previous.value) - 1) * 100
+        change = f"{previous.period[:4]}年至{current.period[:4]}年{_format_growth(growth)}"
+        if "激增" in query and growth <= 20:
+            return f"现有年度序列显示{change}，不支持“应收账款激增”这一前提。"
+        return (
+            f"现有年度序列显示{change}。"
+            "[推断] 若应收账款增速持续高于营业收入，可能带来回款压力、"
+            "坏账减值风险和利润现金含量下降；仍需结合账龄及客户集中度核验。"
+        )
+    return (
+        f"当前数据不足以验证{name_code}应收账款是否激增。"
+        "[推断] 若确有激增，可能带来回款压力、坏账减值风险和利润现金含量下降；"
+        "不能仅凭单期余额确认。"
+    )
+
+
 def _answer_indicator(state: AgentState, indicator: str) -> dict:
     """Phase D #3A：基础财务指标确定性短答与可回查证据。"""
     company = state.get("company")
@@ -1160,18 +1675,133 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
         }
 
     plan = state.get("plan")
+    answer_operation = getattr(plan, "answer_operation", "") if plan else ""
+    if not answer_operation:
+        from app.agents.nodes.plan_modules import _detect_answer_operation
+
+        answer_operation = _detect_answer_operation(state.get("user_query", ""))
     as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
     require_exact = bool(plan and plan.as_of_kind == "report_period")
     # v3.3.3 批次 B：统一入口——registry 指标（r4/r5）与基础指标同构返回
-    from app.application.services.indicator_query_service import query_metric
-
-    result = query_metric(
-        company.wind_code,
-        indicator,
-        as_of=as_of,
-        require_exact_period=require_exact,
+    from app.application.services.indicator_query_service import (
+        query_indicator_cagr,
+        query_indicator_trend,
+        query_metric,
+        query_quarter_mom,
+        query_quarter_value,
+        query_quarter_yoy,
     )
+
+    base_indicator = indicator.removesuffix("_growth").removesuffix("_mom")
     name_code = f"{company.sec_name}（{company.wind_code}）"
+    # 趋势问题先读取年度序列，不能先查询最新单期再决定如何回答。
+    if answer_operation in ("trend", "causal_trend", "loss_years"):
+        query_text = state.get("user_query", "")
+        quarterly_trend = bool(
+            re.search(r"(?:第?[一二三四1-4]季度|Q[1-4])", query_text, re.IGNORECASE)
+        )
+        rows = query_indicator_trend(
+            company.wind_code,
+            base_indicator,
+            as_of=as_of,
+            annual_only=not quarterly_trend,
+        )
+        labels = {
+            "operating_revenue": "营业收入",
+            "net_profit": "净利润",
+            "operating_cash_flow": "经营现金流",
+            "total_assets": "总资产",
+            "total_liabilities": "总负债",
+            "accounts_receivable": "应收账款余额",
+            "inventories": "存货",
+            "r4_turnover_days": "存货周转天数",
+            "r5_gross_margin": "毛利率",
+        }
+        label = labels.get(base_indicator, base_indicator)
+        if len(rows) >= 2:
+            from app.domain.benchmarks.metric_registry import REGISTRY
+
+            trend_unit = "CNY"
+            if base_indicator in REGISTRY:
+                trend_unit = REGISTRY[base_indicator].unit
+
+            def period_label(period: str) -> str:
+                if quarterly_trend:
+                    quarter = {"0331": "Q1", "0630": "Q2", "0930": "Q3", "1231": "Q4"}
+                    return f"{period[:4]}{quarter.get(period[4:], period[4:])}"
+                return f"{period[:4]}年"
+
+            sequence_label = "季度" if quarterly_trend else "年度"
+            table = [
+                f"{name_code}的{label}{sequence_label}序列：",
+                "",
+                f"| {sequence_label} | {label} |",
+                "|---|---:|",
+                *[
+                    f"| {period_label(row.period)} | "
+                    f"{_format_indicator_value(row.value, trend_unit)} |"
+                    for row in rows
+                ],
+            ]
+            if answer_operation == "loss_years":
+                consecutive = 0
+                for row in reversed(rows):
+                    if row.value < 0:
+                        consecutive += 1
+                    else:
+                        break
+                conclusion = (
+                    f"截至最新可用年度，连续亏损 {consecutive} 年。"
+                    if consecutive
+                    else "截至最新可用年度，未处于连续亏损状态。"
+                )
+            else:
+                conclusion = (
+                    "持续下降。"
+                    if all(a.value > b.value for a, b in zip(rows, rows[1:]))
+                    else "未呈连续下降。"
+                )
+            answer = "\n".join(table) + "\n\n" + conclusion
+            if answer_operation == "causal_trend":
+                answer += "仅凭该指标序列无法确认原因，需要结合成本结构和公告证据。"
+        else:
+            answer = (
+                f"{name_code}的{label}：暂不支持多年序列趋势，当前可用年度序列不足，"
+                "不会用最新一期结果代替。"
+            )
+        _emit_segment(state, answer)
+        trend_evidence = []
+        for row in rows:
+            trend_evidence.extend(
+                _evidence_for_observations(
+                    state, company, getattr(row, "observations", None) or []
+                )
+            )
+        trend_evidence = _merge_unique(
+            trend_evidence, key=lambda item: item.evidence_id
+        )
+        return {
+            "claims": [],
+            "evidence": trend_evidence,
+            "final_response": FinalResponse(
+                answer=answer, risk_level="unknown", evidence=trend_evidence
+            ),
+        }
+    if answer_operation == "cagr":
+        result = query_indicator_cagr(company.wind_code, base_indicator, as_of=as_of)
+    elif answer_operation == "quarter_yoy":
+        result = query_quarter_yoy(company.wind_code, base_indicator, as_of=as_of)
+    elif answer_operation == "quarter_single":
+        result = query_quarter_value(company.wind_code, base_indicator, as_of=as_of)
+    elif answer_operation == "quarter_mom":
+        result = query_quarter_mom(company.wind_code, base_indicator, as_of=as_of)
+    else:
+        result = query_metric(
+            company.wind_code,
+            indicator,
+            as_of=as_of,
+            require_exact_period=require_exact,
+        )
     # 2026-08-12 三轮审查修订：带 label 的 unsupported（环比/双字段增速）
     # 与 insufficient_data 分开，不再一律答"数据不足"
     if result.status == "unsupported":
@@ -1191,10 +1821,33 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
             "final_response": FinalResponse(answer=answer, risk_level="unknown"),
         }
 
+    # 多年趋势不得退化成最新单期。基础指标有年度序列时直接展示序列；
+    # registry 指标暂无序列时也明确说明缺口。
+    if answer_operation in ("trend", "causal_trend"):
+        rows = query_indicator_trend(company.wind_code, base_indicator, as_of=as_of)
+        if len(rows) >= 2:
+            values = "；".join(
+                f"{row.period[:4]}年 {_format_indicator_value(row.value, result.unit)}"
+                for row in rows
+            )
+            direction = "持续下降" if all(a.value > b.value for a, b in zip(rows, rows[1:])) else "未呈连续下降"
+            answer = f"{name_code}的{result.label}年度序列：{values}。{direction}。"
+            if answer_operation == "causal_trend":
+                answer += "仅凭该指标序列无法确认原因，需要结合成本结构和公告证据。"
+        else:
+            answer = (
+                f"{name_code}的{result.label}：当前可用年度序列不足，"
+                "无法确认多年趋势或原因，不用最新一期代替。"
+            )
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+
     # v3.3.3 收口批次 D（方案 §3.6）：「正常吗」类问句走 assessment，
     # 只答数值时不得用泛化话术冒充判断
-    plan = state.get("plan")
-    answer_operation = getattr(plan, "answer_operation", "") if plan else ""
     if answer_operation == "assessment":
         return _answer_indicator_assessment(state, company, result)
 
@@ -1214,12 +1867,43 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
             f"（{period_text} 较 {comparison_text}，母公司口径）。"
         )
         claim_value_text = _format_growth(result.value)
+    elif answer_operation == "turnaround":
+        status_text = "已实现扭亏为盈" if result.value >= 0 else "尚未扭亏为盈"
+        answer = (
+            f"{name_code}的{result.label}为 {value_text}"
+            f"（{period_text}，母公司口径），{status_text}。"
+        )
+        claim_value_text = value_text
     else:
         answer = (
             f"{name_code}的{result.label}为 {value_text}"
             f"（{period_text}，母公司口径）。"
         )
         claim_value_text = value_text
+
+    if answer_operation == "cagr":
+        start_period = result.observations[0].period if result.observations else ""
+        end_period = result.observations[-1].period if result.observations else result.period
+        answer = (
+            f"{name_code}的{result.label}为 {result.value:.2f}%"
+            f"（{start_period[:4]}-{end_period[:4]}年，母公司口径）。"
+        )
+        claim_value_text = f"{result.value:.2f}%"
+    elif answer_operation == "causal":
+        answer += "仅凭该指标当前值无法确认下降原因，需要结合期间序列和公告证据。"
+    elif answer_operation == "impact":
+        trend_rows = query_indicator_trend(
+            company.wind_code,
+            base_indicator,
+            as_of=as_of,
+            annual_only=True,
+        )
+        answer += _indicator_impact_text(
+            base_indicator=base_indicator,
+            query=state.get("user_query", ""),
+            trend_rows=trend_rows,
+            name_code=name_code,
+        )
 
     # 双期间契约（2026-08-12 修订）：逐 observation 用自己的 period 生成
     # source_record_id/evidence_id——同比查询含当前期与去年同期两条证据，
@@ -1313,6 +1997,31 @@ def _answer_indicator_assessment(state, company, result) -> dict:
         return f"{float(raw):.2f}"
 
     value_raw = result.value / 100 if result.unit == "percent" else result.value
+    query = state.get("user_query", "")
+    if "平均" in query:
+        mean_value = bench.get("mean_value")
+        if mean_value is None:
+            answer = base_answer + "行业平均值缺失，无法完成比较。"
+        else:
+            mean_text = _bench_display(mean_value)
+            if "低于" in query:
+                relation = "低于" if value_raw < mean_value else "不低于"
+            else:
+                relation = "高于" if value_raw > mean_value else "不高于"
+            answer = (
+                base_answer
+                + f"{result.label}{relation}行业平均值"
+                + f"（平均值 {mean_text}，{sample_count} 家可比公司）。"
+            )
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(
+                answer=answer, risk_level="unknown", claims=[], evidence=[]
+            ),
+        }
+
     p50 = bench.get("p50")
     p75 = bench.get("p75")
     if p50 is None or p75 is None:
@@ -1385,6 +2094,72 @@ def _answer_indicator_assessment(state, company, result) -> dict:
             claims=[claim],
             evidence=evidence,
         ),
+    }
+
+
+def _answer_industry_benchmark(state: AgentState) -> dict:
+    """回答无公司行业均值/趋势，使用真实基准行而非任意公司值。"""
+    plan = state.get("plan")
+    industry = getattr(plan, "industry_l1", "") if plan else ""
+    indicator = getattr(plan, "indicator", "") if plan else ""
+    as_of = plan.as_of.strftime("%Y%m%d") if plan and plan.as_of else ""
+    operation = getattr(plan, "answer_operation", "") if plan else ""
+    if operation in ("industry_leader", "industry_total"):
+        answer = (
+            f"当前行业基准只提供行业均值和分位，未覆盖"
+            f"{'行业营业收入总额' if operation == 'industry_total' else '按指标排序个股'}；"
+            f"无法可靠回答「{industry}」的该问题。"
+        )
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+    from app.application.services.indicator_query_service import (
+        query_industry_benchmark_series,
+    )
+
+    rows = query_industry_benchmark_series(industry, indicator, as_of=as_of)
+    try:
+        from app.domain.benchmarks.metric_registry import get_metric
+
+        metric_label = get_metric(indicator).name
+    except KeyError:
+        metric_label = indicator
+    if not rows:
+        answer = f"行业「{industry}」暂无{metric_label}的可用母公司口径基准数据。"
+    else:
+        try:
+            from app.domain.benchmarks.metric_registry import get_metric
+
+            is_ratio = get_metric(indicator).unit == "ratio"
+        except KeyError:
+            is_ratio = False
+
+        def display(value) -> str:
+            if value is None:
+                return "—"
+            return f"{float(value) * 100:.2f}%" if is_ratio else f"{float(value):.2f}"
+
+        if operation == "trend" and len(rows) >= 2:
+            values = "；".join(
+                f"{row['period'][:4]}年 {display(row['mean_value'])}" for row in rows
+            )
+            answer = f"行业「{industry}」的{metric_label}年度均值：{values}。"
+        else:
+            row = rows[-1]
+            answer = (
+                f"行业「{industry}」最新可用期 {row['period']} 的{metric_label}平均值为 "
+                f"{display(row['mean_value'])}（{row['sample_count']} 家可比公司，母公司口径）。"
+            )
+            if operation == "trend":
+                answer += "可用年度序列不足，无法判断多年变化。"
+    _emit_segment(state, answer)
+    return {
+        "claims": [],
+        "evidence": [],
+        "final_response": FinalResponse(answer=answer, risk_level="unknown"),
     }
 
 
@@ -1648,8 +2423,28 @@ def _answer_cross_company_overview(state, targets, spec) -> dict:
         )
 
     names = "、".join(str(getattr(t, "sec_name", "") or "") for t in targets[:2])
-    if result.conclusion:
-        answer = f"{names}概览\n\n{result.conclusion}"
+    if ok_rows:
+        first_name = str(getattr(targets[0], "sec_name", "公司A"))
+        second_name = str(getattr(targets[1], "sec_name", "公司B"))
+        table = [
+            f"{names}概览",
+            "",
+            f"| 指标 | {first_name} | {second_name} | 共同期间 | 对比结论 |",
+            "|---|---:|---:|---|---|",
+        ]
+        for row in ok_rows:
+            first, second = row.values
+            conclusion = str(row.conclusion or "").replace("|", "｜")
+            table.append(
+                f"| {row.metric_label} | {_fmt(first.value, row.unit)} | "
+                f"{_fmt(second.value, row.unit)} | {row.period} | {conclusion} |"
+            )
+        missing = [r.metric_label for r in result.overview_rows if r.status != "ok"]
+        answer = "\n".join(table)
+        if missing:
+            answer += "\n\n暂无共同可比数据：" + "、".join(missing) + "。"
+        if result.conclusion:
+            answer += "\n\n" + result.conclusion
     else:
         answer = (
             f"{names}概览：{'；'.join(result.warnings) or '数据不足'}，"
@@ -1862,10 +2657,32 @@ def _answer_cross_company_fact(state, targets, spec) -> dict:
         compare_cross_company_facts,
     )
 
-    result = compare_cross_company_facts(targets, spec)
     runtime = state.get("runtime")
     turn_id = getattr(runtime, "turn_id", "") if runtime else ""
     trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+
+    comparison_targets = list(targets)
+    web_evidence_by_code: dict[str, EvidenceRef] = {}
+    if getattr(spec, "fact_key", "") == "listing_date":
+        for index, target in enumerate(comparison_targets):
+            if str(getattr(target, "listing_date", "") or "").strip():
+                continue
+            value, web_evidence = _web_search_fill_company_fact(
+                sec_name=str(target.sec_name),
+                wind_code=str(target.wind_code),
+                fact_key="listing_date",
+                label="上市日期",
+                turn_id=turn_id,
+                trace_id=trace_id,
+            )
+            if value:
+                comparison_targets[index] = target.model_copy(
+                    update={"listing_date": value}
+                )
+            if web_evidence is not None:
+                web_evidence_by_code[str(target.wind_code)] = web_evidence
+
+    result = compare_cross_company_facts(comparison_targets, spec)
 
     def _finish(answer: str, claims: list, evidence: list) -> dict:
         _emit_segment(state, answer)
@@ -1892,9 +2709,13 @@ def _answer_cross_company_fact(state, targets, spec) -> dict:
         )
 
     evidence: list[EvidenceRef] = []
-    for target in targets:
+    for target in comparison_targets:
         date_value = str(getattr(target, "listing_date", "") or "")
         if not date_value:
+            continue
+        web_evidence = web_evidence_by_code.get(str(target.wind_code))
+        if web_evidence is not None:
+            evidence.append(web_evidence)
             continue
         evidence.append(
             EvidenceRef(
@@ -2164,6 +2985,54 @@ def generate_answer_node(state: AgentState) -> dict:
         plan = state.get("plan")
         intent = getattr(plan, "intent", "") if plan else ""
 
+        if intent == "industry_benchmark":
+            return _answer_industry_benchmark(state)
+        if intent == "unsupported_indicator":
+            answer = f"当前数据覆盖范围暂不支持查询「{user_query}」，无法可靠返回该指标。"
+            _emit_segment(state, answer)
+            return {
+                "claims": [],
+                "evidence": [],
+                "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+            }
+        if intent in ("investment_advice", "trade_execution"):
+            answer = (
+                "系统不能代为买卖证券或提交交易指令。"
+                if intent == "trade_execution"
+                else "系统不提供是否买入或卖出的投资建议。"
+            )
+            answer += "可以查询客观行情，或核查财务、股权与公告风险后自行判断。"
+            _emit_segment(state, answer)
+            return {
+                "claims": [],
+                "evidence": [],
+                "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+            }
+        if intent in ("causal_query", "unsupported_scope"):
+            answer = (
+                "当前系统不接入行情价格因果归因，无法仅凭财报、股权和公告模块确认这次涨跌原因。"
+                if intent == "causal_query"
+                else "当前系统固定使用母公司报表口径，不能切换为合并口径；本轮不返回替代口径数值。"
+            )
+            _emit_segment(state, answer)
+            return {
+                "claims": [],
+                "evidence": [],
+                "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+            }
+
+        if getattr(plan, "event_list_requested", False):
+            answer = (
+                "当前公告/事件列表查询需要先指定上市公司或股票代码；"
+                "系统暂不提供全市场公告的完整索引，不能据此确认所有上市公司的股权质押公告。"
+            )
+            _emit_segment(state, answer)
+            return {
+                "claims": [],
+                "evidence": [],
+                "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+            }
+
         # 2026-08-12 批 1.5 补做：实体解析失败/候选截断明确告知，
         # 替代通用引导（"请提供公司名称或股票代码"）——用户能知道
         # 系统"看到了"疑似公司但库内无匹配。
@@ -2179,6 +3048,15 @@ def generate_answer_node(state: AgentState) -> dict:
                 )
             }
         if state.get("entity_resolution_error") == "company_not_found":
+            if _is_unsupported_market_query(user_query):
+                answer = (
+                    "当前只支持可识别的单只 A 股行情快照，未覆盖板块、指数、"
+                    "期货、基金的行情，也不提供交易建议或市场资金流数据。"
+                )
+                _emit_segment(state, answer)
+                return {
+                    "final_response": FinalResponse(answer=answer, risk_level="unknown")
+                }
             frags = state.get("unresolved_fragments") or []
             frag_text = "「" + "」「".join(frags[:3]) + "」" if frags else ""
             answer = (
@@ -2350,8 +3228,22 @@ def generate_answer_node(state: AgentState) -> dict:
             if (
                 intent == "research" or is_research_query(user_query)
             ) and report_insights_enabled():
+                list_query = any(
+                    cue in user_query
+                    for cue in (
+                        "哪些个股",
+                        "竞争者",
+                        "竞争对手",
+                        "新兴公司",
+                        "新兴企业",
+                        "有哪些公司",
+                        "公司有哪些",
+                        "板块有哪些",
+                        "行业有哪些",
+                    )
+                )
                 insights = search_research_insights_sync(
-                    user_query, top_k=3, as_of=as_of
+                    user_query, top_k=8 if list_query else 3, as_of=as_of
                 )
                 # P2-1：先过滤可回查结果——只渲染成功生成 Evidence 的 insight
                 research_evidence, research_claims, valid_insights = (
@@ -2363,15 +3255,10 @@ def generate_answer_node(state: AgentState) -> dict:
                     )
                 )
                 if valid_insights:
-                    parts = []
-                    for it in valid_insights[:3]:
-                        src = it.get("source_title") or "研报"
-                        org = it.get("source_org", "")
-                        label = f"{org}·{src}" if org else src
-                        parts.append(f"{it.get('content', '')[:120]}（来源：{label}）")
+                    parts = _format_research_insights(user_query, valid_insights)
                     answer = (
                         "未匹配到具体公司，以下是相关研报观点摘要："
-                        + "；".join(parts)
+                        + parts.rstrip("。")
                         + "。如需针对某家公司分析，请提供公司名称或股票代码。"
                     )
                     # #4：研报可回查 Evidence + research Claim（写入 AgentState + FinalResponse）
@@ -2420,11 +3307,81 @@ def generate_answer_node(state: AgentState) -> dict:
     # R9：公司事实轻量回答（company_fact plan：requested_modules=[]，
     # 未执行 finance/equity/events/risk；诚实回答 + registry Evidence）
     plan = state.get("plan")
+    if getattr(plan, "intent", "") == "research":
+        return _answer_company_research(state)
+    if getattr(plan, "intent", "") == "industry_benchmark":
+        return _answer_industry_benchmark(state)
+    if getattr(plan, "intent", "") == "market_quote":
+        return _answer_market_quote(state, getattr(plan, "market_field", "") or "")
+    if getattr(plan, "intent", "") == "unsupported":
+        answer = (
+            "这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、"
+            "股权穿透、公告舆情和行业研报核查。"
+        )
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+    if getattr(plan, "intent", "") in ("investment_advice", "trade_execution"):
+        name_code = f"{company.sec_name}（{company.wind_code}）"
+        boundary = (
+            f"{name_code}：系统不能代为买卖证券或提交交易指令。"
+            if plan.intent == "trade_execution"
+            else f"{name_code}：系统不提供是否买入或卖出的投资建议。"
+        )
+        answer = boundary + "可以继续查询客观行情，或核查财务、股权与公告风险后自行判断。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+    if getattr(plan, "intent", "") == "causal_query":
+        answer = "当前系统不接入行情价格因果归因，无法仅凭财报、股权和公告模块确认这次涨跌原因。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+    query = state.get("user_query", "")
+    if getattr(plan, "intent", "") == "unsupported_indicator":
+        answer = f"当前数据覆盖范围暂不支持查询「{query}」，无法可靠返回该指标。"
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
+    if getattr(plan, "intent", "") == "unsupported_scope" or any(
+        keyword in query for keyword in _CONSOLIDATED_SCOPE_KW
+    ):
+        if "行业" in query and re.search(r"所属|所在", query):
+            answer = (
+                "当前行业基准只提供行业均值和分位，未覆盖该行业的整体汇总或个股排名，"
+                "无法可靠回答这项行业统计。"
+            )
+        else:
+            answer = (
+                "当前系统固定使用母公司报表口径，不能切换为合并口径。"
+                "本轮不返回可能被误解为合并口径的分析结果。"
+            )
+        _emit_segment(state, answer)
+        return {
+            "claims": [],
+            "evidence": [],
+            "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+        }
     # v3.3.3 批次 D：company 已识别但比较维度走页面的场景（单主体行业
     # 对比 → comparison_guide）——guide 分支在 company None 块内，
     # 此处补 company 非 None 的调用
     if getattr(plan, "intent", "") == "comparison_guide":
         return _answer_comparison_guide(state)
+    directional_events = _answer_directional_events(state)
+    if directional_events is not None:
+        return directional_events
     if getattr(plan, "intent", "") == "indicator":
         return _answer_indicator(state, getattr(plan, "indicator", "") or "")
     # v3.3.3 批次 C：结构化轻量比较（同主体跨指标；批次 D 扩展跨公司）
@@ -2432,6 +3389,8 @@ def generate_answer_node(state: AgentState) -> dict:
         return _answer_light_comparison(state)
     if getattr(plan, "intent", "") == "company_fact":
         return _answer_company_fact(state, getattr(plan, "fact_key", "") or "")
+    if getattr(plan, "intent", "") == "multi_metric":
+        return _answer_multi_metric(state)
     if getattr(plan, "answer_target", "") == "risk_level":
         return _answer_risk_level(state)
 
@@ -2521,29 +3480,45 @@ def generate_answer_node(state: AgentState) -> dict:
 
     # 分段组装（真流式：每构造完一个真实分层立即 push，再拼接完整 answer）
     segments: list[str] = []
-    segments.append(conclusion)
-    _emit_segment(state, conclusion)
+
+    def append_segment(text: str) -> None:
+        if not text:
+            return
+        rendered = text.strip()
+        if segments:
+            rendered = "\n\n" + rendered
+        segments.append(rendered)
+        _emit_segment(state, rendered)
+
+    append_segment(conclusion)
+    requested_period = getattr(plan, "requested_period_text", "") if plan else ""
+    financial_claims = [c for c in claims if getattr(c, "claim_type", "") == "financial"]
+    if (
+        requested_period
+        and getattr(plan, "as_of_kind", "") == "report_period"
+        and not financial_claims
+    ):
+        append_segment(
+            f"未提取到{requested_period}可核验的财务指标；本次股权或事件信号"
+            "不能替代该报告期的财务分析。"
+        )
     if summary:
         seg = summary + "。"
-        segments.append(seg)
-        _emit_segment(state, seg)
+        append_segment(seg)
+    append_segment(_build_cross_module_observation(state, claims))
     if mode == "equity":
         equity_overview = _build_equity_overview(state)
-        segments.append(equity_overview)
-        _emit_segment(state, equity_overview)
+        append_segment(equity_overview)
     # B2 第二阶段：舆情影响结论段（事件模块有 impacts 才渲染；无则不渲染）
     impact_seg = _build_impact_conclusions_segment(state)
     if impact_seg:
-        segments.append(impact_seg)
-        _emit_segment(state, impact_seg)
+        append_segment(impact_seg)
     if rule_details:
-        segments.append(rule_details)
-        _emit_segment(state, rule_details)
+        append_segment(rule_details)
     # #7/#12：确定性四段解读（无 LLM 自由生成；仅消费规则引擎 explanation/
     # current 与 pattern_matches；含 #9 免责段）
     for seg in _build_interpretation_segments(state, claims):
-        segments.append(seg)
-        _emit_segment(state, seg)
+        append_segment(seg)
 
     # Phase D #10: 研报/公告语义检索（问题涉及研报/行业/评级时可选调用）
     user_query = state.get("user_query", "")
@@ -2560,7 +3535,13 @@ def generate_answer_node(state: AgentState) -> dict:
         if is_research_query(user_query) and report_insights_enabled():
             plan_r = state.get("plan")
             as_of_r = plan_r.as_of.strftime("%Y%m%d") if plan_r and plan_r.as_of else ""
-            insights = search_research_insights_sync(user_query, top_k=3, as_of=as_of_r)
+            list_query = any(
+                cue in user_query
+                for cue in ("哪些个股", "竞争者", "竞争对手", "新兴公司", "新兴企业", "值得关注")
+            )
+            insights = search_research_insights_sync(
+                user_query, top_k=8 if list_query else 3, as_of=as_of_r
+            )
             # P2-1：先过滤可回查结果，只渲染成功生成 Evidence 的 insight
             company_code_r = company.wind_code if company else ""
             runtime_r = state.get("runtime")
@@ -2573,15 +3554,10 @@ def generate_answer_node(state: AgentState) -> dict:
                 )
             )
             if valid_insights:
-                parts = []
-                for it in valid_insights[:3]:
-                    src = it.get("source_title") or "研报"
-                    org = it.get("source_org", "")
-                    label = f"{org}·{src}" if org else src
-                    parts.append(f"{it.get('content', '')[:80]}（来源：{label}）")
-                research_seg = "近期研报观点：" + "；".join(parts) + "。"
-                segments.append(research_seg)
-                _emit_segment(state, research_seg)
+                research_seg = "近期研报观点：" + _format_research_insights(
+                    user_query, valid_insights
+                )
+                append_segment(research_seg)
     except Exception:  # noqa: BLE001 — 检索失败不影响主回答
         logger.warning("generate_answer: 研报检索段失败，跳过", exc_info=True)
 

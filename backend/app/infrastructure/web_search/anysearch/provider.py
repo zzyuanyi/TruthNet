@@ -1,8 +1,10 @@
-"""AnySearch 垂类（A 股 finance 垂直域）Provider — Phase E 会5 B1（8/19 接入）.
+"""AnySearch Provider — Phase E 会5 B1（8/19 接入）.
 
-定位（队长拍板：**只做垂类搜索，不做通用搜索**）：
-本项目是财报反欺诈智能问答，联网搜索只用于补充 A 股结构化金融数据
-（上市日期、公告、三表、行情），不走通用 web 搜索。
+定位：
+本项目是财报反欺诈智能问答，联网搜索优先用于补充 A 股结构化金融数据
+（上市日期、公告、三表、行情）；带 A 股代码时走 MCP finance 垂直域。
+无 A 股代码时，可走 REST /v1/search 通用入口，但必须经过相关性 Gate，
+低相关结果 fail-closed → []，不直接接入回答链。
 
 对接 AnySearch（https://anysearch.com）MCP 端点（垂直搜索唯一可靠路径）：
 - `POST https://api.anysearch.com/mcp`（JSON-RPC 2.0, method="tools/call"）
@@ -16,7 +18,7 @@
 - finance.fundamental  → 三表/指标（type=indicator/income/balance/cashflow/holder）
 
 路由：从 query 提取 A 股代码（600519.SH / 000001.SZ / 830799.BJ），
-按查询意图选子域；无代码 → []（诚实降级，不搜通用 web）。
+有代码按查询意图选 finance 子域；无代码 → REST 通用搜索 + 相关性过滤。
 所有失败路径 fail-closed → []（与 bocha provider 同语义）。
 
 认证：Authorization: Bearer <as_sk_xxx>（可选，匿名可用但限流低）。
@@ -51,7 +53,20 @@ _YYYYMM_RE = re.compile(r"^(?:19|20)\d{2}(?:0[1-9]|1[0-2])$")
 # 意图 cue（垂直子域选择）
 # 审查 P1-2（8/19）："交易所"裸词会误命中"上交所/深交所"行情查询，
 # 改为负向排除——先检查"上交所/深交所"（交易所非"上/深"开头时才是上市意图）。
-_ANNOUNCEMENT_CUES = ("公告", "舆情", "新闻", "快讯", "披露", "处罚", "调查", "评级")
+_ANNOUNCEMENT_CUES = (
+    "公告",
+    "舆情",
+    "新闻",
+    "快讯",
+    "披露",
+    "处罚",
+    "调查",
+    "评级",
+    "高管",
+    "薪酬",
+    "首发",
+    "发行价",
+)
 _LISTING_CUES = ("上市", "挂牌", "什么时候上市", "何时上市", "ipo")
 _EXCHANGE_NAME_QUOTE_CUES = ("上交所", "深交所", "北交所")  # 交易所名 = 行情语境
 # "上市公告"语义 = 上市日期/公告历史，优先上市日期分支（P1-2：含"公告"的
@@ -68,6 +83,7 @@ _FUNDAMENTAL_INCOME_CUES = ("营收", "营业收入", "净利润", "利润表", 
 
 # MCP 端点与客户端标识
 _MCP_ENDPOINT = "https://api.anysearch.com/mcp"
+_REST_SEARCH_ENDPOINT = "https://api.anysearch.com/v1/search"
 _DEFAULT_CLIENT_HEADER = "truthnet/1.0"
 
 # MCP 文本解析：单条 JSON 行最长截断（垂直行情 JSON 字段多，600 字符足够下游）
@@ -75,6 +91,7 @@ _SNIPPET_MAX = 600
 # flash/announcement 默认只返回最近 1d；上市日期查询显式放宽窗口
 # （P1-3：历史上市信息需长窗口，取值对齐 quote 的 period 可选值）
 _FLASH_PERIOD = "1y"
+_QUOTE_PERIOD_RE = re.compile(r"(?:^|\s)period=(7d|14d|30d|90d|180d|1y|5y)(?:\s|$)")
 
 
 class AnySearchWebSearchProvider:
@@ -99,6 +116,7 @@ class AnySearchWebSearchProvider:
         return {
             "requests": 0,
             "vertical_requests": 0,
+            "general_requests": 0,
             "http_401_403": 0,
             "http_429": 0,
             "http_5xx": 0,
@@ -107,6 +125,7 @@ class AnySearchWebSearchProvider:
             "connection_error": 0,
             "empty_real_result": 0,
             "parse_empty": 0,
+            "relevance_filtered": 0,
             "not_observable": 0,
         }
 
@@ -121,6 +140,7 @@ class AnySearchWebSearchProvider:
                 "web_search_provider": "anysearch",
                 "web_search_requests": self._stats["requests"],
                 "web_search_vertical_requests": self._stats["vertical_requests"],
+                "web_search_general_requests": self._stats["general_requests"],
                 "web_search_http_401_403": self._stats["http_401_403"],
                 "web_search_http_429": self._stats["http_429"],
                 "web_search_http_5xx": self._stats["http_5xx"],
@@ -129,6 +149,7 @@ class AnySearchWebSearchProvider:
                 "web_search_connection_error": self._stats["connection_error"],
                 "web_search_empty_real_result": self._stats["empty_real_result"],
                 "web_search_parse_empty": self._stats["parse_empty"],
+                "web_search_relevance_filtered": self._stats["relevance_filtered"],
                 "web_search_not_observable": self._stats["not_observable"],
             }
 
@@ -141,17 +162,79 @@ class AnySearchWebSearchProvider:
     async def search(
         self, query: str | None, max_results: int | None = None
     ) -> list[SearchResult]:
-        """A 股垂类搜索；无代码/异常/无结果 → 空列表（诚实降级）。
+        """AnySearch 搜索；异常/无结果/低相关 → 空列表（诚实降级）。
 
-        纯垂类：必须有 A 股代码才搜索；否则返回 []（不做通用 web 搜索）。
+        有 A 股代码：MCP finance 垂直域；无代码：REST 通用搜索 + 相关性 Gate。
         """
         self._stat_inc("requests")
         query = query or ""
         code = _extract_ashare_code(query)
-        if not code:
-            return []  # 垂类定位：无代码不搜
         count = _safe_max_results(max_results)
+        if not code:
+            return await self._general_search(query, count)
         return await self._vertical_search(query, code, count)
+
+    # ── REST 通用搜索 ───────────────────────────────────────
+
+    async def _general_search(self, query: str, count: int) -> list[SearchResult]:
+        """REST /v1/search 通用搜索；低相关结果过滤后返回。"""
+        self._stat_inc("general_requests")
+        if not (query or "").strip():
+            return []
+        payload = {
+            "query": query,
+            "format": "json",
+            "max_results": count,
+        }
+        if _contains_cjk(query):
+            payload.update({"zone": "cn", "language": "zh"})
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    _REST_SEARCH_ENDPOINT,
+                    headers=self._headers(),
+                    json=payload,
+                )
+            if resp.status_code != 200:
+                raise _AnySearchHTTPError(resp.status_code)
+            data = resp.json()
+            code = data.get("code") if isinstance(data, dict) else None
+            if code not in (None, 0, 200):
+                raise _AnySearchRPCError(str(data.get("message") or data.get("msg") or code))
+        except _AnySearchHTTPError as exc:
+            self._classify_http(exc.status_code)
+            return []
+        except _AnySearchRPCError as exc:
+            self._stat_inc("http_other_error")
+            logger.warning("AnySearch REST 错误: %s", str(exc)[:200])
+            return []
+        except httpx.TimeoutException:
+            self._stat_inc("timeout")
+            logger.warning("AnySearch 通用搜索超时（query=%r）", query)
+            return []
+        except (httpx.ConnectError, httpx.NetworkError, httpx.ProtocolError) as exc:
+            self._stat_inc("connection_error")
+            logger.warning("AnySearch 通用搜索连接失败（query=%r）: %s", query, exc)
+            return []
+        except Exception as exc:  # noqa: BLE001
+            self._stat_inc("not_observable")
+            logger.warning(
+                "AnySearch 通用搜索未知异常（query=%r）: %s", query, str(exc)[:300]
+            )
+            return []
+
+        hits = _parse_rest_results(data)
+        if not hits:
+            raw_results = (((data or {}).get("data") or {}).get("results") or [])
+            if raw_results:
+                self._stat_inc("parse_empty")
+            else:
+                self._stat_inc("empty_real_result")
+            return []
+        relevant = _filter_relevant_results(query, hits)
+        if not relevant:
+            self._stat_inc("relevance_filtered")
+        return relevant[:count]
 
     # ── MCP 垂类搜索 ────────────────────────────────────────
 
@@ -224,6 +307,7 @@ class AnySearchWebSearchProvider:
                 "max_results": count,
             }
         else:
+            period_match = _QUOTE_PERIOD_RE.search(ql)
             tool_args = {
                 "query": query,
                 "domain": "finance",
@@ -232,6 +316,7 @@ class AnySearchWebSearchProvider:
                     "type": "stock",
                     "symbol": "",
                     "cn_code": code,
+                    **({"period": period_match.group(1)} if period_match else {}),
                 },
                 "max_results": count,
             }
@@ -434,6 +519,120 @@ def _parse_mcp_text_results(
     return []
 
 
+def _parse_rest_results(payload: dict) -> list[SearchResult]:
+    """REST /v1/search 结构化结果 → SearchResult。
+
+    AnySearch REST 实测结构：`data.results[{title,url,snippet,content}]`；
+    兼容历史字段 name/summary/description。content 可能很长，只作为 snippet
+    兜底截断，不把整页内容塞进证据链。
+    """
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return []
+    results = data.get("results")
+    if not isinstance(results, list):
+        return []
+    out: list[SearchResult] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or item.get("link") or "")
+        title = str(item.get("title") or item.get("name") or "")
+        snippet = str(
+            item.get("snippet")
+            or item.get("summary")
+            or item.get("description")
+            or item.get("content")
+            or ""
+        )
+        if not (url or title or snippet):
+            continue
+        out.append(
+            SearchResult(
+                title=title,
+                url=url,
+                snippet=snippet[:_SNIPPET_MAX],
+                domain=_hostname(url),
+                published_at=None,
+                source="anysearch",
+            )
+        )
+    return out
+
+
+_GENERIC_QUERY_WORDS = (
+    "行业",
+    "产业",
+    "市场",
+    "公司",
+    "企业",
+    "技术",
+    "趋势",
+    "发展",
+    "现状",
+    "近期",
+    "最新",
+    "观点",
+    "研报",
+    "报告",
+    "分析",
+    "研究",
+    "情况",
+    "影响",
+    "风险",
+    "机会",
+    "如何",
+    "怎么样",
+    "是什么",
+)
+_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,}")
+_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+
+def _query_relevance_terms(query: str) -> list[str]:
+    """提取保守相关性词：去掉通用泛词后保留主体词/代码/英文词。"""
+    q = (query or "").strip().lower()
+    terms = [m.group(0) for m in _TOKEN_RE.finditer(q)]
+    cjk_text = re.sub(r"[^\u4e00-\u9fff]+", " ", q)
+    for word in _GENERIC_QUERY_WORDS:
+        cjk_text = cjk_text.replace(word, " ")
+    for run in _CJK_RUN_RE.findall(cjk_text):
+        if len(run) >= 2:
+            terms.append(run)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for term in terms:
+        if term and term not in seen:
+            seen.add(term)
+            deduped.append(term)
+    return deduped
+
+
+def _filter_relevant_results(
+    query: str, hits: list[SearchResult]
+) -> list[SearchResult]:
+    """通用搜索相关性 Gate。
+
+    中文通用搜索实测容易跑偏；若能提取主体词，则每条结果必须命中至少一个
+    主体词。提不出主体词时不额外过滤，交给上游 off/限流/业务降级。
+    """
+    terms = _query_relevance_terms(query)
+    if not terms:
+        return hits
+    relevant: list[SearchResult] = []
+    for hit in hits:
+        haystack = f"{hit.title}\n{hit.snippet}\n{hit.url}".lower()
+        if any(term in haystack for term in terms):
+            relevant.append(hit)
+    return relevant
+
+
 _EMPTY_RESULTS_HEADER_RE = re.compile(r"^##\s*Search Results\s*\(\s*0\s*\)", re.IGNORECASE)
 
 
@@ -558,6 +757,7 @@ def _search_result_from_vertical_json(
             "turnover_rate",
             "total_mv",
             "circ_mv",
+            "vol",
             "volume",
             "amount",
             # income 利润表（8/19 探测实测字段）
@@ -613,6 +813,7 @@ def _vertical_date(obj: dict) -> str | None:
     raw = (
         obj.get("trade_date")
         or obj.get("end_date")
+        or obj.get("ann_date")
         or obj.get("date")
         or obj.get("period")
         or ""

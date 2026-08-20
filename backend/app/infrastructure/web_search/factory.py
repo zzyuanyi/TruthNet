@@ -4,8 +4,9 @@
 - off（默认）= 不创建，返回 None → 业务侧行为与现状完全一致；
 - mock = 本地测试/演示；
 - bocha = 博查真实联网（中文通用搜索，数据源拍板后启用，未拍板保持 off）；
-- anysearch = AnySearch A 股垂类（finance 垂直域：行情/公告/三表，
-  8/19 接入，队长拍板只做垂类不做通用；免费注册 Key 见调研文档 §2.4）。
+- anysearch = AnySearch（带 A 股代码走 finance MCP 垂直域；无码 query 可走
+  REST /v1/search 通用入口，但 provider 会做相关性 Gate，低质结果返回空；
+  免费注册 Key 见调研文档 §2.4）。
 
 镜像 `infrastructure/llm/factory.py` 的注册表模式。
 换 provider = 新增类 + 在 _PROVIDER_CLASSES 登记一行 + `.env` 改后端名。

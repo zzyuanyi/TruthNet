@@ -13,6 +13,8 @@ from app.agents.state import CompanyRef, RuntimeState
 from app.application.ports.web_search_provider import SearchResult
 from app.application.services import web_search_service
 from app.application.services.web_search_fact_fill import (
+    extract_executive_compensation_excerpt,
+    extract_ipo_price_from_hits,
     extract_listing_date_from_hits,
 )
 from app.core.config import settings
@@ -75,6 +77,20 @@ def test_extract_no_date_returns_none():
         extract_listing_date_from_hits([_hit(snippet="康美药业股份有限公司")]) is None
     )
     assert extract_listing_date_from_hits([]) is None
+
+
+def test_extract_ipo_price_from_hits():
+    hits = [_hit(snippet="波长光电首次公开发行价格为18.20元/股")]
+    assert extract_ipo_price_from_hits(hits) == "18.20元/股"
+
+
+def test_extract_executive_compensation_excerpt_requires_salary_context():
+    assert extract_executive_compensation_excerpt(
+        [_hit(snippet="公司2024年度高管薪酬披露摘要")]
+    ) == "公司2024年度高管薪酬披露摘要"
+    assert extract_executive_compensation_excerpt(
+        [_hit(snippet="公司2024年度营业收入增长")]
+    ) is None
 
 
 # ── 8/19 审查：上市语义负例（非上市日期不得误填）─────────────
@@ -171,6 +187,62 @@ def test_web_hit_without_date_falls_back(monkeypatch):
     assert "当前结构化数据范围未覆盖" in out["final_response"].answer
     assert out["claims"] == []
     assert out["evidence"] == []
+
+
+def test_web_hit_fills_ipo_price(monkeypatch):
+    hits = [_hit(snippet="波长光电首次公开发行价格为18.20元/股")]
+    monkeypatch.setattr(web_search_service, "web_search", lambda *a, **k: hits)
+    state = _fact_state()
+    state["company"] = CompanyRef(
+        entity_id="company_301421_SZ",
+        wind_code="301421.SZ",
+        sec_name="波长光电",
+        exchange="XSHE",
+    )
+    out = generate_answer._answer_company_fact(state, "ipo_price")
+    assert "18.20元/股" in out["final_response"].answer
+    assert out["evidence"][0].source_type == "web_search"
+
+
+def test_ipo_price_falls_back_to_general_query_when_vertical_empty(monkeypatch):
+    calls: list[str] = []
+
+    def _fake_search(query, *args, **kwargs):
+        calls.append(query)
+        if len(calls) == 1:
+            return []
+        return [_hit(snippet="波长光电首次公开发行价格为18.20元/股")]
+
+    monkeypatch.setattr(web_search_service, "web_search", _fake_search)
+    state = _fact_state()
+    state["company"] = CompanyRef(
+        entity_id="company_301421_SZ",
+        wind_code="301421.SZ",
+        sec_name="波长光电",
+        exchange="XSHE",
+    )
+    out = generate_answer._answer_company_fact(state, "ipo_price")
+    assert "18.20元/股" in out["final_response"].answer
+    assert len(calls) == 2
+    assert "301421.SZ" in calls[0]
+    assert "301421.SZ" not in calls[1]
+    assert "公告" in calls[1]
+
+
+def test_web_hit_fills_executive_compensation_excerpt(monkeypatch):
+    hits = [_hit(snippet="中国平安2024年度高管薪酬披露摘要")]
+    monkeypatch.setattr(web_search_service, "web_search", lambda *a, **k: hits)
+    state = _fact_state()
+    state["company"] = CompanyRef(
+        entity_id="company_601318_SH",
+        wind_code="601318.SH",
+        sec_name="中国平安",
+        exchange="XSHG",
+    )
+    out = generate_answer._answer_company_fact(state, "executive_compensation")
+    assert "高管薪酬相关公告摘要" in out["final_response"].answer
+    assert out["evidence"][0].source_type == "web_search"
+    assert len(out["evidence"][0].value or "") <= 256
 
 
 def test_in_db_listing_date_does_not_trigger_web_search(monkeypatch):
