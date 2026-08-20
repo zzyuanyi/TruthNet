@@ -1089,6 +1089,8 @@ def test_explicit_consolidated_scope_is_rejected():
 
 
 def test_multi_year_indicator_does_not_fall_back_to_latest(monkeypatch):
+    from app.application.services.indicator_query_service import IndicatorQueryResult
+
     from app.agents.nodes.generate_answer import _answer_indicator
 
     state = _make_state(
@@ -1096,6 +1098,38 @@ def test_multi_year_indicator_does_not_fall_back_to_latest(monkeypatch):
         plan=ExecutionPlan(intent="indicator", indicator="operating_revenue"),
     )
     state["user_query"] = "最近三年营收变化"
+    # 8/20 CI 修复：本测试此前依赖真实 DB（本地 mysql 有数据、CI sqlite 空）
+    # 导致 query_indicator_trend 返回空 → 误走"年度序列不足"分支。
+    # 显式 mock 三年序列，使断言与数据库环境无关。
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_indicator_trend",
+        lambda *args, **kwargs: [
+            IndicatorQueryResult(
+                status="ok",
+                indicator="operating_revenue",
+                label="营业收入",
+                period="20231231",
+                value=100.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="operating_revenue",
+                label="营业收入",
+                period="20241231",
+                value=120.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="operating_revenue",
+                label="营业收入",
+                period="20251231",
+                value=150.0,
+                unit="CNY",
+            ),
+        ],
+    )
     monkeypatch.setattr(
         "app.application.services.indicator_query_service.query_metric",
         lambda *a, **k: pytest.fail("多年趋势不得查询并冒充最新单期"),

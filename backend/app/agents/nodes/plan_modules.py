@@ -1691,7 +1691,14 @@ def plan_modules_node(state: AgentState) -> dict:
             "analysis",
             "comparison",
         ):
-            detected = "guide"  # 公司分析诉求但实体缺失，转为可执行引导
+            # 公司分析诉求但实体缺失 → 可执行引导。但 mock/降级 LLM 对
+            # 明确 research 关键词（板块/技术/产业等）可能返回泛化
+            # "analysis"——此时以高置信关键词兜底 research 为准（8/20 CI 修复：
+            # 测试在 LLM_BACKEND=mock 下 "AI医疗板块有哪些个股" 等被误判 guide）。
+            if fallback_intent == "research":
+                detected = "research"
+            else:
+                detected = "guide"  # 公司分析诉求但实体缺失，转为可执行引导
         else:
             detected = detect_chitchat_intent(user_query)
             if detected is None:
@@ -1700,7 +1707,14 @@ def plan_modules_node(state: AgentState) -> dict:
                 detected = fallback_intent
             if detected == "analysis":
                 # 已确认是公司分析诉求但实体缺失，转为可执行引导。
-                detected = "guide"
+                # 8/20 CI 修复：mock/降级 LLM 对明确 research 关键词
+                # （板块/技术/产业/热点资讯等）返回泛化 "analysis"——此时
+                # 以高置信关键词兜底 research 为准，否则 "AI医疗板块有
+                # 哪些个股" 等被误判为 guide。
+                if fallback_intent == "research":
+                    detected = "research"
+                else:
+                    detected = "guide"
         return {
             "plan": ExecutionPlan(
                 intent=detected or "simple_query",
