@@ -5,7 +5,7 @@
 company_code 当前无消费者，不入库查询）。
 
 Phase C 集成修正:
-- 恢复窗口由 5 轮扩至 _HISTORY_LIMIT=10，满足"10 轮指代正确"验收。
+- 恢复窗口由配置项 MEMORY_RECENT_TURNS 控制，默认 20 轮，满足长对话验收。
 - 支持 SQL_BACKEND 双后端（sqlite lite / mysql full），lite 模式同样可
   从 SQLite conversation_turns 恢复历史。
 - 数据库不可用/异常时保持占位行为（返回空历史，不阻断图执行）。
@@ -16,9 +16,8 @@ Bug fix: 空 {} 会导致 LangGraph InvalidUpdateError，始终返回 state key�
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.agents.state import AgentState
@@ -26,8 +25,9 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 回读最近轮次上限（10 轮：验收要求第 10 轮仍能恢复正确主体）
-_HISTORY_LIMIT = 10
+def _history_limit() -> int:
+    """回读最近轮次上限（默认 20 轮，由 MEMORY_RECENT_TURNS 配置）。"""
+    return max(int(settings.MEMORY_RECENT_TURNS), 0)
 
 
 def _parse_json_meta(value) -> dict:
@@ -41,33 +41,16 @@ def _parse_json_meta(value) -> dict:
     return parse_response_meta(value)
 
 
-_engines: dict[str, Engine] = {}
-
-
-def _repo_root() -> Path:
-    # backend/app/agents/nodes/load_context.py -> 项目根
-    return Path(__file__).resolve().parents[4]
-
-
 def _get_engine() -> Engine:
-    """惰性缓存引擎，尊重 SQL_BACKEND（sqlite/mysql）。"""
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
+    """惰性缓存引擎，尊重 SQL_BACKEND（sqlite/mysql）。
 
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False)
-    else:  # sqlite
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
-    return _engines[backend]
+    8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine
+    （与 _fetch._ENGINES 同契约）——load_context 回读历史消息驱动指代消解，
+    backend-only key 缓存在切库后会命中旧库，产出错误轮次数据。
+    """
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _session_id(state: AgentState) -> str | None:
@@ -77,6 +60,33 @@ def _session_id(state: AgentState) -> str | None:
         return None
     sid = getattr(runtime, "session_id", "") or ""
     return sid or None
+
+
+def _user_id(state: AgentState) -> str:
+    """从 runtime 获取用户 ID；未传时归属默认本地用户。"""
+    runtime = state.get("runtime")
+    user_id = getattr(runtime, "user_id", "") if runtime is not None else ""
+    return (user_id or "").strip() or settings.SESSION_DEFAULT_USER_ID
+
+
+def _session_owned_and_active(session_id: str, user_id: str) -> bool:
+    """会话归属校验：历史 NULL user_id 只归默认用户。"""
+    with _get_engine().connect() as conn:
+        found = conn.execute(
+            text(
+                "SELECT 1 FROM conversation_sessions "
+                "WHERE session_id = :sid "
+                "AND COALESCE(user_id, :default_user_id) = :user_id "
+                "AND COALESCE(status, 'active') != 'archived' "
+                "LIMIT 1"
+            ),
+            {
+                "sid": session_id,
+                "user_id": user_id,
+                "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+            },
+        ).scalar()
+    return bool(found)
 
 
 def load_context_node(state: AgentState) -> dict:
@@ -104,6 +114,26 @@ def load_context_node(state: AgentState) -> dict:
 
     strategy = settings.MEMORY_STRATEGY
     history: list[dict] = []
+    user_id = _user_id(state)
+
+    try:
+        if not _session_owned_and_active(session_id, user_id):
+            return {
+                "messages": [],
+                "memory_summary": None,
+                "recent_company_codes": [],
+                "recent_executed_metrics": [],
+                "runtime": runtime,
+            }
+    except Exception:
+        logger.exception("LoadContext 会话归属校验失败: session=%s", session_id)
+        return {
+            "messages": [],
+            "memory_summary": None,
+            "recent_company_codes": [],
+            "recent_executed_metrics": [],
+            "runtime": runtime,
+        }
 
     # 远期记忆摘要（优先注入，标注来源轮次，不覆盖近期事实）
     summary = None
@@ -140,7 +170,7 @@ def load_context_node(state: AgentState) -> dict:
                         "WHERE session_id = :sid "
                         "ORDER BY turn_index DESC LIMIT :limit"
                     ),
-                    {"sid": session_id, "limit": _HISTORY_LIMIT},
+                    {"sid": session_id, "limit": _history_limit()},
                 )
                 .mappings()
                 .all()

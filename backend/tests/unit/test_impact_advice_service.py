@@ -66,6 +66,7 @@ async def test_finance_segment_and_evidence(monkeypatch):
     assert "ev_fin_1" in finance[0].evidence_ids
     assert result.evidence_count >= 2
     assert result.method == "template"
+    assert "财务规则信号 1 项" in result.overall_advice
 
 
 @pytest.mark.asyncio

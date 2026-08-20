@@ -115,10 +115,13 @@ def test_list_empty_in_lite_mode(client):
 
 def test_create_session(mysql_client):
     """POST /sessions：返回 ses_ 前缀 session_id。"""
-    resp = mysql_client.post("/api/v1/sessions", json={"title": "新会话"})
+    resp = mysql_client.post(
+        "/api/v1/sessions", json={"title": "新会话", "user_id": "user_a"}
+    )
     assert resp.status_code == 200
     d = resp.json()["data"]
     assert d["session_id"].startswith("ses_")
+    assert d["user_id"] == "user_a"
     assert d["title"] == "新会话"
     assert d["status"] == "active"
 
@@ -279,6 +282,28 @@ def test_list_sessions_paginates_with_total(mysql_client):
     assert data["offset"] == 1
 
 
+def test_sessions_are_filtered_by_user_id(mysql_client):
+    """列表/详情按 user_id 隔离；NULL 历史会话只归默认用户。"""
+    engine = sessions_router._get_engine()
+    with engine.begin() as conn:
+        for sid, user_id in (("ses_a", "user_a"), ("ses_b", "user_b")):
+            conn.execute(
+                text(
+                    "INSERT INTO conversation_sessions "
+                    "(session_id, user_id, title, status, created_at, updated_at) "
+                    "VALUES (:sid, :uid, :title, 'active', CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP)"
+                ),
+                {"sid": sid, "uid": user_id, "title": sid},
+            )
+
+    data_a = mysql_client.get("/api/v1/sessions?user_id=user_a").json()["data"]
+    assert [s["session_id"] for s in data_a["sessions"]] == ["ses_a"]
+
+    assert mysql_client.get("/api/v1/sessions/ses_b?user_id=user_a").status_code == 404
+    assert mysql_client.get("/api/v1/sessions/ses_b?user_id=user_b").status_code == 200
+
+
 # ── 删除（级联 + 全局证据保护回归）─────────────────────────
 
 
@@ -363,11 +388,11 @@ def _seed_delete_scenario(engine) -> None:
         )
 
 
-def test_delete_session_cascade_preserves_global_evidence(mysql_client):
-    """DELETE /sessions/{id}：级联删除，全局证据保留且 turn_id 置 NULL。
+def test_delete_session_soft_deletes_and_preserves_audit_chain(mysql_client):
+    """DELETE /sessions/{id}：软删除，不物理删除 turns/claims/evidence。
 
-    回归（P1 事故）：曾无条件按 turn 删除 evidence_refs，导致 rating_changes /
-    event_cluster_sources 引用的共享证据丢失。
+    物理级联清理由 SessionCleanupService.cleanup_session 在 TTL/脚本中执行；
+    REST 删除只隐藏会话并保留审计链。
     """
     engine = sessions_router._get_engine()
     _seed_delete_scenario(engine)
@@ -377,37 +402,24 @@ def test_delete_session_cascade_preserves_global_evidence(mysql_client):
     assert resp.json()["data"] == {"deleted": True, "session_id": "ses_del"}
 
     with engine.connect() as conn:
-        # 会话/turn/claims/links 全删
-        for table in (
-            "conversation_sessions",
-            "conversation_turns",
-            "claims",
-            "claim_evidence_links",
-        ):
-            n = conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
-            assert n == 0, f"{table} 应清空，实际 {n}"
-        # 本地证据删除；全局证据保留且 turn_id 置 NULL（无无效引用）
-        rows = conn.execute(
-            text("SELECT evidence_id, turn_id FROM evidence_refs ORDER BY evidence_id")
-        ).all()
-        assert [(r[0], r[1]) for r in rows] == [
-            ("ev_cluster", None),
-            ("ev_rating", None),
-        ]
-        invalid = conn.execute(
-            text(
-                "SELECT COUNT(*) FROM evidence_refs e "
-                "LEFT JOIN conversation_turns t ON e.turn_id = t.turn_id "
-                "WHERE e.turn_id IS NOT NULL AND t.turn_id IS NULL"
-            )
-        ).scalar()
-        assert invalid == 0, "不应存在指向已删 turn 的证据引用"
-        # 全局引用表完好
+        row = conn.execute(
+            text("SELECT status, metadata FROM conversation_sessions WHERE session_id='ses_del'")
+        ).first()
+        assert row[0] == "archived"
+        import json
+
+        meta = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+        assert meta["deleted_at"]
+        assert conn.execute(text("SELECT COUNT(*) FROM conversation_turns")).scalar() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM claims")).scalar() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM claim_evidence_links")).scalar() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM evidence_refs")).scalar() == 4
         assert conn.execute(text("SELECT COUNT(*) FROM rating_changes")).scalar() == 1
         assert (
             conn.execute(text("SELECT COUNT(*) FROM event_cluster_sources")).scalar()
             == 1
         )
+    assert mysql_client.get("/api/v1/sessions/ses_del").status_code == 404
 
 
 def test_delete_empty_session(mysql_client):
@@ -419,10 +431,50 @@ def test_delete_empty_session(mysql_client):
     assert resp.status_code == 200
     assert resp.json()["data"] == {"deleted": True, "session_id": "ses_empty"}
     with engine.connect() as conn:
-        assert (
-            conn.execute(text("SELECT COUNT(*) FROM conversation_sessions")).scalar()
-            == 0
-        )
+        status = conn.execute(
+            text("SELECT status FROM conversation_sessions WHERE session_id='ses_empty'")
+        ).scalar()
+        assert status == "archived"
+
+
+def test_purge_expired_soft_deleted_sessions(mysql_client):
+    """TTL 到期后，软删除会话可由清理服务物理删除。"""
+    from datetime import datetime, timezone
+    import json
+
+    from app.application.services.session_cleanup_service import SessionCleanupService
+
+    engine = sessions_router._get_engine()
+    with engine.begin() as conn:
+        for sid, deleted_at in (
+            ("ses_old_deleted", "2026-01-01T00:00:00+00:00"),
+            ("ses_recent_deleted", "2026-08-18T00:00:00+00:00"),
+        ):
+            conn.execute(
+                text(
+                    "INSERT INTO conversation_sessions "
+                    "(session_id, title, status, metadata, created_at, updated_at) "
+                    "VALUES (:sid, :title, 'archived', :meta, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "sid": sid,
+                    "title": sid,
+                    "meta": json.dumps({"deleted_at": deleted_at}),
+                },
+            )
+
+    stats = SessionCleanupService(engine=engine).purge_expired_soft_deleted(
+        now=datetime(2026, 8, 19, tzinfo=timezone.utc),
+        ttl_days=30,
+    )
+    assert stats["scanned"] == 2
+    assert stats["purged"] == 1
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT session_id FROM conversation_sessions ORDER BY session_id")
+        ).scalars().all()
+    assert rows == ["ses_recent_deleted"]
 
 
 def test_delete_session_not_found(mysql_client):
@@ -499,18 +551,19 @@ def _seed_cross_session_scenario(engine) -> None:
         )
 
 
-def test_delete_session_preserves_cross_session_shared_evidence(mysql_client):
-    """跨会话共享证据：删 A 后保留 ev_shared + B 的 link，turn_id 置 NULL。
+def test_hard_cleanup_preserves_cross_session_shared_evidence(mysql_client):
+    """硬清理服务：删 A 后保留 ev_shared + B 的 link，turn_id 置 NULL。
 
-    回归（P1 事故根因）：sessions.py 删除共享 evidence_refs 后，外键级联删除
-    其他 Claim 的 links——曾导致保留会话的证据链断裂。
+    回归（P1 事故根因）：物理清理共享 evidence_refs 后，外键级联删除
+    其他 Claim 的 links，曾导致保留会话的证据链断裂。
     """
+    from app.application.services.session_cleanup_service import SessionCleanupService
+
     engine = sessions_router._get_engine()
     _seed_cross_session_scenario(engine)
 
-    resp = mysql_client.delete("/api/v1/sessions/ses_del")
-    assert resp.status_code == 200
-    assert resp.json()["data"] == {"deleted": True, "session_id": "ses_del"}
+    stats = SessionCleanupService(engine=engine).cleanup_session("ses_del")
+    assert stats["session_deleted"] is True
 
     with engine.connect() as conn:
         # 会话 A 已删，B 保留

@@ -433,18 +433,12 @@ def query_metric(
 
 
 def _company_engine():
-    """惰性 MySQL 引擎（companies/industry_benchmarks/risk_assessments 查询）。"""
-    from sqlalchemy import URL, create_engine
+    """8/19 全面审查：改用公共工厂（完整 profile key + 缓存 + 切库 dispose）。
 
-    url = URL.create(
-        "mysql+pymysql",
-        username=settings.MYSQL_USER,
-        password=settings.MYSQL_PASSWORD,
-        host=settings.MYSQL_HOST,
-        port=settings.MYSQL_PORT,
-        database=settings.MYSQL_DATABASE,
-    )
-    return create_engine(url, echo=False, pool_pre_ping=True)
+    原实现每次调用新建 Engine（连接池不复用、切库后残留旧连接）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def query_industry_benchmark(

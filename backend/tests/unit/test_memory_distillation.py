@@ -75,6 +75,17 @@ def test_summary_structure_complete():
     assert d["version"] == "memory-v1"
 
 
+def test_summary_version_uses_settings(monkeypatch):
+    """MEMORY_SUMMARY_VERSION 改动后新建摘要同步使用配置值。"""
+    from app.application.services import memory_distillation as md
+
+    monkeypatch.setattr(md.settings, "MEMORY_SUMMARY_VERSION", "memory-v2-test")
+    assert MemorySummary().version == "memory-v2-test"
+    summary = MemorySummary.from_dict({"text": "旧摘要"})
+    assert summary is not None
+    assert summary.version == "memory-v2-test"
+
+
 def test_summary_has_source_turns_and_evidence():
     """有来源轮次；保留 Evidence。"""
     s = build_summary_for_turns(_turns(5))
@@ -106,6 +117,57 @@ def test_summary_no_llm_fabrication():
     assert "orange" in " ".join(s.key_facts) or "风险等级 orange" in s.text
     # 不应出现回答中不存在的内容
     assert not any("虚构" in f for f in s.key_facts)
+
+
+def test_key_facts_negated_rules_not_recorded():
+    """8/19 修复：否定语境（未/不/无触发）中的 R 规则不得记为触发。
+
+    反例：答案「R1、R2 未触发」此前被 re.findall 抽成「触发 R1」「触发 R2」，
+    远期摘要出现事实反转。修复后分句级否定过滤，否定句中的 R 全部跳过。
+    """
+    from app.application.services.memory_distillation import _extract_key_facts
+
+    # 全部未触发 → 一条"触发 R"都不应出现
+    rows = [
+        {
+            "question": "R1 是否触发",
+            "answer": "R1、R2 未触发，风险等级为 green，需关注",
+        }
+    ]
+    facts = _extract_key_facts(rows)
+    assert not any(f.startswith("触发 R") for f in facts), f"未触发被误记为触发: {facts}"
+    assert "风险等级 green" in facts
+
+    # 混合：R1 未触发、R3 触发 → 只记 R3
+    rows2 = [
+        {
+            "question": "规则触发情况",
+            "answer": "R1 未触发，但 R3 触发，风险等级为 orange",
+        }
+    ]
+    facts2 = _extract_key_facts(rows2)
+    assert "触发 R1" not in facts2
+    assert "触发 R3" in facts2
+
+    # 正向语境保持：无否定词时正常记录
+    rows3 = [{"question": "规则触发情况", "answer": "触发 R1、R2，风险等级为 red"}]
+    facts3 = _extract_key_facts(rows3)
+    assert "触发 R1" in facts3
+    assert "触发 R2" in facts3
+
+
+def test_key_facts_discovery_words():
+    """8/19 修复：『未发现 R1』等措辞同样不得记为触发。"""
+    from app.application.services.memory_distillation import _extract_key_facts
+
+    rows = [
+        {
+            "question": "是否有规则触发",
+            "answer": "未发现 R4、R5 触发信号，风险等级为 yellow",
+        }
+    ]
+    facts = _extract_key_facts(rows)
+    assert not any(f.startswith("触发 R") for f in facts), f"未发现被误记为触发: {facts}"
 
 
 def test_summary_truncated():

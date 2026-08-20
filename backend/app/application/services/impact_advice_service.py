@@ -325,7 +325,7 @@ def _build_messages(sec_name: str, locked: str) -> list[dict]:
 
 def _template_advice(
     out: Any,
-    equity_segments: list[ImpactAdviceSegment],
+    all_segments: list[ImpactAdviceSegment],
     events_segments: list[ImpactAdviceSegment],
 ) -> tuple[str, list[ImpactAdviceSegment]]:
     """确定性模板兜底：分模块建议（LLM 失败/关闭时使用，不空洞）。"""
@@ -340,11 +340,11 @@ def _template_advice(
     overall = (
         f"{out.sec_name} 综合风险等级为{risk_cn}"
         f"（评分 {out.overall_score:.3f}），"
-        f"财务规则信号 {len([s for s in equity_segments if s.source_module == 'finance'])} 项、"
-        f"股权信号 {len([s for s in equity_segments if s.source_module == 'equity'])} 项、"
+        f"财务规则信号 {len([s for s in all_segments if s.source_module == 'finance'])} 项、"
+        f"股权信号 {len([s for s in all_segments if s.source_module == 'equity'])} 项、"
         f"舆情影响 {len(events_segments)} 项，建议结合下述分模块信号进一步核验。"
     )
-    return overall, equity_segments + events_segments
+    return overall, all_segments
 
 
 async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResult:
@@ -389,7 +389,7 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
     locked = _locked_facts(out, all_segments, events_segments)
 
     overall_text, _template_segments = _template_advice(
-        out, equity_segments, events_segments
+        out, all_segments, events_segments
     )
     method = "template"
 

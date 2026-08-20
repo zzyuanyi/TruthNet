@@ -212,6 +212,7 @@ class RuntimeState(BaseModel):
     request_id: str = ""
     trace_id: str = ""
     session_id: str = ""
+    user_id: str = ""
     thread_id: str = ""
     turn_id: str = ""
     sequence: int = 0

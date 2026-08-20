@@ -11,6 +11,7 @@ asyncio.run，REST/WS 双路径安全，与 llm_sync 同模式）。
 import asyncio
 import concurrent.futures
 import logging
+import threading
 import time
 
 from app.core.config import settings
@@ -19,6 +20,22 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "research_report_chunks"
 _SEARCH_KEYWORDS = ("研报", "观点", "行业", "机构", "分析师", "评级", "近期")
+_VECTOR_STORE = None
+_VECTOR_STORE_LOCK = threading.Lock()
+
+
+def _default_vector_store():
+    """进程级 ChromaVectorStore 单例，避免每次请求重建 Chroma client。"""
+    global _VECTOR_STORE
+    if _VECTOR_STORE is None:
+        with _VECTOR_STORE_LOCK:
+            if _VECTOR_STORE is None:
+                from app.infrastructure.vector.chroma.vector_store import (
+                    ChromaVectorStore,
+                )
+
+                _VECTOR_STORE = ChromaVectorStore()
+    return _VECTOR_STORE
 
 
 def _semantic_to_insight(hit: dict) -> dict:
@@ -193,11 +210,7 @@ async def search_research_insights(
     core_keywords, _intent = _split_keywords(query)
     try:
         if vector_store is None:
-            from app.infrastructure.vector.chroma.vector_store import (
-                ChromaVectorStore,
-            )
-
-            vector_store = ChromaVectorStore()
+            vector_store = _default_vector_store()
         hits = await vector_store.search(query, collection=COLLECTION_NAME, top_k=top_k)
     except Exception:  # noqa: BLE001 — Chroma 任何异常走兜底
         logger.warning(

@@ -126,6 +126,11 @@ def test_belong_boundary_terminates_subject():
     assert _spans("美的营收") == [("美的", 0, 2)]
 
 
+def test_listing_question_predicate_is_not_a_company_mention():
+    assert _spans("康美药业什么时候上市的") == [("康美药业", 0, 4)]
+    assert _spans("贵州茅台何时上市") == [("贵州茅台", 0, 4)]
+
+
 def test_request_frame_does_not_hide_company_starting_with_you_opinion():
     """锚定请求框架应被移除，但公司名中的“有”必须完整保留。"""
     assert _spans("你认为有友食品怎么样") == [("有友食品", 3, 7)]

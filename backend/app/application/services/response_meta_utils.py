@@ -1,6 +1,6 @@
 """最终续审 §7 D1：response_meta 共享解析与 effective active code.
 
-load_context（近期十轮回放）与 memory_distillation（长程摘要）
+load_context（近期配置窗口回放）与 memory_distillation（长程摘要）
 使用同一口径，避免两处各写一份 parser 导致口径漂移。
 """
 

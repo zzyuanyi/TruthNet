@@ -27,6 +27,10 @@ class _Driver:
         return self.records, None, None
 
 
+def _query_text(query) -> str:
+    return getattr(query, "text", str(query))
+
+
 def _adapter(driver):
     adapter = Neo4jEquityGraph.__new__(Neo4jEquityGraph)
     adapter._available = True
@@ -42,7 +46,8 @@ def test_get_graph_filters_and_reports_requested_version(monkeypatch):
     graph = adapter._get_graph_sync("600518.SH", depth=3, graph_version="equity-2026Q2")
 
     query, params = driver.calls[0]
-    assert "rel.graph_version = $graph_version" in query
+    assert "rel.graph_version = $graph_version" in _query_text(query)
+    assert getattr(query, "timeout", None) == 30
     assert params["graph_version"] == "equity-2026Q2"
     assert graph.graph_version == "equity-2026Q2"
 
@@ -130,8 +135,9 @@ def test_asof_historical_uses_target_snapshot_map(monkeypatch):
         "600518.SH", depth=3, as_of="20251231", graph_version="equity-2026Q2"
     )
     query, params = adapter._driver.calls[-1]
+    text = _query_text(query)
     assert (
-        "rel.report_period = $latest_periods[endNode(rel).entity_id]" in query
+        "rel.report_period = $latest_periods[endNode(rel).entity_id]" in text
     ), "历史时点必须按目标公司整体快照期过滤"
     assert params["latest_periods"] == {"company_T": "20251231"}
 
@@ -144,8 +150,9 @@ def test_asof_latest_or_future_uses_is_latest(monkeypatch):
         "600518.SH", depth=3, as_of="20260331", graph_version="equity-2026Q2"
     )
     query, _ = adapter._driver.calls[-1]
-    assert "rel.is_latest = true" in query
-    assert "latest_periods" not in query
+    text = _query_text(query)
+    assert "rel.is_latest = true" in text
+    assert "latest_periods" not in text
 
 
 def test_asof_normalized_before_snapshot_lookup(monkeypatch):
@@ -281,13 +288,14 @@ def test_multi_hop_count_has_versioned_and_all_version_modes():
     versioned = asyncio.run(adapter.count_multi_hop_paths("equity-2026Q2"))
     assert versioned == {"count": 14, "truncated": False}
     query, params = driver.calls[-1]
-    assert "*3..10" in query  # 8.09：默认 min_depth=3, max_depth=10（不再 ..4 截断）
-    assert "count(DISTINCT [n IN nodes(p) | n.entity_id])" in query
+    text = _query_text(query)
+    assert "*3..10" in text  # 8.09：默认 min_depth=3, max_depth=10（不再 ..4 截断）
+    assert "count(DISTINCT [n IN nodes(p) | n.entity_id])" in text
     # 8.09 三轮审查：只要求目标端是上市公司（b.wind_code <> ''），
     # 上游允许任意真实 Entity（自然人/基金/非上市企业）
-    assert "b.wind_code <> ''" in query
+    assert "b.wind_code <> ''" in text
     assert (
-        "a.wind_code <> ''" not in query
+        "a.wind_code <> ''" not in text
     ), "起点不得限制为上市公司（会漏掉自然人→壳公司→上市公司链路）"
     assert params["gv"] == "equity-2026Q2"
     assert params["all_versions"] is False
@@ -308,7 +316,7 @@ def test_multi_hop_strict_gt3_uses_min_depth_4_max_10():
         adapter.count_multi_hop_paths("equity-2026Q2", min_depth=4, max_depth=10)
     )
     query, params = driver.calls[-1]
-    assert "*4..10" in query
+    assert "*4..10" in _query_text(query)
     assert params["gv"] == "equity-2026Q2"
 
 
@@ -320,7 +328,7 @@ def test_multi_hop_exact_4_uses_4_4():
         adapter.count_multi_hop_paths("equity-2026Q2", min_depth=4, max_depth=4)
     )
     query, _ = driver.calls[-1]
-    assert "*4..4" in query
+    assert "*4..4" in _query_text(query)
 
 
 def test_multi_hop_invalid_depth_range_raises():

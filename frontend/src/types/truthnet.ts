@@ -95,6 +95,7 @@ export interface PendingCompanyCandidates {
 
 export interface Session {
   session_id: string;      // 后端是 session_id，不是 id
+  user_id?: string | null;
   title: string;
   status?: string;
   created_at: string;

@@ -29,10 +29,9 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.finance import (
@@ -101,8 +100,6 @@ _TABLE_FIELDS: dict[str, tuple[str, ...]] = {
 
 # 需要去年同期（YoY）计算指标的规则
 _YOY_RULES = {"R1", "R4"}
-
-_ENGINES: dict[str, Engine] = {}
 
 
 class SimilarCaseProvider(Protocol):
@@ -175,41 +172,13 @@ def _is_missing(value: float | None) -> bool:
     return isinstance(value, float) and math.isnan(value)
 
 
-def _repo_root() -> Path:
-    # backend/app/application/services/similar_case_provider.py -> 项目根
-    return Path(__file__).resolve().parents[4]
-
-
-def _engine_profile_key(settings) -> str:
-    backend = settings.SQL_BACKEND
-    if backend == "mysql":
-        return (
-            f"mysql:{settings.MYSQL_USER}:{settings.MYSQL_HOST}:"
-            f"{settings.MYSQL_PORT}:{settings.MYSQL_DATABASE}"
-        )
-    return f"sqlite:{settings.SQLITE_PATH or 'data/truthnet.db'}"
-
-
 def _get_engine() -> Engine:
-    """按 settings.SQL_BACKEND 建 MySQL/SQLite 引擎（参考 _fetch._get_engine 风格）。"""
-    from app.core.config import settings
+    """8/19 全面审查：改用公共工厂（完整 profile key + 切 profile 即 dispose）。
 
-    key = _engine_profile_key(settings)
-    if key in _ENGINES:
-        return _ENGINES[key]
-    if key.startswith("mysql:"):
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _ENGINES[key] = create_engine(url, pool_pre_ping=True)
-    else:  # sqlite
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _ENGINES[key] = create_engine(f"sqlite:///{path.as_posix()}")
-    return _ENGINES[key]
+    原实现自带 profile key 缓存但切库不 dispose 旧 Engine，连接池滞留旧库。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _prev_year(period: str) -> str:

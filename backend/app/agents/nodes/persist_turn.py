@@ -21,9 +21,8 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.agents.state import AgentState, Claim, EvidenceRef, ModuleStatus
@@ -33,33 +32,18 @@ from app.domain.evidence.models import supporting_evidence_ids
 
 logger = logging.getLogger(__name__)
 
-_engines: dict[str, Engine] = {}
-
-
-def _repo_root() -> Path:
-    # backend/app/agents/nodes/persist_turn.py -> 项目根
-    return Path(__file__).resolve().parents[4]
-
 
 def _get_engine() -> Engine:
-    """惰性缓存引擎，尊重 SQL_BACKEND（sqlite/mysql）。"""
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
+    """惰性缓存引擎，尊重 SQL_BACKEND（sqlite/mysql）。
 
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False, pool_pre_ping=True)
-    else:  # sqlite
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
-    return _engines[backend]
+    8/19 全面审查 P0：改用完整 profile key（mysql=user/host/port/database，
+    sqlite 含路径）+ 切 profile 即 dispose 旧 Engine（与 _fetch._ENGINES
+    同契约）——persist_turn 是写路径，按 backend-only key 缓存在进程内
+    切库后会复用旧库 Engine，把轮次/证据写进错误数据库（演示库误写）。
+    """
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _session_id(state: AgentState) -> str | None:
@@ -69,6 +53,13 @@ def _session_id(state: AgentState) -> str | None:
         return None
     sid = getattr(runtime, "session_id", "") or ""
     return sid or None
+
+
+def _user_id(state: AgentState) -> str:
+    """从 runtime 获取用户 ID；未传时归属默认本地用户。"""
+    runtime = state.get("runtime")
+    user_id = getattr(runtime, "user_id", "") if runtime is not None else ""
+    return (user_id or "").strip() or settings.SESSION_DEFAULT_USER_ID
 
 
 def _to_json(value) -> str | None:
@@ -466,6 +457,7 @@ def persist_turn_node(state: AgentState) -> dict:
     question = state.get("user_query", "")
     if not session_id or not question:
         return {"messages": []}
+    user_id = _user_id(state)
 
     final_response = state.get("final_response")
     answer = ""
@@ -491,19 +483,29 @@ def persist_turn_node(state: AgentState) -> dict:
     provenance_error = ""
 
     try:
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with _get_engine().begin() as conn:
             # 会话 upsert
             existing = conn.execute(
                 text(
-                    "SELECT session_id FROM conversation_sessions WHERE session_id = :sid"
+                    "SELECT session_id, user_id FROM conversation_sessions "
+                    "WHERE session_id = :sid"
                 ),
                 {"sid": session_id},
             ).first()
             if existing:
+                existing_user = (existing[1] or settings.SESSION_DEFAULT_USER_ID)
+                if existing_user != user_id:
+                    raise PermissionError(
+                        f"session belongs to another user: {session_id}"
+                    )
                 conn.execute(
                     text(
                         "UPDATE conversation_sessions "
-                        "SET status = 'active', "
+                        "SET user_id = COALESCE(user_id, :user_id), "
+                        "status = 'active', "
                         "title = CASE WHEN title IS NULL OR title = '' "
                         "OR title IN (:placeholder_a, :placeholder_b) "
                         "THEN :title ELSE title END, "
@@ -512,6 +514,7 @@ def persist_turn_node(state: AgentState) -> dict:
                     ),
                     {
                         "sid": session_id,
+                        "user_id": user_id,
                         "title": title,
                         "placeholder_a": sorted(SESSION_TITLE_PLACEHOLDERS)[0],
                         "placeholder_b": sorted(SESSION_TITLE_PLACEHOLDERS)[1],
@@ -521,10 +524,10 @@ def persist_turn_node(state: AgentState) -> dict:
                 conn.execute(
                     text(
                         "INSERT INTO conversation_sessions "
-                        "(session_id, title, status, created_at, updated_at) "
-                        "VALUES (:sid, :title, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                        "(session_id, user_id, title, status, created_at, updated_at) "
+                        "VALUES (:sid, :user_id, :title, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                     ),
-                    {"sid": session_id, "title": title},
+                    {"sid": session_id, "user_id": user_id, "title": title},
                 )
 
             # turn upsert（幂等：同 turn_id 重试 → UPDATE，不新增行/不新增序号）

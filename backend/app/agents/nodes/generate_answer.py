@@ -68,6 +68,17 @@ _CAPABILITY_KW = (
     "如何开始",
 )
 _CONTEXT_REQUEST_KW = ("它", "该公司", "这家公司", "继续", "再看", "刚才", "前面")
+_MODULE_LABELS = {
+    "finance": "财务",
+    "equity": "股权",
+    "events": "舆情事件",
+    "risk": "综合风险",
+}
+_MODULE_STATE_LABELS = {
+    "failed": "失败",
+    "partial": "部分完成",
+    "skipped": "跳过",
+}
 
 # 已触发规则 → 对应指标追问（V12 §2.6 示例："查看应收账款近 8 季度趋势"）
 # R7 不在静态表：#10 动态生成——仅当扣非字段可用时才推荐扣非对比
@@ -790,6 +801,30 @@ def _finance_all_blocked(finance) -> bool:
         s in ("insufficient_data", "not_applicable")
         for s in finance.rule_statuses.values()
     )
+
+
+def _module_state(status) -> str:
+    if isinstance(status, dict):
+        return str(status.get("state") or "")
+    return str(getattr(status, "state", "") or "")
+
+
+def _degraded_module_summary(state: AgentState) -> str:
+    """返回本轮已请求但未成功模块的中文摘要，用于避免无信号 fail-open。"""
+    module_status = state.get("module_status") or {}
+    plan = state.get("plan")
+    requested = list(getattr(plan, "requested_modules", []) or [])
+    if not requested:
+        requested = list(module_status.keys())
+
+    degraded = []
+    for module in requested:
+        status = _module_state(module_status.get(module))
+        if status in _MODULE_STATE_LABELS:
+            module_label = _MODULE_LABELS.get(str(module), str(module))
+            state_label = _MODULE_STATE_LABELS[status]
+            degraded.append(f"{module_label}模块{state_label}")
+    return "、".join(degraded)
 
 
 def _stream_turn_id(state: AgentState) -> str | None:
@@ -2404,12 +2439,19 @@ def generate_answer_node(state: AgentState) -> dict:
     # #11 AnswerMode：按意图选择开场模板，不再一律"综合分析完成"）
     # #8：风险计数只统计叶子信号（排除综合 risk Claim 与绿色控制链）
     risk_count = len(_leaf_risk_claims(claims))
+    degraded_summary = _degraded_module_summary(state)
     mode = _select_answer_mode(state, claims, finance_ran, finance_blocked)
     name_code = f"{company.sec_name}（{company.wind_code}）"
     if mode == "fraud_diagnosis":
         if risk_count:
             conclusion = (
                 name_code + f"针对造假/舞弊疑点，共检测到 {risk_count} 项规则信号。"
+            )
+        elif degraded_summary:
+            conclusion = (
+                name_code
+                + f"针对造假/舞弊疑点，本轮分析未完整完成（{degraded_summary}），"
+                + "无法确认是否存在造假事实或异常信号。"
             )
         else:
             conclusion = name_code + "针对造假/舞弊疑点，当前证据未能认定存在造假事实。"
@@ -2420,7 +2462,11 @@ def generate_answer_node(state: AgentState) -> dict:
             + (
                 f"发现 {risk_count} 项股权风险信号。"
                 if risk_count
-                else "未发现股权风险信号。"
+                else (
+                    f"本轮分析未完整完成（{degraded_summary}），无法确认是否存在股权风险信号。"
+                    if degraded_summary
+                    else "未发现股权风险信号。"
+                )
             )
         )
     elif mode == "events":
@@ -2430,7 +2476,11 @@ def generate_answer_node(state: AgentState) -> dict:
             + (
                 f"检测到 {risk_count} 项风险信号。"
                 if risk_count
-                else "未发现明显异常信号。"
+                else (
+                    f"本轮分析未完整完成（{degraded_summary}），无法确认是否存在明显异常信号。"
+                    if degraded_summary
+                    else "未发现明显异常信号。"
+                )
             )
         )
     elif risk_count:
@@ -2451,6 +2501,11 @@ def generate_answer_node(state: AgentState) -> dict:
         conclusion = (
             name_code + "在母公司报表及当前数据覆盖范围内，财务规则因不适用/数据不足"
             "未产出有效信号，未发现可确认的异常信号。"
+        )
+    elif degraded_summary:
+        conclusion = (
+            name_code
+            + f"本轮分析未完整完成（{degraded_summary}），无法确认是否存在明显异常信号。"
         )
     elif finance_ran:
         conclusion = name_code + NO_SIGNAL_IN_SCOPE

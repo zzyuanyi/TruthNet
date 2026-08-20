@@ -13,14 +13,12 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-_engines: dict[str, Engine] = {}
 
 
 class EvidenceConflictError(Exception):
@@ -86,21 +84,12 @@ def _gap_fill_evidence(conn, eid: str, ev: dict) -> None:
 
 
 def _get_engine() -> Engine:
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False, pool_pre_ping=True)
-    else:
-        _engines[backend] = create_engine(
-            f"sqlite:///{settings.SQLITE_PATH}", echo=False
-        )
-    return _engines[backend]
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+    本服务是写路径（persist_evidence），backend-only key 缓存在切库后会
+    复用旧库 Engine，把证据写进错误数据库（演示库误写）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _to_json(value) -> str | None:
@@ -141,6 +130,9 @@ class ProvenanceService:
         v3.5：status 可显式传（comparisons 生命周期 running → 完成后
         经 update_analysis_run_status 更新为 completed/partial/failed）。
         """
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         with self._engine.begin() as conn:
             conn.execute(
@@ -168,6 +160,9 @@ class ProvenanceService:
         请求级失败（HTTPException/异常）也须把 running 标记为 failed——
         失败记录不得停留在 running 或误标 completed。
         """
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with self._engine.begin() as conn:
             res = conn.execute(
                 text("UPDATE analysis_runs SET status = :s WHERE run_id = :rid"),
@@ -190,6 +185,9 @@ class ProvenanceService:
         """
         if not evidence:
             return []
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         written: list[str] = []
         with self._engine.begin() as conn:
             for ev in evidence:
@@ -276,6 +274,9 @@ class ProvenanceService:
         """幂等写入 claims + claim_evidence_links。返回已写入 Claim ID。"""
         if not claims:
             return []
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         ignore = "IGNORE" if settings.SQL_BACKEND == "mysql" else "OR IGNORE"
         written: list[str] = []
         with self._engine.begin() as conn:

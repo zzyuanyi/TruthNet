@@ -99,6 +99,10 @@ async def _lifespan(app: FastAPI):
     import asyncio
 
     _validate_release_mode()
+    # 8/19 全面审查 P0：运行时写守卫（演示库零写入铁律的运行时防线）
+    from app.core.write_guard import validate_runtime_write_policy
+
+    validate_runtime_write_policy()
     # 最终续审 §6 C3：实体链路配置启动观测（验收必须能核对模式）
     from app.core.config import settings as _settings
 

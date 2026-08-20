@@ -25,7 +25,9 @@ from app.domain.finance.rule_r1 import evaluate_r1
 from app.domain.finance.rule_r2 import evaluate_r2
 from app.domain.finance.rule_r3 import evaluate_r3
 from app.domain.finance.rule_r4 import evaluate_r4
+from app.domain.finance.rule_r5 import evaluate_r5
 from app.domain.finance.rule_r7 import evaluate_r7
+from app.domain.finance.rule_utils import single_quarter_by_period
 
 CONSOLIDATED = "408001000"
 PARENT = "408006000"
@@ -223,6 +225,77 @@ def test_r1_threshold_change_in_yaml_takes_effect(rule_db, tmp_path, monkeypatch
     assert config_path.stat().st_mtime_ns != previous_mtime
 
     assert evaluate_r1("CFG_R1", "20260331").status == "not_triggered"
+
+
+def test_r1_missing_intermediate_period_does_not_pair_by_index(rule_db):
+    """R1 字段缺期时，不能把不同报告期按数组下标拼接。"""
+    conn = rule_db
+    _insert_company(conn, "PERIOD_R1")
+    periods_ar = [
+        "20240331",
+        "20240630",
+        "20240930",
+        "20241231",
+        "20250331",
+        "20250630",
+    ]
+    periods_rev = [
+        "20240331",
+        "20240930",
+        "20241231",
+        "20250331",
+        "20250630",
+    ]
+    _insert_bs(
+        conn,
+        "PERIOD_R1",
+        PARENT,
+        {"acct_rcv": [100e6, 110e6, 120e6, 130e6, 140e6, 200e6]},
+        periods=periods_ar,
+    )
+    _insert_is(
+        conn,
+        "PERIOD_R1",
+        PARENT,
+        {"oper_rev": [100e6, 120e6, 130e6, 140e6, 150e6]},
+        periods=periods_rev,
+    )
+
+    result = evaluate_r1("PERIOD_R1", "20250630", periods=8)
+
+    assert result.status in ("triggered", "not_triggered")
+    # 20250630 没有 20240630 的营收，不能把 20250630 的应收与其他营收期次配对；
+    # 因而选择较早的完整同比对，结果应来自 20250331/20240331。
+    assert result.current["acct_rcv_growth"]["value"] == pytest.approx(40.0)
+    assert result.current["oper_rev_growth"]["value"] == pytest.approx(40.0)
+
+
+def test_r5_missing_period_does_not_shift_cost_into_revenue_period(rule_db):
+    """R5 各字段按 report_period 对齐，缺期不得整体左移。"""
+    conn = rule_db
+    _insert_company(conn, "PERIOD_R5")
+    revenue_periods = [
+        "20240331",
+        "20240630",
+        "20240930",
+        "20241231",
+        "20250331",
+        "20250630",
+    ]
+    _insert_is(
+        conn,
+        "PERIOD_R5",
+        PARENT,
+        {
+            "oper_rev": [100e6] * 6,
+            "less_oper_cost": [90e6, None, 90e6, 90e6, 90e6, 10e6],
+        },
+        periods=revenue_periods,
+    )
+
+    result = evaluate_r5("PERIOD_R5", "20250630", periods=8)
+
+    assert result.current["gross_margin"]["value"] == pytest.approx(90.0)
 
 
 def test_financial_rule_switch_returns_explicit_not_applicable(tmp_path, monkeypatch):
@@ -616,6 +689,71 @@ def test_r4_short_history_no_index_error(rule_db):
     r = evaluate_r4("600036.SH", "20260331")
     assert r.status == "insufficient_data"
     assert r.quality["statement_scope"] == "parent_company"
+
+
+def test_single_quarter_by_period_requires_adjacent_quarter():
+    """缺 Q1 时 Q2 不得拿上一条跨年累计值盲减。"""
+    values = [100.0, 260.0]
+    periods = ["20231231", "20240630"]
+
+    assert single_quarter_by_period(values, periods) == [None, None]
+
+
+def test_r4_turnover_missing_previous_inventory_is_unknown(rule_db):
+    """R4 周转天数缺相邻季度存货时跳过，不把 None 当 0 参与计算。"""
+    conn = rule_db
+    _insert_company(conn, "600038.SH")
+    periods = [
+        "20240331",
+        "20240630",
+        "20240930",
+        "20241231",
+        "20250331",
+        "20250630",
+    ]
+    _insert_bs(
+        conn,
+        "600038.SH",
+        PARENT,
+        {"inventories": [1e8, 1e8, 1e8, 1e8, None, 1e8]},
+        periods=periods,
+    )
+    _insert_is(
+        conn,
+        "600038.SH",
+        PARENT,
+        {
+            "oper_rev": [2e8, 2e8, 2e8, 2e8, 2e8, 2e8],
+            "less_oper_cost": [5e7, 9e7, 13e7, 17e7, 5e7, 9e7],
+        },
+        periods=periods,
+    )
+
+    r = evaluate_r4("600038.SH", "20250630")
+
+    assert "inventory_turnover_days" not in r.current
+    assert r.quality["turnover_calculable"] is False
+
+
+def test_r5_missing_current_cost_does_not_become_full_margin(rule_db):
+    """R5 当期成本缺失不得按 0 计算成 100% 毛利率并触发 red。"""
+    conn = rule_db
+    _insert_company(conn, "600039.SH")
+    _insert_is(
+        conn,
+        "600039.SH",
+        PARENT,
+        {
+            "oper_rev": [1e8, 1e8, 1e8, 1e8, 1e8],
+            "less_oper_cost": [9e7, 9e7, 9e7, 9e7, None],
+        },
+    )
+
+    r = evaluate_r5("600039.SH", "20260331")
+
+    assert r.status == "insufficient_data"
+    assert r.severity != "red"
+    assert "gross_margin" not in r.current
 
 
 def test_r7_orange_without_core_ratio_no_type_error(rule_db):

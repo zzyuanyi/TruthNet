@@ -39,6 +39,7 @@ def _make_state(
     session_id: str = "ses_test",
     answer: str = "康美药业存在高风险信号。",
     turn_id: str = "turn_01",
+    user_id: str = "",
 ) -> AgentState:
     """构造完整轮次状态。"""
     return {
@@ -50,7 +51,10 @@ def _make_state(
         },
         "final_response": FinalResponse(answer=answer, risk_level="red"),
         "runtime": RuntimeState(
-            trace_id="trace_01", session_id=session_id, turn_id=turn_id
+            trace_id="trace_01",
+            session_id=session_id,
+            user_id=user_id,
+            turn_id=turn_id,
         ),
     }
 
@@ -115,12 +119,16 @@ def test_persist_first_turn(monkeypatch, sqlite_engine):
     with sqlite_engine.connect() as conn:
         session = (
             conn.execute(
-                text("SELECT session_id, title, status FROM conversation_sessions")
+                text(
+                    "SELECT session_id, user_id, title, status "
+                    "FROM conversation_sessions"
+                )
             )
             .mappings()
             .one()
         )
         assert session["session_id"] == "ses_test"
+        assert session["user_id"] == pt.settings.SESSION_DEFAULT_USER_ID
         assert session["title"] == "康美药业有风险吗"  # question 前 30 字
         assert session["status"] == "active"
 
@@ -236,6 +244,31 @@ def test_existing_default_new_session_gets_first_question_title(
             text("SELECT title FROM conversation_sessions WHERE session_id='ses_test'")
         ).scalar_one()
     assert title == "分析康美药业 2025 年报"
+
+
+def test_persist_turn_writes_explicit_user_id(monkeypatch, sqlite_engine):
+    """显式 user_id 随自动会话写入，供会话 API 隔离。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    pt.persist_turn_node(_make_state(user_id="user_a"))
+    with sqlite_engine.connect() as conn:
+        user_id = conn.execute(
+            text("SELECT user_id FROM conversation_sessions WHERE session_id='ses_test'")
+        ).scalar_one()
+    assert user_id == "user_a"
+
+
+def test_persist_turn_rejects_cross_user_session_reuse(monkeypatch, sqlite_engine):
+    """同 session_id 不允许被其他 user_id 追加轮次。"""
+    _patch_mysql(monkeypatch, sqlite_engine)
+    pt.persist_turn_node(_make_state(user_id="user_a"))
+    result = pt.persist_turn_node(
+        _make_state(query="第二轮", turn_id="turn_02", user_id="user_b")
+    )
+
+    assert result["module_status"]["persist_turn"].state == "partial"
+    with sqlite_engine.connect() as conn:
+        count = conn.execute(text("SELECT COUNT(*) FROM conversation_turns")).scalar_one()
+    assert count == 1
 
 
 def test_response_meta_persisted(monkeypatch, sqlite_engine):

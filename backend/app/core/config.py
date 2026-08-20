@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     MYSQL_TEST_USER: str = ""
     MYSQL_TEST_PASSWORD: str = ""
 
+    # 运行时写守卫（8/19 全面审查 P0：conftest 三重守卫只护测试进程，
+    # 服务进程/脚本进程无防线——误以演示库身份启动会把证据/会话写进
+    # truthnet，违反「演示库零写入」铁律；守卫见 app/core/write_guard.py）
+    DEMO_DATABASE_NAME: str = "truthnet"  # 受保护的演示库名（可覆盖）
+    ALLOW_DEMO_DB_WRITE: bool = False  # 正式演示/部署显式置 true 才放行写演示库
+
     # ===== 图数据库后端 =====
     GRAPH_BACKEND: str = "networkx"  # networkx | neo4j
 
@@ -165,13 +171,15 @@ class Settings(BaseSettings):
     )
 
     # ===== 远期记忆提炼（Phase D #15）=====
-    MEMORY_RECENT_TURNS: int = 10  # 近期 N 轮全量加载；更早进入摘要
-    MEMORY_SUMMARY_MAX_CHARS: int = 2000  # 摘要最大字符数
-    MEMORY_SUMMARY_MAX_SOURCE_TURNS: int = 50  # 摘要最多引用来源轮次数
+    MEMORY_RECENT_TURNS: int = 20  # 近期 N 轮全量加载；更早进入摘要
+    MEMORY_SUMMARY_MAX_CHARS: int = 3000  # 摘要最大字符数
+    MEMORY_SUMMARY_MAX_SOURCE_TURNS: int = 80  # 摘要最多引用来源轮次数
     MEMORY_SUMMARY_VERSION: str = "memory-v1"  # 摘要结构版本
     MEMORY_STRATEGY: str = (
         "summary_plus_recent"  # none | recent_only | summary_plus_recent
     )
+    SESSION_DEFAULT_USER_ID: str = "default"  # 无登录态/未传 user_id 时的本地归属
+    SESSION_SOFT_DELETE_TTL_DAYS: int = 30  # 软删除后物理清理宽限期
 
     # ===== PDF 报告（Phase D #8）=====
     REPORT_ROOT_DIR: str = "data/reports"  # 报告文件根目录（相对项目根解析）

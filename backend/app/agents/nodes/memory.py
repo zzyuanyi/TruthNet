@@ -14,11 +14,30 @@ import logging
 import re
 
 from app.agents.state import AgentState, ExecutedMetricRef, MemoryContext
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _history_message_limit() -> int:
+    """历史消息窗口上限（8/19 修复：对齐 MEMORY_RECENT_TURNS）。
+
+    历史消息由 load_context 按轮成对注入（user + assistant 各 1 条），
+    因此完整 N 轮 = N*2 条消息。旧实现硬编码 `messages[-20:]` 只覆盖
+    最近 10 轮，与 20 轮回读窗口不一致——>20 轮会话中第 11~20 轮的
+    指标文本提取会漏掉。改为读取配置，与回读窗口严格对齐。
+    """
+    return max(int(settings.MEMORY_RECENT_TURNS) * 2, 0)
+
 # ── 指代消解关键词表 ────────────────────────────────────────
 # 明确指代（直接指向上一轮主体）
+# 8/19 审查修复：单字"它/他/她/其"用子串匹配会误伤"其他/其它/其余"
+# 等财务术语（如"其他应收款占比如何"被判为指代），改用正则：
+#   - "它/他/她"：前一个字符不是"其"（排除"其他/其它"）；
+#   - "其"：后一个字符不是"他/它/余/次/中"（排除"其他/其它/其余/其次/其中"）。
+_EXPLICIT_ANAPHORA_RE = re.compile(r"(?<!其)[它他她]|其(?![他它余次中])")
+
+# 明确指代（保留列表供文档/调试；判定走 _EXPLICIT_ANAPHORA_RE）
 _EXPLICIT_ANAPHORA: list[str] = [
     "它",
     "他",
@@ -67,11 +86,18 @@ _COMPANY_NAME_RE = re.compile(
 
 
 def _contains_anaphora(query: str | None) -> bool:
-    """检测 query 中是否包含指代词。"""
+    """检测 query 中是否包含指代词。
+
+    8/19 修复：单字指代走正则（排除"其他/其它/其余"等组合误伤），
+    "其他应收款占比如何"不再误判为指代，而"它还有其他风险吗"
+    （"它"独立指代 + "其他"是财务词）仍正确判 True。
+    """
     if not query:
         return False
-    all_keywords = _EXPLICIT_ANAPHORA + _VAGUE_ANAPHORA + _BACK_REFERENCE
-    return any(kw in query for kw in all_keywords)
+    all_keywords = _VAGUE_ANAPHORA + _BACK_REFERENCE
+    if any(kw in query for kw in all_keywords):
+        return True
+    return bool(_EXPLICIT_ANAPHORA_RE.search(query))
 
 
 def _extract_anaphora_type(query: str | None) -> str:
@@ -84,9 +110,8 @@ def _extract_anaphora_type(query: str | None) -> str:
     for kw in _VAGUE_ANAPHORA:
         if kw in query:
             return "vague"
-    for kw in _EXPLICIT_ANAPHORA:
-        if kw in query:
-            return "explicit"
+    if _EXPLICIT_ANAPHORA_RE.search(query):
+        return "explicit"
     return "none"
 
 
@@ -209,12 +234,13 @@ def _resolve_lite(
     elif is_anaphora and prev_codes:
         resolved_company_code = prev_codes[0]  # 近期轮次的最近公司代码
     elif is_anaphora and summary_code:
-        resolved_company_code = summary_code  # 十轮外记忆兜底（长程）
+        resolved_company_code = summary_code  # 近期窗口外记忆兜底（长程）
 
-    # 提取历史指标
+    # 提取历史指标（8/19 修复：窗口 = MEMORY_RECENT_TURNS*2 条消息，
+    # 覆盖完整回读窗口；旧实现硬编码 20 条 = 10 轮，20 轮时漏掉前 10 轮）
     referenced_indicators: list[str] = []
     if messages:
-        for msg in reversed(messages[:20]):  # 最近 20 条消息
+        for msg in reversed(messages[-_history_message_limit():]):
             if hasattr(msg, "content"):
                 text = str(getattr(msg, "content", ""))
             elif isinstance(msg, dict):

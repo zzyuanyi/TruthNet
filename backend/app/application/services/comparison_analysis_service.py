@@ -142,7 +142,12 @@ def _template_analysis(result: Any) -> str:
     if not lines and len(participants) >= 2:
         a, b = participants[0], participants[1]
         unit = getattr(result, "difference_unit", "") or a.unit or ""
-        cmp_word = "高于" if float(a.value) > float(b.value) else "低于"
+        if float(a.value) > float(b.value):
+            cmp_word = "高于"
+        elif float(a.value) < float(b.value):
+            cmp_word = "低于"
+        else:
+            cmp_word = "接近"
         lines.append(
             f"{a.sec_name} 的{a.metric_label}{cmp_word}{b.sec_name}"
             f"（{a.sec_name} {_fmt_value(float(a.value), a.unit or '')}；"

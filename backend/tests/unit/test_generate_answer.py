@@ -146,6 +146,24 @@ def test_no_risk_signal_conclusion():
     assert fr.risk_level == "green"
 
 
+def test_module_failure_no_signal_conclusion_is_degraded():
+    """模块失败且无 claim 时，头行不得 fail-open 为未发现异常。"""
+    plan = ExecutionPlan(requested_modules=["finance"])
+    module_status = {
+        "finance": ModuleStatus(
+            state="failed", error_code="DB_ERROR", recoverable=True
+        )
+    }
+    result = generate_answer_node(
+        _make_state(company=_company(), plan=plan, module_status=module_status)
+    )
+    fr = result["final_response"]
+    assert "本轮分析未完整完成" in fr.answer
+    assert "财务模块失败" in fr.answer
+    assert "无法确认是否存在明显异常信号" in fr.answer
+    assert "未发现明显异常信号" not in fr.answer
+
+
 # ── Phase C: 母公司口径措辞 ────────────────────────────────
 
 

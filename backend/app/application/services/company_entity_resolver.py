@@ -710,6 +710,22 @@ class CompanyEntityResolver:
             logger.info("Resolver: 忽略业务上下文片段 %s", dropped)
         return kept
 
+    @staticmethod
+    def _dedupe_bound_identity_mentions(
+        mentions: list[EntityMention],
+    ) -> list[EntityMention]:
+        """合并已解析到同一公司的重复名称/代码 mention。"""
+        seen_codes: set[str] = set()
+        deduped: list[EntityMention] = []
+        for mention in mentions:
+            code = str(mention.selected_wind_code or "").strip()
+            if code and code in seen_codes:
+                continue
+            if code:
+                seen_codes.add(code)
+            deduped.append(mention)
+        return deduped
+
     # ── 默认角色派生（v3.2.1 批次 4 配套）───────────────────────
 
     @staticmethod
@@ -1421,6 +1437,13 @@ class CompanyEntityResolver:
         # 最终 mentions 移除；pending/override/REST/WS 只保留公司身份 mention
         # v3.3.4 收口复核清单 §6：比较语法范围词同样在此按条件忽略
         final_mentions = self._drop_ignored_context(final_mentions, user_query)
+        # 名称与显式代码可能同时指向同一家公司（例如“康美药业
+        # 600518.SH 的公告”）。身份已由 Repository 锁定后按代码合并，
+        # 避免把同一主体误判为多公司关系澄清。
+        if not _detect_reference(user_query) and not _detect_comparison(
+            user_query, [mention.text for mention in final_mentions]
+        ):
+            final_mentions = self._dedupe_bound_identity_mentions(final_mentions)
         # 所有 span 均无公司候选 且 整句为明确行业研究主题 → 非阻断
         # no_company，由意图层继续路由 research（本层不置任何公司错误）；
         # 模板不命中（如"火星科技行业风险"）保持 not_found 阻断。

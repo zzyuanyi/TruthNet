@@ -5,7 +5,7 @@
 所有状态均携带母公司口径 quality。
 """
 
-from app.domain.finance._fetch import fetch_series
+from app.domain.finance._fetch import align_by_period, fetch_series, prev_year_period
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -21,7 +21,8 @@ from app.domain.finance.rule_utils import (
     count_valid,
     fmt_gap_pct,
     fmt_period,
-    single_quarter,
+    previous_quarter_period,
+    single_quarter_by_period,
     yoy_growth,
 )
 
@@ -75,12 +76,28 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    # YoY 增速（t-4Q 需要至少 5 期，避免越界）
-    if len(inventories) < 5 or len(oper_rev) < 5:
+    aligned = align_by_period(inv=inventories_sr, or_=oper_rev_sr, cost=less_oper_cost_sr)
+    ordered = sorted(aligned.keys())
+    current_period = None
+    prior_year_period = None
+    for period in reversed(ordered):
+        candidate_prior = prev_year_period(period, ordered)
+        if candidate_prior is None:
+            continue
+        row = aligned[period]
+        prior_row = aligned[candidate_prior]
+        if (
+            row.get("inv") is not None
+            and row.get("or_") is not None
+            and prior_row.get("inv") is not None
+            and prior_row.get("or_") is not None
+        ):
+            current_period = period
+            prior_year_period = candidate_prior
+            break
+    if current_period is None or prior_year_period is None:
         result.status = "insufficient_data"
-        result.explanation = (
-            f"历史期数不足: inventory={len(inventories)}期, oper_rev={len(oper_rev)}期"
-        )
+        result.explanation = "缺少可精确对齐的当期与去年同期存货/营收数据"
         result.quality = build_parent_scope_quality(
             coverage=inventories_sr.coverage,
             data_completeness=round(valid_inv / 4, 2),
@@ -89,9 +106,10 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    t_idx, t4_idx = -1, -5
-    inv_yoy = yoy_growth(inventories[t_idx], inventories[t4_idx])
-    or_yoy = yoy_growth(oper_rev[t_idx], oper_rev[t4_idx])
+    current_row = aligned[current_period]
+    prior_year_row = aligned[prior_year_period]
+    inv_yoy = yoy_growth(current_row.get("inv"), prior_year_row.get("inv"))
+    or_yoy = yoy_growth(current_row.get("or_"), prior_year_row.get("or_"))
     if inv_yoy is None or or_yoy is None:
         result.status = "insufficient_data"
         result.explanation = "分母保护触发，无法计算 YoY"
@@ -111,35 +129,31 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
     turnover_change = None
     inv_turnover_days = None
 
-    if turnover_ok and len(less_oper_cost) >= 5:
-        sq_cost = single_quarter(less_oper_cost)
-        annualized_cost = (
-            sq_cost[t_idx] * 4
-            if sq_cost[t_idx] is not None and sq_cost[t_idx] > 0
-            else None
+    if turnover_ok:
+        cost_values = [aligned[p].get("cost") for p in ordered]
+        sq_cost_by_period = dict(
+            zip(ordered, single_quarter_by_period(cost_values, ordered), strict=False)
         )
-        if annualized_cost:
-            avg_inv = ((inventories[t_idx] or 0) + (inventories[-2] or 0)) / 2
-            inv_turnover_days = (
-                avg_inv / annualized_cost * 365 if annualized_cost > 0 else None
-            )
-            # 去年同期
-            sq_cost_t4 = single_quarter(less_oper_cost)
-            if len(sq_cost_t4) >= 5:
-                ann_cost_t4 = (
-                    sq_cost_t4[t4_idx] * 4
-                    if sq_cost_t4[t4_idx] is not None and sq_cost_t4[t4_idx] > 0
-                    else None
-                )
-                if ann_cost_t4 and len(inventories) >= 6:
-                    avg_inv_t4 = (
-                        (inventories[t4_idx] or 0) + (inventories[-6] or 0)
-                    ) / 2
-                    days_t4 = (
-                        avg_inv_t4 / ann_cost_t4 * 365 if ann_cost_t4 > 0 else None
-                    )
-                    if inv_turnover_days and days_t4 and days_t4 > 0:
-                        turnover_change = (inv_turnover_days - days_t4) / days_t4 * 100
+
+        def _turnover_days_for(period: str) -> float | None:
+            sq_cost = sq_cost_by_period.get(period)
+            if sq_cost is None or sq_cost <= 0:
+                return None
+            previous_period = previous_quarter_period(period)
+            if previous_period is None:
+                return None
+            current_inv = aligned.get(period, {}).get("inv")
+            previous_inv = aligned.get(previous_period, {}).get("inv")
+            if current_inv is None or previous_inv is None:
+                return None
+            annualized_cost = sq_cost * 4
+            avg_inv = (current_inv + previous_inv) / 2
+            return avg_inv / annualized_cost * 365 if annualized_cost > 0 else None
+
+        inv_turnover_days = _turnover_days_for(current_period)
+        days_t4 = _turnover_days_for(prior_year_period)
+        if inv_turnover_days is not None and days_t4 is not None and days_t4 > 0:
+            turnover_change = (inv_turnover_days - days_t4) / days_t4 * 100
 
     severity = "green"
     # red
@@ -197,24 +211,21 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         coverage=inventories_sr.coverage,
         data_completeness=round(valid_inv / 4, 2),
         missing_periods=4 - valid_inv,
-        extra={"turnover_calculable": turnover_ok},
+        extra={
+            "turnover_calculable": inv_turnover_days is not None,
+            "turnover_change_calculable": turnover_change is not None,
+        },
     )
     result.warnings = field_warnings
     # 多期展示序列：最近 8 期存货/营收 YoY 与增速差（图表趋势用）
     # P2-3（核验修订）：按报告期对齐 + 去年同期计算，不再跨报表按下标拼接。
-    from app.domain.finance._fetch import align_by_period, prev_year_period
-
-    aligned = align_by_period(
-        inv=inventories_sr, or_=oper_rev_sr, cost=less_oper_cost_sr
-    )
-    ordered = sorted(aligned.keys())
     gap_series: list[dict] = []
     for p in ordered[-8:]:
         t4 = prev_year_period(p, ordered)
         if t4 is None:
             continue
         inv_y = yoy_growth(aligned[p].get("inv"), aligned[t4].get("inv"))
-        or_y = yoy_growth(aligned[p].get("or"), aligned[t4].get("or"))
+        or_y = yoy_growth(aligned[p].get("or_"), aligned[t4].get("or_"))
         if inv_y is None or or_y is None:
             continue
         gap_series.append(
@@ -228,17 +239,20 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
     if len(gap_series) >= 2:
         result.history = gap_series
 
-    result.evidence_ids = [f"ev_bs_inventories_{as_of}", f"ev_is_oper_rev_{as_of}"]
+    result.evidence_ids = [
+        f"ev_bs_inventories_{current_period}",
+        f"ev_is_oper_rev_{current_period}",
+    ]
     if severity == "red":
         result.explanation = (
             f"存货增速（{inv_yoy*100:.1f}%）远超营业收入增速（{or_yoy*100:.1f}%），"
-            f"增速差达 {fmt_gap_pct(growth_gap)}，存货积压风险显著（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
+            f"增速差达 {fmt_gap_pct(growth_gap)}，存货积压风险显著（数据期：{fmt_period(current_period)}，母公司报表）。"
         )
     elif severity == "orange":
         result.explanation = (
             f"存货增速（{inv_yoy*100:.1f}%）明显快于营收增速（{or_yoy*100:.1f}%），"
-            f"需关注存货周转效率（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
+            f"需关注存货周转效率（数据期：{fmt_period(current_period)}，母公司报表）。"
         )
     elif severity == "yellow":
-        result.explanation = f"存货增速快于营收增速（增速差 {fmt_gap_pct(growth_gap)}），建议持续关注（数据期：{fmt_period(inventories_sr.periods[-1] if inventories_sr.periods else as_of)}，母公司报表）。"
+        result.explanation = f"存货增速快于营收增速（增速差 {fmt_gap_pct(growth_gap)}），建议持续关注（数据期：{fmt_period(current_period)}，母公司报表）。"
     return result

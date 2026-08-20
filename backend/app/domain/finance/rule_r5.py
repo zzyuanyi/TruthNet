@@ -5,7 +5,7 @@
 所有状态均携带母公司口径 quality。
 """
 
-from app.domain.finance._fetch import fetch_series
+from app.domain.finance._fetch import align_by_period, fetch_series
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -43,10 +43,6 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     admin_exp_sr = fetch_series(company_code, "less_gerl_admin_exp", periods, as_of)
     fin_exp_sr = fetch_series(company_code, "less_fin_exp", periods, as_of)
     oper_rev = oper_rev_sr.values
-    less_oper_cost = less_oper_cost_sr.values
-    selling_exp = selling_exp_sr.values
-    admin_exp = admin_exp_sr.values
-    fin_exp = fin_exp_sr.values
 
     field_warnings = [
         w
@@ -73,7 +69,24 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    if oper_rev[-1] is None or oper_rev[-1] <= 0:
+    aligned = align_by_period(
+        oper_rev=oper_rev_sr,
+        less_oper_cost=less_oper_cost_sr,
+        selling_exp=selling_exp_sr,
+        admin_exp=admin_exp_sr,
+        fin_exp=fin_exp_sr,
+    )
+    ordered = sorted(aligned)
+    current_period = next(
+        (
+            period
+            for period in reversed(ordered)
+            if aligned[period].get("oper_rev") is not None
+            and aligned[period]["oper_rev"] > 0
+        ),
+        None,
+    )
+    if current_period is None:
         result.status = "insufficient_data"
         result.explanation = "当期无收入"
         result.quality = build_parent_scope_quality(
@@ -88,32 +101,43 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     # 计算最近 8 期毛利率
     gm_list = []
     er_list = []
-    for i in range(len(oper_rev)):
-        rev = oper_rev[i] or 0
-        if rev <= 0:
+
+    for period in ordered:
+        row = aligned[period]
+        rev = row.get("oper_rev")
+        if rev is None or rev <= 0:
             gm_list.append(None)
             er_list.append(None)
             continue
-        cost = less_oper_cost[i] or 0 if i < len(less_oper_cost) else 0
-        gm = (rev - cost) / rev * 100
-        gm_list.append(gm)
-        sell = selling_exp[i] or 0 if i < len(selling_exp) else 0
-        adm = admin_exp[i] or 0 if i < len(admin_exp) else 0
-        fin = fin_exp[i] or 0 if i < len(fin_exp) else 0
-        total_exp = sell + adm + fin
-        er = total_exp / rev * 100
-        er_list.append(er)
+        cost = row.get("less_oper_cost")
+        gm_list.append((rev - cost) / rev * 100 if cost is not None else None)
 
-    gm_current = gm_list[-1] if gm_list[-1] is not None else None
-    gm_hist = mean_or_none([g for g in gm_list[:-1] if g is not None])
+        expenses = (
+            row.get("selling_exp"),
+            row.get("admin_exp"),
+            row.get("fin_exp"),
+        )
+        if any(v is None for v in expenses):
+            er_list.append(None)
+        else:
+            total_exp = sum(expenses)
+            er_list.append(total_exp / rev * 100)
+
+    current_index = ordered.index(current_period)
+    gm_current = gm_list[current_index]
+    gm_hist = mean_or_none(
+        [g for i, g in enumerate(gm_list) if i != current_index and g is not None]
+    )
     gm_deviation = (
         (gm_current - gm_hist)
         if gm_current is not None and gm_hist is not None
         else None
     )
 
-    er_current = er_list[-1] if er_list[-1] is not None else None
-    er_hist = mean_or_none([e for e in er_list[:-1] if e is not None])
+    er_current = er_list[current_index]
+    er_hist = mean_or_none(
+        [e for i, e in enumerate(er_list) if i != current_index and e is not None]
+    )
     er_deviation = (
         (er_current - er_hist)
         if er_current is not None and er_hist is not None
@@ -125,6 +149,18 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         if gm_deviation is not None and er_deviation is not None
         else None
     )
+
+    if gm_current is None and er_current is None:
+        result.status = "insufficient_data"
+        result.explanation = "缺少当期成本/费用数据，无法计算毛利率或费用率"
+        result.quality = build_parent_scope_quality(
+            coverage=oper_rev_sr.coverage,
+            data_completeness=round(valid_or / 6, 2),
+            missing_periods=6 - valid_or,
+            extra={"history_periods_available": valid_or},
+        )
+        result.warnings = field_warnings
+        return result
 
     severity = "green"
     if (
@@ -191,7 +227,7 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
     result.warnings = field_warnings
     # 多期展示序列：最近 8 期毛利率（gm_list 已在计算中构建）
     gm_series: list[dict] = []
-    periods_hist = oper_rev_sr.periods
+    periods_hist = ordered
     for i in range(max(0, len(gm_list) - 8), len(gm_list)):
         gm_v = gm_list[i]
         if gm_v is None:
@@ -205,10 +241,23 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
 
     result.evidence_ids = [f"ev_is_oper_rev_{as_of}", f"ev_is_oper_cost_{as_of}"]
     if severity == "red":
-        result.explanation = (
-            f"毛利率较历史均值偏离 {gm_deviation:.1f}pp，费用率下降 {er_deviation:.1f}pp，"
-            f"利润两端同时优化，异常信号叠加。"
-        )
+        if gm_deviation is not None and er_deviation is not None:
+            result.explanation = (
+                f"毛利率较历史均值偏离 {gm_deviation:.1f}pp，"
+                f"费用率下降 {er_deviation:.1f}pp，利润两端同时优化，异常信号叠加。"
+            )
+        elif gm_deviation is not None:
+            result.explanation = (
+                f"毛利率较历史均值偏离 {gm_deviation:.1f}pp，"
+                "成本口径可计算但费用率数据不足，存在异常信号。"
+            )
+        elif er_deviation is not None:
+            result.explanation = (
+                f"费用率较历史均值下降 {er_deviation:.1f}pp，"
+                "毛利率数据不足，存在异常信号。"
+            )
+        else:
+            result.explanation = "毛利率/费用率异常信号触发，但明细数据不足。"
     elif severity == "orange":
         result.explanation = (
             f"毛利率（{gm_deviation:+.1f}pp）明显偏离历史水平，建议关注。"

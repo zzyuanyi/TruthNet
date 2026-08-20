@@ -82,6 +82,14 @@ def test_exact_code_locked():
     assert r.selected_companies[0].wind_code == "600519.SH"
 
 
+def test_same_company_name_and_code_are_one_subject():
+    lookup = _mysql_lookup([("c1", "600518.SH", "康美药业", None)])
+    r = _resolver(lookup).resolve("康美药业 600518.SH 的公告")
+    assert r.intent == "single"
+    assert [company.wind_code for company in r.selected_companies] == ["600518.SH"]
+    assert [mention.selected_wind_code for mention in r.mentions] == ["600518.SH"]
+
+
 def test_reverse_contains_unique_locked():
     """safe_reverse_contains：'茅台' → 贵州茅台 自动锁定。"""
     lookup = SQLiteCompanyRepository()

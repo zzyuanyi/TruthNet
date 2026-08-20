@@ -1,4 +1,4 @@
-"""远期记忆 20 轮真实会话测试 — Phase D #15 验收.
+"""远期记忆 20+ 轮真实会话测试 — Phase D #15 验收.
 
 第 1 轮关键公司 → 中间切换公司 → 第 20 轮使用指代 → 能召回关键事实；
 来源 turn ID 正确；Evidence 可查询；摘要长度受限；跨 session 隔离。
@@ -76,7 +76,7 @@ def _seed_session(sid: str, n: int, start: int = 1) -> None:
 
 @_NEED_MYSQL
 def test_20_turn_memory_fact_recall():
-    """20 轮后关键事实可召回 + 摘要限长 + 来源可回查。"""
+    """20 轮窗口内关键事实可召回；21 轮后早期摘要开始接管。"""
     from app.application.services.memory_distillation import (
         build_summary_for_turns,
         load_or_build_summary,
@@ -120,10 +120,10 @@ def test_20_turn_memory_fact_recall():
         engine.dispose()
         assert len(turns) >= 20, f"应有 20 轮，实际 {len(turns)}"
 
-        # 前 10 轮提炼（早期轮次摘要）
-        summary = build_summary_for_turns(turns[:10])
+        # 前 20 轮仍在近期完整窗口内；直接构建摘要函数保持限长/来源能力。
+        summary = build_summary_for_turns(turns[:20])
         assert summary.source_turn_ids, "摘要必须有来源轮次"
-        assert summary.covered_until_turn_index >= 10
+        assert summary.covered_until_turn_index >= 20
         assert (
             len(summary.text) <= settings.MEMORY_SUMMARY_MAX_CHARS + 100
         ), "摘要应限长"
@@ -132,17 +132,18 @@ def test_20_turn_memory_fact_recall():
         all_text = summary.text + " ".join(summary.key_facts)
         assert "600518.SH" in all_text or "康美" in all_text, "应能召回关键公司"
 
-        # load_or_build_summary 可读取/构建摘要（真实 DB）
+        # 新增第 21 轮后，第 1 轮滑出近期窗口，load_or_build_summary 开始生成摘要。
+        _seed_session(sid, 1, start=21)
         s = load_or_build_summary(sid)
         assert s is not None
-        assert s.covered_until_turn_index >= 10
+        assert s.covered_until_turn_index >= 1
     finally:
         client.delete(f"/api/v1/sessions/{sid}")
 
 
 @_NEED_MYSQL
 def test_25_turn_summary_progression():
-    """25 轮：首次摘要覆盖 1-15（含 11-15 轮来源）；新增第 26 轮后推进到 16。
+    """25 轮：首次摘要覆盖 1-5；新增第 26 轮后推进到 6。
 
     回归验证：早期窗口 = 不在近期 N 轮内的轮次（而非 turn_index ≤ N）；
     会话增长后 covered_until 推进并重建。
@@ -156,28 +157,28 @@ def test_25_turn_summary_progression():
         s = load_or_build_summary(sid)
         assert s is not None
         assert (
-            s.covered_until_turn_index == 15
-        ), f"25 轮时早期窗口应覆盖到 15，实际 {s.covered_until_turn_index}"
+            s.covered_until_turn_index == 5
+        ), f"25 轮时早期窗口应覆盖到 5，实际 {s.covered_until_turn_index}"
 
-        # 第 11-15 轮 source_turn_ids 全部进入摘要（此前永久丢失的中间轮次）
-        expected = {f"turn_{sid}_{i}" for i in range(11, 16)}
+        # 第 1-5 轮 source_turn_ids 全部进入摘要
+        expected = {f"turn_{sid}_{i}" for i in range(1, 6)}
         assert expected.issubset(
             set(s.source_turn_ids)
-        ), f"11-15 轮来源必须全部进入摘要，缺失 {expected - set(s.source_turn_ids)}"
-        # 关键事实可召回（第 11 轮五粮液 → "涉及知名公司"归纳）
-        assert any("知名公司" in f for f in s.key_facts), "应能召回第 11 轮关键公司"
+        ), f"1-5 轮来源必须全部进入摘要，缺失 {expected - set(s.source_turn_ids)}"
+        # 关键事实可召回（第 1 轮康美 → "涉及知名公司"归纳）
+        assert any("知名公司" in f for f in s.key_facts), "应能召回早期关键公司"
 
         # 重复加载幂等：不重建、文本一致
         s2 = load_or_build_summary(sid)
         assert s2 is not None and s2.text == s.text
 
-        # 会话增长：新增第 26 轮 → 早期窗口扩大为 1-16，摘要推进
+        # 会话增长：新增第 26 轮 → 早期窗口扩大为 1-6，摘要推进
         _seed_session(sid, 1, start=26)
         s3 = load_or_build_summary(sid)
         assert (
-            s3.covered_until_turn_index == 16
-        ), f"新增轮次后应推进到 16，实际 {s3.covered_until_turn_index}"
-        assert f"turn_{sid}_16" in s3.source_turn_ids, "第 16 轮应进入摘要"
+            s3.covered_until_turn_index == 6
+        ), f"新增轮次后应推进到 6，实际 {s3.covered_until_turn_index}"
+        assert f"turn_{sid}_6" in s3.source_turn_ids, "第 6 轮应进入摘要"
     finally:
         client.delete(f"/api/v1/sessions/{sid}")
 

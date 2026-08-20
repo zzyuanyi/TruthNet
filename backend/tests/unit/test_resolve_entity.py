@@ -321,7 +321,7 @@ def test_alias_only_ambiguity_returns_candidates(monkeypatch):
 
 
 def test_resolved_company_code_recovers_entity():
-    """十轮外记忆：resolved_company_code 直接按代码解析公司。"""
+    """近期窗口外记忆：resolved_company_code 直接按代码解析公司。"""
     mc = MemoryContext(
         resolved_entity_name=None,
         resolved_company_code="600518.SH",

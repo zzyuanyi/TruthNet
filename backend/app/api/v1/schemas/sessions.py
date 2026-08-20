@@ -32,6 +32,7 @@ class SessionCreateDataV1(BaseModel):
     """创建会话响应（不返回 turn_count）."""
 
     session_id: str
+    user_id: str | None = None
     title: str
     status: str = "active"
     created_at: str

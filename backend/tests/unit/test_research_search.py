@@ -82,6 +82,28 @@ def test_search_returns_unified_structure():
     assert r0["report_id"] == "rp_1001"  # #4：report_id 供可回查 Evidence
 
 
+def test_default_vector_store_reused(monkeypatch):
+    """未显式注入 vector_store 时，默认 ChromaVectorStore 应复用单例。"""
+    from app.application.services import research_search as svc
+    from app.infrastructure.vector.chroma import vector_store as chroma_mod
+
+    created = []
+
+    class _ReusableVectorStore(_FakeVectorStore):
+        def __init__(self):
+            created.append(1)
+            super().__init__(hits=_SEMANTIC_HITS)
+
+    monkeypatch.setattr(svc, "_VECTOR_STORE", None)
+    monkeypatch.setattr(chroma_mod, "ChromaVectorStore", _ReusableVectorStore)
+
+    first = asyncio.run(search_research_insights("白酒行业近期研报观点"))
+    second = asyncio.run(search_research_insights("白酒行业近期研报观点"))
+
+    assert len(created) == 1
+    assert first and second
+
+
 def test_relevance_gate_filters_off_topic():
     """#6：全部命中与主题无关 → 不返回跨行业内容（走 SQL 兜底/空）。
 

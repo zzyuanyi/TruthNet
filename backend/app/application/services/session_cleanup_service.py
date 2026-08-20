@@ -11,6 +11,9 @@
      b. 不再被任何地方引用的会话本地证据：删除；
   4. 删 conversation_turns + conversation_sessions。
 
+REST DELETE 先走 soft_delete_session()：标记 archived + metadata.deleted_at；
+cleanup_session() 作为 TTL/脚本的物理清理入口保留。
+
 v3.5（审查要求）：
 - 引擎用 URL.create() 构建；缓存键含 backend/host/port/database/user，
   不只按 backend（测试库/演示库 engine 不串）；
@@ -22,49 +25,25 @@ v3.5（审查要求）：
 
 from __future__ import annotations
 
+import json
 import logging
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine, URL
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_engines: dict[str, Engine] = {}
-
 
 def _get_engine() -> Engine:
-    """按 (backend, host, port, database, user) 键缓存 engine（v3.5）。"""
-    if settings.SQL_BACKEND == "mysql":
-        key = (
-            f"mysql|{settings.MYSQL_HOST}|{settings.MYSQL_PORT}|"
-            f"{settings.MYSQL_DATABASE}|{settings.MYSQL_USER}"
-        )
-    else:
-        key = f"sqlite|{settings.SQLITE_PATH}"
-    if key in _engines:
-        return _engines[key]
-    if settings.SQL_BACKEND == "mysql":
-        url = URL.create(
-            "mysql+pymysql",
-            username=settings.MYSQL_USER,
-            password=settings.MYSQL_PASSWORD,
-            host=settings.MYSQL_HOST,
-            port=settings.MYSQL_PORT,
-            database=settings.MYSQL_DATABASE,
-            query={"charset": "utf8mb4"},
-        )
-        _engines[key] = create_engine(url, echo=False, pool_pre_ping=True)
-    else:
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = Path(__file__).resolve().parents[4] / path
-        _engines[key] = create_engine(
-            URL.create("sqlite", database=path.as_posix()), echo=False
-        )
-    return _engines[key]
+    """8/19 全面审查：改用公共工厂（完整 profile key + 切 profile 即 dispose）。
+
+    原实现自带 profile key 缓存但切库不 dispose 旧 Engine，连接池滞留旧库。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 class SessionCleanupService:
@@ -72,6 +51,105 @@ class SessionCleanupService:
 
     def __init__(self, engine: Engine | None = None) -> None:
         self._engine = engine or _get_engine()
+
+    def soft_delete_session(self, session_id: str, user_id: str | None = None) -> dict:
+        """软删除指定 session；不删除 turns/evidence，供审计与 TTL 清理。
+
+        历史 user_id 为 NULL 的会话归属默认用户；显式 user_id 不可删除他人会话。
+        """
+        stats = {
+            "session_found": False,
+            "session_deleted": False,
+            "session_id": session_id,
+        }
+        owner = (user_id or "").strip() or settings.SESSION_DEFAULT_USER_ID
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable(
+            database=getattr(getattr(self._engine, "url", None), "database", None)
+        )
+        with self._engine.begin() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT metadata FROM conversation_sessions "
+                        "WHERE session_id = :sid "
+                        "AND COALESCE(user_id, :default_user_id) = :user_id "
+                        "AND COALESCE(status, 'active') != 'archived' "
+                        "LIMIT 1"
+                    ),
+                    {
+                        "sid": session_id,
+                        "user_id": owner,
+                        "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                    },
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return stats
+            stats["session_found"] = True
+            meta = _json_value(row["metadata"], {})
+            meta["deleted_at"] = datetime.now(timezone.utc).isoformat()
+            meta["delete_ttl_days"] = settings.SESSION_SOFT_DELETE_TTL_DAYS
+            res = conn.execute(
+                text(
+                    "UPDATE conversation_sessions "
+                    "SET status = 'archived', metadata = :meta, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE session_id = :sid "
+                    "AND COALESCE(user_id, :default_user_id) = :user_id "
+                    "AND COALESCE(status, 'active') != 'archived'"
+                ),
+                {
+                    "sid": session_id,
+                    "user_id": owner,
+                    "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                    "meta": json.dumps(meta, ensure_ascii=False),
+                },
+            )
+            stats["session_deleted"] = (res.rowcount or 0) > 0
+        return stats
+
+    def purge_expired_soft_deleted(
+        self, now: datetime | None = None, ttl_days: int | None = None
+    ) -> dict:
+        """物理清理已超过 TTL 的软删除会话。
+
+        返回 {scanned, purged, sessions}；单个 session 清理失败时继续处理其他
+        session，并在 sessions 项记录 error。
+        """
+        now = now or datetime.now(timezone.utc)
+        ttl = settings.SESSION_SOFT_DELETE_TTL_DAYS if ttl_days is None else ttl_days
+        cutoff = now - timedelta(days=max(int(ttl), 0))
+        scanned = 0
+        sessions: list[dict] = []
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT session_id, metadata FROM conversation_sessions "
+                        "WHERE status = 'archived'"
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        for row in rows:
+            scanned += 1
+            meta = _json_value(row["metadata"], {})
+            deleted_at = _parse_datetime(str(meta.get("deleted_at") or ""))
+            if deleted_at is None or deleted_at > cutoff:
+                continue
+            sid = str(row["session_id"])
+            try:
+                stats = self.cleanup_session(sid)
+                sessions.append({"session_id": sid, "stats": stats})
+            except Exception as exc:  # noqa: BLE001 — 清理其他 session 不受影响
+                logger.warning("session purge failed: %s", sid, exc_info=True)
+                sessions.append({"session_id": sid, "error": str(exc)})
+        return {"scanned": scanned, "purged": len(sessions), "sessions": sessions}
 
     def cleanup_session(self, session_id: str) -> dict:
         """删除指定 session 全部数据；返回统计。单事务，失败整体回滚。
@@ -91,6 +169,11 @@ class SessionCleanupService:
             "evidence_kept": 0,
             "evidence_deleted": 0,
         }
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable(  # 8/19 P0：写路径运行时守卫（演示库零写入）
+            database=getattr(getattr(self._engine, "url", None), "database", None)
+        )
         with self._engine.begin() as conn:
             found = conn.execute(
                 text(
@@ -161,3 +244,26 @@ class SessionCleanupService:
             )
             stats["session_deleted"] = (res.rowcount or 0) > 0
         return stats
+
+
+def _json_value(value, default):
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
