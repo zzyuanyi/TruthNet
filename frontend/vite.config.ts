@@ -32,5 +32,16 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     minify: 'terser',
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('/d3-') || id.includes('/d3/') || id.includes('d3-selection') || id.includes('d3-interpolate')) return 'vendor-d3';
+          if (id.includes('recharts') || id.includes('victory-vendor') || id.includes('/d3')) return 'vendor-charts';
+          if (id.includes('react-syntax-highlighter') || id.includes('refractor') || id.includes('prismjs') || id.includes('highlight.js')) return 'vendor-syntax';
+          if (id.includes('react-markdown') || id.includes('remark') || id.includes('unified') || id.includes('micromark') || id.includes('mdast')) return 'vendor-markdown';
+        },
+      },
+    },
   },
 })

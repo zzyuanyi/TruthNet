@@ -251,6 +251,8 @@ interface RuleMatrixCell {
   severity: string;
   explanation: string;
   metrics: Array<{ label: string; text: string; riskDirection?: string }>;
+  asOf?: string;
+  evidenceCount: number;
 }
 
 interface RuleMatrixRow {
@@ -288,6 +290,8 @@ function buildRuleMatrix(companies: CompanyRiskSummary[]): RuleMatrixRow[] {
             text: m.value != null ? `${m.value}${unitLabelMap[m.unit] ?? (m.unit || '')}` : '-',
             riskDirection: m.risk_direction,
           })),
+          asOf: detail?.as_of || undefined,
+          evidenceCount: detail?.evidence_ids?.length || 0,
         };
       }),
     }));
@@ -706,7 +710,6 @@ export default function ComparePage() {
             </Card>
 
             {/* 触发规则对比 */}
-              {false && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -806,7 +809,6 @@ export default function ComparePage() {
                 </div>
               </CardContent>
             </Card>
-              )}
 
               {/* 触发规则矩阵：同一规则横向对比各公司状态/指标，替代逐公司堆叠 */}
               <Card>
@@ -860,6 +862,12 @@ export default function ComparePage() {
                                       </p>
                                     ))}
                                   </div>
+                                )}
+                                {cell.triggered && cell.asOf && (
+                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                    期次：{cell.asOf}
+                                    {cell.evidenceCount > 0 ? ` · ${cell.evidenceCount} 条证据可回查` : ''}
+                                  </p>
                                 )}
                                 {cell.triggered && cell.explanation && (
                                   <p className="mt-1.5 line-clamp-2 text-[11px] text-muted-foreground">

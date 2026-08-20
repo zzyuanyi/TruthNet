@@ -2,10 +2,67 @@
 
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx';
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
+import css from 'react-syntax-highlighter/dist/esm/languages/prism/css';
+import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
+import java from 'react-syntax-highlighter/dist/esm/languages/prism/java';
+import go from 'react-syntax-highlighter/dist/esm/languages/prism/go';
 import { Check, Copy } from 'lucide-react';
 import { useState, useCallback } from 'react';
+
+// 按需注册语言（仅保留业务高频语言，从根上压缩 syntax-highlighter 体积）
+SyntaxHighlighter.registerLanguage('javascript', javascript);
+SyntaxHighlighter.registerLanguage('typescript', typescript);
+SyntaxHighlighter.registerLanguage('jsx', jsx);
+SyntaxHighlighter.registerLanguage('tsx', tsx);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+SyntaxHighlighter.registerLanguage('css', css);
+SyntaxHighlighter.registerLanguage('html', markup);
+SyntaxHighlighter.registerLanguage('markup', markup);
+SyntaxHighlighter.registerLanguage('java', java);
+SyntaxHighlighter.registerLanguage('go', go);
+
+/** 语言别名 → 已注册主名 */
+const LANG_ALIASES: Record<string, string> = {
+  py: 'python',
+  js: 'javascript',
+  ts: 'typescript',
+  sh: 'bash',
+  shell: 'bash',
+  yml: 'yaml',
+  html: 'markup',
+};
+
+/** 已注册语言集合（用于 fallback 到 text） */
+const REGISTERED_LANGS = new Set([
+  'javascript',
+  'typescript',
+  'jsx',
+  'tsx',
+  'python',
+  'sql',
+  'bash',
+  'json',
+  'yaml',
+  'css',
+  'markup',
+  'java',
+  'go',
+]);
 
 /** Copy button for code blocks */
 function CopyButton({ text }: { text: string }) {
@@ -58,13 +115,15 @@ function CodeBlock({
 }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
   const match = /language-(\w+)/.exec(className || '');
   const language = match?.[1] ?? '';
+  const normalized = LANG_ALIASES[language] ?? language;
+  const highlightLang = REGISTERED_LANGS.has(normalized) ? normalized : '';
   const codeText = String(children).replace(/\n$/, '');
 
   // Inline code (no language specified and single line)
   if (!language && !codeText.includes('\n')) {
     return (
       <code
-        className="px-1.5 py-0.5 rounded bg-gray-100 text-blue-700 text-[13px] font-mono"
+        className="px-1.5 py-0.5 rounded bg-muted text-primary text-[13px] font-mono"
         {...rest}
       >
         {children}
@@ -84,7 +143,7 @@ function CodeBlock({
       )}
       <CopyButton text={codeText} />
       <SyntaxHighlighter
-        language={language || 'text'}
+        language={highlightLang || 'text'}
         style={oneDark}
         customStyle={{
           margin: 0,
@@ -144,36 +203,36 @@ const sharedComponents = {
 
   // Blockquotes
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="my-2 pl-3 border-l-3 border-blue-400 bg-blue-50/50 rounded-r-md py-1.5 pr-2 text-gray-700 italic">
+    <blockquote className="my-2 pl-3 border-l-4 border-primary/40 bg-muted/40 rounded-r-md py-1.5 pr-2 text-foreground/80 italic">
       {children}
     </blockquote>
   ),
 
   // Tables
   table: ({ children }: { children?: React.ReactNode }) => (
-    <div className="my-2 overflow-x-auto rounded-md border border-gray-200">
+    <div className="my-2 overflow-x-auto rounded-lg border border-border">
       <table className="min-w-full text-sm">{children}</table>
     </div>
   ),
   thead: ({ children }: { children?: React.ReactNode }) => (
-    <thead className="bg-gray-50">{children}</thead>
+    <thead className="bg-muted/60">{children}</thead>
   ),
   th: ({ children }: { children?: React.ReactNode }) => (
-    <th className="px-3 py-1.5 text-left font-semibold text-gray-700 border-b border-gray-200 whitespace-nowrap">
+    <th className="px-3 py-1.5 text-left font-semibold text-foreground border-b border-border whitespace-nowrap">
       {children}
     </th>
   ),
   td: ({ children }: { children?: React.ReactNode }) => (
-    <td className="px-3 py-1.5 text-gray-600 border-b border-gray-100 whitespace-nowrap">
+    <td className="px-3 py-1.5 text-muted-foreground border-b border-border/60 whitespace-nowrap">
       {children}
     </td>
   ),
   tr: ({ children }: { children?: React.ReactNode }) => (
-    <tr className="hover:bg-gray-50/50 transition-colors">{children}</tr>
+    <tr className="hover:bg-muted/40 transition-colors">{children}</tr>
   ),
 
   // Horizontal rule
-  hr: () => <hr className="my-3 border-gray-200" />,
+  hr: () => <hr className="my-3 border-border" />,
 
   // Links
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
@@ -181,7 +240,7 @@ const sharedComponents = {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-600 hover:text-blue-800 underline underline-offset-2 transition-colors"
+      className="text-primary hover:text-primary/80 underline underline-offset-2 transition-colors"
     >
       {children}
     </a>
@@ -189,10 +248,10 @@ const sharedComponents = {
 
   // Strong & Emphasis
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-gray-900">{children}</strong>
+    <strong className="font-semibold text-foreground">{children}</strong>
   ),
   em: ({ children }: { children?: React.ReactNode }) => (
-    <em className="italic text-gray-700">{children}</em>
+    <em className="italic text-foreground/80">{children}</em>
   ),
 
   // Images (render as link for chat context)
@@ -201,7 +260,7 @@ const sharedComponents = {
       href={src}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-600 hover:text-blue-800 underline underline-offset-2"
+      className="text-primary hover:text-primary/80 underline underline-offset-2"
     >
       {alt ?? '图片链接'}
     </a>
