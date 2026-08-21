@@ -466,6 +466,18 @@ export default function ChatPage() {
         setPanelState('error');
         setIsLoading(false);
         break;
+      case 'turn.cancelled': {
+        // 契约修复（接口审计 CONFIRMED）：后端取消确认终态——用户显式 turn.cancel、
+        // 断线清理、stream.resume 断线重连回放均发此事件；本 turn 不会再发
+        // turn.completed/turn.failed。若不处理，重连回放的 turn.cancelled 会被静默
+        // 丢弃 → isLoading 恒真、面板卡在 loading，只能刷新或切会话恢复。
+        const cancelled = payload as { turn_id?: string; message?: string };
+        console.warn('[WS] turn cancelled:', cancelled.message || '当前轮次已取消');
+        setPendingCandidates(null);
+        setPanelState('error');
+        setIsLoading(false);
+        break;
+      }
       case 'company.candidates': {
         // 契约修复：mention 分组协议优先——多候选时后端 candidates 为空、
         // 候选在 mentions[]（每 mention 带 mention_id，payload 带 revision）。
