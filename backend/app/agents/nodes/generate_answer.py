@@ -295,6 +295,54 @@ def _build_signal_summary(claims: list, results=None, risk_output=None) -> str:
     return "；".join(parts)
 
 
+def _build_company_brief_analysis(
+    state: AgentState, claims: list, risk_output=None
+) -> str:
+    """公司宽泛提问的轻量综合分析：一句判断 + 少量事实，不扩成新模块。"""
+    company = state.get("company")
+    if company is None:
+        return ""
+    plan = state.get("plan")
+    query = state.get("user_query", "")
+    if getattr(plan, "intent", "") != "analysis" and not any(
+        cue in query for cue in ("怎么样", "如何", "情况", "表现")
+    ):
+        return ""
+
+    financial = [c for c in claims if c.claim_type == "financial"]
+    equity = [c for c in claims if c.claim_type == "equity"]
+    events = [c for c in claims if c.claim_type == "event"]
+    risk_level = (
+        getattr(risk_output, "risk_level", "")
+        or _highest_severity(claims)
+        or "unknown"
+    )
+    risk_label = _SEVERITY_LABELS.get(risk_level, "数据不足")
+    if risk_level in ("red", "orange", "yellow"):
+        stance = "偏谨慎，建议重点核验财务、股权和舆情是否同向"
+    elif risk_level == "green":
+        stance = "当前未见明显异常"
+    else:
+        stance = "数据覆盖仍有限，暂不能下定论"
+
+    parts: list[str] = [f"【简要分析】{company.sec_name}整体判断：{stance}"]
+    if risk_output is not None:
+        as_of = getattr(risk_output, "as_of", "") or ""
+        if as_of:
+            parts.append(f"数据截止日 {as_of[:4]}-{as_of[4:6]}-{as_of[6:]}")
+    if financial:
+        rule_ids = sorted({c.rule_id for c in financial if c.rule_id})
+        rule_text = "、".join(rule_ids[:3]) or "多条规则"
+        parts.append(f"财务信号 {len(financial)} 项（{rule_text}）")
+    if equity:
+        parts.append(f"股权信号 {len(equity)} 项")
+    if events:
+        parts.append(f"事件信号 {len(events)} 项")
+    if not financial and not equity and not events:
+        parts.append(f"当前仅有综合风险等级 {risk_label}")
+    return "；".join(parts) + "。"
+
+
 def _build_cross_module_observation(state: AgentState, claims: list) -> str:
     """把多模块信号收敛为可行动的核验优先级，不推导未经验证的因果。"""
     plan = state.get("plan")
@@ -447,8 +495,9 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
     if triggers:
         segs.append("【预警点】" + "；".join(triggers) + "。")
 
-    # 【数据对比】：只格式化 rule_details.current
+    # 【数据对比】：只格式化 rule_details.current；多条指标用表格便于核对。
     pairs: list[str] = []
+    metric_rows: list[tuple[str, str, str]] = []
     if finance and finance.rule_details:
         for rid in sorted(finance.rule_details):
             if finance.rule_statuses.get(rid) != "triggered":
@@ -462,9 +511,29 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
                 unit = _METRIC_UNITS.get(str(v.get("unit", "")), "")
                 if val is None:
                     continue
-                pairs.append(f"{label} {_format_number_value(val, unit)}{unit}")
+                value_text = f"{_format_number_value(val, unit)}{unit}"
+                pairs.append(f"{label} {value_text}")
+                raw_unit = str(v.get("unit", "") or "")
+                table_unit = unit or {"ratio": "比值"}.get(raw_unit, raw_unit)
+                row = (label, value_text, table_unit)
+                if row not in metric_rows:
+                    metric_rows.append(row)
     if pairs:
-        segs.append("【数据对比】" + "、".join(pairs) + "。")
+        if len(metric_rows) >= 2:
+            table = [
+                "【数据对比】",
+                "",
+                "| 指标 | 数值 | 单位 |",
+                "|---|---:|---|",
+                *[
+                    f"| {label.replace('|', '｜')} | {value.replace('|', '｜')} | "
+                    f"{table_unit or '暂无'} |"
+                    for label, value, table_unit in metric_rows
+                ],
+            ]
+            segs.append("\n".join(table))
+        else:
+            segs.append("【数据对比】" + "、".join(pairs) + "。")
 
     # 财务解读场景（有预警点或数据对比）才保证四段完整（P2-5）
     has_content = bool(triggers or pairs)
@@ -978,29 +1047,29 @@ def _web_search_fill_company_fact(
     )
     from app.application.services.web_search_service import web_search
 
-    # 8/19 审查：先用带 wind_code 的 query 提升同名公司消歧（如平安银行/
-    # 中国平安/平安电工）；若垂直域没有命中，再退到不带代码的通用检索。
-    # 这样既保留精确路由，又给 IPO 价格/高管薪酬这类公告事实一个第二机会。
+    # 8/19 审查：所有候选 query 均保留 wind_code，避免同名公司串线；
+    # 不把公司事实降级到质量不稳定的无代码通用检索。
     queries = _company_fact_search_queries(sec_name, wind_code, fact_key, label)
     hits = []
-    for query in queries:
-        hits = web_search(query)
-        if hits:
-            break
-    if not hits:
-        return None, None
-
     value: str | None = None
     field = ""
-    if fact_key == "listing_date":
-        value = extract_listing_date_from_hits(hits)
-        field = "listing_date"
-    elif fact_key == "ipo_price":
-        value = extract_ipo_price_from_hits(hits)
-        field = "ipo_price"
-    elif fact_key == "executive_compensation":
-        value = extract_executive_compensation_excerpt(hits)
-        field = "executive_compensation"
+    for query in queries:
+        candidate_hits = web_search(query)
+        if fact_key == "listing_date":
+            candidate_value = extract_listing_date_from_hits(candidate_hits)
+            field = "listing_date"
+        elif fact_key == "ipo_price":
+            candidate_value = extract_ipo_price_from_hits(candidate_hits)
+            field = "ipo_price"
+        elif fact_key == "executive_compensation":
+            candidate_value = extract_executive_compensation_excerpt(candidate_hits)
+            field = "executive_compensation"
+        else:
+            candidate_value = None
+        if candidate_value:
+            hits = candidate_hits
+            value = candidate_value
+            break
     if not value:
         return None, None
 
@@ -1044,7 +1113,7 @@ def _company_fact_search_queries(
 ) -> list[str]:
     """公司事实联网检索 query 列表。
 
-    先走带代码的精确检索，再走不带代码的通用检索兜底。
+    先走带代码的精确检索，再走仍带代码的补充检索。
     对于 IPO 价格/高管薪酬，第二条 query 显式补公告语义，避免只命中垂直
     行情/空结果。
     """
@@ -1052,18 +1121,18 @@ def _company_fact_search_queries(
     if fact_key == "listing_date":
         return [
             base,
-            f"{sec_name} 上市日期 上市公告书",
-            f"{sec_name} 上市公告 上市日期",
+            f"{sec_name} {wind_code} 上市日期 上市公告书",
+            f"{sec_name} {wind_code} 上市公告 上市日期",
         ]
     if fact_key == "ipo_price":
         return [
             f"{sec_name} {wind_code} 首发价格 发行价 公告",
-            f"{sec_name} 首发价格 发行价 公告",
+            f"{sec_name} {wind_code} 首次公开发行 发行价格 上市公告",
         ]
     if fact_key == "executive_compensation":
         return [
             f"{sec_name} {wind_code} 高管薪酬 董监高薪酬 公告",
-            f"{sec_name} 高管薪酬 董监高薪酬 公告",
+            f"{sec_name} {wind_code} 年报 高管薪酬 董监高报酬",
         ]
     return [base]
 
@@ -1250,6 +1319,12 @@ def _answer_market_quote(state: AgentState, field: str) -> dict:
     else:
         rendered = format_market_value(field, result.value)
         date_text = result.trade_date
+        if (
+            any(word in state.get("user_query", "") for word in ("今天", "今日"))
+            and not result.period_start
+            and result.trade_date
+        ):
+            date_text = f"当前可获取的最近交易日为 {result.trade_date}"
         if result.period_start:
             date_text = f"{result.period_start}至{result.trade_date}"
         if field in ("amount", "volume"):
@@ -1340,7 +1415,7 @@ def _answer_multi_metric(state: AgentState) -> dict:
     if "营业收入" in query or "营收" in query:
         requested.append(("营业收入", "operating_revenue"))
     if "净资产" in query:
-        requested.append(("净资产", "unsupported"))
+        requested.append(("净资产", "net_assets"))
     if "收盘价" in query or "收盘" in query:
         requested.append(("收盘价", "unsupported"))
     if "eps" in query.lower() or "每股收益" in query:
@@ -1422,6 +1497,10 @@ def _answer_directional_events(state: AgentState) -> dict | None:
         return None
     name_code = f"{company.sec_name}（{company.wind_code}）"
     direction_label = {"positive": "利好", "negative": "利空"}.get(direction, "")
+    query = str(state.get("user_query") or "")
+    latest_requested = any(
+        cue in query for cue in ("最新公告", "最新动态", "最近公告", "公告内容")
+    )
     if not selected:
         label = f"{direction_label}事件" if direction_label else "公告或事件"
         answer = f"{name_code}近期未检出可回查的{label}。"
@@ -1441,7 +1520,16 @@ def _answer_directional_events(state: AgentState) -> dict | None:
                 detail += f" [证据: {evidence_id}]"
             rows.append(f"- {detail}")
         label = f"{direction_label}事件" if direction_label else "公告或事件"
-        answer = f"{name_code}近期可回查的{label}：\n" + "\n".join(rows)
+        if latest_requested:
+            latest_date = str(selected[0].get("date") or "未知")
+            answer = (
+                f"{name_code}数据集内最新可回查的{label}（截至 {latest_date}）：\n"
+                + "\n".join(rows)
+                + "\n当前事件数据仅保留公告标题和元数据，未取回公告正文；"
+                "因此不能把上述记录表述为当前市场的最新公告。"
+            )
+        else:
+            answer = f"{name_code}近期可回查的{label}：\n" + "\n".join(rows)
     _emit_segment(state, answer)
     return {
         "claims": [],
@@ -1450,6 +1538,93 @@ def _answer_directional_events(state: AgentState) -> dict | None:
             answer=answer, risk_level="unknown", evidence=list(events.evidence or [])
         ),
     }
+
+
+def _research_relevant_excerpt(query: str, content: str) -> str:
+    """从研报摘要中保留与问题相关的句子，避免把相邻营销信息当结论。"""
+    normalized = " ".join(str(content or "").replace("\n", " ").split())
+    if not normalized:
+        return "暂无摘要"
+    if not any(
+        cue in query
+        for cue in (
+            "行业表现",
+            "行业整体",
+            "整体表现",
+            "行业趋势",
+            "发展趋势",
+            "研发技术",
+            "正在研发",
+            "技术趋势",
+            "新技术",
+        )
+    ):
+        return normalized[:160].strip("。；; ")
+
+    technology_query = any(
+        cue in query
+        for cue in ("研发技术", "正在研发", "技术趋势", "新技术", "AI医疗")
+    )
+    industry_query = any(
+        cue in query
+        for cue in ("行业表现", "行业整体", "整体表现", "行业趋势", "发展趋势")
+    )
+    cues = (
+        (
+            "技术",
+            "研发",
+            "产品",
+            "人工智能",
+            "AI",
+            "机器人",
+            "影像",
+            "材料",
+            "设备",
+            "专利",
+            "工艺",
+        )
+        if technology_query
+        else (
+            "行业",
+            "市场",
+            "规模",
+            "增速",
+            "增长",
+            "需求",
+            "竞争",
+            "集采",
+            "利润",
+            "景气",
+            "政策",
+            "出口",
+        )
+    )
+    noise = (
+        "营销渠道",
+        "销售渠道",
+        "渠道拓展",
+        "目标价",
+        "买入评级",
+        "增持评级",
+        "估值",
+        "评级",
+        "EPS",
+    )
+    sentences = [
+        part.strip(" 。；;，,")
+        for part in re.split(r"[。！？；;\n]", normalized)
+        if part.strip(" 。；;，, ")
+    ]
+    selected = [
+        sentence
+        for sentence in sentences
+        if any(cue.lower() in sentence.lower() for cue in cues)
+        and not any(term in sentence for term in noise)
+        and not (industry_query and "公司" in sentence)
+    ]
+    if not selected:
+        return normalized[:160].strip("。；; ")
+    return "；".join(selected[:2])[:160].strip("。；; ")
 
 
 def _format_research_insights(query: str, insights: list[dict]) -> str:
@@ -1488,7 +1663,9 @@ def _format_research_insights(query: str, insights: list[dict]) -> str:
             for item in rich_items[:8]:
                 name = str(item.get("sec_name") or "暂无明确公司")
                 source = str(item.get("source_title") or "研报").replace("|", "｜")
-                content = " ".join(str(item.get("content") or "暂无摘要").split())
+                content = _research_relevant_excerpt(
+                    query, item.get("content") or "暂无摘要"
+                )
                 rows.append(
                     f"| {name} | {source[:80]} | {content[:160].replace('|', '｜')} |"
                 )
@@ -1512,11 +1689,17 @@ def _format_research_insights(query: str, insights: list[dict]) -> str:
         src = item.get("source_title") or "研报"
         org = item.get("source_org", "")
         label = f"{org}·{src}" if org else src
-        content = " ".join(str(item.get("content") or "").split())[:160].strip("。；; ")
+        content = _research_relevant_excerpt(query, item.get("content") or "")
         if not content:
             content = str(item.get("source_title") or "暂无摘要").strip("。；; ")
         parts.append(f"{content}（来源：{label}）")
-    return "；".join(parts)
+    result = "；".join(parts)
+    if result and any(
+        cue in query
+        for cue in ("行业表现", "行业整体", "整体表现", "行业趋势", "发展趋势")
+    ):
+        return "研报样本显示：" + result + "。研报样本有限，不能代表全行业全部公司。"
+    return result
 
 
 def _answer_company_research(state: AgentState) -> dict:
@@ -3286,7 +3469,7 @@ def generate_answer_node(state: AgentState) -> dict:
                 if valid_insights:
                     parts = _format_research_insights(user_query, valid_insights)
                     answer = (
-                        "未匹配到具体公司，以下是相关研报观点摘要："
+                        "当前问题未指定具体公司，以下是相关研报观点摘要："
                         + parts.rstrip("。")
                         + "。如需针对某家公司分析，请提供公司名称或股票代码。"
                     )
@@ -3538,6 +3721,9 @@ def generate_answer_node(state: AgentState) -> dict:
     if summary:
         seg = summary + "。"
         append_segment(seg)
+    brief = _build_company_brief_analysis(state, claims, risk_output=risk_output)
+    if brief:
+        append_segment(brief)
     append_segment(_build_cross_module_observation(state, claims))
     if mode == "equity":
         equity_overview = _build_equity_overview(state)

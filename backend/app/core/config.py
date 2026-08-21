@@ -101,7 +101,8 @@ class Settings(BaseSettings):
     # AnySearch 专用 Key（as_sk_*，独立于 bocha；匿名可用但限流低）
     ANYSEARCH_API_KEY: str = ""
     WEB_SEARCH_BASE_URL: str = "https://api.bochaai.com/v1/web-search"
-    WEB_SEARCH_TIMEOUT_SECONDS: float = 10.0  # 单次联网墙钟预算（秒）
+    # AnySearch finance MCP 的部分历史/公告查询超过 10 秒才返回；按接口规范留出 15 秒。
+    WEB_SEARCH_TIMEOUT_SECONDS: float = 15.0  # 单次联网墙钟预算（秒）
     WEB_SEARCH_MAX_RESULTS: int = 5  # 每 query 最多返回命中数
     WEB_SEARCH_RATE_LIMIT_RPM: int = 30  # 限流：每分钟最多请求数（fail-fast）
 

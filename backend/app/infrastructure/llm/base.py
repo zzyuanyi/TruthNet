@@ -38,7 +38,14 @@ def _is_transient_error(exception: BaseException) -> bool:
     try:
         from openai import APIStatusError, APITimeoutError
 
-        return isinstance(exception, (APIStatusError, APITimeoutError))
+        if isinstance(exception, APITimeoutError):
+            return True
+        if isinstance(exception, APIStatusError):
+            status_code = getattr(exception, "status_code", None)
+            return status_code == 429 or (
+                status_code is not None and status_code >= 500
+            )
+        return False
     except ImportError:
         return False
 
@@ -254,7 +261,7 @@ class BaseOpenAICompatibleProvider:
                         )
                         return None
             except Exception as e:
-                if attempt == 0:
+                if attempt == 0 and _is_transient_error(e):
                     logger.warning(
                         "%s: structured_chat 第 %d 次调用失败: %s",
                         self.provider_name,
@@ -262,13 +269,12 @@ class BaseOpenAICompatibleProvider:
                         e,
                     )
                     continue
-                else:
-                    logger.error(
-                        "%s: structured_chat 两次调用均失败: %s",
-                        self.provider_name,
-                        e,
-                    )
-                    return None
+                logger.error(
+                    "%s: structured_chat 调用失败（不再重试）: %s",
+                    self.provider_name,
+                    e,
+                )
+                return None
 
         return None
 

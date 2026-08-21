@@ -29,6 +29,7 @@ Key 注册：免费，一个邮箱即可（POST /v1/auth/email/register，见调
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import re
 import threading
@@ -379,21 +380,33 @@ class AnySearchWebSearchProvider:
             "params": {"name": tool_name, "arguments": arguments},
         }
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                self._mcp_endpoint, headers=self._headers(), json=payload
-            )
-            # P2-3：3xx/4xx/5xx 一律按 HTTP 错误分类（httpx 默认不跟随重定向，
-            # 302/301 响应体非 JSON，若放过会误记 not_observable）
-            if resp.status_code != 200:
-                raise _AnySearchHTTPError(resp.status_code)
-            data = resp.json()
-            if "error" in data:
-                raise _AnySearchRPCError(str(data["error"].get("message", "unknown")))
-            result = data.get("result") or {}
-            for part in result.get("content") or []:
-                if part.get("type") == "text":
-                    return str(part.get("text") or "")
-            return ""
+            for attempt in range(2):
+                try:
+                    resp = await client.post(
+                        self._mcp_endpoint, headers=self._headers(), json=payload
+                    )
+                    # 仅对服务端瞬时错误重试一次；认证、限流和参数错误不重试。
+                    if resp.status_code != 200:
+                        if resp.status_code in (500, 502, 503, 504) and attempt == 0:
+                            await asyncio.sleep(0.2)
+                            continue
+                        raise _AnySearchHTTPError(resp.status_code)
+                    data = resp.json()
+                    if "error" in data:
+                        raise _AnySearchRPCError(
+                            str(data["error"].get("message", "unknown"))
+                        )
+                    result = data.get("result") or {}
+                    for part in result.get("content") or []:
+                        if part.get("type") == "text":
+                            return str(part.get("text") or "")
+                    return ""
+                except (httpx.ConnectError, httpx.NetworkError, httpx.ProtocolError):
+                    if attempt == 0:
+                        await asyncio.sleep(0.2)
+                        continue
+                    raise
+        return ""
 
     def _headers(self) -> dict:
         headers = {
@@ -761,6 +774,8 @@ def _search_result_from_vertical_json(
             "pe",
             "pb",
             "pe_ttm",
+            "dv_ratio",
+            "dv_ttm",
             "turnover_rate",
             "total_mv",
             "circ_mv",

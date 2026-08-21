@@ -1,7 +1,7 @@
 // 织网鉴真 TruthNet - 企业画像页
 // T3: 5 区块（概览/财务/股权/舆情/证据），使用新组件
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
@@ -385,6 +385,62 @@ export default function CompanyProfilePage() {
   const coverageGapText =
     coverageGaps.length > 0 ? `数据说明：${coverageGaps.join(' · ')}` : '';
 
+  const profileBrief = useMemo(() => {
+    if (!profile) return null;
+    const level = (riskData?.risk_level || 'unknown') as RiskLevel;
+    const levelLabel = riskLevelConfig[level]?.label || '未知';
+    const levelColor = riskLevelConfig[level]?.color || riskLevelConfig.unknown.color;
+    const financeLine = financeHasData
+      ? (triggeredRules.length > 0
+          ? `财务发现 ${triggeredRules.length} 条异常信号`
+          : '财务未见明显异常信号')
+      : '财务数据不足';
+    const equityLine = equityHasData
+      ? (equityData?.paths?.length
+          ? `股权穿透已识别 ${equityData.paths.length} 条路径`
+          : '股权数据存在但未形成稳定穿透路径')
+      : '股权数据不足';
+    const eventLine = eventsHasData
+      ? (impactConclusions.length > 0
+          ? `舆情已形成 ${impactConclusions.length} 条影响结论`
+          : sentimentEvents.length > 0
+            ? `舆情已有 ${sentimentEvents.length} 条事件记录`
+            : '舆情暂无明显事件')
+      : '舆情数据不足';
+    const dateText = riskData?.as_of || '截止日暂无';
+    const stance =
+      level === 'red' || level === 'orange' || level === 'yellow'
+        ? '偏谨慎'
+        : level === 'green'
+          ? '相对平稳'
+          : '待补充数据后再判断';
+    return {
+      levelLabel,
+      levelColor,
+      dateText,
+      stance,
+      financeLine,
+      equityLine,
+      eventLine,
+      note:
+        coverageGapText ||
+        (impactAdvice?.overall_advice ? impactAdvice.overall_advice.slice(0, 120) : ''),
+    };
+  }, [
+    profile,
+    riskData?.risk_level,
+    riskData?.as_of,
+    financeHasData,
+    equityHasData,
+    eventsHasData,
+    triggeredRules.length,
+    equityData?.paths?.length,
+    impactConclusions.length,
+    sentimentEvents.length,
+    coverageGapText,
+    impactAdvice?.overall_advice,
+  ]);
+
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 bg-background">
       {/* 左侧锚点导航 */}
@@ -482,6 +538,24 @@ export default function CompanyProfilePage() {
                   <p className="rounded-md border border-dashed border-border/60 p-2 text-xs text-muted-foreground">
                     {coverageGapText}
                   </p>
+                )}
+
+                {profileBrief && (
+                  <div className="rounded-md border border-border/60 bg-background p-4 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Badge className={profileBrief.levelColor}>{profileBrief.levelLabel}</Badge>
+                      <span className="text-muted-foreground">简要分析</span>
+                      <span className="text-muted-foreground">数据截止：{profileBrief.dateText}</span>
+                    </div>
+                    <p className="text-sm leading-6 text-foreground">
+                      {profile.sec_name}整体{profileBrief.stance}；{profileBrief.financeLine}；{profileBrief.equityLine}；{profileBrief.eventLine}。
+                    </p>
+                    {profileBrief.note && (
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        {profileBrief.note}
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 {/* A3：top 触发规则（点击跳转财务异常区） */}

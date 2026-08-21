@@ -703,6 +703,7 @@ def test_market_quote_fields_route_to_anysearch_snapshot():
         ("贵州茅台今天股价", "close"),
         ("恒生电子换手率", "turnover_rate"),
         ("东吴证券总市值", "total_mv"),
+        ("恒生电子股息率", "dividend_yield"),
         ("东吴证券今日成交量", "volume"),
         ("平安银行今日是涨还是跌", "pct_chg"),
         ("平安银行的当前市价是多少", "close"),

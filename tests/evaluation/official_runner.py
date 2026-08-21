@@ -284,9 +284,29 @@ def _run_with_context(
                         "comparison_mode": (getattr(comparison, "mode", "") or ""),
                         "metric_ids": list(getattr(comparison, "metric_ids", []) or []),
                         "indicator": getattr(plan, "indicator", "") if plan else "",
-                        "answer": (getattr(final, "answer", "") or "")[:240],
+                        "answer": getattr(final, "answer", "") or "",
                         "claims": len(result.get("claims", [])),
                         "evidence": len(result.get("evidence", [])),
+                        "evidence_items": [
+                            {
+                                "evidence_id": str(getattr(ev, "evidence_id", "") or ""),
+                                "field_path": str(getattr(ev, "field_path", "") or ""),
+                                "period": str(getattr(ev, "period", "") or ""),
+                                "value": str(getattr(ev, "value", "") or ""),
+                                "unit": str(getattr(ev, "unit", "") or ""),
+                                "statement_scope": str(
+                                    getattr(ev, "statement_scope", "") or ""
+                                ),
+                                "source_title": str(
+                                    getattr(ev, "source_title", "") or ""
+                                ),
+                                "source_excerpt": str(
+                                    getattr(ev, "source_excerpt", "") or ""
+                                )[:240],
+                                "source_uri": str(getattr(ev, "source_uri", "") or ""),
+                            }
+                            for ev in result.get("evidence", [])
+                        ],
                     },
                 }
             )
@@ -329,6 +349,11 @@ def main() -> int:
         help="官方 clean.xlsx 路径（默认 repo 相对副本）",
     )
     ap.add_argument("--report", default=str(DEFAULT_REPORT), help="报告输出路径")
+    ap.add_argument(
+        "--semantic-judge",
+        action="store_true",
+        help="执行独立语义裁判并在报告中输出估计正确率（不写回 sidecar）",
+    )
     ap.add_argument(
         "--accept-new-hash",
         action="store_true",
@@ -375,11 +400,27 @@ def main() -> int:
         _cleanup_sessions(session_ids)
 
     summary = _summarize(records, requires_reannotation=requires_reannotation)
+    semantic_judgement = None
+    if args.semantic_judge:
+        from semantic_judge import judge_records
+
+        semantic_judgement = judge_records(records)
     lines: list[str] = []
     lines.append("=" * 72)
     lines.append("TruthNet 官方问题语料分项评测 — v3.3.3 收口批次 E canary")
     lines.append("=" * 72)
     lines.append(json.dumps(summary, ensure_ascii=False, indent=2))
+    if semantic_judgement is not None:
+        lines.append("")
+        lines.append("独立语义裁判（不写回 sidecar）：")
+        lines.append(
+            json.dumps(
+                semantic_judgement["summary"], ensure_ascii=False, indent=2
+            )
+        )
+        lines.append("逐条语义裁判结果：")
+        for judgement in semantic_judgement["judgements"]:
+            lines.append(json.dumps(judgement, ensure_ascii=False))
     lines.append("")
     lines.append("逐条 observed（人工核验依据，不写回 sidecar）：")
     lines.append("-" * 72)

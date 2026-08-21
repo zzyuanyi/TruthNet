@@ -89,6 +89,7 @@ def test_mock_backend_uses_template(monkeypatch):
         result=result, company_names=["贵州茅台", "康美药业"]
     )
     assert warnings
+    assert "| 指标 | 公司A | 公司B | 共同期间 | 结论 |" in text
     assert "贵州茅台" in text
     assert "高于" in text or "低于" in text
     assert "毛利率" in text
@@ -123,6 +124,7 @@ def test_llm_success_returns_paragraphs(monkeypatch):
         result=result, company_names=["贵州茅台", "康美药业"]
     )
     assert warnings == []
+    assert "| 指标 | 公司A | 公司B | 共同期间 | 结论 |" in text
     assert "盈利质量明显优于" in text
     assert "毛利率维度" in text
     # 结构化数据未被覆盖：LLM 输出与 result 分离（只读）

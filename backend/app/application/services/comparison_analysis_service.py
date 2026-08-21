@@ -129,8 +129,9 @@ def _validate_output(
 
 
 def _template_analysis(result: Any) -> str:
-    """确定性模板兜底：基于 ok_rows 生成'谁高谁低'小结（无 LLM 也可用）。"""
+    """确定性模板兜底：先给表，再给简短结论（无 LLM 也可用）。"""
     lines: list[str] = []
+    table_rows: list[str] = []
     for row in getattr(result, "overview_rows", None) or []:
         if row.status != "ok" or len(row.values) != 2:
             continue
@@ -142,29 +143,39 @@ def _template_analysis(result: Any) -> str:
             cmp_word = "低于"
         else:
             cmp_word = "接近"
+        table_rows.append(
+            f"| {row.metric_label} | {a.sec_name} {_fmt_value(float(a.value), unit)} | "
+            f"{b.sec_name} {_fmt_value(float(b.value), unit)} | {row.period} | {cmp_word} |"
+        )
         lines.append(
-            f"{a.sec_name} 的{row.metric_label}{cmp_word}{b.sec_name}"
-            f"（{a.sec_name} {_fmt_value(float(a.value), unit)}；"
-            f"{b.sec_name} {_fmt_value(float(b.value), unit)}；共同期间 {row.period}）"
+            f"{a.sec_name} 的{row.metric_label}{cmp_word}{b.sec_name}（共同期间 {row.period}）"
         )
     participants = getattr(result, "participants", None) or []
-    if not lines and len(participants) >= 2:
+    if not table_rows and len(participants) >= 2:
         a, b = participants[0], participants[1]
-        unit = getattr(result, "difference_unit", "") or a.unit or ""
         if float(a.value) > float(b.value):
             cmp_word = "高于"
         elif float(a.value) < float(b.value):
             cmp_word = "低于"
         else:
             cmp_word = "接近"
+        table_rows.append(
+            f"| {a.metric_label} | {a.sec_name} {_fmt_value(float(a.value), a.unit or '')} | "
+            f"{b.sec_name} {_fmt_value(float(b.value), b.unit or '')} | {getattr(a, 'period', '')} | {cmp_word} |"
+        )
         lines.append(
             f"{a.sec_name} 的{a.metric_label}{cmp_word}{b.sec_name}"
             f"（{a.sec_name} {_fmt_value(float(a.value), a.unit or '')}；"
             f"{b.sec_name} {_fmt_value(float(b.value), b.unit or '')}）"
         )
-    if not lines:
+    if not table_rows:
         return "两家公司在可比较指标上数据不足，无法给出整体分析。"
-    return "；".join(lines)
+    header = [
+        "| 指标 | 公司A | 公司B | 共同期间 | 结论 |",
+        "|---|---:|---:|---|---|",
+    ]
+    summary = "；".join(lines[:3])
+    return "\n".join(header + table_rows) + ("\n\n" + summary if summary else "")
 
 
 def build_comparison_analysis(
@@ -216,7 +227,7 @@ def build_comparison_analysis(
         return output, warnings  # output = 模板兜底
 
     elapsed = time.perf_counter() - started
-    parts = [output.overall]
+    parts = [_template_analysis(result), output.overall]
     for para in output.paragraphs:
         parts.append(para.text)
     logger.info(

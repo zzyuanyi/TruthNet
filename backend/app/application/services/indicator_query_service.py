@@ -59,6 +59,9 @@ _INDICATORS: dict[str, _IndicatorSpec] = {
     "total_liabilities": _IndicatorSpec(
         "总负债", ("tot_liab",), ("balance_sheet",), "CNY"
     ),
+    "net_assets": _IndicatorSpec(
+        "净资产", ("tot_shrhldr_eqy_incl_min_int",), ("balance_sheet",), "CNY"
+    ),
     "accounts_receivable": _IndicatorSpec(
         "应收账款余额", ("acct_rcv",), ("balance_sheet",), "CNY"
     ),

@@ -19,6 +19,7 @@ def test_detect_market_quote_fields():
     assert service.detect_market_quote_field("贵州茅台今天股价") == "close"
     assert service.detect_market_quote_field("恒生电子换手率") == "turnover_rate"
     assert service.detect_market_quote_field("东吴证券总市值") == "total_mv"
+    assert service.detect_market_quote_field("恒生电子股息率") == "dividend_yield"
     assert service.detect_market_quote_field("东吴证券今日成交额") == "amount"
     assert service.detect_market_quote_field("东吴证券今日成交量") == "volume"
     assert service.detect_market_quote_field("平安银行今日是涨还是跌") == "pct_chg"
@@ -46,6 +47,7 @@ def test_query_market_quote_selects_latest_snapshot(monkeypatch):
     assert result.status == "ok"
     assert result.trade_date == "2026-08-20"
     assert result.value == Decimal("1291.5")
+    assert result.period_start == ""
 
 
 def test_volume_uses_anysearch_vol_field_and_not_amount(monkeypatch):
@@ -69,6 +71,25 @@ def test_volume_uses_anysearch_vol_field_and_not_amount(monkeypatch):
 
     assert result.status == "ok"
     assert result.value == Decimal("230690.17")
+
+
+def test_dividend_yield_uses_quote_dv_ratio(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "web_search",
+        lambda query, **kwargs: [
+            _hit("20260820", "trade_date=20260820 dv_ratio=2.45")
+        ],
+    )
+    result = service.query_market_quote(
+        sec_name="恒生电子",
+        wind_code="600570.SH",
+        field="dividend_yield",
+        user_query="恒生电子股息率",
+    )
+    assert result.status == "ok"
+    assert result.value == Decimal("2.45")
+    assert service.format_market_value("dividend_yield", result.value) == "2.45%"
 
 
 def test_historical_range_does_not_use_daily_snapshot(monkeypatch):
@@ -131,6 +152,24 @@ def test_historical_pct_change_uses_first_and_last_close(monkeypatch):
     assert result.value == Decimal("10")
     assert result.trade_date == "2026-08-20"
     assert result.period_start == "2026-07-20"
+
+
+def test_historical_range_requires_requested_date_coverage(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "web_search",
+        lambda query, **kwargs: [
+            _hit("20260820", "trade_date=20260820 close=110"),
+            _hit("20260819", "trade_date=20260819 close=109"),
+        ],
+    )
+    result = service.query_market_quote(
+        sec_name="中兴通讯",
+        wind_code="000063.SZ",
+        field="high",
+        user_query="中兴通讯近一年最高价",
+    )
+    assert result.status == "history_required"
 
 
 def test_market_value_units_are_formatted_from_quote_contract():

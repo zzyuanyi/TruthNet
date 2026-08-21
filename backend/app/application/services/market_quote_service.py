@@ -21,6 +21,7 @@ MARKET_FIELD_LABELS: dict[str, str] = {
     "pe": "市盈率",
     "pb": "市净率",
     "pe_ttm": "滚动市盈率",
+    "dividend_yield": "股息率",
     "total_mv": "总市值",
     "circ_mv": "流通市值",
     "amount": "成交额",
@@ -30,6 +31,7 @@ MARKET_FIELD_LABELS: dict[str, str] = {
 # AnySearch finance.quote 沿用 A 股日线常用字段单位。
 _FIELD_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("pe_ttm", ("滚动市盈率", "市盈率ttm", "市盈率 ttm", "pe_ttm")),
+    ("dividend_yield", ("股息率", "股息")),
     ("circ_mv", ("流通市值",)),
     ("total_mv", ("总市值", "市值")),
     ("turnover_rate", ("换手率",)),
@@ -77,6 +79,14 @@ _HISTORY_CUES = (
 )
 _PAIR_RE = re.compile(r"(?:^|\s)([a-z_]+)=([^\s]+)")
 _DATE_RE = re.compile(r"^\d{4}-?\d{2}-?\d{2}$")
+_MIN_HISTORY_SPAN_DAYS = {
+    "7d": 5,
+    "30d": 24,
+    "90d": 72,
+    "180d": 144,
+    "1y": 300,
+    "5y": 1500,
+}
 
 
 @dataclass(frozen=True)
@@ -146,7 +156,7 @@ def query_market_quote(
         return MarketQuoteResult(status="no_data", field=field)
 
     if historical:
-        if len(snapshots) < 2:
+        if len(snapshots) < 2 or not _history_covers_period(snapshots, period):
             return MarketQuoteResult(status="history_required", field=field)
         if field == "pct_chg":
             first_close = snapshots[-1][1].get("close")
@@ -196,7 +206,7 @@ def query_market_quote(
         value=value,
         raw_value=raw_value,
         trade_date=trade_date,
-        period_start=snapshots[-1][0],
+        period_start=snapshots[-1][0] if historical else "",
         hit=hit,
     )
 
@@ -205,7 +215,7 @@ def format_market_value(field: str, value: Decimal) -> str:
     """按 AnySearch finance.quote 契约格式化行情值。"""
     if field in ("close", "open", "high", "low", "pre_close"):
         return f"{value:,.2f}元"
-    if field in ("pct_chg", "turnover_rate"):
+    if field in ("pct_chg", "turnover_rate", "dividend_yield"):
         return f"{_trim_decimal(value, 4)}%"
     if field in ("pe", "pb", "pe_ttm"):
         return f"{_trim_decimal(value, 4)}倍"
@@ -218,8 +228,14 @@ def _snapshot_from_hit(hit: SearchResult) -> tuple[str, dict[str, str], SearchRe
     values = {
         match.group(1): match.group(2).strip("，。;,.")
         for match in _PAIR_RE.finditer(hit.snippet or "")
-        if match.group(1) in MARKET_FIELD_LABELS or match.group(1) == "trade_date"
+        if match.group(1) in MARKET_FIELD_LABELS
+        or match.group(1) in {"dv_ratio", "dv_ttm"}
+        or match.group(1) == "trade_date"
     }
+    if "dividend_yield" not in values:
+        values["dividend_yield"] = values.get("dv_ratio") or values.get(
+            "dv_ttm", ""
+        )
     # AnySearch finance.quote 使用 vol，应用层统一称为 volume。
     vol_match = re.search(r"(?:^|\s)vol=([^\s]+)", hit.snippet or "")
     if vol_match and "volume" not in values:
@@ -234,6 +250,26 @@ def _normalize_date(raw: str) -> str:
         return ""
     digits = text.replace("-", "")
     return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+
+
+def _history_covers_period(
+    snapshots: list[tuple[str, dict[str, str], SearchResult]], period: str
+) -> bool:
+    """确认返回序列覆盖请求区间，避免用最近少量样本冒充完整历史。"""
+    from datetime import date
+
+    dates = []
+    for trade_date, _, _ in snapshots:
+        try:
+            dates.append(date.fromisoformat(trade_date))
+        except ValueError:
+            continue
+    if len(dates) < 2:
+        return False
+    minimum_span = _MIN_HISTORY_SPAN_DAYS.get(period)
+    if minimum_span is None:
+        return True
+    return (max(dates) - min(dates)).days >= minimum_span
 
 
 def _trim_decimal(value: Decimal, places: int) -> str:

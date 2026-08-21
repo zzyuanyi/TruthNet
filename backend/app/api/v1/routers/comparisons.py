@@ -60,6 +60,83 @@ def _metric_label(rid: str, key: str) -> str:
     return metric.label if metric else f"{_indicator_label(rid)} · {key}"
 
 
+_FINANCIAL_REPORT_INDICATORS = (
+    "operating_revenue",
+    "net_profit",
+    "operating_cash_flow",
+    "total_assets",
+    "total_liabilities",
+)
+
+
+def _build_financial_indicators(
+    resolved_map: dict, period_ymd: str
+) -> list[IndicatorCompare]:
+    """构造财务人员可直接阅读的标准财报科目对比。"""
+    from app.application.services.indicator_query_service import query_metric
+
+    rows: list[IndicatorCompare] = []
+    for metric_id in _FINANCIAL_REPORT_INDICATORS:
+        companies: list[CompanyIndicator] = []
+        labels: list[str] = []
+        periods: list[str] = []
+        units: list[str] = []
+        for rec in resolved_map.values():
+            result = query_metric(
+                rec.wind_code,
+                metric_id,
+                as_of=period_ymd,
+                require_exact_period=True,
+            )
+            labels.append(result.label or metric_id)
+            periods.append(result.period or "")
+            units.append(result.unit or "")
+            companies.append(
+                CompanyIndicator(
+                    wind_code=rec.wind_code,
+                    sec_name=rec.sec_name,
+                    value=(
+                        float(result.value)
+                        if result.status == "ok" and result.value is not None
+                        else None
+                    ),
+                    unit=result.unit or "",
+                    period=result.period or period_ymd,
+                    status=result.status,
+                )
+            )
+
+        common_period = (
+            periods[0]
+            if periods and periods[0] and all(period == periods[0] for period in periods)
+            else ""
+        )
+        common_unit = (
+            units[0]
+            if units and units[0] and all(unit == units[0] for unit in units)
+            else ""
+        )
+        difference = None
+        if (
+            len(companies) == 2
+            and all(company.value is not None for company in companies)
+            and common_period
+            and common_unit
+        ):
+            difference = companies[0].value - companies[1].value
+        rows.append(
+            IndicatorCompare(
+                indicator=metric_id,
+                label=next((label for label in labels if label), metric_id),
+                companies=companies,
+                period=common_period,
+                difference=difference,
+                difference_unit=common_unit,
+            )
+        )
+    return rows
+
+
 def _build_rule_details(
     results, rule_evidence_map: dict[str, list[str]], period_ymd: str
 ) -> list[TriggeredRuleDetail]:
@@ -416,6 +493,9 @@ async def _create_comparison_impl(
                 )
             )
 
+    # 标准财报科目单独透出，供对比页以财务表格展示；不混入 R1-R7 风险指标。
+    financial_indicators = _build_financial_indicators(resolved_map, period_ymd)
+
     # v3.5：完成状态——全失败 failed / 有失败 partial / 全部成功 completed
     if company_failures and len(company_failures) == len(resolved_map):
         _finalize("failed")
@@ -430,6 +510,7 @@ async def _create_comparison_impl(
             statement_scope=statement_scope,
             companies=company_summaries,
             indicators=indicator_compares,
+            financial_indicators=financial_indicators,
             dataset_version=settings.DATASET_VERSION,
             warnings=data_warnings,
         ),
