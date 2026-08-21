@@ -912,8 +912,10 @@ export default function ComparePage() {
                               <div
                                 key={cell.code}
                                 className={cn(
-                                  'rounded-md border p-2.5',
-                                  cell.triggered ? 'border-orange-500/30 bg-orange-500/5' : 'border-border/60 bg-muted/20',
+                                  'rounded-md border p-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md',
+                                  cell.triggered
+                                    ? 'border-orange-500/30 bg-orange-500/5 hover:border-orange-500/60'
+                                    : 'border-border/60 bg-muted/20 hover:border-primary/40',
                                 )}
                               >
                                 <div className="flex items-center justify-between gap-2">

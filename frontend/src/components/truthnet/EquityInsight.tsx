@@ -128,9 +128,9 @@ export function EquityInsight({ equityData }: EquityInsightProps) {
         {findings.map((finding, index) => {
           const icon =
             finding.level === 'red' ? (
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500 animate-pulse" />
             ) : finding.level === 'orange' ? (
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-orange-500 animate-pulse" />
             ) : finding.level === 'blue' ? (
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
             ) : (

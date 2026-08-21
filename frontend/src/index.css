@@ -116,3 +116,57 @@ body::before {
   max-width: 100%;
   word-break: break-word;
 }
+
+/* ─── 动效增强：卡片入场浮入 ─── */
+[data-slot="card"] {
+  animation: card-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: border-color 0.2s ease, box-shadow 0.25s ease;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── 动效增强：卡片 hover 微交互（仅边框高亮+柔化阴影，不做位移，避免误导可点性） ─── */
+[data-slot="card"]:hover {
+  border-color: color-mix(in srgb, var(--color-border) 45%, var(--color-primary) 55%);
+  box-shadow: 0 10px 30px -14px color-mix(in srgb, var(--color-foreground) 22%, transparent);
+}
+
+/* ─── 动效增强：骨架屏 shimmer 扫光 ─── */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+[data-slot="skeleton"] {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-muted) 25%,
+    color-mix(in srgb, var(--color-foreground) 8%, var(--color-muted)) 50%,
+    var(--color-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ─── 动效增强：尊重「减少动画」设置 ─── */
+[style*="--reduce-motion: reduce"] *,
+[style*="--reduce-motion: reduce"] *::before,
+[style*="--reduce-motion: reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}

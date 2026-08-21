@@ -41,6 +41,15 @@
 - 表格（Markdown / 数据表）：表头 `bg-muted`，单元格 `border-border`，随深浅主题自适应。
 - 图 / 明细标签统一主题语义类，不混用 Tailwind 原生色。
 
+## 动效与交互
+
+- 卡片入场：淡入 + 上移 14px，0.45s ease-out（`cubic-bezier(0.22, 1, 0.36, 1)`），`animation-fill-mode: both`，仅播一次。
+- 卡片 hover：仅边框高亮 + 柔化阴影，**不做位移**（内容容器卡片不可被误认为可点）。
+- 骨架屏：shimmer 扫光（渐变 `background-position` 位移）。
+- 风险信号：红/橙风险图标 `animate-pulse` 呼吸。
+- 对比矩阵数据格：hover 上浮 + 边框增强，服务定位跟手。
+- 减少动画：`--reduce-motion: reduce`（Settings 开关）时禁用所有 `animation` / `transition`。
+
 ## 可访问性
 
 - 深色模式下文字使用 `text-foreground` / `text-muted-foreground`，禁止硬编码黑/白色。
