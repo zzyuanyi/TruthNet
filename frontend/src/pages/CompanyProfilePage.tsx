@@ -394,8 +394,8 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
           : '股权数据存在但未形成稳定穿透路径')
       : '股权数据不足';
     const eventLine = eventsHasData
-      ? (impactConclusions.length > 0
-          ? `舆情已形成 ${impactConclusions.length} 条影响结论`
+      ? (impactAdvice?.overall_advice
+          ? `舆情已形成影响结论（${impactAdvice.evidence_count} 条可回查证据）`
           : sentimentEvents.length > 0
             ? `舆情已有 ${sentimentEvents.length} 条事件记录`
             : '舆情暂无明显事件')
@@ -428,7 +428,7 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
     eventsHasData,
     triggeredRules.length,
     equityData?.paths?.length,
-    impactConclusions.length,
+    impactAdvice?.evidence_count,
     sentimentEvents.length,
     coverageGapText,
     impactAdvice?.overall_advice,
