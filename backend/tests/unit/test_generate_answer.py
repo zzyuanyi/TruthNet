@@ -1616,7 +1616,7 @@ def test_cross_company_fact_uses_web_fill_for_missing_dates(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.agents.nodes.generate_answer._web_search_fill_company_fact", fake_fill
+        "app.agents.nodes._answer_comparison._web_search_fill_company_fact", fake_fill
     )
     state = {
         "company": _company("中国石化", "600028.SH"),
