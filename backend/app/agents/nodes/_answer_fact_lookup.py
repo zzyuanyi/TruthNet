@@ -28,6 +28,21 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# 指标 ID → 中文标签（会5 联网回填的回答/检索用；与 indicator_semantics 一致）
+_INDICATOR_LABELS: dict[str, str] = {
+    "operating_revenue": "营业收入",
+    "net_profit": "净利润",
+    "operating_cash_flow": "经营现金流",
+    "total_assets": "总资产",
+    "total_liabilities": "总负债",
+    "accounts_receivable": "应收账款余额",
+    "inventories": "存货",
+    "debt_to_assets": "资产负债率",
+    "net_assets": "净资产",
+    "r4_turnover_days": "存货周转天数",
+    "r5_gross_margin": "毛利率",
+}
+
 
 def _web_search_fill_company_fact(
     *,
@@ -104,6 +119,72 @@ def _web_search_fill_company_fact(
         retrieved_at=datetime.now(timezone.utc).isoformat(),
     )
     return value, evidence
+
+
+def _web_search_fill_metric(
+    *,
+    sec_name: str,
+    wind_code: str,
+    metric_label: str,
+    turn_id: str,
+    trace_id: str,
+) -> tuple[str | None, EvidenceRef | None]:
+    """会5 深化：本地财务指标数据不足 → 联网搜索回填（数字锁定 + 来源证据）。
+
+    Returns:
+        (value_text, evidence)：value_text 如 "77.54%（2025H1）"；
+        无命中/提取失败/搜索不可用 → (None, None)——调用方保持原拒答。
+        口径声明：联网来源为公开披露/第三方口径，非母公司口径，回答显式披露。
+    """
+    from app.application.services.web_search_fact_fill import extract_metric_from_hits
+    from app.application.services.web_search_service import web_search
+
+    # 全部 query 保留公司代码（去交易所后缀：'000858.SZ' → '000858'——
+    # 实测带后缀的 query 搜索质量差，命中占位页导致提取失败），避免同名
+    # 公司串线；优先带「最新/年份」的 query——纯名称 query 会命中
+    # 「毛利率 0.00%」等占位页，提取器无法区分占位与真值。
+    code_short = (wind_code or "").split(".")[0]
+    queries = [
+        f"{sec_name} {code_short} {metric_label} 最新 2025年",
+        f"{sec_name} {code_short} {metric_label} 最新 财报",
+        f"{sec_name} {code_short} {metric_label}",
+    ]
+    for query in queries:
+        hits = web_search(query)
+        extracted = extract_metric_from_hits(hits, metric_label)
+        if not extracted:
+            continue
+        value_text = str(extracted["value"])
+        period = str(extracted["period"])
+        if period and period != "最新":
+            value_text = f"{value_text}（{period}）"
+        hit = next((h for h in hits if (h.snippet or h.title)), None)
+        evidence = EvidenceRef(
+            evidence_id=make_evidence_id(
+                source_namespace=NS_WEB_SEARCH,
+                source_type="web_search",
+                source_record_id=wind_code,
+                field_path=f"metric_{metric_label}",
+                company_code=wind_code,
+            ),
+            source_type="web_search",
+            source_record_id=wind_code,
+            field_path=f"metric_{metric_label}",
+            value=_clip_evidence_value(value_text),
+            source_title=(
+                extracted["source_title"]
+                or (hit.title if hit else f"联网检索 · {metric_label}")
+            ),
+            source_uri=extracted["source_url"] or (hit.url if hit else None),
+            source_excerpt=(extracted["quote"] or (hit.snippet if hit else ""))[:300],
+            turn_id=turn_id,
+            trace_id=trace_id,
+            company_code=wind_code,
+            module="finance",
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+        )
+        return value_text, evidence
+    return None, None
 
 
 def _company_fact_search_queries(
@@ -692,6 +773,37 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
             "final_response": FinalResponse(answer=answer, risk_level="unknown"),
         }
     if result.status != "ok" or result.value is None:
+        # 会5 深化（2026-08-21）：本地数据不足 → 联网搜索回填。
+        # 仅无精确期次要求时触发（精确期次联网数据不可靠）；提取失败/
+        # 搜索不可用（WEB_SEARCH_BACKEND=off）→ 保持原拒答 fail-closed。
+        if not require_exact and settings.WEB_SEARCH_FILL_FINANCE_METRIC:
+            runtime = state.get("runtime")
+            turn_id = getattr(runtime, "turn_id", "") if runtime else ""
+            trace_id = getattr(runtime, "trace_id", "") if runtime else ""
+            filled_value, filled_evidence = _web_search_fill_metric(
+                sec_name=company.sec_name,
+                wind_code=company.wind_code,
+                metric_label=result.label
+                or _INDICATOR_LABELS.get(indicator, indicator),
+                turn_id=turn_id,
+                trace_id=trace_id,
+            )
+            if filled_value:
+                answer = (
+                    f"{name_code}的{result.label or _INDICATOR_LABELS.get(indicator, indicator)}：{filled_value}"
+                    "（来源：联网检索，非母公司口径，以公司公告为准）。"
+                )
+                evidence_items = [filled_evidence] if filled_evidence else []
+                _emit_segment(state, answer)
+                return {
+                    "claims": [],
+                    "evidence": evidence_items,
+                    "final_response": FinalResponse(
+                        answer=answer,
+                        risk_level="unknown",
+                        evidence=evidence_items,
+                    ),
+                }
         answer = f"{name_code}的{result.label}：数据不足，无法按母公司口径计算。"
         _emit_segment(state, answer)
         return {
