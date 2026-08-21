@@ -154,7 +154,6 @@ export default function CompanyProfilePage() {
     return styles[level] || styles.unknown;
   };
   // B2 舆情影响结论（后端 events.impact_conclusions，需 include_impacts=true）
-  
   // A2（8/9 老师要求）：触发规则关联证据的摘要（evidenceId → 平铺摘要）
   const [ruleEvidenceSummary, setRuleEvidenceSummary] = useState<Record<string, RuleEvidenceSummary>>({});
   // A2：批量拉取触发规则的证据摘要用于平铺（去重 + 上限 30）。
