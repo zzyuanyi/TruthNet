@@ -233,9 +233,7 @@ def _snapshot_from_hit(hit: SearchResult) -> tuple[str, dict[str, str], SearchRe
         or match.group(1) == "trade_date"
     }
     if "dividend_yield" not in values:
-        values["dividend_yield"] = values.get("dv_ratio") or values.get(
-            "dv_ttm", ""
-        )
+        values["dividend_yield"] = values.get("dv_ratio") or values.get("dv_ttm", "")
     # AnySearch finance.quote 使用 vol，应用层统一称为 volume。
     vol_match = re.search(r"(?:^|\s)vol=([^\s]+)", hit.snippet or "")
     if vol_match and "volume" not in values:

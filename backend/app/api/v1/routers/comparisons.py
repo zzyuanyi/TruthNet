@@ -108,7 +108,9 @@ def _build_financial_indicators(
 
         common_period = (
             periods[0]
-            if periods and periods[0] and all(period == periods[0] for period in periods)
+            if periods
+            and periods[0]
+            and all(period == periods[0] for period in periods)
             else ""
         )
         common_unit = (

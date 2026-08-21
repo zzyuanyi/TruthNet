@@ -77,9 +77,7 @@ def test_dividend_yield_uses_quote_dv_ratio(monkeypatch):
     monkeypatch.setattr(
         service,
         "web_search",
-        lambda query, **kwargs: [
-            _hit("20260820", "trade_date=20260820 dv_ratio=2.45")
-        ],
+        lambda query, **kwargs: [_hit("20260820", "trade_date=20260820 dv_ratio=2.45")],
     )
     result = service.query_market_quote(
         sec_name="恒生电子",

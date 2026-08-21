@@ -68,7 +68,9 @@ def test_build_rule_details_structure():
     assert all(eid.startswith("ev_fin_") for eid in r1.evidence_ids)
 
 
-def test_build_financial_indicators_keeps_period_difference_and_missing_value(monkeypatch):
+def test_build_financial_indicators_keeps_period_difference_and_missing_value(
+    monkeypatch,
+):
     from types import SimpleNamespace
 
     from app.api.v1.routers.comparisons import _build_financial_indicators

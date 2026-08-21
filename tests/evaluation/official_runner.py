@@ -289,7 +289,9 @@ def _run_with_context(
                         "evidence": len(result.get("evidence", [])),
                         "evidence_items": [
                             {
-                                "evidence_id": str(getattr(ev, "evidence_id", "") or ""),
+                                "evidence_id": str(
+                                    getattr(ev, "evidence_id", "") or ""
+                                ),
                                 "field_path": str(getattr(ev, "field_path", "") or ""),
                                 "period": str(getattr(ev, "period", "") or ""),
                                 "value": str(getattr(ev, "value", "") or ""),
@@ -414,9 +416,7 @@ def main() -> int:
         lines.append("")
         lines.append("独立语义裁判（不写回 sidecar）：")
         lines.append(
-            json.dumps(
-                semantic_judgement["summary"], ensure_ascii=False, indent=2
-            )
+            json.dumps(semantic_judgement["summary"], ensure_ascii=False, indent=2)
         )
         lines.append("逐条语义裁判结果：")
         for judgement in semantic_judgement["judgements"]:

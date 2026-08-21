@@ -313,9 +313,7 @@ def _build_company_brief_analysis(
     equity = [c for c in claims if c.claim_type == "equity"]
     events = [c for c in claims if c.claim_type == "event"]
     risk_level = (
-        getattr(risk_output, "risk_level", "")
-        or _highest_severity(claims)
-        or "unknown"
+        getattr(risk_output, "risk_level", "") or _highest_severity(claims) or "unknown"
     )
     risk_label = _SEVERITY_LABELS.get(risk_level, "数据不足")
     if risk_level in ("red", "orange", "yellow"):
@@ -1562,8 +1560,7 @@ def _research_relevant_excerpt(query: str, content: str) -> str:
         return normalized[:160].strip("。；; ")
 
     technology_query = any(
-        cue in query
-        for cue in ("研发技术", "正在研发", "技术趋势", "新技术", "AI医疗")
+        cue in query for cue in ("研发技术", "正在研发", "技术趋势", "新技术", "AI医疗")
     )
     industry_query = any(
         cue in query
