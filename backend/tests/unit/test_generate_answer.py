@@ -180,6 +180,40 @@ def test_announcement_list_query_renders_all_events():
     assert answer.index("回购公告") < answer.index("监管处罚")
 
 
+def test_latest_announcement_states_dataset_coverage():
+    """旧数据集不能被包装成当前最新公告，也不能虚构正文。"""
+    events = EventsResult(
+        timeline=[
+            {
+                "date": "2025-01-09",
+                "title": "行政处罚决定书公告",
+                "sentiment": "negative",
+                "evidence_ids": ["ev_ann_old"],
+            }
+        ]
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("东吴证券", "601555.SH"),
+                plan=ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    event_list_requested=True,
+                ),
+                results=ModuleResults(events=events),
+            ),
+            "user_query": "东吴证券的最新公告内容？",
+        }
+    )
+
+    answer = result["final_response"].answer
+    assert "数据集内最新可回查" in answer
+    assert "截至 2025-01-09" in answer
+    assert "不能把上述记录表述为当前市场的最新公告" in answer
+    assert "未取回公告正文" in answer
+
+
 def test_market_wide_announcement_query_explains_scope():
     result = generate_answer_node(
         {
@@ -416,7 +450,7 @@ def test_multi_metric_query_returns_available_items(monkeypatch):
     assert "| 指标 | 数值 | 数据期与口径 |" in answer
     assert "| 总股本 | 暂无数据 | 当前数据范围未覆盖 |" in answer
     assert "营业收入" in answer
-    assert "| 净资产 | 暂无数据 | 当前数据范围未覆盖 |" in answer
+    assert "| 净资产 | 1.23亿元 | 2023-12-31，母公司口径 |" in answer
 
 
 def test_research_list_questions_are_formatted_as_company_list():
@@ -430,6 +464,41 @@ def test_research_list_questions_are_formatted_as_company_list():
         ],
     )
     assert answer == "相关研报涉及的公司包括：鱼跃医疗、海尔生物。"
+
+
+def test_research_technology_question_filters_marketing_noise():
+    from app.agents.nodes.generate_answer import _format_research_insights
+
+    answer = _format_research_insights(
+        "医疗器械行业正在研发哪些技术",
+        [
+            {
+                "source_title": "医疗器械行业报告",
+                "source_org": "测试机构",
+                "content": "行业正在研发AI影像辅助诊断技术。营销渠道持续拓展，报告给出目标价。",
+            }
+        ],
+    )
+    assert "AI影像辅助诊断技术" in answer
+    assert "营销渠道" not in answer
+    assert "目标价" not in answer
+
+
+def test_research_industry_question_marks_limited_sample():
+    from app.agents.nodes.generate_answer import _format_research_insights
+
+    answer = _format_research_insights(
+        "医疗器械行业整体表现如何",
+        [
+            {
+                "source_title": "行业报告",
+                "content": "市场规模保持增长。营销渠道改善。",
+            }
+        ],
+    )
+    assert "市场规模保持增长" in answer
+    assert "营销渠道" not in answer
+    assert "不能代表全行业全部公司" in answer
 
 
 def test_research_emerging_company_questions_are_formatted_as_company_list():
@@ -588,6 +657,25 @@ def test_four_layer_structure():
     # ④ 追问：equity/event claim 触发对应追问
     assert "查看实控人控制的其他上市公司" in fr.follow_ups
     assert "查看公司事件时间线" in fr.follow_ups
+
+
+def test_company_analysis_includes_brief_summary():
+    """公司综合提问 → 附带轻量简要分析，不缺席。"""
+    claims = [
+        _claim("c1", "financial", "red", "R1"),
+        _claim("c2", "equity", "orange", None),
+        _claim("c3", "event", "yellow", None),
+    ]
+    state = _make_state(
+        company=_company("金牌家居", "603180.SH"),
+        claims=claims,
+        plan=ExecutionPlan(intent="analysis"),
+    )
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "【简要分析】金牌家居整体判断" in answer
+    assert "财务信号 1 项" in answer
+    assert "股权信号 1 项" in answer
+    assert "事件信号 1 项" in answer
 
 
 def test_no_risk_signal_conclusion():
@@ -874,11 +962,27 @@ def test_rule_details_units():
         },
     }
     answer = generate_answer_node(_rule_state(rule_details))["final_response"].answer
-    assert "应收账款增速 149.6%" in answer
-    assert "增速差距 166.2pp" in answer
-    assert "连续负现金流季度 2个季度" in answer
-    assert "存货周转天数 20天" in answer
-    assert "存在大额其他应收款：是" in answer
+    assert "| 指标 | 数值 | 单位 |" in answer
+    assert "| 应收账款增速 | 149.6% | % |" in answer
+    assert "| 增速差距 | 166.2pp | pp |" in answer
+    assert "| 连续负现金流季度 | 2个季度 | 个季度 |" in answer
+    assert "| 存货周转天数 | 20天 | 天 |" in answer
+    assert "| 存在大额其他应收款 | 是 | 暂无 |" in answer
+
+
+def test_rule_details_single_metric_keeps_short_text():
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
+            },
+        },
+    }
+    answer = generate_answer_node(_rule_state(rule_details))["final_response"].answer
+    assert "【数据对比】应收账款增速 149.6%。" in answer
+    assert "| 指标 | 数值 | 单位 |" not in answer
 
 
 def test_rule_details_none_value_skipped():

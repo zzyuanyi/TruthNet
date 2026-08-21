@@ -7,6 +7,15 @@
 
 ## 1. 评测数据集
 
+官方 81 题 runner 可在完成观测后追加独立语义裁判：
+
+```powershell
+python tests/evaluation/official_runner.py --semantic-judge --report data/test-artifacts/official_report_semantic_judge.txt
+```
+
+该裁判只输出严格正确率、可接受率和部分可用率，不修改 `official_questions_v1.jsonl`，
+也不改变 runner 的 `scored_count`；所有 `to_verify` 样本仍不属于官方自动评分分母。
+
 ### 1.1 数据集概览
 
 | 数据集 | 规模 | 用途 | 评测方式 |

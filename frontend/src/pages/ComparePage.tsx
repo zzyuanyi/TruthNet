@@ -25,6 +25,7 @@ import type {
   BenchmarksResponseData,
   CompanyRiskSummary,
   ComparisonsResponseData,
+  IndicatorCompare,
   RiskLevel,
 } from '@/types/truthnet';
 import type { CompanyCandidate } from '@/lib/api-client';
@@ -241,6 +242,20 @@ const unitLabelMap: Record<string, string> = {
 // 不增加后端计算量（evaluate_all_rules 本就全量执行，仅多透出 current 值）。
 const DEFAULT_COMPARISON_RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'];
 
+function formatFinancialValue(value: number | null, unit: string): string {
+  if (value == null) return '暂无数据';
+  if (unit === 'CNY') return `${(value / 100000000).toFixed(2)} 亿元`;
+  if (unit === 'percent' || unit === 'ratio' || unit === 'pp') return `${value.toFixed(2)}%`;
+  if (unit === 'days') return `${value.toFixed(2)} 天`;
+  return `${value}${unit}`;
+}
+
+function formatReportPeriod(period: string): string {
+  return /^\d{8}$/.test(period)
+    ? `${period.slice(0, 4)}-${period.slice(4, 6)}-${period.slice(6)}`
+    : period || '暂无数据';
+}
+
 const RISK_ORDER: Record<string, number> = {
   red: 5,
   orange: 4,
@@ -313,12 +328,25 @@ function buildComparisonConclusions(companies: CompanyRiskSummary[]): string[] {
   });
   const conclusions: string[] = [];
 
+  const best = ranked[0];
+  const worst = ranked[ranked.length - 1];
   const riskText = ranked
     .map((c, i) => `${i + 1}. ${c.sec_name}：${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}（${c.partial ? '暂无评分' : `${c.overall_score.toFixed(3)} 分`}）`)
     .join('；');
   conclusions.push(`风险排序：${riskText}`);
+  if (best && worst) {
+    conclusions.push(
+      `当前相对更稳的是${best.sec_name}，风险最集中的是${worst.sec_name}；两者差异主要看综合评分、触发规则数量和是否存在高危模式。`,
+    );
+  }
 
   const commonRules = new Set<string>();
+  const uniqueRulesByCompany = companies.map(c => ({
+    name: c.sec_name,
+    rules: (c.triggered_rules || []).filter(rid =>
+      !companies.some(other => other.wind_code !== c.wind_code && (other.triggered_rules || []).includes(rid)),
+    ),
+  }));
   companies.forEach((c, idx) => {
     const own = new Set(c.triggered_rules || []);
     companies.slice(idx + 1).forEach(other => {
@@ -333,12 +361,24 @@ function buildComparisonConclusions(companies: CompanyRiskSummary[]): string[] {
     conclusions.push(`${companies.length} 家公司没有共同触发规则，风险差异主要来自各自财务指标结构。`);
   }
 
+  const uniqueRuleTexts = uniqueRulesByCompany
+    .filter(item => item.rules.length > 0)
+    .map(item => `${item.name} 的独有规则：${item.rules.slice(0, 3).join('、')}`);
+  if (uniqueRuleTexts.length > 0) {
+    conclusions.push(uniqueRuleTexts.join('；'));
+  }
+
   const patterns = companies
     .filter(c => (c.pattern_matches?.length ?? 0) > 0)
     .map(c => `${c.sec_name}：${c.pattern_matches!.join('、')}`);
   if (patterns.length > 0) {
     conclusions.push(`风险模式：${patterns.join('；')}。`);
   }
+
+  const coverageText = companies
+    .map(c => `${c.sec_name}${c.partial || c.coverage <= 0 ? '覆盖不足' : `覆盖 ${(c.coverage * 100).toFixed(0)}%`}`)
+    .join('；');
+  conclusions.push(`数据覆盖：${coverageText}。`);
 
   return conclusions;
 }
@@ -716,6 +756,73 @@ export default function ComparePage() {
                 </Card>
               )}
 
+
+            {/* 标准财报科目：供财务人员横向核对原始数值、期间和差值 */}
+            {(comparisonData?.financial_indicators?.length ?? 0) > 0 && (
+              <Card className="mb-4">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <BarChart3 className="h-4 w-4" />
+                    财报数据对比
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    母公司报表口径；金额统一换算为亿元，缺失值不按 0 处理。
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">财报科目</th>
+                          {comparisonData.companies.map(company => (
+                            <th key={company.wind_code} className="px-3 py-2 font-medium">
+                              {company.sec_name}
+                            </th>
+                          ))}
+                          <th className="px-3 py-2 font-medium">共同期次</th>
+                          {comparisonData.companies.length === 2 && (
+                            <th className="px-3 py-2 font-medium">差值（第一家-第二家）</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {comparisonData.financial_indicators.map((row: IndicatorCompare) => (
+                          <tr key={row.indicator}>
+                            <th className="whitespace-nowrap px-3 py-2 text-left font-medium">
+                              {row.label}
+                            </th>
+                            {comparisonData.companies.map(company => {
+                              const item = row.companies.find(
+                                value => value.wind_code === company.wind_code,
+                              );
+                              return (
+                                <td key={company.wind_code} className="px-3 py-2">
+                                  <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
+                                  {item?.status && item.status !== 'ok' && (
+                                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                      {item.status === 'insufficient_data' ? '数据不足' : item.status}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                              {formatReportPeriod(row.period ?? '')}
+                            </td>
+                            {comparisonData.companies.length === 2 && (
+                              <td className="whitespace-nowrap px-3 py-2 font-medium">
+                                {formatFinancialValue(row.difference ?? null, row.difference_unit ?? '')}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* 指标对比 */}
             <Card>

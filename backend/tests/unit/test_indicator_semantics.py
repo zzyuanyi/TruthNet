@@ -124,10 +124,15 @@ def test_latest_quarter_period_hint():
     assert result.period_hint == "latest_quarter"
 
 
+def test_net_assets_is_mapped_to_parent_company_balance_sheet_field():
+    result = resolve_indicator_semantics("公司2023年净资产是多少")
+    assert result.metric_ids == ["net_assets"]
+    assert result.executable is True
+
+
 def test_known_market_metrics_are_honestly_unsupported_without_llm():
     """官方题型中的未覆盖资金/分红指标不得落入综合诊断。"""
     for query in (
-        "恒生电子股息率",
         "恒生电子今天的主力净买入额是多少",
         "昨天贵州茅台的融资买入额是多少",
         "贵州茅台的融券卖出量是多少",

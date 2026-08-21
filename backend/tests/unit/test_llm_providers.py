@@ -271,6 +271,49 @@ class TestDeepSeekProviderStructuredChat:
         # 应该调用了两次
         assert mock_client.chat.completions.create.call_count == 2
 
+    @pytest.mark.asyncio
+    async def test_structured_chat_connection_error_does_not_retry(self):
+        """连接错误直接降级，不为同一失败重复等待。"""
+        from openai import APIConnectionError
+
+        provider = DeepSeekProvider()
+        mock_client = _mock_async_openai()
+        mock_client.chat.completions.create.side_effect = APIConnectionError(
+            request=MagicMock()
+        )
+        provider._client = mock_client
+        provider._available = True
+
+        result = await provider.structured_chat(
+            [{"role": "user", "content": "分析"}],
+            OutputFixture,
+        )
+
+        assert result is None
+        mock_client.chat.completions.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_structured_chat_client_error_does_not_retry(self):
+        """4xx 参数/认证类错误不是瞬时故障，不重复请求。"""
+        from openai import APIStatusError
+
+        provider = DeepSeekProvider()
+        mock_client = _mock_async_openai()
+        error = APIStatusError(
+            "400 Bad Request", response=MagicMock(status_code=400), body={}
+        )
+        mock_client.chat.completions.create.side_effect = error
+        provider._client = mock_client
+        provider._available = True
+
+        result = await provider.structured_chat(
+            [{"role": "user", "content": "分析"}],
+            OutputFixture,
+        )
+
+        assert result is None
+        mock_client.chat.completions.create.assert_called_once()
+
 
 class TestDeepSeekProviderRetry:
     """DeepSeek 重试测试."""
@@ -285,7 +328,11 @@ class TestDeepSeekProviderRetry:
 
         # 第一次返回 503 → 重试 → 第二次成功
         mock_client.chat.completions.create.side_effect = [
-            APIStatusError("503 Service Unavailable", response=MagicMock(), body={}),
+            APIStatusError(
+                "503 Service Unavailable",
+                response=MagicMock(status_code=503),
+                body={},
+            ),
             MockChatCompletion("重试后成功"),
         ]
         provider._client = mock_client

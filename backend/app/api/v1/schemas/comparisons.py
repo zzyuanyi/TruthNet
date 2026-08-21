@@ -26,6 +26,7 @@ class CompanyIndicator(BaseModel):
     sec_name: str = Field(default="", description="公司名称")
     value: float | None = Field(default=None)
     unit: str = Field(default="")
+    period: str = Field(default="", description="该数值对应的报告期 YYYYMMDD")
     severity: str = Field(default="green")
     status: str = Field(default="not_triggered")
 
@@ -36,6 +37,9 @@ class IndicatorCompare(BaseModel):
     indicator: str = Field(..., description="指标/规则 ID")
     label: str = Field(default="", description="中文标签")
     companies: list[CompanyIndicator] = Field(default_factory=list)
+    period: str = Field(default="", description="共同报告期 YYYYMMDD")
+    difference: float | None = Field(default=None, description="两家公司差值 A-B")
+    difference_unit: str = Field(default="", description="差值单位")
 
 
 class RuleMetricValue(BaseModel):
@@ -88,5 +92,9 @@ class ComparisonsResponseData(BaseModel):
     statement_scope: str = Field(default="parent_company")
     companies: list[CompanyRiskSummary] = Field(default_factory=list)
     indicators: list[IndicatorCompare] = Field(default_factory=list)
+    financial_indicators: list[IndicatorCompare] = Field(
+        default_factory=list,
+        description="标准财报科目对比：营业收入、净利润、现金流及资产负债等",
+    )
     dataset_version: str = Field(default="")
     warnings: list[str] = Field(default_factory=list)

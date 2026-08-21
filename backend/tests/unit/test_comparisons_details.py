@@ -68,6 +68,44 @@ def test_build_rule_details_structure():
     assert all(eid.startswith("ev_fin_") for eid in r1.evidence_ids)
 
 
+def test_build_financial_indicators_keeps_period_difference_and_missing_value(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from app.api.v1.routers.comparisons import _build_financial_indicators
+    from app.application.services.indicator_query_service import IndicatorQueryResult
+
+    refs = {
+        "A": SimpleNamespace(wind_code="A", sec_name="甲公司"),
+        "B": SimpleNamespace(wind_code="B", sec_name="乙公司"),
+    }
+
+    def fake_query(code, metric_id, **_kwargs):
+        value = 10_000_000_000 if code == "A" else None
+        return IndicatorQueryResult(
+            status="ok" if value is not None else "insufficient_data",
+            indicator=metric_id,
+            label=metric_id,
+            period="20260630" if value is not None else "",
+            value=value,
+            unit="CNY",
+            observations=[],
+            available_periods=["20260630"] if value is not None else [],
+        )
+
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_metric", fake_query
+    )
+    rows = _build_financial_indicators(refs, "20260630")
+
+    assert len(rows) == 5
+    assert rows[0].companies[0].value == 10_000_000_000
+    assert rows[0].companies[1].value is None
+    assert rows[0].difference is None
+    assert rows[0].companies[0].period == "20260630"
+
+
 def test_shared_id_consistency_with_finance():
     """共享纯函数：comparisons 与 finance 的 _normalize_evidence_id 同参数同 ID。"""
     from app.api.v1.routers.finance import _normalize_evidence_id

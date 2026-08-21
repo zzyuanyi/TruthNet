@@ -551,6 +551,7 @@ export interface CompanyIndicator {
   sec_name: string;
   value: number | null;
   unit: string;
+  period?: string;
   severity: string;
   status: string;
 }
@@ -559,6 +560,9 @@ export interface IndicatorCompare {
   indicator: string;
   label: string;
   companies: CompanyIndicator[];
+  period?: string;
+  difference?: number | null;
+  difference_unit?: string;
 }
 
 export interface CompanyRiskSummary {
@@ -626,6 +630,7 @@ export interface ComparisonsResponseData {
   statement_scope: string;
   companies: CompanyRiskSummary[];
   indicators: IndicatorCompare[];
+  financial_indicators: IndicatorCompare[];
   dataset_version: string;
   warnings: string[];
   /** 推导链 (Phase E) */

@@ -459,6 +459,54 @@ def test_mcp_http_500_classified(monkeypatch):
     assert provider.report_stats()["web_search_http_5xx"] == 1
 
 
+def test_mcp_retries_transient_503_once(monkeypatch):
+    calls = {"n": 0}
+
+    class _SequenceClient(_FakeClient):
+        async def post(self, *a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _FakeResp(status_code=503, payload={})
+            return _FakeResp(
+                status_code=200,
+                payload={"result": {"content": [{"type": "text", "text": ""}]}},
+            )
+
+    monkeypatch.setattr(
+        "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
+        lambda timeout=None: _SequenceClient(),
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert calls["n"] == 2
+    assert provider.report_stats()["web_search_http_5xx"] == 0
+
+
+def test_mcp_retries_connect_error_once(monkeypatch):
+    import httpx
+
+    calls = {"n": 0}
+
+    class _SequenceClient(_FakeClient):
+        async def post(self, *a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ConnectError("temporary")
+            return _FakeResp(
+                status_code=200,
+                payload={"result": {"content": [{"type": "text", "text": ""}]}},
+            )
+
+    monkeypatch.setattr(
+        "app.infrastructure.web_search.anysearch.provider.httpx.AsyncClient",
+        lambda timeout=None: _SequenceClient(),
+    )
+    provider = AnySearchWebSearchProvider(api_key="")
+    assert _run(provider.search("康美药业 600518.SH 公告")) == []
+    assert calls["n"] == 2
+    assert provider.report_stats()["web_search_connection_error"] == 0
+
+
 def test_mcp_http_429_classified(monkeypatch):
     _patch_client(monkeypatch, resp=_FakeResp(status_code=429, payload={}))
     provider = AnySearchWebSearchProvider(api_key="")

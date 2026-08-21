@@ -216,7 +216,7 @@ def test_ipo_price_falls_back_to_general_query_when_vertical_empty(monkeypatch):
     def _fake_search(query, *args, **kwargs):
         calls.append(query)
         if len(calls) == 1:
-            return []
+            return [_hit(snippet="trade_date=20260820 close=76.55")]
         return [_hit(snippet="波长光电首次公开发行价格为18.20元/股")]
 
     monkeypatch.setattr(web_search_service, "web_search", _fake_search)
@@ -231,8 +231,9 @@ def test_ipo_price_falls_back_to_general_query_when_vertical_empty(monkeypatch):
     assert "18.20元/股" in out["final_response"].answer
     assert len(calls) == 2
     assert "301421.SZ" in calls[0]
-    assert "301421.SZ" not in calls[1]
+    assert "301421.SZ" in calls[1]
     assert "公告" in calls[1]
+    assert calls[0] != calls[1]
 
 
 def test_web_hit_fills_executive_compensation_excerpt(monkeypatch):
