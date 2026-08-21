@@ -1,7 +1,7 @@
 // 织网鉴真 TruthNet - 企业画像页
 // T3: 5 区块（概览/财务/股权/舆情/证据），使用新组件
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
@@ -46,13 +46,17 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { truthnetAPI, type EvidenceLookupData, type RuleDefinition } from '@/lib/api-client';
-import { EquityGraph } from '@/components/truthnet/EquityGraph';
+const EquityGraph = lazy(() =>
+  import('@/components/truthnet/EquityGraph').then((m) => ({ default: m.EquityGraph })),
+);
 import { RelatedPartyTable } from '@/components/truthnet/RelatedPartyTable';
 import { RuleCard, type RuleEvidenceSummary } from '@/components/truthnet/RuleCard';
 import { UpstreamDownstream } from '@/components/truthnet/UpstreamDownstream';
 import { EquityInsight } from '@/components/truthnet/EquityInsight';
 import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
+import { FinanceTrendOverview } from '@/components/truthnet/FinanceTrendOverview';
+import { ExportSnapshotButton } from '@/components/ExportSnapshotButton';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company, DerivationChain, ImpactAdviceData, DataQuality } from '@/types/truthnet';
@@ -378,7 +382,7 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 bg-background">
       {/* 左侧锚点导航 */}
-      <div className="w-40 border-r border-border bg-card">
+      <div className="w-40 border-r border-border bg-card" data-no-print>
         <div className="p-4">
           <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="mb-4 w-full justify-start">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -413,10 +417,12 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               <h1 className="text-2xl font-bold text-foreground">{profile.sec_name}</h1>
               <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
               <span className="text-sm text-muted-foreground">{profile.wind_code}</span>
+              <ExportSnapshotButton className="ml-auto gap-1.5" />
               <Button
                 variant="outline"
                 size="sm"
-                className="ml-auto gap-1.5"
+                className="gap-1.5"
+                data-no-print
                 onClick={handleGenerateReport}
                 disabled={reportCreating}
               >
@@ -662,6 +668,7 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
             </h2>
             {financialAnomalies.length > 0 ? (
               <>
+              <FinanceTrendOverview rules={financialAnomalies} />
               <div className="space-y-3">
                 {financialAnomalies.map((anomaly) => (
                     <RuleCard
@@ -835,11 +842,13 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
                       <span>从左到右为向上穿透层级，可滚轮缩放、按住拖拽</span>
                     </div>
                   <div className="mt-4">
-                    <EquityGraph
-                      nodes={equityData.nodes}
-                      edges={equityData.edges}
-                      targetId={equityData.target?.entity_id || ''}
-                    />
+                    <Suspense fallback={<div className="flex h-64 items-center justify-center text-sm text-muted-foreground">股权图谱加载中…</div>}>
+                      <EquityGraph
+                        nodes={equityData.nodes}
+                        edges={equityData.edges}
+                        targetId={equityData.target?.entity_id || ''}
+                      />
+                    </Suspense>
                   </div>
                   </CardContent>
                 </Card>

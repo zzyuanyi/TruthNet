@@ -32,6 +32,7 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     minify: 'terser',
+    chunkSizeWarningLimit: 1300,
     rollupOptions: {
       output: {
         manualChunks(id: string) {

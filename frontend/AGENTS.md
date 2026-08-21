@@ -8,7 +8,7 @@ TruthNet（织网鉴真）前端，财报反欺诈智能问答系统。与后端
 
 - React 18 + Vite 6 + TypeScript 5.6
 - shadcn/ui + Tailwind CSS v4
-- 图表：Recharts；图谱可视化：D3.js
+- 图表：Recharts；图谱可视化：AntV G6（股权图，React.lazy 懒加载）
 - Markdown：react-markdown + remark-gfm + react-syntax-highlighter（PrismLight 按需注册）
 - 动效：@formkit/auto-animate、react-hotkeys-hook、cmdk（⌘K 命令面板）
 
@@ -19,7 +19,8 @@ frontend/src/
   pages/           7 个路由页（ChatPage / CompanyProfilePage / ComparePage / ReportPage / RulesPage / SettingsPage / NotFoundPage）
   components/
     ui/            shadcn/ui 基础组件（card / badge / skeleton / dialog 等）
-    truthnet/      业务组件（ChatInterface / EquityGraph / EquityInsight / UpstreamDownstream / RelatedPartyTable / RiskTimeline / RuleCard / EvidenceChain 等）
+    truthnet/      业务组件（ChatInterface / EquityGraph / EquityInsight / FinanceTrendOverview / UpstreamDownstream / RelatedPartyTable / RiskTimeline / RuleCard / EvidenceChain 等）
+    ExportSnapshotButton.tsx  通用「导出快照」按钮（window.print 打印报告快照）
   lib/             api-client.ts（REST + WS 封装）、utils.ts（cn）
   types/truthnet.ts  数据契约类型（与后端 schemas 对齐）
   hooks/           useDocumentTitle 等
@@ -44,6 +45,7 @@ pnpm lint                  # ESLint
 - **Hydration 安全**：`Date.now()` / `Math.random()` 等动态值必须在 `useEffect + useState` 内，禁止在 JSX 渲染中直接调用。
 - **大文件分段写入**：超出 2000 行或 15000 token 的文件禁止单次 `write_file` 全量写入。
 - **字体**：Google Fonts 走 `.cn` 域（`fonts.googleapis.cn`），在 `index.css` 顶部 `@import`（必须位于其它语句之前）。
+- **股权图懒加载**：`EquityGraph` 用 `React.lazy` 动态 import，G6 进入独立 chunk（约 1.2MB minified / 356KB gzip），不阻塞首屏；`vite.config.ts` 的 `chunkSizeWarningLimit` 已相应调至 1300。
 
 ## 数据契约注意
 

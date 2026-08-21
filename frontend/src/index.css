@@ -170,3 +170,79 @@ body::before {
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
+
+/* ─── 报告快照导出：打印样式 ─── */
+@media print {
+  /* 强制浅色主题，保证打印可读（覆盖暗色模式） */
+  :root,
+  :root.dark,
+  .dark {
+    --color-background: #ffffff;
+    --color-foreground: #0a0a0a;
+    --color-card: #ffffff;
+    --color-card-foreground: #0a0a0a;
+    --color-popover: #ffffff;
+    --color-popover-foreground: #0a0a0a;
+    --color-primary: #2563eb;
+    --color-primary-foreground: #ffffff;
+    --color-secondary: #f1f5f9;
+    --color-secondary-foreground: #0f172a;
+    --color-muted: #f1f5f9;
+    --color-muted-foreground: #64748b;
+    --color-accent: #f1f5f9;
+    --color-accent-foreground: #0f172a;
+    --color-destructive: #ef4444;
+    --color-destructive-foreground: #ffffff;
+    --color-border: #e2e8f0;
+    --color-input: #e2e8f0;
+    --color-ring: #2563eb;
+  }
+
+  /* 保留必要的背景色（badge / 图表） */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 关闭微纹理背景 */
+  body::before {
+    display: none !important;
+  }
+
+  /* 隐藏导航与操作元素 */
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* 展开滚动容器，避免打印内容被截断 */
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+  .overflow-auto,
+  .overflow-x-auto,
+  .overflow-y-auto {
+    overflow: visible !important;
+  }
+  [class*="h-[calc(100dvh"] {
+    height: auto !important;
+  }
+
+  /* 卡片去除磨砂/入场动画/阴影，避免分页碎裂 */
+  [data-slot="card"] {
+    background: var(--color-card) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    animation: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .recharts-wrapper,
+  .recharts-responsive-container {
+    break-inside: avoid;
+  }
+}

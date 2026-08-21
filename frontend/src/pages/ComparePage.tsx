@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { ExportSnapshotButton } from '@/components/ExportSnapshotButton';
 import {
   ArrowLeft,
   AlertTriangle,
@@ -629,13 +630,14 @@ export default function ComparePage() {
     <div className="h-full flex flex-col bg-background">
       {/* 头部 */}
       <header className="border-b px-6 py-4 flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+        <Button variant="ghost" size="icon" data-no-print onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-lg font-medium">跨公司对比</h1>
         <Badge variant="secondary">
           {companies.length} 家公司
         </Badge>
+        <ExportSnapshotButton className="ml-auto gap-1.5" />
       </header>
 
       {/* 内容区 */}
