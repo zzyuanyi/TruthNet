@@ -4,6 +4,9 @@
 company None、FinalResponse 字段透传、LLM 问答润色（Phase D #13）。
 """
 
+from datetime import date
+from decimal import Decimal
+
 import pytest
 
 from app.agents.nodes.generate_answer import generate_answer_node
@@ -12,11 +15,14 @@ from app.agents.state import (
     Claim,
     CompanyRef,
     ExecutionPlan,
+    EventsResult,
     FinanceResult,
     ModuleResults,
     ModuleStatus,
     RuntimeState,
 )
+from app.application.ports.web_search_provider import SearchResult
+from app.application.services.market_quote_service import MarketQuoteResult
 
 
 class _PassthroughProvider:
@@ -108,6 +114,453 @@ def test_company_none():
     assert fr.evidence == []
 
 
+def test_positive_event_query_does_not_render_negative_summary():
+    events = EventsResult(
+        timeline=[
+            {"date": "2026-01-01", "title": "监管处罚", "sentiment": "negative"},
+            {"date": "2026-02-01", "title": "回购公告", "sentiment": "positive"},
+        ]
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("东吴证券", "601555.SH"),
+                plan=ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    event_sentiment="positive",
+                ),
+                results=ModuleResults(events=events),
+            ),
+            "user_query": "最近有哪些利好事件",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "回购公告" in answer
+    assert "监管处罚" not in answer
+
+
+def test_announcement_list_query_renders_all_events():
+    events = EventsResult(
+        timeline=[
+            {
+                "date": "2026-02-01",
+                "title": "回购公告",
+                "category": "股份回购",
+                "sentiment": "positive",
+                "evidence_ids": ["ev_ann_1"],
+            },
+            {
+                "date": "2026-01-01",
+                "title": "监管处罚",
+                "category": "监管处罚",
+                "sentiment": "negative",
+                "evidence_ids": ["ev_ann_2"],
+            },
+        ]
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("金杯汽车", "600609.SH"),
+                plan=ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    event_list_requested=True,
+                ),
+                results=ModuleResults(events=events),
+            ),
+            "user_query": "金杯汽车的最新公告有哪些",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "回购公告" in answer
+    assert "监管处罚" in answer
+    assert "ev_ann_1" in answer
+    assert answer.index("回购公告") < answer.index("监管处罚")
+
+
+def test_market_wide_announcement_query_explains_scope():
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=None,
+                plan=ExecutionPlan(intent="research", event_list_requested=True),
+            ),
+            "user_query": "最近有没有上市公司发布了控股股东股权质押公告",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "需要先指定上市公司或股票代码" in answer
+    assert "不能据此确认所有上市公司的股权质押公告" in answer
+
+
+def test_unresolved_market_question_does_not_ask_for_fake_company():
+    result = generate_answer_node(
+        {
+            **_make_state(company=None),
+            "user_query": "黄金板块还可以买吗",
+            "entity_resolution_error": "company_not_found",
+            "unresolved_fragments": ["黄金板块还可以买"],
+        }
+    )
+    assert "只支持可识别的单只 A 股行情快照" in result["final_response"].answer
+    assert "请提供完整名称" not in result["final_response"].answer
+
+
+def test_no_company_investment_advice_uses_boundary_answer():
+    result = generate_answer_node(
+        {
+            **_make_state(company=None),
+            "user_query": "黄金板块还可以买吗？",
+            "plan": ExecutionPlan(intent="investment_advice"),
+        }
+    )
+    answer = result["final_response"].answer
+    assert "不提供是否买入或卖出的投资建议" in answer
+    assert "请提供完整公司名称" not in answer
+
+
+def test_market_quote_answer_has_exact_field_date_and_evidence(monkeypatch):
+    hit = SearchResult(
+        title="600519.SH 20260820 日线行情",
+        url="https://example.test/600519",
+        snippet="trade_date=20260820 close=1291.5 amount=3280474.226",
+        source="anysearch",
+    )
+    monkeypatch.setattr(
+        "app.application.services.market_quote_service.query_market_quote",
+        lambda **kwargs: MarketQuoteResult(
+            status="ok",
+            field="close",
+            value=Decimal("1291.5"),
+            raw_value="1291.5",
+            trade_date="2026-08-20",
+            hit=hit,
+        ),
+    )
+    state = {
+        **_make_state(
+            company=_company("贵州茅台", "600519.SH"),
+            plan=ExecutionPlan(intent="market_quote", market_field="close"),
+        ),
+        "user_query": "贵州茅台今天股价",
+    }
+
+    result = generate_answer_node(state)
+
+    assert "2026-08-20" in result["final_response"].answer
+    assert "收盘价为1,291.50元" in result["final_response"].answer
+    assert result["evidence"][0].field_path == "market_quote.close"
+    assert result["evidence"][0].value == "1291.5"
+    assert result["claims"][0].evidence_ids == [result["evidence"][0].evidence_id]
+
+
+def test_market_quote_missing_field_is_honest(monkeypatch):
+    monkeypatch.setattr(
+        "app.application.services.market_quote_service.query_market_quote",
+        lambda **kwargs: MarketQuoteResult(
+            status="field_missing",
+            field="volume",
+            trade_date="2026-08-20",
+            hit=SearchResult(snippet="amount=3280474.226", source="anysearch"),
+        ),
+    )
+    state = {
+        **_make_state(
+            company=_company("东吴证券", "601555.SH"),
+            plan=ExecutionPlan(intent="market_quote", market_field="volume"),
+        ),
+        "user_query": "东吴证券今日成交量",
+    }
+
+    result = generate_answer_node(state)
+
+    assert "未返回成交量字段" in result["final_response"].answer
+    assert result["evidence"] == []
+    assert "成交额" not in result["final_response"].answer
+
+
+def test_investment_advice_and_trade_execution_are_not_guessed():
+    advice = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("上海机电", "600835.SH"),
+                plan=ExecutionPlan(intent="investment_advice"),
+            ),
+            "user_query": "上海机电还可以买入吗？",
+        }
+    )["final_response"].answer
+    execution = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("贵州茅台", "600519.SH"),
+                plan=ExecutionPlan(intent="trade_execution"),
+            ),
+            "user_query": "帮我买入100手贵州茅台",
+        }
+    )["final_response"].answer
+    assert "不提供是否买入或卖出的投资建议" in advice
+    assert "不能代为买卖证券" in execution
+
+
+def test_turnaround_question_explains_result(monkeypatch):
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_metric",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {
+                "status": "ok",
+                "value": -1_776_000_000.0,
+                "unit": "CNY",
+                "period": "20251231",
+                "observations": [],
+                "label": "净利润",
+            },
+        )(),
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("通威股份", "600438.SH"),
+                plan=ExecutionPlan(intent="indicator", indicator="net_profit"),
+            ),
+            "user_query": "通威股份2025年净利润能否扭亏为盈",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "尚未扭亏为盈" in answer
+    assert "17.76亿元" in answer
+
+
+def test_receivable_impact_verifies_growth_before_risk_reasoning(monkeypatch):
+    from app.application.services.indicator_query_service import IndicatorQueryResult
+
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_metric",
+        lambda *args, **kwargs: IndicatorQueryResult(
+            status="ok",
+            indicator="accounts_receivable",
+            label="应收账款余额",
+            period="20251231",
+            value=130.0,
+            unit="CNY",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_indicator_trend",
+        lambda *args, **kwargs: [
+            IndicatorQueryResult(
+                status="ok",
+                indicator="accounts_receivable",
+                label="应收账款余额",
+                period="20241231",
+                value=100.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="accounts_receivable",
+                label="应收账款余额",
+                period="20251231",
+                value=130.0,
+                unit="CNY",
+            ),
+        ],
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("贵州茅台", "600519.SH"),
+                plan=ExecutionPlan(
+                    intent="indicator",
+                    indicator="accounts_receivable",
+                    answer_operation="impact",
+                ),
+            ),
+            "user_query": "贵州茅台应收账款激增有何风险？",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "同比增长 30.00%" in answer
+    assert "[推断]" in answer
+    assert "坏账减值风险" in answer
+
+
+def test_multi_metric_query_returns_available_items(monkeypatch):
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_metric",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {
+                "status": "ok",
+                "value": 123_000_000.0,
+                "unit": "CNY",
+                "period": "20231231",
+                "observations": [],
+            },
+        )(),
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company(),
+                plan=ExecutionPlan(intent="multi_metric", as_of=date(2023, 12, 31)),
+            ),
+            "user_query": "康美药业2023年总股本、营业收入、净资产、收盘价、eps",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "| 指标 | 数值 | 数据期与口径 |" in answer
+    assert "| 总股本 | 暂无数据 | 当前数据范围未覆盖 |" in answer
+    assert "营业收入" in answer
+    assert "| 净资产 | 暂无数据 | 当前数据范围未覆盖 |" in answer
+
+
+def test_research_list_questions_are_formatted_as_company_list():
+    from app.agents.nodes.generate_answer import _format_research_insights
+
+    answer = _format_research_insights(
+        "医疗器械行业的主要竞争者有哪些",
+        [
+            {"sec_name": "鱼跃医疗", "content": "片段"},
+            {"sec_name": "海尔生物", "content": "片段"},
+        ],
+    )
+    assert answer == "相关研报涉及的公司包括：鱼跃医疗、海尔生物。"
+
+
+def test_research_emerging_company_questions_are_formatted_as_company_list():
+    from app.agents.nodes.generate_answer import _format_research_insights
+
+    answer = _format_research_insights(
+        "医疗器械行业有哪些新兴公司值得关注",
+        [
+            {"sec_name": "鱼跃医疗", "content": ""},
+            {"sec_name": "海尔生物", "content": ""},
+        ],
+    )
+    assert answer == "相关研报涉及的公司包括：鱼跃医疗、海尔生物。"
+
+
+def test_research_sector_company_questions_are_formatted_as_company_list():
+    from app.agents.nodes.generate_answer import _format_research_insights
+
+    answer = _format_research_insights(
+        "化学制药板块有哪些公司",
+        [
+            {"sec_name": "司太立", "content": "片段"},
+            {"sec_name": "华海药业", "content": "片段"},
+        ],
+    )
+    assert answer == "相关研报涉及的公司包括：司太立、华海药业。"
+
+
+def test_research_company_list_includes_source_table_when_available():
+    from app.agents.nodes.generate_answer import _format_research_insights
+
+    answer = _format_research_insights(
+        "医疗器械行业的主要竞争者有哪些",
+        [
+            {
+                "sec_name": "鱼跃医疗",
+                "source_title": "医疗器械行业报告",
+                "report_id": "rp_1",
+                "content": "家用医疗设备覆盖较广",
+            }
+        ],
+    )
+    assert "相关研报涉及的公司包括：鱼跃医疗。" in answer
+    assert "| 公司 | 研报依据 | 摘要 |" in answer
+
+
+def test_company_research_returns_source_table_without_generic_risk(monkeypatch):
+    monkeypatch.setattr(
+        "app.application.services.research_search.report_insights_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.application.services.research_search.search_research_insights_sync",
+        lambda *args, **kwargs: [
+            {
+                "report_id": "rp_1",
+                "source_date": "2026-08-18",
+                "source_org": "测试证券",
+                "source_title": "公司评级更新",
+                "content": "盈利预测维持稳定，评级由增持调整为中性。",
+            }
+        ],
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("哈药股份", "600664.SH"),
+                plan=ExecutionPlan(intent="research"),
+            ),
+            "user_query": "哈药股份的机构评级有哪些变化",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "| 日期 | 机构 / 研报 | 核心观点 |" in answer
+    assert "公司评级更新" in answer
+    assert "综合分析完成" not in answer
+    assert len(result["evidence"]) == 1
+
+
+def test_continuous_loss_answer_counts_latest_negative_years_and_uses_table(
+    monkeypatch,
+):
+    from app.application.services.indicator_query_service import IndicatorQueryResult
+
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_indicator_trend",
+        lambda *args, **kwargs: [
+            IndicatorQueryResult(
+                status="ok",
+                indicator="net_profit",
+                label="净利润",
+                period="20231231",
+                value=2.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="net_profit",
+                label="净利润",
+                period="20241231",
+                value=-1.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="net_profit",
+                label="净利润",
+                period="20251231",
+                value=-2.0,
+                unit="CNY",
+            ),
+        ],
+    )
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("通威股份", "600438.SH"),
+                plan=ExecutionPlan(
+                    intent="indicator",
+                    indicator="net_profit",
+                    answer_operation="loss_years",
+                ),
+            ),
+            "user_query": "通威股份连续亏损了几年",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "| 年度 | 净利润 |" in answer
+    assert "连续亏损 2 年" in answer
+
+
 # ── 四层回答结构 ────────────────────────────────────────────
 
 
@@ -144,6 +597,43 @@ def test_no_risk_signal_conclusion():
     fr = result["final_response"]
     assert "未发现明显异常信号" in fr.answer
     assert fr.risk_level == "green"
+
+
+def test_module_failure_no_signal_conclusion_is_degraded():
+    """模块失败且无 claim 时，头行不得 fail-open 为未发现异常。"""
+    plan = ExecutionPlan(requested_modules=["finance"])
+    module_status = {
+        "finance": ModuleStatus(state="failed", error_code="DB_ERROR", recoverable=True)
+    }
+    result = generate_answer_node(
+        _make_state(company=_company(), plan=plan, module_status=module_status)
+    )
+    fr = result["final_response"]
+    assert "本轮分析未完整完成" in fr.answer
+    assert "财务模块失败" in fr.answer
+    assert "无法确认是否存在明显异常信号" in fr.answer
+    assert "未发现明显异常信号" not in fr.answer
+
+
+def test_report_period_without_financial_claims_discloses_scope_limit():
+    plan = ExecutionPlan(
+        intent="diagnose",
+        requested_modules=["finance", "equity", "events"],
+        as_of=date(2025, 9, 30),
+        as_of_kind="report_period",
+        requested_period_text="三季报",
+    )
+    state = _make_state(
+        company=_company("东吴证券", "601555.SH"),
+        plan=plan,
+        claims=[_claim("event-1", "event", "red", None)],
+        results=ModuleResults(
+            finance=FinanceResult(rule_statuses={"R1": "not_applicable"})
+        ),
+    )
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "未提取到三季报可核验的财务指标" in answer
+    assert "不能替代该报告期的财务分析" in answer
 
 
 # ── Phase C: 母公司口径措辞 ────────────────────────────────
@@ -579,6 +1069,77 @@ def test_claims_and_evidence_passthrough():
     assert result.evidence == []
 
 
+def test_unsupported_plan_with_company_does_not_fail_open_to_normal():
+    state = _make_state(
+        company=_company("华旺科技", "605377.SH"),
+        plan=ExecutionPlan(intent="unsupported"),
+    )
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "超出了织网鉴真的服务范围" in answer
+    assert "未发现明显异常信号" not in answer
+
+
+def test_explicit_consolidated_scope_is_rejected():
+    state = _make_state(company=_company())
+    state["user_query"] = "请按合并口径分析康美药业财务风险"
+    result = generate_answer_node(state)
+    answer = result["final_response"].answer
+    assert "不能切换为合并口径" in answer
+    assert result["final_response"].claims == []
+
+
+def test_multi_year_indicator_does_not_fall_back_to_latest(monkeypatch):
+    from app.application.services.indicator_query_service import IndicatorQueryResult
+
+    from app.agents.nodes.generate_answer import _answer_indicator
+
+    state = _make_state(
+        company=_company(),
+        plan=ExecutionPlan(intent="indicator", indicator="operating_revenue"),
+    )
+    state["user_query"] = "最近三年营收变化"
+    # 8/20 CI 修复：本测试此前依赖真实 DB（本地 mysql 有数据、CI sqlite 空）
+    # 导致 query_indicator_trend 返回空 → 误走"年度序列不足"分支。
+    # 显式 mock 三年序列，使断言与数据库环境无关。
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_indicator_trend",
+        lambda *args, **kwargs: [
+            IndicatorQueryResult(
+                status="ok",
+                indicator="operating_revenue",
+                label="营业收入",
+                period="20231231",
+                value=100.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="operating_revenue",
+                label="营业收入",
+                period="20241231",
+                value=120.0,
+                unit="CNY",
+            ),
+            IndicatorQueryResult(
+                status="ok",
+                indicator="operating_revenue",
+                label="营业收入",
+                period="20251231",
+                value=150.0,
+                unit="CNY",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_metric",
+        lambda *a, **k: pytest.fail("多年趋势不得查询并冒充最新单期"),
+    )
+    result = _answer_indicator(state, "operating_revenue")
+    answer = result["final_response"].answer
+    assert "年度序列" in answer
+    assert "2023年" in answer and "2025年" in answer
+
+
 # ── 2026-08-12 批 1.5：实体解析失败/候选截断文案 ─────────────
 
 
@@ -927,6 +1488,54 @@ def test_answer_cross_company_fact_listing_date(monkeypatch):
     assert "早约 6.3 年" in answer
     assert out["claims"][0].claim_type == "company_fact_comparison"
     assert len(out["evidence"]) == 2
+
+
+def test_cross_company_fact_uses_web_fill_for_missing_dates(monkeypatch):
+    from app.agents.nodes.generate_answer import _answer_light_comparison
+    from app.agents.state import ComparisonSpec, EvidenceRef
+
+    dates = {"600028.SH": "2001-08-08", "601857.SH": "2007-11-05"}
+    calls: list[str] = []
+
+    def fake_fill(**kwargs):
+        code = kwargs["wind_code"]
+        calls.append(code)
+        value = dates[code]
+        return value, EvidenceRef(
+            evidence_id=f"ev_web_{code}",
+            source_type="web_search",
+            source_record_id=f"https://example.test/{code}",
+            field_path="listing_date",
+            value=value,
+            company_code=code,
+            module="company_fact",
+        )
+
+    monkeypatch.setattr(
+        "app.agents.nodes.generate_answer._web_search_fill_company_fact", fake_fill
+    )
+    state = {
+        "company": _company("中国石化", "600028.SH"),
+        "comparison_targets": [
+            CompanyRefWithDate("中国石化", "600028.SH", ""),
+            CompanyRefWithDate("中国石油", "601857.SH", ""),
+        ],
+        "plan": ExecutionPlan(
+            intent="light_comparison",
+            comparison=ComparisonSpec(
+                scope="cross_company",
+                mode="company_fact",
+                fact_key="listing_date",
+                operation="earlier_than",
+                period_policy="not_applicable",
+            ),
+        ),
+        "runtime": RuntimeState(turn_id="turn-1", trace_id="trace-1"),
+    }
+    out = _answer_light_comparison(state)
+    assert calls == ["600028.SH", "601857.SH"]
+    assert "早约" in out["final_response"].answer
+    assert {e.source_type for e in out["evidence"]} == {"web_search"}
 
 
 def CompanyRefWithDate(name: str, code: str, listing: str) -> CompanyRef:

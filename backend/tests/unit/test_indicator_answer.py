@@ -9,6 +9,10 @@ from app.application.services.indicator_query_service import (
     IndicatorObservation,
     IndicatorQueryResult,
     query_indicator,
+    query_indicator_cagr,
+    query_indicator_trend,
+    query_quarter_mom,
+    query_quarter_value,
 )
 from app.domain.finance._fetch import SeriesResult
 
@@ -204,6 +208,84 @@ def test_query_indicator_growth_two_field_unsupported(monkeypatch):
     assert result.label == "资产负债率"
 
 
+def test_query_indicator_cagr_rejects_inconsistent_annual_source(monkeypatch):
+    """年报远低于同年三季报时不输出看似精确的错误 CAGR。"""
+    data = SeriesResult(
+        [100.0, 60.0, 90.0, 110.0, 1.0],
+        periods=["20231231", "20240930", "20241231", "20250930", "20251231"],
+    )
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.fetch_series",
+        lambda *args, **kwargs: data,
+    )
+    result = query_indicator_cagr("603180.SH", "operating_revenue", years=3)
+    assert result.status == "insufficient_data"
+    assert result.value is None
+
+
+def test_query_indicator_rejects_inconsistent_annual_revenue(monkeypatch):
+    """年度累计营收为零但同年三季报有值时，不把零展示成真实营收。"""
+    data = SeriesResult(
+        [110.0, 0.0],
+        periods=["20250930", "20251231"],
+    )
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.fetch_series",
+        lambda *args, **kwargs: data,
+    )
+    result = query_indicator("600606.SH", "operating_revenue")
+    assert result.status == "insufficient_data"
+    assert result.value is None
+
+
+def test_query_indicator_rejects_zero_revenue_placeholder(monkeypatch):
+    data = SeriesResult([0.0], periods=["20251231"])
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.fetch_series",
+        lambda *args, **kwargs: data,
+    )
+    result = query_indicator("600606.SH", "operating_revenue")
+    assert result.status == "insufficient_data"
+    assert result.value is None
+
+
+def test_registry_metric_trend_reuses_period_evaluator(monkeypatch):
+    data = {
+        "oper_rev": SeriesResult(
+            [100.0, 110.0, 120.0],
+            periods=["20231231", "20241231", "20251231"],
+        ),
+        "less_oper_cost": SeriesResult(
+            [60.0, 66.0, 84.0],
+            periods=["20231231", "20241231", "20251231"],
+        ),
+    }
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.fetch_series",
+        lambda _code, field, periods, as_of: data[field],
+    )
+    rows = query_indicator_trend("603180.SH", "r5_gross_margin")
+    assert [row.period for row in rows] == ["20231231", "20241231", "20251231"]
+    assert [row.value for row in rows] == [0.4, 0.4, 0.3]
+
+
+def test_query_quarter_value_subtracts_same_year_cumulative_prior(monkeypatch):
+    data = {
+        "net_profit_excl_min_int_inc": SeriesResult(
+            [10.0, 25.0, 55.0, 100.0],
+            periods=["20250331", "20250630", "20250930", "20251231"],
+        )
+    }
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.fetch_series",
+        lambda _code, field, periods, as_of: data[field],
+    )
+    result = query_quarter_value("603180.SH", "net_profit")
+    assert result.status == "ok"
+    assert result.period == "20251231"
+    assert result.value == 45.0
+
+
 def test_query_indicator_growth_denominator_protection(monkeypatch):
     """yoy_growth 分母绝对值 <1 万 → insufficient_data。"""
     data = {
@@ -305,25 +387,64 @@ def test_answer_indicator_positive_growth_text(monkeypatch):
     assert "同比增长 8.50%" in out["final_response"].answer
 
 
-def test_answer_indicator_labeled_unsupported():
-    """带 label 的 unsupported（环比）→ 独立文案（非"数据不足"）。"""
+def test_answer_indicator_quarter_mom(monkeypatch):
+    """单季度环比走真实计算结果，不再主动降级为 unsupported。"""
     from app.agents.nodes.generate_answer import _answer_indicator
 
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.query_quarter_mom",
+        lambda *args, **kwargs: IndicatorQueryResult(
+            status="ok",
+            indicator="operating_revenue_quarter_mom",
+            label="单季度营业收入环比增长率",
+            period="20250331",
+            comparison_period="20241231",
+            value=50.0,
+            unit="percent",
+            observations=[
+                IndicatorObservation(
+                    "oper_rev", "income_statement", 45.0, period="20250331"
+                ),
+                IndicatorObservation(
+                    "oper_rev", "income_statement", 30.0, period="20241231"
+                ),
+            ],
+        ),
+    )
     out = _answer_indicator(
         {
             "company": _company(),
             "plan": ExecutionPlan(
-                intent="indicator", indicator="operating_revenue_mom"
+                intent="indicator",
+                indicator="operating_revenue_mom",
+                answer_operation="quarter_mom",
             ),
             "runtime": RuntimeState(turn_id="t"),
         },
         "operating_revenue_mom",
     )
     answer = out["final_response"].answer
-    assert "营业收入" in answer
-    assert "暂不支持" in answer
-    assert out["claims"] == []
-    assert out["evidence"] == []
+    assert "单季度营业收入环比增长率为 50.00%" in answer
+    assert "2025-03-31" in answer
+
+
+def test_query_quarter_mom_crosses_year_boundary(monkeypatch):
+    data = {
+        "oper_rev": SeriesResult(
+            [70_000_000.0, 100_000_000.0, 45_000_000.0],
+            periods=["20240930", "20241231", "20250331"],
+        )
+    }
+    monkeypatch.setattr(
+        "app.application.services.indicator_query_service.fetch_series",
+        lambda _code, field, periods, as_of: data[field],
+    )
+    result = query_quarter_mom("603180.SH", "operating_revenue")
+    assert result.status == "ok"
+    assert result.period == "20250331"
+    assert result.comparison_period == "20241231"
+    assert result.value == pytest.approx(50.0)
+    assert [item.value for item in result.observations] == [45_000_000.0, 30_000_000.0]
 
 
 # ── v3.3.3 批次 B：registry 指标查询适配（方案 §5.3）────────────

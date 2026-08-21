@@ -275,6 +275,22 @@ def test_missing_text():
     assert event["payload"]["error_code"] == "MISSING_QUESTION"
 
 
+def test_non_object_message_and_payload_are_recoverable():
+    """合法 JSON 的数组消息/载荷不得让 WS 连接因 AttributeError 断开。"""
+    client = TestClient(app)
+    with client.websocket_connect("/api/v1/chat/ws") as ws:
+        ws.send_json(["chat.query", {"text": "康美药业"}])
+        message_event = _receive_one(ws)
+        assert message_event["payload"]["error_code"] == "INVALID_MESSAGE"
+
+        ws.send_json({"event_type": "chat.query", "payload": ["bad"]})
+        payload_event = _receive_one(ws)
+        assert payload_event["payload"]["error_code"] == "INVALID_PAYLOAD"
+
+        ws.send_json({"event_type": "ping", "payload": {}})
+        assert _receive_one(ws)["event_type"] == "heartbeat"
+
+
 @_NEED_MYSQL
 def test_risk_diagnosis_runs_all_modules(ws_session_tracker):
     """综合风险问题 → finance + equity + events 全部执行。"""

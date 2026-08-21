@@ -49,7 +49,7 @@ def prewarm_runtime() -> None:
     try:
         from app.infrastructure.vector.chroma.vector_store import ChromaVectorStore
 
-        ChromaVectorStore()
+        ChromaVectorStore()._get_client()
     except Exception:  # noqa: BLE001 — Chroma 不可用时首请求自行降级
         logger.warning("启动预热: Chroma client 初始化失败（降级）", exc_info=True)
 

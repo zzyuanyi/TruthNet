@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.agents.state import (
@@ -27,8 +27,6 @@ from app.core.config import settings
 from app.domain.events.fcode_taxonomy import fcode_category_label
 
 logger = logging.getLogger(__name__)
-
-_engine: Engine | None = None
 
 # ── B2 第二阶段：舆情影响分析同步适配 ─────────────────────
 # 事件节点是同步 def（graph 全同步 add_node），而 generate_impacts 是
@@ -147,15 +145,11 @@ def _run_event_impacts(
 
 
 def _get_engine() -> Engine:
-    """惰性缓存 MySQL engine。"""
-    global _engine
-    if _engine is None:
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-        )
-        _engine = create_engine(url, echo=False)
-    return _engine
+    """惰性缓存 MySQL engine（8/19 全面审查：改用完整 profile key，
+    避免切库后复用旧库 Engine 命中错误数据）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _fetch_announcements(wind_code: str, as_of: str = "") -> list[dict]:

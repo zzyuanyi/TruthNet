@@ -86,7 +86,13 @@ def test_events_no_announcement_web_search_empty(monkeypatch, _mysql_backend):
 
 
 def test_events_off_default_no_web_search(monkeypatch, _mysql_backend):
-    """off 默认：不 patch web_search → 真实服务 off 门返回 []，无 web 证据。"""
+    """off 默认：不 patch web_search → 真实服务 off 门返回 []，无 web 证据。
+
+    （8/19 环境解耦：显式置 off，避免 .env 配置 anysearch 时真实联网。）
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "off")
     out = events_node(_state(monkeypatch))
     events = out["results"].events
     assert not [e for e in events.evidence if e.source_type == "web_search"]

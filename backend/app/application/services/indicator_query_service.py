@@ -89,6 +89,16 @@ def _series_values(series: SeriesResult) -> dict[str, float]:
     }
 
 
+def _inconsistent_annual_revenue(
+    period: str, value: float, values: dict[str, float]
+) -> bool:
+    """年报营收远低于同年三季报，视为源数据占位值而非真实数值。"""
+    if not period.endswith("1231"):
+        return False
+    q3_value = values.get(f"{period[:4]}0930")
+    return q3_value is not None and q3_value > 0 and value < q3_value * 0.1
+
+
 def query_indicator(
     company_code: str,
     indicator: str,
@@ -157,6 +167,33 @@ def query_indicator(
                 if require_exact_period
                 else []
             ),
+        )
+
+    # 上市公司年度营业收入为 0 通常是测试库占位值或缺失映射；
+    # 不把它展示成真实的“0.00 元”。
+    if (
+        indicator == "operating_revenue"
+        and values_by_field[spec.fields[0]][period] == 0
+    ):
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=indicator,
+            label=spec.label,
+            period=period,
+            available_periods=available,
+            warnings=["营业收入为零，未作为有效财务数据输出"],
+        )
+
+    if indicator == "operating_revenue" and _inconsistent_annual_revenue(
+        period, values_by_field[spec.fields[0]][period], values_by_field[spec.fields[0]]
+    ):
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=indicator,
+            label=spec.label,
+            period=period,
+            available_periods=available,
+            warnings=["年报营业收入与同年三季报不一致，未采用该值"],
         )
 
     observations = [
@@ -284,6 +321,350 @@ def _query_yoy_growth(
         ],
         comparison_period=prev_period,
         available_periods=available,
+    )
+
+
+def query_indicator_cagr(
+    company_code: str,
+    base_indicator: str,
+    *,
+    as_of: str = "",
+    years: int = 3,
+) -> IndicatorQueryResult:
+    """按年度报表计算 CAGR，缺少完整起止年度时不回退到单期。"""
+    spec = _INDICATORS.get(base_indicator)
+    if spec is None or len(spec.fields) != 1:
+        return IndicatorQueryResult(
+            status="unsupported", indicator=f"{base_indicator}_cagr", label="复合增长率"
+        )
+    series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
+    values = _series_values(series)
+    annual = {
+        str(period): float(value)
+        for period, value in zip(series.periods, series.values)
+        if value is not None and str(period).endswith("1231")
+    }
+    # 年报与同年三季报相差两个数量级时，通常是源数据口径/单位异常。
+    # 这种值不能继续参与 CAGR，否则会把脏数据包装成精确百分比。
+    for period in list(annual):
+        if _inconsistent_annual_revenue(period, annual[period], values):
+            annual.pop(period)
+    periods = sorted(annual)
+    if len(periods) < years or years < 2:
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=f"{base_indicator}_cagr",
+            label=f"{spec.label}复合增长率",
+            available_periods=periods,
+        )
+    start_period, end_period = periods[-years], periods[-1]
+    start_value, end_value = annual[start_period], annual[end_period]
+    if start_value <= 0 or end_value < 0:
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=f"{base_indicator}_cagr",
+            label=f"{spec.label}复合增长率",
+            available_periods=periods,
+        )
+    value = ((end_value / start_value) ** (1 / (years - 1)) - 1) * 100
+    return IndicatorQueryResult(
+        status="ok",
+        indicator=f"{base_indicator}_cagr",
+        label=f"{spec.label}复合增长率",
+        period=end_period,
+        value=value,
+        unit="percent",
+        observations=[
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], start_value, start_period
+            ),
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], end_value, end_period
+            ),
+        ],
+        available_periods=periods,
+    )
+
+
+def query_indicator_trend(
+    company_code: str,
+    base_indicator: str,
+    *,
+    as_of: str = "",
+    periods: int = 5,
+    annual_only: bool = True,
+) -> list[IndicatorObservation]:
+    """返回最近年度序列，供趋势/连续变化问法使用。"""
+    from app.domain.benchmarks.metric_registry import REGISTRY
+
+    if base_indicator in REGISTRY:
+        return query_registry_metric_trend(
+            company_code,
+            base_indicator,
+            as_of=as_of,
+            periods=periods,
+            annual_only=annual_only,
+        )
+    spec = _INDICATORS.get(base_indicator)
+    if spec is None or len(spec.fields) != 1:
+        return []
+    series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
+    rows = [
+        IndicatorObservation(
+            spec.fields[0], spec.source_tables[0], float(value), str(period)
+        )
+        for period, value in zip(series.periods, series.values)
+        if value is not None and (not annual_only or str(period).endswith("1231"))
+    ]
+    return rows[-periods:]
+
+
+def query_registry_metric_trend(
+    company_code: str,
+    metric_id: str,
+    *,
+    as_of: str = "",
+    periods: int = 5,
+    annual_only: bool = True,
+) -> list[IndicatorObservation]:
+    """按报告期逐期计算注册指标的趋势序列。"""
+    from app.domain.benchmarks.metric_evaluator import evaluate_metric_per_period
+    from app.domain.benchmarks.metric_registry import get_metric
+
+    try:
+        metric = get_metric(metric_id)
+    except KeyError:
+        return []
+
+    fetch_periods = max(40, periods + metric.periods + 4)
+    sequences: dict[str, list[tuple[str, float | None]]] = {}
+    for field_name in metric.fields:
+        series = fetch_series(
+            company_code, field_name, periods=fetch_periods, as_of=as_of
+        )
+        sequences[field_name] = [
+            (str(period), value) for period, value in zip(series.periods, series.values)
+        ]
+
+    rows = evaluate_metric_per_period(metric, sequences)
+    if annual_only:
+        rows = [(period, value) for period, value in rows if period.endswith("1231")]
+    return [
+        IndicatorObservation(metric_id, "metric_registry", float(value), period)
+        for period, value in rows[-periods:]
+    ]
+
+
+def query_quarter_value(
+    company_code: str,
+    base_indicator: str,
+    *,
+    as_of: str = "",
+) -> IndicatorQueryResult:
+    """将年内累计基础指标还原为最近单季度值。"""
+    spec = _INDICATORS.get(base_indicator)
+    if spec is None or len(spec.fields) != 1:
+        return IndicatorQueryResult(
+            status="unsupported",
+            indicator=f"{base_indicator}_quarter",
+            label="单季度指标",
+        )
+    series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
+    values = {
+        str(period): float(value)
+        for period, value in zip(series.periods, series.values)
+        if value is not None
+    }
+
+    def quarter_value(period: str) -> float | None:
+        if len(period) != 8 or period[4:] not in ("0331", "0630", "0930", "1231"):
+            return None
+        if period[4:] == "0331":
+            return values.get(period)
+        previous = {
+            "0630": "0331",
+            "0930": "0630",
+            "1231": "0930",
+        }[period[4:]]
+        current = values.get(period)
+        prior = values.get(period[:4] + previous)
+        return current - prior if current is not None and prior is not None else None
+
+    candidates = sorted(p for p in values if quarter_value(p) is not None)
+    target = as_of if as_of in candidates else (candidates[-1] if candidates else "")
+    value = quarter_value(target) if target else None
+    if value is None:
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=f"{base_indicator}_quarter",
+            label=f"单季度{spec.label}",
+            period=target,
+            available_periods=candidates,
+        )
+    return IndicatorQueryResult(
+        status="ok",
+        indicator=f"{base_indicator}_quarter",
+        label=f"单季度{spec.label}",
+        period=target,
+        value=value,
+        unit=spec.unit,
+        observations=[
+            IndicatorObservation(spec.fields[0], spec.source_tables[0], value, target)
+        ],
+        available_periods=candidates,
+    )
+
+
+def query_quarter_yoy(
+    company_code: str,
+    base_indicator: str,
+    *,
+    as_of: str = "",
+) -> IndicatorQueryResult:
+    """将年内累计报表还原为单季度值后计算同比。"""
+    spec = _INDICATORS.get(base_indicator)
+    if spec is None or len(spec.fields) != 1:
+        return IndicatorQueryResult(
+            status="unsupported",
+            indicator=f"{base_indicator}_quarter_growth",
+            label="单季度同比",
+        )
+    series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
+    values = {
+        str(p): float(v) for p, v in zip(series.periods, series.values) if v is not None
+    }
+
+    def quarter_value(period: str) -> float | None:
+        if len(period) != 8 or period[4:] not in ("0331", "0630", "0930", "1231"):
+            return None
+        if period[4:] == "0331":
+            return values.get(period)
+        previous = {
+            "0630": "0331",
+            "0930": "0630",
+            "1231": "0930",
+        }[period[4:]]
+        prior_period = period[:4] + previous
+        current, prior = values.get(period), values.get(prior_period)
+        return current - prior if current is not None and prior is not None else None
+
+    candidates = sorted(p for p in values if quarter_value(p) is not None)
+    target = as_of if as_of in candidates else (candidates[-1] if candidates else "")
+    previous_year = f"{int(target[:4]) - 1}{target[4:]}" if target else ""
+    current_value = quarter_value(target) if target else None
+    previous_value = quarter_value(previous_year) if previous_year else None
+    growth = (
+        yoy_growth(current_value, previous_value)
+        if current_value is not None and previous_value is not None
+        else None
+    )
+    if growth is None:
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=f"{base_indicator}_quarter_growth",
+            label=f"单季度{spec.label}同比增速",
+            period=target,
+            available_periods=candidates,
+        )
+    return IndicatorQueryResult(
+        status="ok",
+        indicator=f"{base_indicator}_quarter_growth",
+        label=f"单季度{spec.label}同比增速",
+        period=target,
+        value=growth * 100,
+        unit="percent",
+        observations=[
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], current_value, target
+            ),
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], previous_value, previous_year
+            ),
+        ],
+        comparison_period=previous_year,
+        available_periods=candidates,
+    )
+
+
+def query_quarter_mom(
+    company_code: str,
+    base_indicator: str,
+    *,
+    as_of: str = "",
+) -> IndicatorQueryResult:
+    """将年内累计报表还原为单季度值后计算环比。"""
+    spec = _INDICATORS.get(base_indicator)
+    if spec is None or len(spec.fields) != 1:
+        return IndicatorQueryResult(
+            status="unsupported",
+            indicator=f"{base_indicator}_quarter_mom",
+            label="单季度环比增长率",
+        )
+    series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
+    values = {
+        str(period): float(value)
+        for period, value in zip(series.periods, series.values)
+        if value is not None
+    }
+
+    def quarter_value(period: str) -> float | None:
+        if len(period) != 8 or period[4:] not in ("0331", "0630", "0930", "1231"):
+            return None
+        if period[4:] == "0331":
+            return values.get(period)
+        previous = {"0630": "0331", "0930": "0630", "1231": "0930"}[period[4:]]
+        current = values.get(period)
+        prior = values.get(period[:4] + previous)
+        return current - prior if current is not None and prior is not None else None
+
+    def previous_quarter(period: str) -> str:
+        previous = {
+            "0331": (str(int(period[:4]) - 1), "1231"),
+            "0630": (period[:4], "0331"),
+            "0930": (period[:4], "0630"),
+            "1231": (period[:4], "0930"),
+        }.get(period[4:])
+        return "" if previous is None else "".join(previous)
+
+    candidates = sorted(p for p in values if quarter_value(p) is not None)
+    target = as_of if as_of in candidates else (candidates[-1] if candidates else "")
+    comparison_period = previous_quarter(target) if target else ""
+    current_value = quarter_value(target) if target else None
+    previous_value = quarter_value(comparison_period) if comparison_period else None
+    growth = (
+        yoy_growth(current_value, previous_value)
+        if current_value is not None and previous_value is not None
+        else None
+    )
+    if growth is None:
+        return IndicatorQueryResult(
+            status="insufficient_data",
+            indicator=f"{base_indicator}_quarter_mom",
+            label=f"单季度{spec.label}环比增长率",
+            period=target,
+            comparison_period=comparison_period,
+            available_periods=candidates,
+        )
+    return IndicatorQueryResult(
+        status="ok",
+        indicator=f"{base_indicator}_quarter_mom",
+        label=f"单季度{spec.label}环比增长率",
+        period=target,
+        value=growth * 100,
+        unit="percent",
+        observations=[
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], current_value, target
+            ),
+            IndicatorObservation(
+                spec.fields[0],
+                spec.source_tables[0],
+                previous_value,
+                comparison_period,
+            ),
+        ],
+        comparison_period=comparison_period,
+        available_periods=candidates,
     )
 
 
@@ -433,18 +814,12 @@ def query_metric(
 
 
 def _company_engine():
-    """惰性 MySQL 引擎（companies/industry_benchmarks/risk_assessments 查询）。"""
-    from sqlalchemy import URL, create_engine
+    """8/19 全面审查：改用公共工厂（完整 profile key + 缓存 + 切库 dispose）。
 
-    url = URL.create(
-        "mysql+pymysql",
-        username=settings.MYSQL_USER,
-        password=settings.MYSQL_PASSWORD,
-        host=settings.MYSQL_HOST,
-        port=settings.MYSQL_PORT,
-        database=settings.MYSQL_DATABASE,
-    )
-    return create_engine(url, echo=False, pool_pre_ping=True)
+    原实现每次调用新建 Engine（连接池不复用、切库后残留旧连接）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def query_industry_benchmark(
@@ -467,7 +842,8 @@ def query_industry_benchmark(
                         "SELECT sample_count, mean_value, p25, p50, p75, p95 "
                         "FROM industry_benchmarks "
                         "WHERE industry_l1 = :ind AND metric_id = :mid "
-                        "AND period = :p AND statement_scope = 'parent_company' "
+                        "AND period = :p "
+                        "AND statement_scope = 'parent_company' "
                         "AND dataset_version = :dv LIMIT 1"
                     ),
                     {
@@ -488,6 +864,41 @@ def query_industry_benchmark(
         }
     except Exception:  # noqa: BLE001 — 基准查询失败按「无基准」处理
         return None
+
+
+def query_industry_benchmark_series(
+    industry_l1: str, metric_id: str, *, as_of: str = ""
+) -> list[dict]:
+    """读取行业基准时间序列，供行业均值/变化问法使用。"""
+    from sqlalchemy import text
+
+    if not industry_l1 or not metric_id:
+        return []
+    clause = " AND period <= :as_of" if as_of else ""
+    try:
+        with _company_engine().connect() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT period, sample_count, mean_value, p25, p50, p75 "
+                        "FROM industry_benchmarks "
+                        "WHERE industry_l1 = :ind AND metric_id = :mid "
+                        "AND statement_scope = 'parent_company' "
+                        "AND dataset_version = :dv" + clause + " ORDER BY period"
+                    ),
+                    {
+                        "ind": industry_l1,
+                        "mid": metric_id,
+                        "dv": settings.DATASET_VERSION,
+                        "as_of": as_of,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+    except Exception:  # noqa: BLE001 — 行业基准缺失按空结果处理
+        return []
 
 
 def query_latest_risk_assessment(wind_code: str) -> dict | None:

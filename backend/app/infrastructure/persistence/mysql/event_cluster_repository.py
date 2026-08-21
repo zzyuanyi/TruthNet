@@ -11,10 +11,9 @@ import json
 import logging
 from datetime import date, datetime, timezone
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from app.core.config import settings
 from app.domain.events.contracts import EventClusterRecord, EventSourceRef
 
 logger = logging.getLogger(__name__)
@@ -57,20 +56,16 @@ def _canonical_fingerprint(record: EventClusterRecord) -> str:
 
 
 class MySQLEventClusterRepository:
-    """MySQL 事件簇仓库 — full profile."""
+    """MySQL 事件簇仓库 — full profile.
 
-    def __init__(self):
-        self._engine: Engine | None = None
+    8/19 全面审查：不再持有实例级 Engine，统一走公共工厂
+    （完整 profile key + 切 profile 即 dispose 旧 Engine）。
+    """
 
     def _get_engine(self) -> Engine:
-        if self._engine is None:
-            url = (
-                f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-                f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-                "?charset=utf8mb4"
-            )
-            self._engine = create_engine(url, echo=False, pool_pre_ping=True)
-        return self._engine
+        from app.domain.finance._engine_utils import get_engine
+
+        return get_engine()
 
     # ── 读取 ────────────────────────────────────────────
 

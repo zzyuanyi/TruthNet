@@ -3,7 +3,10 @@
 根据 WEB_SEARCH_BACKEND 配置创建对应的 Provider 实例。
 - off（默认）= 不创建，返回 None → 业务侧行为与现状完全一致；
 - mock = 本地测试/演示；
-- bocha = 真实联网（数据源拍板后启用，未拍板保持 off）。
+- bocha = 博查真实联网（中文通用搜索，数据源拍板后启用，未拍板保持 off）；
+- anysearch = AnySearch（带 A 股代码走 finance MCP 垂直域；无码 query 可走
+  REST /v1/search 通用入口，但 provider 会做相关性 Gate，低质结果返回空；
+  免费注册 Key 见调研文档 §2.4）。
 
 镜像 `infrastructure/llm/factory.py` 的注册表模式。
 换 provider = 新增类 + 在 _PROVIDER_CLASSES 登记一行 + `.env` 改后端名。
@@ -15,6 +18,7 @@ import logging
 
 from app.application.ports.web_search_provider import WebSearchProvider
 from app.core.config import settings
+from app.infrastructure.web_search.anysearch.provider import AnySearchWebSearchProvider
 from app.infrastructure.web_search.bocha.provider import BochaWebSearchProvider
 from app.infrastructure.web_search.mock.provider import MockWebSearchProvider
 
@@ -23,6 +27,7 @@ logger = logging.getLogger(__name__)
 _PROVIDER_CLASSES: dict[str, type] = {
     "mock": MockWebSearchProvider,
     "bocha": BochaWebSearchProvider,
+    "anysearch": AnySearchWebSearchProvider,
 }
 
 

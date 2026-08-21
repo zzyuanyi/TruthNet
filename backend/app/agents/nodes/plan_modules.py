@@ -9,6 +9,7 @@
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import date
 
 from pydantic import BaseModel
@@ -23,11 +24,14 @@ from app.domain.comparison.scope_registry import (
     COMPARISON_FULL_COMPOSITE_CUES,
     COMPARISON_FULL_SCOPE_WORDS,
 )
+from app.application.services.market_quote_service import detect_market_quote_field
 
 logger = logging.getLogger(__name__)
 
 
-def parse_query_period(query: str) -> tuple[date | None, str, str]:
+def parse_query_period(
+    query: str, *, today: date | None = None
+) -> tuple[date | None, str, str]:
     """从用户问题解析财报期/信息截止日（#5 期次解析，纯函数，无副作用）。
 
     Returns:
@@ -57,19 +61,58 @@ def parse_query_period(query: str) -> tuple[date | None, str, str]:
     #    支持 "2025年报" 与 "2025年年报" 两种写法（年字可选）；
     #    不用 \b——汉字与数字之间无单词边界。
     specs = (
-        (r"(\d{4})\s*(?:年\s*)?(?:一季报|第1季度)", 3, 31),
+        (r"(\d{4})\s*(?:年\s*)?(?:财年\s*)?(?:一季报|一季度|第一季度|第1季度)", 3, 31),
         (r"(\d{4})\s*[qQ]1", 3, 31),
-        (r"(\d{4})\s*(?:年\s*)?(?:半年报|中报|二季报|第2季度)", 6, 30),
+        (
+            r"(\d{4})\s*(?:年\s*)?(?:财年\s*)?(?:上半年|半年报|中报|二季报|二季度|第二季度|第2季度)",
+            6,
+            30,
+        ),
         (r"(\d{4})\s*[qQ]2", 6, 30),
-        (r"(\d{4})\s*(?:年\s*)?(?:三季报|第3季度)", 9, 30),
+        (r"(\d{4})\s*(?:年\s*)?(?:财年\s*)?(?:三季报|三季度|第三季度|第3季度)", 9, 30),
         (r"(\d{4})\s*[qQ]3", 9, 30),
-        (r"(\d{4})\s*(?:年\s*)?(?:年报|年度报告|财报|数据)", 12, 31),
+        (
+            r"(\d{4})\s*(?:年\s*)?(?:财年\s*)?(?:四季度|第四季度|年报|年度报告|财报|数据)",
+            12,
+            31,
+        ),
         (r"(\d{4})\s*[qQ]4", 12, 31),
+        # “2024年毛利率”默认指该年度报表；季度/年报等更具体写法已在前面命中。
+        (r"(\d{4})\s*年", 12, 31),
     )
     for pat, month, day in specs:
         m = re.search(pat, query)
         if m:
             return date(int(m.group(1)), month, day), "report_period", m.group(0)
+
+    # 3) 相对年份或省略年份的财报期。省略年份时选择最近已经结束的同类
+    # 报告期；显式“今年”则严格锁定今年，即使数据尚未披露也不回退。
+    period_words = (
+        (r"上半年|半年报|中报|二季度|第二季度", 6, 30),
+        (r"一季报|一季度|第一季度", 3, 31),
+        (r"三季报|三季度|第三季度", 9, 30),
+        (r"四季度|第四季度|年报", 12, 31),
+    )
+    anchor = today or date.today()
+    for words, month, day in period_words:
+        m = re.search(rf"(?:(今年|去年|前年)\s*)?({words})", query)
+        if not m:
+            continue
+        relative = m.group(1)
+        if relative:
+            year = anchor.year - {"今年": 0, "去年": 1, "前年": 2}[relative]
+        else:
+            year = anchor.year
+            if date(year, month, day) > anchor:
+                year -= 1
+        return date(year, month, day), "report_period", m.group(0)
+    if re.search(
+        r"(?:今年|去年|前年).*(?:营收|营业收入|利润|总资产|负债|毛利率|现金流)", query
+    ):
+        m = re.search(r"今年|去年|前年", query)
+        relative = m.group(0)
+        year = anchor.year - {"今年": 0, "去年": 1, "前年": 2}[relative]
+        return date(year, 12, 31), "report_period", relative
     return None, "", ""
 
 
@@ -207,6 +250,7 @@ _CAPABILITY_EXACT = (
     "你能帮我做什么",
     "会做什么",
     "你会做什么",
+    "你会什么",
     "有什么用",
     "有什么功能",
     "介绍一下你",
@@ -265,17 +309,95 @@ _UNSUPPORTED_KW = (
     "帮我卖出",
     "基金持仓",
     "基金规模",
+    "开放式基金",
+    "放量和缩量",
+    "均线",
+    "死叉",
+    "深市期权",
+    "信用账户",
+    "查询已清仓",
+    "新手买股票",
+    "买股票要注意",
+    "科创板股票",
+    "创业板有哪些",
+    "上证指数",
+    "多少家银行",
+    "交易记录",
+    "个人信息",
+    "预留手机号码",
+    "设置个股行情页面",
+    "行情路径",
+    "国债逆回购",
+    "可转债",
+    "大宗交易",
+    "港股通",
+    "条件单",
+    "银行卡",
+    "手续费",
+    "创业板权限",
+    "科创板成长层",
+    "成交回报",
+    "担保证券",
+    "基金分红",
+    "天添利",
+    "otc账户",
+    "买什么股票",
+    "推荐一些股票",
+    "适合长期投资",
+    "信息源",
+    "外国游客",
+    "打开多股同列",
+    "接下来你关注的焦点",
+    "财经事件",
+    "估值",
+    "操盘",
+    "主力增仓",
+    "自选相关",
+    "自选股中",
+    "走势预测",
+    "预测走势",
+)
+
+_MARKET_WIDE_CUES = (
+    "全市场",
+    "市场整体",
+    "自选股",
+    "哪些股票",
+    "哪些个股",
+    "强势股",
+    "涨幅靠前",
+    "涨停股票",
+    "龙虎榜",
+    "大宗交易市场",
+    "跑赢大盘",
+    "跌最狠",
+    "涨最多",
+    "有资金进入的股票",
+    "资金进入的股票",
+    "大宗交易成交额最大",
+    "多晶硅价格上涨",
 )
 
 # 公司事实轻量查询（R9）：只匹配明确模板，禁止裸"行业/股本"包含匹配
 # （"康美药业行业研报""股本变化风险"不得误路由）。
 _COMPANY_FACT_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"属于什么行业|所属行业|什么行业|是什么行业"), "industry"),
+    (re.compile(r"细分板块|所属板块|哪个板块|什么板块"), "industry"),
+    (re.compile(r"旗下(?:的)?(?:公司|企业)|子公司|控股公司"), "subsidiary"),
+    (
+        re.compile(
+            r"(?:收到|签订|中标|获得|拿到).{0,10}(?:项目|合同)|项目金额|项目是真的吗|项目真实吗|有.*项目吗"
+        ),
+        "project",
+    ),
     (
         re.compile(r"在哪个交易所上市|在哪个市场上市|在哪上市|上市交易所|什么交易所"),
         "exchange",
     ),
+    (re.compile(r"退市|上市状态|是否上市"), "listing_status"),
     (re.compile(r"上市日期|上市时间|什么时候上市|何时上市"), "listing_date"),
+    (re.compile(r"高管薪酬|董监高薪酬|管理层薪酬"), "executive_compensation"),
+    (re.compile(r"首发价格|首发价|发行价格|发行价"), "ipo_price"),
     (re.compile(r"企业类型|公司类型|是什么类型|什么企业类型"), "comp_type"),
     (re.compile(r"主营业务|主要业务|是做什么的|做什么的|主营产品"), "business"),
     (re.compile(r"总股本|股本总额"), "total_shares"),
@@ -291,6 +413,8 @@ _COMPANY_FACT_TEMPLATES = (
     "主营业务",
     "总股本",
     "股本总额",
+    "高管薪酬",
+    "首发价格",
 )
 
 # v3.3.3 批次 A（方案 §5.3）：中文指标语义入口收敛到
@@ -330,7 +454,44 @@ _ANALYSIS_CUES = (
     "公司",
 )
 
-_RESEARCH_CUES = ("研报", "行业", "板块", "观点")
+_RESEARCH_CUES = (
+    "研报",
+    "行业",
+    "板块",
+    "观点",
+    "技术",
+    "研发中",
+    "研发",
+    "工艺",
+    "应用领域",
+    "新进展",
+    "市场规模",
+    "竞争者",
+    "挑战",
+    "创新",
+    "热点资讯",
+    "产业",
+    "概念",
+    "题材",
+    "政策",
+    "发展趋势",
+)
+
+_COMPANY_RESEARCH_CUES = (
+    "核心优势",
+    "竞争优势",
+    "技术优势",
+    "产品优势",
+    "业务优势",
+    "研发进展",
+    "旗下",
+    "项目",
+    "财务报告",
+    "高管薪酬",
+    "首发价格",
+    "发行价",
+    "发行价格",
+)
 _CONTEXT_CUES = ("它", "该公司", "这家公司", "继续", "再看", "刚才", "前面")
 
 # v3.3.3 批次 C（方案 §5.6）：同主体跨指标比较语义 cue——
@@ -373,9 +534,56 @@ _IMPACT_REQUEST_CUES = (
     "冲击",
     "后果",
     "拖累",
-    "利好",
-    "利空",
 )
+
+_MARKET_PRICE_BOUNDARY_CUES = (
+    "反转",
+    "走势分析",
+    "预测走势",
+    "走势预测",
+    "会涨吗",
+    "会跌吗",
+)
+
+
+def _detect_market_price_boundary(user_query: str) -> bool:
+    """识别无法由财务模块回答的价格预测/趋势判断。"""
+    query = user_query or ""
+    return any(cue in query for cue in _MARKET_PRICE_BOUNDARY_CUES)
+
+
+def _detect_event_sentiment(user_query: str) -> str:
+    query = user_query or ""
+    if "利好" in query or "正面事件" in query:
+        return "positive"
+    if "利空" in query or "负面事件" in query:
+        return "negative"
+    return "all"
+
+
+def _detect_event_list_requested(user_query: str) -> bool:
+    query = user_query or ""
+    if any(
+        cue in query
+        for cue in (
+            "最新公告",
+            "公告内容",
+            "有哪些公告",
+            "最近有哪些公告",
+            "事件有哪些",
+            "最近有什么事件",
+            "最新动态",
+            "市场动态",
+            "最新消息",
+            "最新资讯",
+            "财务报告有哪些",
+            "监管问询",
+        )
+    ):
+        return True
+    return "公告" in query and any(
+        cue in query for cue in ("有没有", "有哪些", "发布", "最近")
+    )
 
 
 def _detect_impact_requested(user_query: str) -> bool:
@@ -393,12 +601,42 @@ def _detect_impact_requested(user_query: str) -> bool:
 
 
 def _detect_answer_operation(user_query: str) -> str:
-    """指标回答语义操作：assessment（需基准）/ value（只答数值）。
-
-    trend（多期间序列）暂未接入查询，诚实保留枚举（方案 §3.6），
-    命中「趋势/变化」问句时仍走 value 短答 + 诊断路由兜底。
-    """
+    """识别指标问题真正要求的运算，避免把趋势/原因答成单期数值。"""
     query = user_query or ""
+    if "亏损" in query and any(cue in query for cue in ("几年", "多少年", "连续")):
+        return "loss_years"
+    if "复合增长率" in query or "CAGR" in query.upper():
+        return "cagr"
+    if "扭亏为盈" in query or "扭亏" in query:
+        return "turnaround"
+    if "行业" in query and any(
+        cue in query for cue in ("平均", "对比", "高于", "低于", "水平")
+    ):
+        return "assessment"
+    if "行业" in query and "总额" in query:
+        return "industry_total"
+    if "最大的个股" in query or "最高的个股" in query:
+        return "industry_leader"
+    if any(
+        cue in query for cue in ("连续", "持续", "近三年", "最近三年", "趋势")
+    ) and any(cue in query for cue in ("原因", "为何", "为什么", "怎么回事")):
+        return "causal_trend"
+    if any(cue in query for cue in ("原因", "为何", "为什么", "怎么回事")):
+        return "causal"
+    if any(cue in query for cue in ("影响", "后果", "会受", "风险")):
+        return "impact"
+    if "环比" in query and (
+        "单季度" in query or "最近季度" in query or "最新季度" in query
+    ):
+        return "quarter_mom"
+    if ("单季度" in query or "最近季度" in query or "最新季度" in query) and any(
+        cue in query for cue in ("同比", "增长率", "增速")
+    ):
+        return "quarter_yoy"
+    if "单季度" in query:
+        return "quarter_single"
+    if any(cue in query for cue in ("趋势", "变化", "连续", "近三年", "最近三年")):
+        return "trend"
     if any(cue in query for cue in _ASSESSMENT_CUES):
         return "assessment"
     return "value"
@@ -416,6 +654,27 @@ def _detect_comparison_operation(user_query: str) -> str:
     if "高多少" in query or "高出" in query or "更高" in query:
         return "greater_than"
     return "difference"
+
+
+def _detect_multi_metric_query(user_query: str) -> bool:
+    """识别显式并列指标，避免只回答第一个指标造成语义错答。"""
+    query = user_query or ""
+    if not any(separator in query for separator in ("、", ",", "，")):
+        return False
+    phrases = (
+        "总股本",
+        "营业收入",
+        "营收",
+        "净资产",
+        "净利润",
+        "总资产",
+        "收盘价",
+        "eps",
+        "每股收益",
+        "每股净资产",
+        "毛利率",
+    )
+    return sum(phrase in query.lower() for phrase in phrases) >= 2
 
 
 def _recent_executed_metric_ids(state: AgentState) -> list:
@@ -488,18 +747,40 @@ def detect_indicator(user_query: str) -> str | None:
     - 诊断 cue（风险/异常等）优先于指标识别 → None。
     """
     query = user_query or ""
-    if any(cue in query for cue in _INDICATOR_DIAGNOSIS_CUES):
-        return None
     from app.application.services.indicator_semantics import (
         resolve_indicator_semantics,
     )
 
     result = resolve_indicator_semantics(query)
-    if result.executable and result.metric_ids:
-        return result.metric_ids[0]
+    # 语义服务确认的 unsupported 比“风险/原因”更具体，优先返回。
     if result.reason in ("unsupported", "modifier_unsupported"):
         return "unsupported"
+    if any(cue in query for cue in _INDICATOR_DIAGNOSIS_CUES):
+        return None
+    if result.executable and result.metric_ids:
+        return result.metric_ids[0]
     return None
+
+
+def detect_industry_benchmark_request(user_query: str) -> tuple[str, str] | None:
+    """识别无公司行业统计问法，返回 (规范行业名, metric_id)。"""
+    query = user_query or ""
+    if "行业" not in query:
+        return None
+    match = re.search(r"([\u4e00-\u9fff]{2,8})行业", query)
+    if not match:
+        return None
+    indicator = detect_indicator(query)
+    if not indicator or indicator == "unsupported":
+        return None
+    industry_aliases = {
+        "家电": "家用电器",
+        "家用电器": "家用电器",
+        "食品饮料": "食品饮料",
+        "白酒": "食品饮料",
+    }
+    industry = industry_aliases.get(match.group(1))
+    return (industry, indicator) if industry else None
 
 
 def detect_answer_target(user_query: str) -> str | None:
@@ -529,6 +810,21 @@ def detect_chitchat_intent(user_query: str) -> str | None:
     ql = (user_query or "").lower().strip()
     if not ql:
         return "chitchat"  # 空问题按寒暄引导
+
+    if any(cue in ql for cue in _MARKET_WIDE_CUES) and not (
+        ("个股" in ql or "股票" in ql)
+        and any(cue in ql for cue in ("行业", "板块", "领域"))
+        and "自选" not in ql
+    ):
+        return "unsupported"
+
+    # AnySearch 已覆盖的行情字段应继续进入实体解析，不能被旧的范围外词表短路。
+    from app.application.services.market_quote_service import (
+        detect_market_quote_field,
+    )
+
+    if detect_market_quote_field(ql) or _detect_market_decision_intent(ql):
+        return None
 
     # 范围外问题（天气/编程/翻译等）先于问候宽松判定：
     # "你好，今天天气怎么样"应归 unsupported，而非被"你好"抢先为 chitchat。
@@ -562,6 +858,8 @@ def detect_chitchat_intent(user_query: str) -> str | None:
         return "chitchat"
     if ql_clean in _CAPABILITY_EXACT:
         return "chitchat"  # "你是谁/能做什么" → 能力引导
+    if re.fullmatch(r"你(?:会|能做|能帮我做)什么", ql_clean):
+        return "chitchat"
     return None
 
 
@@ -600,6 +898,69 @@ def _fallback_no_company_intent(user_query: str) -> str | None:
     return None
 
 
+def _detect_market_decision_intent(user_query: str) -> str | None:
+    """识别交易执行与投资建议边界，不把它们伪装成风险诊断。"""
+    query = user_query or ""
+    if re.search(
+        r"(?:帮我|替我|给我).{0,6}(?:买入|卖出|清仓)"
+        r"|(?:^|[，。！？\s])清仓\s*(?=[\u4e00-\u9fffA-Za-z0-9])"
+        r"|(?:买入|卖出).{0,12}\d+\s*(?:手|股)"
+        r"|\d+\s*元.{0,12}(?:买入|卖出).{0,12}\d+\s*(?:手|股)"
+        r"|(?:\d{6}.*(?:买入|卖出)|(?:\d+\s*(?:元|股|手)).{0,20}(?:买入|卖出))",
+        query,
+    ):
+        return "trade_execution"
+    if re.search(
+        r"(?:适合|值得|可以|还能|还可).{0,3}(?:买|买入|卖出)"
+        r"|(?:买入|卖出)吗|(?:能不能|可不可以|该不该)买|能买吗"
+        r"|(?:推荐|推).{0,12}(?:买入|证券|股票)",
+        query,
+    ):
+        return "investment_advice"
+    return None
+
+
+@dataclass(frozen=True)
+class _QuerySemanticContext:
+    """Planner 的一次性语义中间结果。
+
+    该对象只汇总查询特征，不执行数据库或 LLM 调用；ExecutionPlan 仍是
+    下游模块唯一消费的结构化语义表示。集中计算可以避免同一问题在多个
+    边界分支中被重复解释，导致前置 unsupported 短路覆盖后续因果路由。
+    """
+
+    answer_operation: str
+    market_field: str | None
+    market_decision_intent: str | None
+    is_multi_metric: bool
+    is_causal_boundary: bool
+    is_market_price_boundary: bool
+
+    @classmethod
+    def from_query(cls, query: str) -> "_QuerySemanticContext":
+        operation = _detect_answer_operation(query)
+        return cls(
+            answer_operation=operation,
+            market_field=detect_market_quote_field(query),
+            market_decision_intent=_detect_market_decision_intent(query),
+            is_multi_metric=_detect_multi_metric_query(query),
+            is_market_price_boundary=_detect_market_price_boundary(query),
+            is_causal_boundary=(
+                (
+                    operation == "causal"
+                    and any(cue in query for cue in ("上涨", "下跌", "涨", "跌"))
+                )
+                or (
+                    operation == "impact"
+                    and any(
+                        cue in query for cue in ("价格上涨", "价格下跌", "原材料价格")
+                    )
+                    and not any(cue in query for cue in _IMPACT_EVENT_REF_CUES)
+                )
+            ),
+        )
+
+
 def plan_modules_node(state: AgentState) -> dict:
     user_query = state.get("user_query", "")
 
@@ -612,6 +973,184 @@ def plan_modules_node(state: AgentState) -> dict:
         period_text = request_context.requested_period_text
 
     company = state.get("company")
+
+    semantics = _QuerySemanticContext.from_query(user_query)
+    market_field = semantics.market_field
+    market_decision_intent = semantics.market_decision_intent
+    causal_boundary = semantics.is_causal_boundary or semantics.is_market_price_boundary
+
+    # 交易指令/投资建议的能力边界与实体是否入库无关，应先于实体失败返回。
+    # 例如 ETF、基金或错别字证券的“买入”请求也不能误报成公司未识别。
+    if market_decision_intent:
+        return {
+            "plan": ExecutionPlan(
+                intent=market_decision_intent,
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # 明确范围外的账户/页面操作优先于会话中的旧公司主体，避免把
+    # “预留手机号/行情页面设置”等问题误做成公司综合诊断。
+    if (
+        detect_chitchat_intent(user_query) == "unsupported"
+        or any(cue in user_query for cue in ("设置个股行情页面", "行情路径"))
+    ) and not causal_boundary:
+        return {
+            "plan": ExecutionPlan(
+                intent="unsupported",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    if company is None and market_field:
+        return {
+            "plan": ExecutionPlan(
+                intent="unsupported",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    if (
+        company is None
+        and any(cue in user_query for cue in _MARKET_WIDE_CUES)
+        and not (
+            ("个股" in user_query or "股票" in user_query)
+            and any(cue in user_query for cue in ("行业", "板块", "领域"))
+            and "自选" not in user_query
+        )
+    ):
+        return {
+            "plan": ExecutionPlan(
+                intent="unsupported",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # 明确行业统计问题优先于会话中的旧公司上下文；否则“家电行业均值”
+    # 会沿用上一轮公司并回答公司自身指标。
+    industry_request = detect_industry_benchmark_request(user_query)
+    if industry_request is not None and not re.search(r"所属|所在", user_query):
+        industry_l1, indicator = industry_request
+        return {
+            "plan": ExecutionPlan(
+                intent="industry_benchmark",
+                requested_modules=[],
+                cross_checks=[],
+                indicator=indicator,
+                industry_l1=industry_l1,
+                answer_operation=_detect_answer_operation(user_query),
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    if company is not None and semantics.is_market_price_boundary:
+        return {
+            "plan": ExecutionPlan(
+                intent="causal_query",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # 单公司行情快照由 AnySearch 精准查询，不启动财务/股权/舆情模块。
+    # 多指标混合题仍交给既有 multi_metric 边界处理，避免只答其中一个字段。
+    market_causal = any(
+        cue in user_query
+        for cue in ("原因", "为何", "为什么", "怎么回事", "驱动", "影响")
+    )
+    if (
+        company is not None
+        and market_field
+        and not market_causal
+        and not semantics.is_multi_metric
+    ):
+        if any(cue in user_query for cue in ("排名", "排行", "压力位", "支撑位")):
+            return {
+                "plan": ExecutionPlan(
+                    intent="unsupported_indicator",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+        return {
+            "plan": ExecutionPlan(
+                intent="market_quote",
+                requested_modules=[],
+                cross_checks=[],
+                market_field=market_field,
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    if company is not None and market_decision_intent:
+        return {
+            "plan": ExecutionPlan(
+                intent=market_decision_intent,
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # 明确命中未覆盖指标时先给出能力边界，不让指标修饰词进入实体解析，
+    # 例如“基本每股收益”不应被拆成“基本”“收益”两个疑似公司。
+    if (
+        not semantics.is_multi_metric
+        and detect_indicator(user_query) == "unsupported"
+        and not causal_boundary
+    ):
+        return {
+            "plan": ExecutionPlan(
+                intent="unsupported_indicator",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
+
+    # 明确范围外的账户、交易规则和市场级问题不依赖公司实体。实体提取器
+    # 即使从自然语言中切出了疑似公司片段，也应返回真实能力边界。
+    if company is None and detect_chitchat_intent(user_query) == "unsupported":
+        return {
+            "plan": ExecutionPlan(
+                intent="unsupported",
+                requested_modules=[],
+                cross_checks=[],
+                as_of=as_of,
+                as_of_kind=as_of_kind,
+                requested_period_text=period_text,
+            )
+        }
 
     # 2026-08-12 四轮审查 P2-2：实体解析失败/候选截断为确定性错误——
     # 直接产出 entity_error intent，不进入 chitchat LLM 检测
@@ -879,6 +1418,123 @@ def plan_modules_node(state: AgentState) -> dict:
     # R9：公司事实轻量查询——只匹配明确模板（属于什么行业/上市日期等），
     # 直接进 generate_answer，不执行 finance/equity/events/risk。
     if company is not None:
+        # 产品口径固定为母公司报表。明确要求合并口径时先说明不支持切换，
+        # 不能继续给出容易被误读的母公司数值。
+        operation = semantics.answer_operation
+        event_sentiment = _detect_event_sentiment(user_query)
+        event_list_requested = _detect_event_list_requested(user_query)
+        fact_key = detect_company_fact(user_query)
+        if fact_key in {
+            "subsidiary",
+            "project",
+            "executive_compensation",
+            "ipo_price",
+        }:
+            return {
+                "plan": ExecutionPlan(
+                    intent="company_fact",
+                    requested_modules=[],
+                    cross_checks=[],
+                    fact_key=fact_key,
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+        if any(
+            cue in user_query for cue in ("研报", "机构评级", "券商评级")
+        ) and not any(cue in user_query for cue in _IMPACT_REQUEST_CUES):
+            return {
+                "plan": ExecutionPlan(
+                    intent="research",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+        if any(cue in user_query for cue in _COMPANY_RESEARCH_CUES):
+            return {
+                "plan": ExecutionPlan(
+                    intent="research",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+        if event_list_requested and not any(
+            cue in user_query for cue in _IMPACT_REQUEST_CUES
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    event_list_requested=True,
+                )
+            }
+        if event_sentiment != "all" and not any(
+            cue in user_query for cue in _IMPACT_REQUEST_CUES
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    event_sentiment=event_sentiment,
+                )
+            }
+        if "合并口径" in user_query:
+            return {
+                "plan": ExecutionPlan(
+                    intent="unsupported_scope",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    answer_operation=operation,
+                )
+            }
+        if (
+            "行业" in user_query
+            and re.search(r"所属|所在", user_query)
+            and (
+                operation in ("assessment", "industry_total", "industry_leader")
+                or "整体" in user_query
+            )
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="unsupported_scope",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    answer_operation=operation,
+                )
+            }
+        if semantics.is_multi_metric:
+            return {
+                "plan": ExecutionPlan(
+                    intent="multi_metric",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
         # v3.3.3 批次 D（方案 §2.4 行业对比行）+ v3.3.4（方案 §2.1/§4.1）：
         # 单主体行业/全面对比引导页面（industry_benchmark_service 在 REST
         # 页面提供行业分位，对话内不执行、不伪造成双公司比较；只有一家
@@ -898,6 +1554,69 @@ def plan_modules_node(state: AgentState) -> dict:
                 )
             }
         indicator = detect_indicator(user_query)
+        # 外部价格变化的原因/影响问题属于已有的因果边界，不应被
+        # detect_indicator 的“未覆盖指标”结果提前截断。
+        causal_boundary = (
+            operation == "causal"
+            and any(cue in user_query for cue in ("上涨", "下跌", "涨", "跌"))
+        ) or (
+            operation == "impact"
+            and any(cue in user_query for cue in ("价格上涨", "价格下跌", "原材料价格"))
+            and not any(cue in user_query for cue in _IMPACT_EVENT_REF_CUES)
+        )
+        if indicator == "unsupported" and not causal_boundary:
+            return {
+                "plan": ExecutionPlan(
+                    intent="unsupported_indicator",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    answer_operation=operation,
+                )
+            }
+        # 原因/影响类问题含诊断词，普通 detect_indicator 会主动让位给
+        # 综合诊断；已有明确指标时恢复结构化指标回答，避免答成全量风险报告。
+        if not indicator and operation in ("causal", "impact"):
+            from app.application.services.indicator_semantics import (
+                resolve_indicator_semantics,
+            )
+
+            semantic = resolve_indicator_semantics(user_query)
+            if semantic.executable and semantic.metric_ids:
+                indicator = semantic.metric_ids[0]
+        if (
+            not indicator
+            and operation == "causal"
+            and any(cue in user_query for cue in ("上涨", "下跌", "涨", "跌"))
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="causal_query",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
+        if (
+            not indicator
+            and operation == "impact"
+            and any(cue in user_query for cue in ("价格上涨", "价格下跌", "原材料价格"))
+            and not any(cue in user_query for cue in _IMPACT_EVENT_REF_CUES)
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="causal_query",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
         if indicator:
             return {
                 "plan": ExecutionPlan(
@@ -910,7 +1629,7 @@ def plan_modules_node(state: AgentState) -> dict:
                     requested_period_text=period_text,
                     # v3.3.3 收口批次 D（方案 §3.6）：「正常吗」类问句
                     # 需要基准判断，不能只答数值
-                    answer_operation=_detect_answer_operation(user_query),
+                    answer_operation=operation,
                 )
             }
 
@@ -929,6 +1648,20 @@ def plan_modules_node(state: AgentState) -> dict:
             }
 
     if company is None:
+        if _detect_event_list_requested(user_query) and not any(
+            cue in user_query for cue in _RESEARCH_CUES
+        ):
+            return {
+                "plan": ExecutionPlan(
+                    intent="research",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    event_list_requested=True,
+                )
+            }
         if state.get("company_candidates"):
             return {
                 "plan": ExecutionPlan(
@@ -944,7 +1677,21 @@ def plan_modules_node(state: AgentState) -> dict:
         # LLM 失败后再用同一高置信规则兜底，绝不阻塞正常查询。
         # v3.3.2-R1 §8：已验证 plan_hint 优先（research/chitchat/
         # unsupported 复用现有 intent；公司分析类但实体缺失 → guide）
-        if plan_hint == "research":
+        fallback_intent = _fallback_no_company_intent(user_query)
+        if plan_hint == "research" or (
+            plan_hint
+            not in {
+                "",
+                "chitchat",
+                "unsupported",
+                "indicator",
+                "diagnostic",
+                "summary",
+                "analysis",
+                "comparison",
+            }
+            and fallback_intent == "research"
+        ):
             detected = "research"
         elif plan_hint == "chitchat":
             detected = "chitchat"
@@ -957,16 +1704,30 @@ def plan_modules_node(state: AgentState) -> dict:
             "analysis",
             "comparison",
         ):
-            detected = "guide"  # 公司分析诉求但实体缺失，转为可执行引导
+            # 公司分析诉求但实体缺失 → 可执行引导。但 mock/降级 LLM 对
+            # 明确 research 关键词（板块/技术/产业等）可能返回泛化
+            # "analysis"——此时以高置信关键词兜底 research 为准（8/20 CI 修复：
+            # 测试在 LLM_BACKEND=mock 下 "AI医疗板块有哪些个股" 等被误判 guide）。
+            if fallback_intent == "research":
+                detected = "research"
+            else:
+                detected = "guide"  # 公司分析诉求但实体缺失，转为可执行引导
         else:
             detected = detect_chitchat_intent(user_query)
             if detected is None:
                 detected = _detect_chitchat_with_llm(user_query)
             if detected is None:
-                detected = _fallback_no_company_intent(user_query)
+                detected = fallback_intent
             if detected == "analysis":
                 # 已确认是公司分析诉求但实体缺失，转为可执行引导。
-                detected = "guide"
+                # 8/20 CI 修复：mock/降级 LLM 对明确 research 关键词
+                # （板块/技术/产业/热点资讯等）返回泛化 "analysis"——此时
+                # 以高置信关键词兜底 research 为准，否则 "AI医疗板块有
+                # 哪些个股" 等被误判为 guide。
+                if fallback_intent == "research":
+                    detected = "research"
+                else:
+                    detected = "guide"
         return {
             "plan": ExecutionPlan(
                 intent=detected or "simple_query",

@@ -8,6 +8,7 @@
 - URL.create()（P1-6）密码特殊字符（本测试通过内存表间接覆盖引擎创建路径）。
 """
 
+import asyncio
 import json
 
 from sqlalchemy import create_engine, text
@@ -155,6 +156,16 @@ def test_empty_text_returns_empty():
     result = _lookup(engine, "")
     assert result.matches == []
     assert result.truncated is False
+
+
+def test_mysql_empty_search_keeps_result_contract():
+    repo = MySQLCompanyRepository()
+    repo._list_all_sync = lambda limit: []
+
+    result = asyncio.run(repo.search("", limit=3))
+
+    assert result.companies == []
+    assert result.total == 0
 
 
 # ── lite 实现（Resolver 单元测试用）─────────────────────────

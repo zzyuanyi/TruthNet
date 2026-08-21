@@ -77,8 +77,14 @@ async def test_profile_fill_hit_without_date(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_profile_fill_off_default():
-    """off 默认：真实 web_search_async → off 门返回 []，不回填。"""
+async def test_profile_fill_off_default(monkeypatch):
+    """off 默认：真实 web_search_async → off 门返回 []，不回填。
+
+    （8/19 环境解耦：显式置 off，避免 .env 配置 anysearch 时真实联网。）
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WEB_SEARCH_BACKEND", "off")
     profile = {"listing_date": None}
     warnings: list[WarningItem] = []
     ok = await companies._web_search_fill_profile_listing_date(

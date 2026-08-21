@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -30,7 +30,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_engines: dict[str, Engine] = {}
 _semaphore: asyncio.Semaphore | None = None
 _running_tasks: set[asyncio.Task] = set()
 
@@ -40,22 +39,13 @@ def _repo_root() -> Path:
 
 
 def _get_engine() -> Engine:
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False, pool_pre_ping=True)
-    else:
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
-    return _engines[backend]
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+
+    原实现以 SQL_BACKEND 作缓存键，进程内切库后（conftest 运行时改写
+    MYSQL_DATABASE、验收双库探针）会复用旧库 Engine，把报告任务写进错误库。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _utcnow() -> datetime:
@@ -95,6 +85,9 @@ def create_report_job(
     # 2. INSERT 独立事务
     report_id = f"report_{uuid.uuid4().hex[:12]}"
     try:
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with _get_engine().begin() as conn:
             conn.execute(
                 text(
@@ -138,6 +131,9 @@ def retry_failed_report_job(report_id: str) -> bool:
     progress/error/file 字段；并发重试时仅 rowcount=1 的一方真正重置，
     其余返回 False（不会重复启动）。
     """
+    from app.core.write_guard import assert_db_writable
+
+    assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
     with _get_engine().begin() as conn:
         result = conn.execute(
             text(
@@ -162,7 +158,8 @@ def get_report_job(report_id: str) -> dict | None:
                 text(
                     "SELECT report_id, session_id, company_code, status, progress, "
                     "idempotency_key, file_path, file_sha256, error_code, "
-                    "error_message, trace_id, created_at, started_at, completed_at "
+                    "error_message, trace_id, request_payload, created_at, "
+                    "started_at, completed_at "
                     "FROM report_jobs WHERE report_id = :rid"
                 ),
                 {"rid": report_id},
@@ -172,12 +169,24 @@ def get_report_job(report_id: str) -> dict | None:
         )
     if row is None:
         return None
-    return dict(row)
+    result = dict(row)
+    payload = result.get("request_payload")
+    if isinstance(payload, str):
+        try:
+            result["request_payload"] = json.loads(payload)
+        except json.JSONDecodeError:
+            result["request_payload"] = {}
+    return result
 
 
 def _update_status(
-    report_id: str, *, status: str, progress: int = None, **extra
-) -> None:
+    report_id: str,
+    *,
+    status: str,
+    progress: int = None,
+    expected_status: str | tuple[str, ...] | None = None,
+    **extra,
+) -> bool:
     """更新任务状态（持久化）。
 
     时间戳字段直接内联 SQL 字面量（CURRENT_TIMESTAMP），不绑定参数——
@@ -194,11 +203,27 @@ def _update_status(
             continue
         sets.append(f"{k} = :{k}")
         params[k] = v
-    with _get_engine().begin() as conn:
-        conn.execute(
-            text(f"UPDATE report_jobs SET {', '.join(sets)} WHERE report_id = :rid"),
-            params,
+    from app.core.write_guard import assert_db_writable
+
+    assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
+    where = "WHERE report_id = :rid"
+    if expected_status is not None:
+        allowed = (
+            (expected_status,)
+            if isinstance(expected_status, str)
+            else tuple(expected_status)
         )
+        placeholders = []
+        for index, value in enumerate(allowed):
+            key = f"expected_status_{index}"
+            placeholders.append(f":{key}")
+            params[key] = value
+        where += f" AND status IN ({', '.join(placeholders)})"
+    with _get_engine().begin() as conn:
+        result = conn.execute(
+            text(f"UPDATE report_jobs SET {', '.join(sets)} {where}"), params
+        )
+    return (result.rowcount or 0) == 1
 
 
 # ── 后台执行 ────────────────────────────────────────────────
@@ -224,7 +249,15 @@ async def _run_report_job(report_id: str) -> None:
         job = get_report_job(report_id)
         if job is None:
             return
-        _update_status(report_id, status="running", progress=5, started_at=None)
+        claimed = _update_status(
+            report_id,
+            status="running",
+            progress=5,
+            started_at=None,
+            expected_status="queued",
+        )
+        if not claimed:
+            return
         try:
             # 计时：queue_wait → generation → file_write
             t0 = _perf()
@@ -237,6 +270,7 @@ async def _run_report_job(report_id: str) -> None:
                 completed_at=None,
                 file_path=str(pdf_path.relative_to(_report_root())),
                 file_sha256=sha,
+                expected_status="running",
             )
             logger.info(
                 "report_job %s succeeded (%dms)",
@@ -251,6 +285,7 @@ async def _run_report_job(report_id: str) -> None:
                 error_code="REPORT_GENERATION_FAILED",
                 error_message=str(exc)[:500],
                 completed_at=None,
+                expected_status="running",
             )
 
 
@@ -624,6 +659,9 @@ def recover_stale_running_jobs() -> int:
         恢复任务数。
     """
     try:
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with _get_engine().begin() as conn:
             row = conn.execute(
                 text(

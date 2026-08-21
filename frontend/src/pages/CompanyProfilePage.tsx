@@ -55,7 +55,7 @@ import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
 
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company, DerivationChain, ImpactConclusion, DataQuality } from '@/types/truthnet';
+import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company, DerivationChain, ImpactAdviceData, DataQuality } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
 function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
@@ -104,7 +104,7 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
 // 锚点导航项
 const navItems = [
   { id: 'overview', label: '概览', icon: AlertTriangle },
-  { id: 'impact', label: '影响建议', icon: Shield },
+{ id: 'impact', label: '影响与建议', icon: Shield },
   { id: 'financial', label: '财务异常', icon: TrendingUp },
   { id: 'equity', label: '股权穿透', icon: GitBranch },
   { id: 'sentiment', label: '舆情时间线', icon: Newspaper },
@@ -126,6 +126,8 @@ export default function CompanyProfilePage() {
   const [sentimentEvents, setSentimentEvents] = useState<TimelineEvent[]>([]);
   const [eventClusters, setEventClusters] = useState<EventCluster[]>([]);
   const [riskData, setRiskData] = useState<RiskResponseData | null>(null);
+  const [impactAdvice, setImpactAdvice] = useState<ImpactAdviceData | null>(null);
+  const [impactAdviceLoading, setImpactAdviceLoading] = useState(false);
   const [derivationChains, setDerivationChains] = useState<DerivationChain[]>([]);
   // 2026-08-16 口径整改：覆盖判定用真实数据存在性信号
   const [financeQuality, setFinanceQuality] = useState<DataQuality | null>(null);
@@ -148,7 +150,7 @@ export default function CompanyProfilePage() {
     return styles[level] || styles.unknown;
   };
   // B2 舆情影响结论（后端 events.impact_conclusions，需 include_impacts=true）
-  const [impactConclusions, setImpactConclusions] = useState<ImpactConclusion[]>([]);
+  
   // A2（8/9 老师要求）：触发规则关联证据的摘要（evidenceId → 平铺摘要）
   const [ruleEvidenceSummary, setRuleEvidenceSummary] = useState<Record<string, RuleEvidenceSummary>>({});
   // A2：批量拉取触发规则的证据摘要用于平铺（去重 + 上限 30）。
@@ -241,8 +243,6 @@ export default function CompanyProfilePage() {
       setEquityData(equityRes.data);
       setSentimentEvents(eventsRes.data?.timeline || []);
       setEventClusters(eventsRes.data?.event_clusters || []);
-      // B2 契约修复：消费后端 impact_conclusions（include_impacts=true 时返回）
-      setImpactConclusions(eventsRes.data?.impact_conclusions || []);
       setRiskData(riskRes.data);
               const allChains = riskRes.data?.derivation_chains || [];
         setDerivationChains([
@@ -251,7 +251,13 @@ export default function CompanyProfilePage() {
         ]);
       setFinanceQuality(financeRes.data?.data_quality || null);
       setAnnouncementsAvailable(eventsRes.data?.announcements_available ?? null);
-      setRuleDefinitions(rulesDefRes.data?.rules || []);
+setRuleDefinitions(rulesDefRes.data?.rules || []);
+      setImpactAdviceLoading(true);
+      void truthnetAPI
+        .getImpactAdvice(code)
+        .then(res => setImpactAdvice(res.data))
+        .catch(err => console.warn('影响建议加载失败:', err))
+        .finally(() => setImpactAdviceLoading(false));
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -593,62 +599,54 @@ export default function CompanyProfilePage() {
 
           <Separator className="my-6" />
 
-          {/* 影响与建议：移入首屏（核心结论之后），摘要 + 可展开因果链 */}
-          <div ref={sectionRefs.impact} className="mb-8">
+<div ref={sectionRefs.impact} className="mb-8">
             <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <Shield className="h-5 w-5" />
+              <TrendingUp className="h-5 w-5" />
               影响与建议
             </h2>
-            {impactConclusions.length > 0 ? (
-              <div className="space-y-2">
-                {impactConclusions.map((ic, i) => (
-                  <Card key={i} className="bg-muted/20">
-                    <CardContent className="p-3">
-                      <div className="flex items-start gap-2">
-                        <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle({ high: 'red', medium: 'yellow', low: 'blue' }[ic.severity] || 'unknown')}`}>
-                          {ic.display_tag}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium leading-snug">{ic.conclusion}</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {ic.impact_type} · {ic.direction} · {ic.evidence_ids.length} 条证据
-                          </p>
-                        </div>
-                      </div>
-                      {ic.causality_chain.length > 0 && (
-                        <Collapsible className="mt-2">
-                          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                            <ChevronRight className="h-3.5 w-3.5" />
-                            查看因果链（{ic.causality_chain.length} 步）
-                          </CollapsibleTrigger>
-                          <CollapsibleContent>
-                            <div className="mt-2 flex flex-wrap items-start gap-1.5">
-                              {ic.causality_chain.map((step, si) => (
-                                <span key={si} className="flex items-center gap-1.5">
-                                  {si > 0 && <span className="text-muted-foreground text-xs">→</span>}
-                                  <span className={`rounded-md border px-2 py-1 text-xs text-foreground ${
-                                    step.statement_type === 'observed'
-                                      ? 'border-green-500/40 bg-green-500/5'
-                                      : step.statement_type === 'inference'
-                                        ? 'border-yellow-500/40 bg-yellow-500/5'
-                                        : 'border-gray-500/40 bg-muted/30'
-                                  }`}>
-                                    {step.text}
-                                  </span>
-                                </span>
-                              ))}
-                            </div>
-                          </CollapsibleContent>
-                        </Collapsible>
-                      )}
-                    </CardContent>
-                  </Card>
+            {impactAdviceLoading ? (
+              <Card>
+                <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  正在聚合财务、股权与舆情信号
+                </CardContent>
+              </Card>
+            ) : impactAdvice ? (
+              <div className="space-y-3">
+                <div className="rounded-md border border-border/60 bg-muted/20 p-4">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge className={riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].color}>
+                      {riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].label}
+                    </Badge>
+                    <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
+                    <span>{impactAdvice.evidence_count} 条可回查证据</span>
+                  </div>
+                  <p className="text-sm leading-6 text-foreground">{impactAdvice.overall_advice}</p>
+                </div>
+                {impactAdvice.segments.map((segment, index) => (
+                  <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
+                    <p className="text-sm font-medium text-foreground">{segment.title}</p>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{segment.detail}</p>
+                    {segment.evidence_ids.length > 0 && (
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="mt-1 h-auto p-0 text-xs"
+                        onClick={() => void openEvidenceDetails(segment.evidence_ids, `${segment.title} · 证据详情`)}
+                      >
+                        查看 {segment.evidence_ids.length} 条证据
+                      </Button>
+                    )}
+                  </div>
                 ))}
+                {impactAdvice.warnings.length > 0 && (
+                  <p className="text-xs text-muted-foreground">{impactAdvice.warnings.join('；')}</p>
+                )}
               </div>
             ) : (
               <Card className="border-dashed">
-                <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                  暂无影响建议（舆情影响分析完成后自动生成）
+                <CardContent className="py-6 text-sm text-muted-foreground">
+                  当前未生成可回查的综合影响建议。
                 </CardContent>
               </Card>
             )}

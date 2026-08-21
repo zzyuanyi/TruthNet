@@ -11,6 +11,7 @@
 import asyncio
 
 from app.application.services.research_search import (
+    _pass_answer_type_gate,
     is_research_query,
     search_research_insights,
     search_research_insights_sync,
@@ -82,6 +83,69 @@ def test_search_returns_unified_structure():
     assert r0["report_id"] == "rp_1001"  # #4：report_id 供可回查 Evidence
 
 
+def test_sql_fallback_keeps_wind_code(monkeypatch):
+    from app.application.services import research_search as rs
+
+    class _Row:
+        report_id = "rp_1"
+        wind_code = "600519.SH"
+        title = "贵州茅台研报"
+        abstract = "核心观点"
+        org_name = "机构"
+        sec_name = "贵州茅台"
+        publish_date = "2025-01-01"
+        source_uri = "https://example.test/report"
+        industry_l1 = "食品饮料"
+
+    class _Result:
+        def __iter__(self):
+            return iter([_Row()])
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, *args, **kwargs):
+            return _Result()
+
+    class _Engine:
+        def connect(self):
+            return _Conn()
+
+    monkeypatch.setattr(rs, "_get_engine", lambda: _Engine(), raising=False)
+    # The service imports _get_engine inside the function, so patch its source.
+    monkeypatch.setattr(
+        "app.domain.finance._fetch._get_engine", lambda: _Engine(), raising=False
+    )
+    rows = rs._fallback_sql_filter_sync("贵州茅台研报", 3)
+    assert rows[0]["wind_code"] == "600519.SH"
+
+
+def test_default_vector_store_reused(monkeypatch):
+    """未显式注入 vector_store 时，默认 ChromaVectorStore 应复用单例。"""
+    from app.application.services import research_search as svc
+    from app.infrastructure.vector.chroma import vector_store as chroma_mod
+
+    created = []
+
+    class _ReusableVectorStore(_FakeVectorStore):
+        def __init__(self):
+            created.append(1)
+            super().__init__(hits=_SEMANTIC_HITS)
+
+    monkeypatch.setattr(svc, "_VECTOR_STORE", None)
+    monkeypatch.setattr(chroma_mod, "ChromaVectorStore", _ReusableVectorStore)
+
+    first = asyncio.run(search_research_insights("白酒行业近期研报观点"))
+    second = asyncio.run(search_research_insights("白酒行业近期研报观点"))
+
+    assert len(created) == 1
+    assert first and second
+
+
 def test_relevance_gate_filters_off_topic():
     """#6：全部命中与主题无关 → 不返回跨行业内容（走 SQL 兜底/空）。
 
@@ -127,6 +191,69 @@ def test_relevance_gate_filters_off_topic():
         assert not any(
             kw in meta_text for kw in _UNRELATED_KW
         ), f"白酒检索返回无关行业内容: {r}"
+
+
+def test_relevance_gate_requires_full_topic_anchor():
+    """“区块链”不能被只含“链/技术”的光模块研报放行。"""
+    off_topic = [
+        {
+            "content": "随着网络快速发展，硅光技术需求提升，公司加大光模块研发。",
+            "metadata": {"title": "高速光模块行业报告", "report_id": "x"},
+            "score": 0.95,
+        }
+    ]
+    results = asyncio.run(
+        search_research_insights(
+            "近期区块链技术创新有哪些", vector_store=_FakeVectorStore(hits=off_topic)
+        )
+    )
+    assert all("光模块" not in item.get("content", "") for item in results)
+
+
+def test_answer_type_gate_rejects_company_revenue_for_market_size():
+    """单家公司业务收入不能回答行业市场规模。"""
+    hit = [
+        {
+            "content": "中药板块2024年实现工业收入95.71亿元。",
+            "metadata": {"title": "中药行业公司点评", "report_id": "x"},
+            "score": 0.95,
+        }
+    ]
+    results = asyncio.run(
+        search_research_insights(
+            "中药行业市场规模如何", vector_store=_FakeVectorStore(hits=hit)
+        )
+    )
+    assert all("95.71" not in item.get("content", "") for item in results)
+
+
+def test_generic_chain_query_does_not_accept_arbitrary_company_report():
+    hit = {"content": "公司产业链分部收入增长", "metadata": {}}
+
+    assert not _pass_answer_type_gate(hit, "推荐一些热门产业链")
+
+
+def test_fact_query_does_not_accept_unrelated_company_report():
+    generic = {"content": "公司一季度营收和利润均实现增长", "metadata": {}}
+    assert not _pass_answer_type_gate(generic, "中国平安的高管薪酬")
+    assert not _pass_answer_type_gate(generic, "波长光电的首发价格是多少")
+
+
+def test_fact_query_accepts_matching_report_sentence():
+    assert _pass_answer_type_gate(
+        {"content": "公司首发价格为18.20元/股", "metadata": {}},
+        "波长光电的首发价格是多少",
+    )
+    assert _pass_answer_type_gate(
+        {"content": "公司披露董监高薪酬情况", "metadata": {}},
+        "中国平安的高管薪酬",
+    )
+
+
+def test_process_question_requires_process_evidence():
+    hit = {"content": "固态电池设备收入有望提升", "metadata": {}}
+
+    assert not _pass_answer_type_gate(hit, "固态电池的生产工艺是怎样的")
 
 
 def test_search_chroma_down_falls_back(monkeypatch):

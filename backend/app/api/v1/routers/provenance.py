@@ -13,10 +13,8 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Path as FPath
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
@@ -25,36 +23,20 @@ from app.api.v1.schemas.provenance import (
     EvidenceLookupDataV1,
     TraceProvenanceDataV1,
 )
-from app.core.errors import ProblemDetail
 from app.application.services.source_resolver import resolve_source
-from app.core.config import settings
+from app.core.errors import ProblemDetail
 
 router = APIRouter(tags=["provenance"])
 
-_engine: Engine | None = None
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[5]
-
 
 def _get_engine() -> Engine:
-    global _engine
-    if _engine is not None:
-        return _engine
-    if settings.SQL_BACKEND == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engine = create_engine(url, echo=False, pool_pre_ping=True)
-    else:
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _engine = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
-    return _engine
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+
+    原实现以模块级单例缓存，进程内切库后（conftest 运行时改写
+    MYSQL_DATABASE、验收双库探针）会复用指向旧库的 Engine。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _trace() -> str:

@@ -103,9 +103,11 @@ def _build_messages(company_names: list[str], facts: list[str]) -> list[dict]:
 
 
 def _validate_output(
-    output: ComparisonAnalysisOutput, facts_metric_ids: set[str]
+    output: ComparisonAnalysisOutput,
+    facts_metric_ids: set[str],
+    locked_facts: str = "",
 ) -> tuple[bool, str]:
-    """程序校验：整体判断非空、段落非空、metric_ids 属于事实指标。"""
+    """校验必填字段、指标引用和 LLM 数字锁定。"""
     if not output.overall or not output.overall.strip():
         return False, "overall 为空"
     if not output.paragraphs:
@@ -116,6 +118,13 @@ def _validate_output(
         unknown = [mid for mid in para.metric_ids if mid not in facts_metric_ids]
         if unknown:
             return False, f"段落引用了事实之外的指标: {unknown}"
+    from app.application.services._llm_numeric_lock import unlocked_numbers
+
+    invented = unlocked_numbers(
+        [output.overall, *(para.text for para in output.paragraphs)], locked_facts
+    )
+    if invented:
+        return False, f"输出包含事实之外的数字: {sorted(invented)}"
     return True, ""
 
 
@@ -142,7 +151,12 @@ def _template_analysis(result: Any) -> str:
     if not lines and len(participants) >= 2:
         a, b = participants[0], participants[1]
         unit = getattr(result, "difference_unit", "") or a.unit or ""
-        cmp_word = "高于" if float(a.value) > float(b.value) else "低于"
+        if float(a.value) > float(b.value):
+            cmp_word = "高于"
+        elif float(a.value) < float(b.value):
+            cmp_word = "低于"
+        else:
+            cmp_word = "接近"
         lines.append(
             f"{a.sec_name} 的{a.metric_label}{cmp_word}{b.sec_name}"
             f"（{a.sec_name} {_fmt_value(float(a.value), a.unit or '')}；"
@@ -184,7 +198,7 @@ def build_comparison_analysis(
         facts_metric_ids.add(p.metric_id)
 
     def _validate(output) -> tuple[bool, str]:
-        return _validate_output(output, facts_metric_ids)
+        return _validate_output(output, facts_metric_ids, "\n".join(facts))
 
     def _template_fallback() -> str:
         warnings.append("LLM 分析降级，使用确定性模板")

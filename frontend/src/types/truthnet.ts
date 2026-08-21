@@ -95,6 +95,7 @@ export interface PendingCompanyCandidates {
 
 export interface Session {
   session_id: string;      // 后端是 session_id，不是 id
+  user_id?: string | null;
   title: string;
   status?: string;
   created_at: string;
@@ -576,6 +577,26 @@ export interface CompanyRiskSummary {
   warnings?: string[];
   /** 推导链 (Phase E) */
   derivation_chains?: DerivationChain[];
+}
+
+export interface ImpactAdviceSegmentData {
+  source_module: 'finance' | 'equity' | 'events' | 'overall';
+  title: string;
+  detail: string;
+  evidence_ids: string[];
+}
+
+export interface ImpactAdviceData {
+  wind_code: string;
+  sec_name: string;
+  risk_level: string;
+  overall_score: number | null;
+  as_of: string;
+  overall_advice: string;
+  method: 'llm' | 'template';
+  segments: ImpactAdviceSegmentData[];
+  evidence_count: number;
+  warnings: string[];
 }
 
 // ============ 触发规则详情 (对齐 comparisons.py TriggeredRuleDetail/RuleMetricValue) ============

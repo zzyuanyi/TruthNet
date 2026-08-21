@@ -66,6 +66,7 @@ async def test_finance_segment_and_evidence(monkeypatch):
     assert "ev_fin_1" in finance[0].evidence_ids
     assert result.evidence_count >= 2
     assert result.method == "template"
+    assert "财务规则信号 1 项" in result.overall_advice
 
 
 @pytest.mark.asyncio
@@ -113,6 +114,12 @@ async def test_llm_success_uses_llm_method(monkeypatch):
     assert "去化压力" in result.overall_advice
     modules = {s.source_module for s in result.segments}
     assert "finance" in modules and "overall" in modules
+    llm_finance = [
+        s
+        for s in result.segments
+        if s.source_module == "finance" and s.detail.startswith("结合")
+    ]
+    assert llm_finance and "ev_fin_1" in llm_finance[0].evidence_ids
 
 
 @pytest.mark.asyncio
@@ -149,6 +156,41 @@ async def test_llm_invalid_falls_back(monkeypatch):
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "template"
     assert "综合风险等级" in result.overall_advice
+
+
+@pytest.mark.asyncio
+async def test_llm_new_number_falls_back(monkeypatch):
+    """LLM 新增事实外数字时，影响建议回退模板。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+
+    async def fake_score(code, as_of=""):
+        return _risk_output()
+
+    monkeypatch.setattr(
+        "app.application.services.risk_scoring_service.assemble_and_score",
+        fake_score,
+    )
+    monkeypatch.setattr(svc, "_equity_signals", lambda *a, **kw: ([], []))
+
+    async def fake_events(*a, **kw):
+        return ([], [], [])
+
+    monkeypatch.setattr(svc, "_events_signals", fake_events)
+    output = svc._ImpactAdviceOutput(
+        overall="综合评分为0.999。",
+        suggestions=[
+            svc._ImpactSuggestion(source_module="finance", text="建议关注2024年风险。")
+        ],
+    )
+
+    def fake_with_fallback(messages, schema, fallback, validate=None, timeout=None):
+        ok, _ = validate(output)
+        return (output, True) if ok else (fallback(), False)
+
+    monkeypatch.setattr("app.agents.llm_guard.llm_with_fallback", fake_with_fallback)
+    result = await assemble_impact_advice("600518.SH", "")
+    assert result.method == "template"
+    assert "0.999" not in result.overall_advice
 
 
 @pytest.mark.asyncio

@@ -475,6 +475,19 @@ def test_parse_query_period_none():
     assert parse_query_period("康美药业财务健康吗") == (None, "", "")
 
 
+def test_parse_query_period_relative_and_yearless_quarter():
+    assert parse_query_period("康美药业今年上半年营收", today=date(2026, 8, 20)) == (
+        date(2026, 6, 30),
+        "report_period",
+        "今年上半年",
+    )
+    assert parse_query_period("康美药业三季度变化", today=date(2026, 8, 20)) == (
+        date(2025, 9, 30),
+        "report_period",
+        "三季度",
+    )
+
+
 # ── #6 搜索主题 Gate ────────────────────────────────────────
 
 

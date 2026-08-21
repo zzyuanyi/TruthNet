@@ -242,6 +242,7 @@ def test_company_confirm_replays_original_question_with_selected_company(monkeyp
         session_id,
         turn_id,
         question,
+        user_id,
         trace_id,
         request_context,
         accepted_at,

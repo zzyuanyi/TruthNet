@@ -124,6 +124,19 @@ def test_latest_quarter_period_hint():
     assert result.period_hint == "latest_quarter"
 
 
+def test_known_market_metrics_are_honestly_unsupported_without_llm():
+    """官方题型中的未覆盖资金/分红指标不得落入综合诊断。"""
+    for query in (
+        "恒生电子股息率",
+        "恒生电子今天的主力净买入额是多少",
+        "昨天贵州茅台的融资买入额是多少",
+        "贵州茅台的融券卖出量是多少",
+    ):
+        result = resolve_indicator_semantics(query)
+        assert result.executable is False
+        assert result.reason == "unsupported"
+
+
 # ── 8/17 方案 §5.7 接线：受约束 LLM 指标 fallback ─────────────
 
 
@@ -140,7 +153,7 @@ def test_no_match_off_mode_zero_llm(monkeypatch):
         return None
 
     monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
-    result = resolve_indicator_semantics("股息率是多少")
+    result = resolve_indicator_semantics("摊薄EPS是多少")
     assert result.reason == "no_match"
     assert calls == []
 
@@ -158,7 +171,7 @@ def test_no_match_mock_backend_zero_llm(monkeypatch):
         return None
 
     monkeypatch.setattr("app.agents.llm_sync.run_llm_structured", fake_llm)
-    result = resolve_indicator_semantics("股息率是多少")
+    result = resolve_indicator_semantics("摊薄EPS是多少")
     assert result.reason == "no_match"
     assert calls == []
 
@@ -176,7 +189,7 @@ def test_llm_unsupported_indicator_honest(monkeypatch):
     monkeypatch.setattr(
         "app.agents.llm_sync.run_llm_structured", lambda *a, **kw: output
     )
-    result = resolve_indicator_semantics("贵州茅台股息率是多少")
+    result = resolve_indicator_semantics("贵州茅台摊薄EPS是多少")
     assert result.executable is False
     assert result.reason == "unsupported"
     assert result.confidence == "llm"

@@ -71,8 +71,8 @@
 |    4    | Claim 生成+证据绑定：每项结论 ≥1 EvidenceRef       | `agents/nodes/build_claims.py`   | 无空 evidence_ids                |
 |    5    | 问答生成：汇总→结构化 JSON→基于缺失证据的追问     | `agents/nodes/generate.py`       | 追问与当轮结论相关               |
 |    6    | 风险评分：财务+股权+事件+评级→综合分、分项分、等级、策略版本、<br />数据覆盖、置信度、关键贡献因素、缓解因素、证据 | `agents/nodes/risk.py`           | risk 端点返回 V12 全部字段       |
-|    7    | 记忆 Agent：多轮实体提取+指代消解                   | `agents/nodes/memory.py`         | 10 轮"它""上次那家"正确          |
-|    8    | 会话持久化：`load_context.py` 恢复上下文，`persist_turn.py` 写会话+消息；<br />会话 REST 端点：列表、创建、详情/历史 | `load_context.py` + `persist_turn.py` + sessions router + 会话表/迁移 | 10 轮指代正确；会话写入后可通过 REST 回读 |
+|    7    | 记忆 Agent：多轮实体提取+指代消解                   | `agents/nodes/memory.py`         | 默认 20 轮"它""上次那家"正确          |
+|    8    | 会话持久化：`load_context.py` 恢复上下文，`persist_turn.py` 写会话+消息；<br />会话 REST 端点：列表、创建、详情/历史 | `load_context.py` + `persist_turn.py` + sessions router + 会话表/迁移 | 20 轮指代正确；会话写入后可通过 REST 回读 |
 |    9    | `/api/v1/companies/{code}/finance`                | REST 端点                          | 对齐 V12 §11.10                 |
 |   10    | `/api/v1/companies/{code}/events`                 | REST 端点                          | 对齐 V12 §11.11                 |
 |   11    | `/api/v1/companies/{code}/risk`                   | REST 端点                          | 返回综合分、分项分、等级、策略版本、数据覆盖、置信度、关键贡献因素、缓解因素、证据 |
@@ -117,7 +117,7 @@
 ✅ 造假手法 ≥2 条可触发
 ✅ 评测脚本框架就绪，1410 全量自动评测 + 77 深度人工评测口径明确
 ✅ 公告覆盖方案确定，康美演示不依赖假数据
-✅ 会话持久化：10 轮指代测试通过
+✅ 会话持久化：20 轮指代测试通过
 ```
 
 ### Phase C 实际结果

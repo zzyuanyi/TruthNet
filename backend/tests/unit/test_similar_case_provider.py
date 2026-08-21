@@ -771,3 +771,29 @@ class TestDecimalCoercion:
         assert isinstance(m5["gross_margin"], float)
         m7 = _compute_metric("R7", cur_rows, prev_rows, "600000.SH")
         assert isinstance(m7["core_profit_ratio"], float)
+
+
+def test_compute_metric_missing_debt_or_cost_does_not_use_zero():
+    from app.application.services.similar_case_provider import _RawRow, _compute_metric
+
+    def row(values):
+        return _RawRow(
+            row_id=1,
+            source_record_id=None,
+            wind_code="600000.SH",
+            report_period="20260331",
+            values=values,
+        )
+
+    cur = {
+        "balance_sheet": {
+            "600000.SH": row(
+                {"tot_assets": 100.0, "st_borrow": None, "lt_borrow": 10.0}
+            )
+        },
+        "income_statement": {
+            "600000.SH": row({"oper_rev": 100.0, "less_oper_cost": None})
+        },
+    }
+    assert _compute_metric("R3", cur, {}, "600000.SH")["debt_to_assets"] is None
+    assert _compute_metric("R5", cur, {}, "600000.SH")["gross_margin"] is None

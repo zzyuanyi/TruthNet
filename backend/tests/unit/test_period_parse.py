@@ -43,9 +43,12 @@ def test_invalid_returns_none():
     assert normalize_period("2026Q5") is None
     assert normalize_period("") is None
     assert normalize_period(None) is None
+    assert normalize_period("20250231") is None
+    assert normalize_period("2026-02-29") is None
 
 
 def test_is_valid_period():
     assert is_valid_period("20260630")
     assert not is_valid_period("20261301")
+    assert not is_valid_period("20250231")
     assert not is_valid_period("2026")

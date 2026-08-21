@@ -76,10 +76,46 @@ def test_exact_name_locked():
     assert not r.needs_confirmation
 
 
+def test_market_alias_resolves_to_china_pacific_insurance():
+    """市场俗称“太平洋保险”应绑定证券主表中的中国太保。"""
+    lookup = _mysql_lookup([("c1", "601601.SH", "中国太保", None)])
+    r = _resolver(lookup).resolve("太平洋保险最新净利润")
+    assert r.intent == "single"
+    assert [c.wind_code for c in r.selected_companies] == ["601601.SH"]
+    assert r.mentions[0].text == "太平洋保险"
+    assert r.mentions[0].selected_wind_code == "601601.SH"
+    assert r.mentions[0].status == "auto_selected"
+    assert r.mentions[0].resolution_source == "exact_alias"
+
+
+def test_market_alias_resolves_code_placeholder_security():
+    lookup = _mysql_lookup([("c1", "600835.SH", "600835.SH", None)])
+    result = _resolver(lookup).resolve("上海机电还可以买入吗？")
+    assert result.intent == "single"
+    assert result.selected_companies[0].wind_code == "600835.SH"
+    assert result.selected_companies[0].sec_name == "上海机电"
+    assert result.mentions[0].resolution_source == "exact_alias"
+
+
 def test_exact_code_locked():
     lookup = SQLiteCompanyRepository()
     r = _resolver(lookup).resolve("600519.SH 的营收")
     assert r.selected_companies[0].wind_code == "600519.SH"
+
+
+def test_event_followup_keeps_previous_subject():
+    lookup = _mysql_lookup([("c1", "600518.SH", "康美药业", None)])
+    result = _resolver(lookup).resolve("最近有哪些利好事件", memory=_km_memory())
+    assert result.intent == "continuation"
+    assert result.selected_companies[0].wind_code == "600518.SH"
+
+
+def test_same_company_name_and_code_are_one_subject():
+    lookup = _mysql_lookup([("c1", "600518.SH", "康美药业", None)])
+    r = _resolver(lookup).resolve("康美药业 600518.SH 的公告")
+    assert r.intent == "single"
+    assert [company.wind_code for company in r.selected_companies] == ["600518.SH"]
+    assert [mention.selected_wind_code for mention in r.mentions] == ["600518.SH"]
 
 
 def test_reverse_contains_unique_locked():
@@ -256,16 +292,8 @@ def test_shrink_fallback_not_found_stays_blocked():
 def test_short_name_boundary_regression_20260815():
     """第三轮复核 P1/P2 回归（2026-08-15，交接说明 §十一.3）。
 
-    真机现象：『围海近期舆情事件对公司有什么影响？』被提取为
-    mention「围海近期」（短称与邻近时间词误并单 span）→ not_found，
-    用户可见"疑似公司「围海近期」但未能识别"；『002586.SZ 近期…』
-    则多出「近期」not_found mention（fail-closed 阻断整句）。
-
-    当前锁定行为（防串保持，不修 span 边界）：
-    - 「围海近期」误并 span → not_found，不静默锁任何公司；
-    - 「002586.SZ」代码 mention 正常 auto_selected，附属「近期」not_found。
-    修复批目标（实体识别后续批次）：短称「围海」应走候选确认
-    （needs_confirmation 候选 *ST围海）而非直接 NIL；届时更新本用例断言。
+    时间区间修复后，邻近的“近期”应被识别为时间修饰词，而不是
+    公司名的一部分；代码后的“近期”也不能形成附属伪 mention。
     """
     lookup = _mysql_lookup(
         [
@@ -277,19 +305,18 @@ def test_short_name_boundary_regression_20260815():
             )
         ]
     )
-    # ① 短称+邻近词误并：not_found 且不锁公司（防串保持）
+    # ① 短称+邻近时间词：保留公司短称并按候选状态处理
     r = _resolver(lookup).resolve("围海近期舆情事件对公司有什么影响？")
     m = r.mentions[0]
-    assert m.text == "围海近期"
-    assert m.status == "not_found"
-    assert r.selected_companies == []
-    assert not r.needs_confirmation
-    # ② 代码 + 邻近词：代码正常锁定，附属词 not_found
+    assert m.text == "围海"
+    assert m.status == "auto_selected"
+    assert r.selected_companies[0].wind_code == "002586.SZ"
+    # ② 代码 + 邻近词：代码正常锁定，不产生附属伪 mention
     r2 = _resolver(lookup).resolve("002586.SZ 近期舆情事件对公司有什么影响？")
     by_text = {mm.text: mm for mm in r2.mentions}
     assert by_text["002586.SZ"].status == "auto_selected"
     assert by_text["002586.SZ"].selected_wind_code == "002586.SZ"
-    assert by_text["近期"].status == "not_found"
+    assert "近期" not in by_text
 
 
 # ── v3.2.1 批次 2/3：业务上下文与受控所有格（旧断言迁移）──────
@@ -320,6 +347,14 @@ def test_business_context_dropped_with_valid_company():
     assert r.selected_companies[0].sec_name == "康美药业"
     assert r.unresolved_mentions == []  # 年报不进入 unresolved
     assert [m.text for m in r.mentions] == ["康美药业"]
+
+
+def test_request_adjective_simple_is_not_company_mention():
+    """请求修饰词“简单”不得被解析为第二家公司。"""
+    lookup = _mysql_lookup([("c1", "300677.SZ", "英科医疗", None)])
+    r = _resolver(lookup).resolve("英科医疗这段时间涨幅较大，请帮我简单分析")
+    assert [c.sec_name for c in r.selected_companies] == ["英科医疗"]
+    assert all(m.text != "简单" for m in r.mentions)
 
 
 def test_company_name_containing_you_and_trailing_predicates_resolve_exactly():

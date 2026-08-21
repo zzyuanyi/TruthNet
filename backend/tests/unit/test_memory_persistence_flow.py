@@ -2,7 +2,7 @@
 
 对应后端任务 7 验收（不是单次传入全量消息）:
 - 每轮历史从 conversation_turns 持久化恢复（load_context 回读）；
-- 第 10 轮仍能恢复正确主体；
+- 第 20 轮以内仍能恢复正确主体；
 - 中途切换公司后"它"指向最近主体；
 - 不同 session 之间不串公司（隔离）。
 使用内存 SQLite，不访问 MySQL。
@@ -78,12 +78,12 @@ def _next_turn_resolution(engine, session_id: str, query: str):
     return out["memory_context"]
 
 
-# ── 10 轮指代正确（第 10 轮从持久化恢复后仍正确）──────────────
+# ── 20 轮窗口内指代正确（从持久化恢复后仍正确）──────────────
 
 
-def test_ten_turns_anaphora_via_persistence(conv_engine):
+def test_twenty_turns_anaphora_via_persistence(conv_engine):
     engine = conv_engine
-    sid = "ses_ten"
+    sid = "ses_twenty"
     turns = [
         ("康美药业有风险吗", "康美药业财务存在以下高风险信号..."),
         ("它的应收账款增速如何", "康美药业应收账款增速47.2%与营收增速背离..."),
@@ -95,11 +95,14 @@ def test_ten_turns_anaphora_via_persistence(conv_engine):
         ("那关联方有什么异常吗", "康美药业其他应收款占比过高..."),
         ("之前分析的结论是什么", "康美药业综合风险为红色预警..."),
     ]
-    # 前 9 轮逐轮持久化
+    turns.extend(
+        (f"第{i}轮继续核查", "康美药业仍作为当前分析对象。") for i in range(10, 20)
+    )
+    # 前 19 轮逐轮持久化
     for q, a in turns:
         _persist_turn(engine, sid, q, a)
 
-    # 第 10 轮：含指代"这个"，历史从 DB 恢复（9 轮共 18 条消息）
+    # 第 20 轮：含指代"这个"，历史从 DB 恢复（19 轮共 38 条消息）
     ctx = _next_turn_resolution(engine, sid, "这个结论可靠吗")
     assert ctx.is_anaphora is True
     assert ctx.resolved_entity_name == "康美药业"

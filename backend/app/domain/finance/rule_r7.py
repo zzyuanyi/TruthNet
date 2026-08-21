@@ -5,7 +5,7 @@
 所有状态均携带母公司口径 quality。
 """
 
-from app.domain.finance._fetch import fetch_series
+from app.domain.finance._fetch import align_by_period, fetch_series, prev_year_period
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -52,11 +52,6 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     tot_profit_sr = fetch_series(company_code, "tot_profit", periods, as_of)
     oper_cf_sr = fetch_series(company_code, "net_cash_flows_oper_act", periods, as_of)
     net_profit = net_profit_sr.values
-    core_profit = core_profit_sr.values
-    oper_rev = oper_rev_sr.values
-    oper_profit = oper_profit_sr.values
-    tot_profit = tot_profit_sr.values
-    oper_cf = oper_cf_sr.values
 
     field_warnings = [
         w
@@ -72,7 +67,8 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     ]
 
     # 检查扣非字段是否可用
-    core_available = core_profit and any(v is not None for v in core_profit)
+    core_values = core_profit_sr.values
+    core_available = bool(core_values) and any(v is not None for v in core_values)
     simplified = not core_available
 
     valid_np = count_valid(net_profit, 4)
@@ -91,8 +87,27 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    t_idx, t4_idx = -1, -5
-    np_current = net_profit[t_idx]
+    aligned = align_by_period(
+        net_profit=net_profit_sr,
+        core_profit=core_profit_sr,
+        oper_rev=oper_rev_sr,
+        oper_profit=oper_profit_sr,
+        tot_profit=tot_profit_sr,
+        oper_cf=oper_cf_sr,
+    )
+    ordered = sorted(aligned)
+    current_period = next(
+        (
+            period
+            for period in reversed(ordered)
+            if aligned[period].get("net_profit") is not None
+        ),
+        None,
+    )
+    prior_year_period = (
+        prev_year_period(current_period, ordered) if current_period else None
+    )
+    np_current = aligned[current_period].get("net_profit") if current_period else None
     if np_current is None or np_current <= 0:
         result.status = "not_applicable"
         result.explanation = "公司亏损，盈利质量规则不适用"
@@ -110,32 +125,44 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
 
     # 扣非利润占比
     core_ratio = None
-    if core_available and core_profit[t_idx] is not None and np_current != 0:
-        core_ratio = core_profit[t_idx] / abs(np_current)
+    current_row = aligned[current_period]
+    prior_row = aligned.get(prior_year_period, {})
+    if (
+        core_available
+        and current_row.get("core_profit") is not None
+        and np_current != 0
+    ):
+        core_ratio = current_row["core_profit"] / abs(np_current)
 
     # 非经常性损益占比
     non_recurring_ratio = None
-    if core_available and core_profit[t_idx] is not None:
-        non_recurring = np_current - core_profit[t_idx]
+    if core_available and current_row.get("core_profit") is not None:
+        non_recurring = np_current - current_row["core_profit"]
         non_recurring_ratio = (
             non_recurring / abs(np_current) if abs(np_current) > 0 else 0
         )
 
     # YoY 增速对比
     np_yoy = (
-        yoy_growth(net_profit[t_idx], net_profit[t4_idx])
-        if len(net_profit) >= 5
+        yoy_growth(current_row.get("net_profit"), prior_row.get("net_profit"))
+        if prior_year_period
         else None
     )
     core_yoy = (
-        yoy_growth(core_profit[t_idx], core_profit[t4_idx])
-        if core_available and len(core_profit) >= 5
+        yoy_growth(current_row.get("core_profit"), prior_row.get("core_profit"))
+        if core_available and prior_year_period
         else None
     )
     rev_yoy = (
-        yoy_growth(oper_rev[t_idx], oper_rev[t4_idx]) if len(oper_rev) >= 5 else None
+        yoy_growth(current_row.get("oper_rev"), prior_row.get("oper_rev"))
+        if prior_year_period
+        else None
     )
-    cf_yoy = yoy_growth(oper_cf[t_idx], oper_cf[t4_idx]) if len(oper_cf) >= 5 else None
+    cf_yoy = (
+        yoy_growth(current_row.get("oper_cf"), prior_row.get("oper_cf"))
+        if prior_year_period
+        else None
+    )
 
     quality_div = (
         ((np_yoy or 0) - (core_yoy or 0)) * 100
@@ -156,12 +183,14 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     # 营业外收支占比
     non_oper_ratio = None
     if (
-        oper_profit[t_idx] is not None
-        and tot_profit[t_idx] is not None
-        and tot_profit[t_idx] != 0
+        current_row.get("oper_profit") is not None
+        and current_row.get("tot_profit") is not None
+        and current_row["tot_profit"] != 0
     ):
         non_oper_ratio = (
-            (tot_profit[t_idx] - oper_profit[t_idx]) / abs(tot_profit[t_idx]) * 100
+            (current_row["tot_profit"] - current_row["oper_profit"])
+            / abs(current_row["tot_profit"])
+            * 100
         )
 
     severity = "green"
@@ -264,15 +293,14 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     result.warnings = field_warnings
     # 多期展示序列：最近 8 期扣非/归母净利比（图表趋势用；扣非不可用期跳过）
     r7_series: list[dict] = []
-    periods_hist = net_profit_sr.periods
-    for i in range(max(0, len(net_profit) - 8), len(net_profit)):
-        np_v, cp_v = net_profit[i], core_profit[i]
+    periods_hist = ordered
+    for i in range(max(0, len(ordered) - 8), len(ordered)):
+        np_v = aligned[ordered[i]].get("net_profit")
+        cp_v = aligned[ordered[i]].get("core_profit")
         if np_v is None or cp_v is None or np_v == 0:
             continue
         label = (
-            str(periods_hist[i])
-            if i < len(periods_hist)
-            else f"t-{len(net_profit)-1-i}Q"
+            str(periods_hist[i]) if i < len(periods_hist) else f"t-{len(ordered)-1-i}Q"
         )
         r7_series.append(
             {"period": label, "core_profit_ratio": round(cp_v / abs(np_v) * 100, 1)}
@@ -298,16 +326,16 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if severity == "red" and core_ratio is not None:
         result.explanation = (
             f"扣非利润占净利润仅 {core_ratio*100:.1f}%，盈利对非经常性损益严重依赖，"
-            f"主营业务盈利能力需审视（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
+            f"主营业务盈利能力需审视（数据期：{fmt_period(current_period or as_of)}，母公司报表）。"
         )
     elif severity == "orange":
         if core_ratio is not None:
-            result.explanation = f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
+            result.explanation = f"扣非净利润占比较低（{core_ratio*100:.1f}%），盈利质量有待改善（数据期：{fmt_period(current_period or as_of)}，母公司报表）。"
         else:
-            result.explanation = f"净利润增速与现金流/营收增速存在背离，盈利质量有待改善（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
+            result.explanation = f"净利润增速与现金流/营收增速存在背离，盈利质量有待改善（数据期：{fmt_period(current_period or as_of)}，母公司报表）。"
     elif severity == "yellow":
         if core_ratio is not None and core_ratio < thresholds.weak_core_profit_ratio:
-            result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
+            result.explanation = f"扣非净利润占净利润比重偏低（{core_ratio*100:.1f}%），建议关注盈利可持续性（数据期：{fmt_period(current_period or as_of)}，母公司报表）。"
         else:
-            result.explanation = f"净利润增速与现金流/营收增速存在背离，建议关注（数据期：{fmt_period(net_profit_sr.periods[-1] if net_profit_sr.periods else as_of)}，母公司报表）。"
+            result.explanation = f"净利润增速与现金流/营收增速存在背离，建议关注（数据期：{fmt_period(current_period or as_of)}，母公司报表）。"
     return result

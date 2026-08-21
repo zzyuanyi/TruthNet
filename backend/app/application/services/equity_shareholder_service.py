@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.core.config import settings
@@ -27,30 +27,18 @@ from app.domain.provenance.id_factory import NS_EQUITY, make_evidence_id
 
 logger = logging.getLogger(__name__)
 
-_engines: dict[str, Engine] = {}
-
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
 def _get_engine() -> Engine:
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False, pool_pre_ping=True)
-    else:
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
-    return _engines[backend]
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+    本服务是写路径（materialize_equity_evidence），backend-only key 缓存在
+    切库后会复用旧库 Engine，把证据写进错误数据库（演示库误写）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 # ── 边属性统一读取（dict / Pydantic 对象兼容） ──────────────
@@ -147,6 +135,9 @@ def materialize_equity_evidence(
     trace = trace_id or f"rest_{uuid.uuid4().hex[:12]}"
     now = datetime.now(timezone.utc)
     try:
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with _get_engine().begin() as conn:
             for edge in edges:
                 eid = make_equity_edge_evidence_id(
@@ -187,7 +178,12 @@ def materialize_equity_evidence(
                         continue  # 同内容幂等复用
                     conflicts.append(eid)
                     continue
-                conn.execute(
+                conflict_clause = (
+                    "ON DUPLICATE KEY UPDATE evidence_id = evidence_id"
+                    if conn.engine.dialect.name == "mysql"
+                    else "ON CONFLICT(evidence_id) DO NOTHING"
+                )
+                result = conn.execute(
                     text(
                         "INSERT INTO evidence_refs "
                         "(evidence_id, source_type, source_record_id, company_code, "
@@ -198,7 +194,8 @@ def materialize_equity_evidence(
                         "VALUES (:eid, 'neo4j_relationship', :srid, :cc, "
                         " 'ownership_pct', :per, :val, NULL, 'ownership_record', "
                         " :title, NULL, NULL, NULL, :dv, :retrieved, "
-                        " :turn, :trace, 'equity', 'neo4j:OWNS')"
+                        " :turn, :trace, 'equity', 'neo4j:OWNS') "
+                        f"{conflict_clause}"
                     ),
                     {
                         "eid": eid,
@@ -213,7 +210,23 @@ def materialize_equity_evidence(
                         "trace": trace,
                     },
                 )
-                added += 1
+                # 无论本请求插入还是并发命中，均复读并验证 canonical 内容。
+                existing = conn.execute(
+                    text(
+                        "SELECT source_record_id, period, value "
+                        "FROM evidence_refs WHERE evidence_id = :eid LIMIT 1"
+                    ),
+                    {"eid": eid},
+                ).first()
+                if (
+                    existing is not None
+                    and existing[0] == rel_id
+                    and str(existing[2] or "") == value
+                ):
+                    if result.rowcount:
+                        added += 1
+                    continue
+                conflicts.append(eid)
         if added or conflicts:
             logger.info(
                 "materialize_equity_evidence: company=%s added=%d conflicts=%d",

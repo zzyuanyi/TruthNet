@@ -8,25 +8,18 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import create_engine, text
-
-from app.core.config import settings
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-_engine = None
-
 
 def _get_engine():
-    global _engine
-    if _engine is None:
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engine = create_engine(url, echo=False, pool_pre_ping=True)
-    return _engine
+    """8/19 全面审查：改用公共工厂（完整 profile key + 缓存 + 切库 dispose）。
+
+    原实现以模块级单例缓存，进程内切库后复用指向旧库的 Engine。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _public_fields(row: dict, allow: set[str]) -> dict:
@@ -189,33 +182,20 @@ def _resolve_research_report(source_record_id: str) -> dict:
     返回允许公开的字段：标题、公司、机构、发布日期、评级、摘要与来源 URI。
     """
     try:
-        from sqlalchemy import create_engine, text
-
-        from app.core.config import settings
-
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        engine = create_engine(url, pool_pre_ping=True)
-        try:
-            with engine.connect() as conn:
-                row = (
-                    conn.execute(
-                        text(
-                            "SELECT report_id, wind_code, sec_name, org_name, "
-                            "publish_date, rating_org, rating_change, title, abstract, "
-                            "source_uri, industry_l1 "
-                            "FROM research_reports WHERE report_id = :rid LIMIT 1"
-                        ),
-                        {"rid": source_record_id},
-                    )
-                    .mappings()
-                    .first()
+        with _get_engine().connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT report_id, wind_code, sec_name, org_name, "
+                        "publish_date, rating_org, rating_change, title, abstract, "
+                        "source_uri, industry_l1 "
+                        "FROM research_reports WHERE report_id = :rid LIMIT 1"
+                    ),
+                    {"rid": source_record_id},
                 )
-        finally:
-            engine.dispose()
+                .mappings()
+                .first()
+            )
         if row is None:
             return {"resolved": False, "record": {}}
         return {

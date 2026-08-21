@@ -104,3 +104,33 @@ def _has_listing_key(window: str) -> bool:
 
 def _has_neg_key(window: str) -> bool:
     return any(key in window for key in _NEG_KEYS)
+
+
+_IPO_PRICE_RE = re.compile(
+    r"(?:首发价格|首发价|发行价格|发行价)\s*(?:为|是|:|：)?\s*"
+    r"([0-9]+(?:\.[0-9]+)?)\s*元\s*(?:/股|每股)?"
+)
+
+
+def extract_ipo_price_from_hits(hits: list[SearchResult]) -> str | None:
+    """从公告/快讯摘要提取首发价格；多值冲突时不猜。"""
+    values: set[str] = set()
+    for hit in hits or []:
+        for text in (hit.snippet, hit.title):
+            for match in _IPO_PRICE_RE.finditer(text or ""):
+                values.add(f"{match.group(1)}元/股")
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def extract_executive_compensation_excerpt(
+    hits: list[SearchResult],
+) -> str | None:
+    """返回明确涉及高管薪酬的联网摘要，不把无关研报当作事实。"""
+    for hit in hits or []:
+        for text in (hit.snippet, hit.title):
+            value = " ".join(str(text or "").split()).strip()
+            if value and any(
+                cue in value for cue in ("高管薪酬", "董监高薪酬", "薪酬", "报酬")
+            ):
+                return value[:300]
+    return None

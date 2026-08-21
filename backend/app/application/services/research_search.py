@@ -11,6 +11,8 @@ asyncio.run，REST/WS 双路径安全，与 llm_sync 同模式）。
 import asyncio
 import concurrent.futures
 import logging
+import re
+import threading
 import time
 
 from app.core.config import settings
@@ -19,6 +21,22 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "research_report_chunks"
 _SEARCH_KEYWORDS = ("研报", "观点", "行业", "机构", "分析师", "评级", "近期")
+_VECTOR_STORE = None
+_VECTOR_STORE_LOCK = threading.Lock()
+
+
+def _default_vector_store():
+    """进程级 ChromaVectorStore 单例，避免每次请求重建 Chroma client。"""
+    global _VECTOR_STORE
+    if _VECTOR_STORE is None:
+        with _VECTOR_STORE_LOCK:
+            if _VECTOR_STORE is None:
+                from app.infrastructure.vector.chroma.vector_store import (
+                    ChromaVectorStore,
+                )
+
+                _VECTOR_STORE = ChromaVectorStore()
+    return _VECTOR_STORE
 
 
 def _semantic_to_insight(hit: dict) -> dict:
@@ -136,7 +154,41 @@ def _split_keywords(query: str) -> tuple[list[str], list[str]]:
 _MIN_RELEVANCE_SCORE = 0.15
 
 
-def _pass_relevance_gate(hit: dict, core_keywords: list[str]) -> bool:
+def _topic_anchor(query: str) -> str:
+    """提取研报问题的主题锚点，避免用任意二元词放行无关结果。"""
+    text = re.sub(r"[？?。！!，,]", "", query or "").strip()
+    for marker in ("的生产工艺", "的主要应用领域", "的应用领域"):
+        if marker in text:
+            return text.split(marker, 1)[0].strip("的")
+    match = re.search(
+        r"(?:近期|目前|当前|最近)?(.{2,16}?)(?:行业|领域|板块|产业链)", text
+    )
+    if match:
+        return match.group(1).strip("的")
+    if "技术" in text:
+        prefix = text.split("技术", 1)[0]
+        prefix = re.sub(r"^(?:近期|目前|当前|最近|有哪些)", "", prefix)
+        return prefix.strip("的")
+    return ""
+
+
+def _hit_text(hit: dict) -> str:
+    meta = hit.get("metadata") or {}
+    return "".join(
+        str(value or "")
+        for value in (
+            hit.get("content"),
+            hit.get("source_title"),
+            hit.get("sec_name"),
+            hit.get("industry"),
+            meta.get("title"),
+            meta.get("sec_name"),
+            meta.get("industry_l1"),
+        )
+    )
+
+
+def _pass_relevance_gate(hit: dict, core_keywords: list[str], query: str = "") -> bool:
     """核心主题 Gate（#6）：至少一个核心主题词出现在命中内容/标题中。
 
     语义检索可能返回语义相近但主题无关的研报（如"白酒"配到"电子"），
@@ -144,8 +196,127 @@ def _pass_relevance_gate(hit: dict, core_keywords: list[str]) -> bool:
     """
     if not core_keywords:
         return False
-    text = f"{hit.get('content') or ''}{hit.get('source_title') or ''}"
+    text = _hit_text(hit)
+    anchor = _topic_anchor(query)
+    if anchor:
+        return anchor in text
     return any(kw in text for kw in core_keywords)
+
+
+_TECH_OBJECT_CUES = (
+    "人工智能",
+    "AI",
+    "机器人",
+    "影像",
+    "内窥",
+    "微创",
+    "介入",
+    "植入",
+    "手术",
+    "监护",
+    "麻醉",
+    "传感",
+    "算法",
+    "数字化",
+    "3D",
+    "基因",
+    "质谱",
+    "分子",
+    "康复",
+    "激光",
+    "超声",
+)
+
+
+def _pass_answer_type_gate(hit: dict, query: str) -> bool:
+    """命中内容必须能回答问题类型；不满足时宁可返回数据不足。"""
+    text = _hit_text(hit)
+    sentences = [s for s in re.split(r"[。；;\n]", text) if s]
+    anchor = _topic_anchor(query)
+    if "高管薪酬" in query:
+        return any(
+            (not anchor or anchor in sentence)
+            and any(cue in sentence for cue in ("高管", "薪酬", "董事长薪酬", "董监高"))
+            for sentence in sentences
+        )
+    if any(cue in query for cue in ("首发价格", "首发价", "发行价格", "发行价")):
+        return any(
+            (not anchor or anchor in sentence)
+            and any(
+                cue in sentence for cue in ("首发价格", "首发价", "发行价格", "发行价")
+            )
+            for sentence in sentences
+        )
+    if "产业链" in query:
+        if not anchor or anchor in {"热门", "相关"}:
+            return False
+        return any(
+            (not anchor or anchor in sentence) and "产业链" in sentence
+            for sentence in sentences
+        )
+    if "市场规模" in query or "市场空间" in query or "市场容量" in query:
+        return any(
+            (not anchor or anchor in sentence)
+            and any(
+                cue in sentence
+                for cue in ("市场规模", "市场空间", "市场容量", "行业规模")
+            )
+            for sentence in sentences
+        )
+    if "生产工艺" in query:
+        return bool(anchor) and any(
+            anchor in sentence
+            and any(
+                cue in sentence
+                for cue in ("生产工艺", "制备工艺", "生产流程", "制备流程")
+            )
+            for sentence in sentences
+        )
+    if "应用领域" in query:
+        return bool(anchor) and any(
+            anchor in sentence
+            and any(
+                cue in sentence for cue in ("应用领域", "应用于", "用于", "应用场景")
+            )
+            for sentence in sentences
+        )
+    if "挑战" in query:
+        return any(
+            (not anchor or anchor in sentence)
+            and any(
+                cue in sentence
+                for cue in (
+                    "挑战",
+                    "风险",
+                    "压力",
+                    "瓶颈",
+                    "集采",
+                    "降价",
+                    "监管",
+                    "竞争加剧",
+                )
+            )
+            for sentence in sentences
+        )
+    if "整体表现" in query:
+        return any(
+            (not anchor or anchor in sentence)
+            and "行业" in sentence
+            and any(
+                cue in sentence
+                for cue in ("增长", "下降", "回升", "承压", "景气", "增速", "表现")
+            )
+            for sentence in sentences
+        )
+    if any(cue in query for cue in ("技术", "研发", "创新")):
+        progress_cues = ("技术", "研发", "在研", "开发", "创新", "临床", "试验", "迭代")
+        return any(
+            (not anchor or anchor in sentence)
+            and any(cue in sentence for cue in progress_cues)
+            and any(cue in sentence for cue in _TECH_OBJECT_CUES)
+            for sentence in sentences
+        )
+    return True
 
 
 def _dedup_report_ids(hits: list[dict]) -> list[dict]:
@@ -193,11 +364,7 @@ async def search_research_insights(
     core_keywords, _intent = _split_keywords(query)
     try:
         if vector_store is None:
-            from app.infrastructure.vector.chroma.vector_store import (
-                ChromaVectorStore,
-            )
-
-            vector_store = ChromaVectorStore()
+            vector_store = _default_vector_store()
         hits = await vector_store.search(query, collection=COLLECTION_NAME, top_k=top_k)
     except Exception:  # noqa: BLE001 — Chroma 任何异常走兜底
         logger.warning(
@@ -210,7 +377,8 @@ async def search_research_insights(
             h
             for h in hits
             if float(h.get("score", 0.0)) >= _MIN_RELEVANCE_SCORE
-            and _pass_relevance_gate(h, core_keywords)
+            and _pass_relevance_gate(h, core_keywords, query)
+            and _pass_answer_type_gate(h, query)
             and _pass_date_gate(h, as_of)
         ]
         if filtered:
@@ -239,9 +407,8 @@ def _fallback_sql_filter_sync(query: str, top_k: int, as_of: str = "") -> list[d
     core_keywords, _intent = _split_keywords(query)
     if not core_keywords:
         return []
-    # 完整主题串（最长核心词）为 MUST 词；其余 2-gram 为 OR 扩展
-    must_kw = max(core_keywords, key=len)
-    or_kws = [k for k in core_keywords if k != must_kw]
+    # 主题锚点优先；不能再以任意 2-gram（如“块链”）代替完整主题。
+    must_kw = _topic_anchor(query) or max(core_keywords, key=len)
     try:
         from sqlalchemy import text
 
@@ -262,19 +429,12 @@ def _fallback_sql_filter_sync(query: str, top_k: int, as_of: str = "") -> list[d
                 # publish_date 为 varchar 日期（YYYY-MM-DD），归一化后比较
                 date_cond = " AND REPLACE(publish_date, '-', '') <= :asof "
                 params["asof"] = as_of
-            extra_sql = ""
-            if or_kws:
-                extras = []
-                for i, kw in enumerate(or_kws):
-                    extras.append("(title LIKE :e%d OR abstract LIKE :e%d)" % (i, i))
-                    params[f"e{i}"] = f"%{kw}%"
-                extra_sql = " AND (" + " OR ".join(extras) + ")"
             rs = conn.execute(
                 text(
-                    f"SELECT report_id, title, abstract, org_name, sec_name, "
+                    f"SELECT report_id, wind_code, title, abstract, org_name, sec_name, "
                     f"publish_date, source_uri, industry_l1 "
                     f"FROM research_reports "
-                    f"WHERE is_latest = 1 AND {must_cond}{extra_sql}{date_cond}"
+                    f"WHERE is_latest = 1 AND {must_cond}{date_cond}"
                     f"ORDER BY publish_date DESC LIMIT :lim"
                 ),
                 params,
@@ -287,7 +447,7 @@ def _fallback_sql_filter_sync(query: str, top_k: int, as_of: str = "") -> list[d
                         "source_org": r.org_name or "",
                         "source_date": str(r.publish_date or ""),
                         "report_id": str(r.report_id or ""),
-                        "wind_code": "",
+                        "wind_code": str(r.wind_code or ""),
                         "sec_name": r.sec_name or "",
                         "source_uri": r.source_uri or "",
                         # 行业映射命中（industry_l1）也属主题相关——随结果返回
@@ -295,7 +455,7 @@ def _fallback_sql_filter_sync(query: str, top_k: int, as_of: str = "") -> list[d
                         "score": 0.0,
                     }
                 )
-        return rows
+        return [row for row in rows if _pass_answer_type_gate(row, query)]
     except Exception:  # noqa: BLE001 — 兜底失败也返回空，绝不报错
         logger.warning("research_search: 结构化过滤兜底失败，返回空", exc_info=True)
         return []

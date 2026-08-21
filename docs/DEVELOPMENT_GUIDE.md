@@ -365,7 +365,7 @@ pnpm dev                                   # 启动开发服务器（默认 http
 | 4 | Claim 生成 + 证据绑定：每项事实结论至少挂一个 EvidenceRef | `agents/nodes/build_claims.py` | 输出 Claim 列表中无空 `evidence_ids` |
 | 5 | 问答生成 Agent：汇总→结构化 JSON→追问建议（基于缺失证据生成） | `agents/nodes/generate.py` | 追问建议与当轮结论相关，不固定模板 |
 | 6 | 风险评分聚合：财务+股权+事件+评级→分级→标签→模式匹配 | `agents/nodes/risk.py` | `/api/v1/companies/{code}/risk` 返回完整字段 |
-| 7 | 记忆 Agent：多轮上下文实体提取+指代消解 | `agents/nodes/memory.py` | 模拟 10 轮对话，"它""上次那家"正确消解 |
+| 7 | 记忆 Agent：多轮上下文实体提取+指代消解 | `agents/nodes/memory.py` | 模拟 20 轮对话，"它""上次那家"正确消解 |
 | 8 | `/api/v1/companies/{code}/finance` 端点 | REST | 对齐 V11 §11.10 格式 |
 | 9 | `/api/v1/companies/{code}/events` 端点 | REST | 对齐 V11 §11.11 格式 |
 | 10 | 全部端点的 `evidence_ids` 和 `claim_ids` 交叉引用可追踪 | 全局 | 通过 evidence_id 能找到对应 Claim，反之亦然 |

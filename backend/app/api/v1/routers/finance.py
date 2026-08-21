@@ -248,7 +248,10 @@ async def get_company_finance(
                 "claim_id": cid,
                 "text": text,
                 "claim_type": "risk_signal",
-                "severity": "medium",
+                "severity": next(
+                    (rule.severity for rule in rules if rule.rule_id == rid),
+                    "unknown",
+                ),
                 "confidence": 0.7,
                 "rule_id": rid,
                 "rule_version": settings.RULE_SET_VERSION,

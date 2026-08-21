@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 _QUARTER_END = {1: "0331", 2: "0630", 3: "0930", 4: "1231"}
 
@@ -23,12 +24,13 @@ def normalize_period(value: str | None) -> str | None:
 
     # YYYYMMDD
     if re.fullmatch(r"\d{8}", raw):
-        return raw
+        return raw if is_valid_period(raw) else None
 
     # YYYY-MM-DD
     m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", raw)
     if m:
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+        normalized = f"{m.group(1)}{m.group(2)}{m.group(3)}"
+        return normalized if is_valid_period(normalized) else None
 
     # YYYYQn
     m = re.fullmatch(r"(\d{4})[Qq]([1-4])", raw)
@@ -49,11 +51,9 @@ def is_valid_period(value: str) -> bool:
     """校验 YYYYMMDD 基本合法性（月份 01-12，日按季度末）。"""
     if not re.fullmatch(r"\d{8}", value):
         return False
-    month = int(value[4:6])
-    day = int(value[6:8])
-    if not 1 <= month <= 12:
-        return False
-    if not 1 <= day <= 31:
+    try:
+        date(int(value[:4]), int(value[4:6]), int(value[6:8]))
+    except ValueError:
         return False
     return True
 
