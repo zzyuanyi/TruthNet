@@ -20,6 +20,11 @@ class ChatRequestV1(BaseModel):
     """POST /api/v1/chat 请求体 — V12."""
 
     question: str = Field(..., min_length=1, max_length=2000, description="用户问题")
+    user_id: str | None = Field(
+        None,
+        max_length=64,
+        description="用户 ID；未传时归属默认本地用户",
+    )
     session_id: str | None = Field(
         None,
         max_length=64,

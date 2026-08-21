@@ -20,7 +20,12 @@ import {
   X,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
-import type { CompanyRiskSummary, ComparisonsResponseData, RiskLevel } from '@/types/truthnet';
+import type {
+  BenchmarksResponseData,
+  CompanyRiskSummary,
+  ComparisonsResponseData,
+  RiskLevel,
+} from '@/types/truthnet';
 import type { CompanyCandidate } from '@/lib/api-client';
 
 // 对比公司选择器（无 codes 默认入口，审计 P1-2）
@@ -297,12 +302,14 @@ function buildComparisonConclusions(companies: CompanyRiskSummary[]): string[] {
   const ranked = [...companies].sort((a, b) => {
     const levelDiff = (RISK_ORDER[b.risk_level] ?? 0) - (RISK_ORDER[a.risk_level] ?? 0);
     if (levelDiff !== 0) return levelDiff;
-    return (b.overall_score ?? 0) - (a.overall_score ?? 0);
+    const scoreA = a.partial ? Number.NEGATIVE_INFINITY : a.overall_score;
+    const scoreB = b.partial ? Number.NEGATIVE_INFINITY : b.overall_score;
+    return scoreB - scoreA;
   });
   const conclusions: string[] = [];
 
   const riskText = ranked
-    .map((c, i) => `${i + 1}. ${c.sec_name}：${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}（${(c.overall_score ?? 0).toFixed(3)} 分）`)
+    .map((c, i) => `${i + 1}. ${c.sec_name}：${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}（${c.partial ? '暂无评分' : `${c.overall_score.toFixed(3)} 分`}）`)
     .join('；');
   conclusions.push(`风险排序：${riskText}`);
 
@@ -337,6 +344,7 @@ export default function ComparePage() {
   const navigate = useNavigate();
   const [companies, setCompanies] = useState<CompanyRiskSummary[]>([]);
   const [comparisonData, setComparisonData] = useState<ComparisonsResponseData | null>(null);
+  const [industryBenchmarks, setIndustryBenchmarks] = useState<BenchmarksResponseData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [industryUnavailable, setIndustryUnavailable] = useState(false);
@@ -366,6 +374,7 @@ export default function ComparePage() {
       setLoading(true);
       setError(null);
       setIndustryUnavailable(false);
+      setIndustryBenchmarks([]);
 
       // 选两家入口：不自动查询，等待用户在预填列表中勾选
       if (candidateCodes.length > 0) {
@@ -379,11 +388,21 @@ export default function ComparePage() {
         return;
       }
 
-      // 行业分位数据源未接入（清单 §5.3）：诚实降级，不得把普通
-      // 对比结果伪装成行业对比
       if (scope === 'industry') {
-        setIndustryUnavailable(true);
-        setLoading(false);
+        try {
+          const results = await Promise.all(
+            codesParam.map(code => truthnetAPI.getBenchmarks(code)),
+          );
+          const benchmarkData = results
+            .map(result => result.data)
+            .filter((data): data is BenchmarksResponseData => Boolean(data));
+          if (benchmarkData.length === 0) setIndustryUnavailable(true);
+          else setIndustryBenchmarks(benchmarkData);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '行业基准加载失败');
+        } finally {
+          setLoading(false);
+        }
         return;
       }
 
@@ -451,8 +470,6 @@ export default function ComparePage() {
     );
   }
 
-  // v3.3.4 收口复核清单 §5.3：行业分位数据源未接入 → 诚实降级，
-  // 明确不可用，不把普通对比结果伪装成行业对比
   if (industryUnavailable) {
     return (
       <div className="h-full flex flex-col bg-background">
@@ -465,9 +482,9 @@ export default function ComparePage() {
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center max-w-md">
             <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h2 className="text-lg font-medium">行业分位暂未接入</h2>
+            <h2 className="text-lg font-medium">行业基准暂无数据</h2>
             <p className="text-sm text-muted-foreground mt-2">
-              行业分位/行业基准数据源尚未接入，暂无法展示行业对比结果。
+              当前公司或期间没有足够的同行样本，无法展示可靠的行业分位。
               可先查看这些公司的普通完整对比。
             </p>
             <Button
@@ -479,6 +496,64 @@ export default function ComparePage() {
             <Button variant="outline" className="mt-4 ml-2" onClick={() => navigate(-1)}>
               返回
             </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (scope === 'industry' && industryBenchmarks.length > 0) {
+    return (
+      <div className="h-full flex flex-col bg-background">
+        <header className="border-b px-6 py-4 flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-lg font-medium">跨公司对比 · 行业基准</h1>
+        </header>
+        <div className="flex-1 overflow-auto p-6">
+          <div className="mx-auto max-w-5xl space-y-4">
+            {industryBenchmarks.map(data => (
+              <Card key={data.wind_code}>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">
+                    {data.sec_name}（{data.wind_code}） · {data.industry_l1 || '行业未知'}
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    期间：{data.period}；口径：{data.statement_scope}；同行样本：{data.peer_count}
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-xs text-muted-foreground">
+                          <th className="px-2 py-2">指标</th>
+                          <th className="px-2 py-2">公司值</th>
+                          <th className="px-2 py-2">行业 P50</th>
+                          <th className="px-2 py-2">公司分位</th>
+                          <th className="px-2 py-2">有效样本</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.percentiles.map(metric => (
+                          <tr key={metric.indicator} className="border-b last:border-0">
+                            <td className="px-2 py-2">{metric.label || metric.indicator}</td>
+                            <td className="px-2 py-2">{metric.company_value != null ? `${metric.company_value}${metric.unit || ''}` : '暂无数据'}</td>
+                            <td className="px-2 py-2">{metric.p50 != null ? `${metric.p50}${metric.unit || ''}` : '暂无数据'}</td>
+                            <td className="px-2 py-2">{metric.company_percentile != null ? `${metric.company_percentile}%` : '暂无数据'}</td>
+                            <td className="px-2 py-2">{metric.sample_count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {(data.warnings?.length ?? 0) > 0 && (
+                    <p className="mt-3 text-xs text-muted-foreground">{data.warnings.join('；')}</p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
           </div>
         </div>
       </div>
@@ -591,7 +666,7 @@ export default function ComparePage() {
                         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                           <div className="rounded bg-muted/50 px-2 py-1">
                             <span className="text-muted-foreground">综合评分 </span>
-                            <span className="font-medium">{(company.overall_score ?? 0).toFixed(3)}</span>
+                            <span className="font-medium">{company.partial ? '暂无数据' : company.overall_score.toFixed(3)}</span>
                           </div>
                           <div className="rounded bg-muted/50 px-2 py-1">
                             <span className="text-muted-foreground">触发规则 </span>
@@ -603,7 +678,7 @@ export default function ComparePage() {
                           </div>
                           <div className="rounded bg-muted/50 px-2 py-1">
                             <span className="text-muted-foreground">数据覆盖 </span>
-                            <span className="font-medium">{((company.coverage ?? 0) * 100).toFixed(0)}%</span>
+                            <span className="font-medium">{company.partial || company.coverage <= 0 ? '暂无数据' : `${(company.coverage * 100).toFixed(0)}%`}</span>
                           </div>
                         </div>
                     </div>
@@ -662,9 +737,11 @@ export default function ComparePage() {
                         <div className="grid grid-cols-3 gap-4">
                           {indicator.companies.map((ci) => {
                             const isRisk = indicator.indicator === 'risk_level';
-                            const displayValue = indicator.indicator === 'coverage'
-                              ? `${((ci.value ?? 0) * 100).toFixed(0)}%`
-                              : ci.value != null ? `${ci.value}${ci.unit || ''}` : '-';
+                            const displayValue = ci.value == null
+                              ? '暂无数据'
+                              : indicator.indicator === 'coverage'
+                                ? `${(ci.value * 100).toFixed(0)}%`
+                                : `${ci.value}${ci.unit || ''}`;
                             return (
                               <div
                                 key={ci.wind_code}

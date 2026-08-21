@@ -7,6 +7,7 @@
 - 返回真实 entity_id，不通过字符串重新生成。
 """
 
+import asyncio
 import logging
 import re
 
@@ -151,7 +152,7 @@ class MySQLCompanyRepository:
             self._engine = create_engine(url, echo=False, pool_pre_ping=True)
         return self._engine
 
-    async def check_connection(self) -> bool:
+    def _check_connection_sync(self) -> bool:
         try:
             with self._get_engine().connect() as conn:
                 conn.execute(text("SELECT 1"))
@@ -160,7 +161,41 @@ class MySQLCompanyRepository:
             logger.warning("MySQL 连接不可用: %s", e)
             return False
 
+    async def check_connection(self) -> bool:
+        return await asyncio.to_thread(self._check_connection_sync)
+
     # ── 查询 ────────────────────────────────────────────
+
+    def _get_by_code_sync(
+        self, normalized: str | None, name: str | None
+    ) -> CompanyRecord | None:
+        if normalized is None:
+            with self._get_engine().connect() as conn:
+                row = (
+                    conn.execute(
+                        text(
+                            f"SELECT {_SELECT_COLS} FROM companies "
+                            "WHERE is_latest = 1 AND sec_name = :name LIMIT 1"
+                        ),
+                        {"name": name},
+                    )
+                    .mappings()
+                    .first()
+                )
+        else:
+            with self._get_engine().connect() as conn:
+                row = (
+                    conn.execute(
+                        text(
+                            f"SELECT {_SELECT_COLS} FROM companies "
+                            "WHERE is_latest = 1 AND wind_code = :code LIMIT 1"
+                        ),
+                        {"code": normalized},
+                    )
+                    .mappings()
+                    .first()
+                )
+        return _row_to_record(row) if row else None
 
     async def get_by_code(self, code: str) -> CompanyRecord | None:
         """按代码获取（支持 600518 / 600518.SH / 600518_SH / company_600518_SH）。"""
@@ -174,36 +209,10 @@ class MySQLCompanyRepository:
 
         normalized = _normalize_input_code(v)
         if normalized is None:
-            # 非代码形式：退回名称精确匹配
-            with self._get_engine().connect() as conn:
-                row = (
-                    conn.execute(
-                        text(
-                            f"SELECT {_SELECT_COLS} FROM companies "
-                            "WHERE is_latest = 1 AND sec_name = :name LIMIT 1"
-                        ),
-                        {"name": v},
-                    )
-                    .mappings()
-                    .first()
-                )
-            return _row_to_record(row) if row else None
+            return await asyncio.to_thread(self._get_by_code_sync, None, v)
+        return await asyncio.to_thread(self._get_by_code_sync, normalized, None)
 
-        with self._get_engine().connect() as conn:
-            row = (
-                conn.execute(
-                    text(
-                        f"SELECT {_SELECT_COLS} FROM companies "
-                        "WHERE is_latest = 1 AND wind_code = :code LIMIT 1"
-                    ),
-                    {"code": normalized},
-                )
-                .mappings()
-                .first()
-            )
-        return _row_to_record(row) if row else None
-
-    async def get_by_entity_id(self, entity_id: str) -> CompanyRecord | None:
+    def _get_by_entity_id_sync(self, entity_id: str) -> CompanyRecord | None:
         with self._get_engine().connect() as conn:
             row = (
                 conn.execute(
@@ -218,34 +227,10 @@ class MySQLCompanyRepository:
             )
         return _row_to_record(row) if row else None
 
-    async def search(self, query: str, limit: int = 10) -> CompanySearchResult:
-        """搜索公司 — 匹配质量排序.
+    async def get_by_entity_id(self, entity_id: str) -> CompanyRecord | None:
+        return await asyncio.to_thread(self._get_by_entity_id_sync, entity_id)
 
-        精确代码 > 精确名称 > 前缀匹配 > 包含匹配。
-        单字符非代码查询返回空（避免误解析）。
-        """
-        q = (query or "").strip()
-        if not q:
-            # 空查询 → 返回全部（受限 limit）
-            with self._get_engine().connect() as conn:
-                rows = (
-                    conn.execute(
-                        text(
-                            f"SELECT {_SELECT_COLS} FROM companies "
-                            "WHERE is_latest = 1 ORDER BY wind_code LIMIT :limit"
-                        ),
-                        {"limit": limit},
-                    )
-                    .mappings()
-                    .all()
-                )
-            recs = [_row_to_record(r) for r in rows]
-            return CompanySearchResult(companies=recs, total=len(recs))
-
-        # 单字符非代码 → 拒绝
-        if len(q) == 1 and not _CODE_RE.match(q):
-            return CompanySearchResult(companies=[], total=0)
-
+    def _search_sync(self, q: str, limit: int = 10) -> CompanySearchResult:
         exact_code = _normalize_input_code(q)
         name = _escape_like(q)
         prefix = f"{name}%"
@@ -282,7 +267,24 @@ class MySQLCompanyRepository:
         recs = [_row_to_record(r) for r in rows]
         return CompanySearchResult(companies=recs, total=len(recs))
 
-    async def list_all(self, limit: int = 100) -> list[CompanyRecord]:
+    async def search(self, query: str, limit: int = 10) -> CompanySearchResult:
+        """搜索公司 — 匹配质量排序.
+
+        精确代码 > 精确名称 > 前缀匹配 > 包含匹配。
+        单字符非代码查询返回空（避免误解析）。
+        """
+        q = (query or "").strip()
+        if not q:
+            records = await asyncio.to_thread(self._list_all_sync, limit)
+            return CompanySearchResult(companies=records, total=len(records))
+
+        # 单字符非代码 → 拒绝
+        if len(q) == 1 and not _CODE_RE.match(q):
+            return CompanySearchResult(companies=[], total=0)
+
+        return await asyncio.to_thread(self._search_sync, q, limit)
+
+    def _list_all_sync(self, limit: int = 100) -> list[CompanyRecord]:
         with self._get_engine().connect() as conn:
             rows = (
                 conn.execute(
@@ -296,6 +298,9 @@ class MySQLCompanyRepository:
                 .all()
             )
         return [_row_to_record(r) for r in rows]
+
+    async def list_all(self, limit: int = 100) -> list[CompanyRecord]:
+        return await asyncio.to_thread(self._list_all_sync, limit)
 
     # ── 候选召回（v3.1 冻结方案 P1-2/P1-3/P0-2）────────────────
 

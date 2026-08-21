@@ -81,17 +81,12 @@ def _impact_cache_key(
 
 
 def _get_engine():
-    """轻量 engine（只读 evidence_refs 回查用）；与 provenance_service 同款。"""
-    from sqlalchemy import create_engine
+    """8/19 全面审查：改用公共工厂（完整 profile key + 缓存 + 切库 dispose）。
 
-    if settings.SQL_BACKEND == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        return create_engine(url, echo=False, pool_pre_ping=True)
-    return create_engine(f"sqlite:///{settings.SQLITE_PATH}", echo=False)
+    原实现每次调用新建 Engine（连接池不复用、切库后残留旧连接）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 class _CausalityStepRaw(BaseModel):
@@ -214,6 +209,7 @@ async def _compute_impacts(
         "请输出 1-3 条影响结论（结论引用输入证据；不足 1 条可输出空数组）。"
     )
 
+    provider = None
     try:
         from app.infrastructure.llm.factory import (
             create_llm_provider,
@@ -233,6 +229,13 @@ async def _compute_impacts(
     except Exception as exc:  # noqa: BLE001 — 降级：基础事件响应不受影响
         logger.warning("events_impact: LLM 调用失败: %s", exc)
         return ([], [f"IMPACT_LLM_FAILED: {exc}"])
+    finally:
+        client = getattr(provider, "_client", None) if provider is not None else None
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001 — 关闭失败不影响影响分析结果
+                logger.debug("events_impact: LLM client close failed", exc_info=True)
 
     if not result or not result.conclusions:
         return ([], ["IMPACT_EMPTY: LLM 未返回影响结论"])

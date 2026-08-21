@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
@@ -240,8 +241,12 @@ async def _events_signals(
         )
 
         cutoff_date, cutoff_str = _events_cutoff()
-        clusters = _fetch_event_clusters(wind_code, cutoff_date)
-        rating_changes = _fetch_rating_changes(wind_code, cutoff_str)
+        clusters, rating_changes = await asyncio.to_thread(
+            lambda: (
+                _fetch_event_clusters(wind_code, cutoff_date),
+                _fetch_rating_changes(wind_code, cutoff_str),
+            )
+        )
         facts, input_evidence = build_impact_facts(
             event_clusters=clusters, timeline=[], rating_changes=rating_changes
         )
@@ -325,7 +330,7 @@ def _build_messages(sec_name: str, locked: str) -> list[dict]:
 
 def _template_advice(
     out: Any,
-    equity_segments: list[ImpactAdviceSegment],
+    all_segments: list[ImpactAdviceSegment],
     events_segments: list[ImpactAdviceSegment],
 ) -> tuple[str, list[ImpactAdviceSegment]]:
     """确定性模板兜底：分模块建议（LLM 失败/关闭时使用，不空洞）。"""
@@ -340,11 +345,11 @@ def _template_advice(
     overall = (
         f"{out.sec_name} 综合风险等级为{risk_cn}"
         f"（评分 {out.overall_score:.3f}），"
-        f"财务规则信号 {len([s for s in equity_segments if s.source_module == 'finance'])} 项、"
-        f"股权信号 {len([s for s in equity_segments if s.source_module == 'equity'])} 项、"
+        f"财务规则信号 {len([s for s in all_segments if s.source_module == 'finance'])} 项、"
+        f"股权信号 {len([s for s in all_segments if s.source_module == 'equity'])} 项、"
         f"舆情影响 {len(events_segments)} 项，建议结合下述分模块信号进一步核验。"
     )
-    return overall, equity_segments + events_segments
+    return overall, all_segments
 
 
 async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResult:
@@ -356,7 +361,9 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
 
     # 股权路（同步）——失败不影响财务
     try:
-        equity_segments, _eq_ev = _equity_signals(out.wind_code, as_of)
+        equity_segments, _eq_ev = await asyncio.to_thread(
+            _equity_signals, out.wind_code, as_of
+        )
     except Exception:  # noqa: BLE001 — 股权路异常降级
         logger.warning("impact_advice: equity 路异常，跳过", exc_info=True)
         equity_segments, _eq_ev = [], []
@@ -389,7 +396,7 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
     locked = _locked_facts(out, all_segments, events_segments)
 
     overall_text, _template_segments = _template_advice(
-        out, equity_segments, events_segments
+        out, all_segments, events_segments
     )
     method = "template"
 
@@ -398,8 +405,6 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
     from app.core.config import settings
 
     if settings.LLM_BACKEND not in ("", "mock") and all_segments:
-        import asyncio
-
         valid_modules = {"finance", "equity", "events", "overall"}
 
         def _validate(output) -> tuple[bool, str]:
@@ -408,6 +413,13 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
             for s in output.suggestions:
                 if s.source_module not in valid_modules or not s.text.strip():
                     return False, f"非法建议（{s.source_module}/{s.text[:20]!r}）"
+            from app.application.services._llm_numeric_lock import unlocked_numbers
+
+            invented = unlocked_numbers(
+                [output.overall, *(s.text for s in output.suggestions)], locked
+            )
+            if invented:
+                return False, f"输出包含事实之外的数字: {sorted(invented)}"
             return True, ""
 
         def _fallback():
@@ -425,7 +437,23 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
         if used:
             overall_text = output.overall.strip()
             method = "llm"
+            module_evidence: dict[str, list[str]] = {
+                module: [] for module in valid_modules
+            }
+            for segment in all_segments:
+                for evidence_id in segment.evidence_ids:
+                    if (
+                        evidence_id
+                        and evidence_id not in module_evidence[segment.source_module]
+                    ):
+                        module_evidence[segment.source_module].append(evidence_id)
+            all_evidence_ids = list(all_evidence)
             for s in output.suggestions:
+                evidence_ids = (
+                    all_evidence_ids
+                    if s.source_module == "overall"
+                    else module_evidence.get(s.source_module, [])
+                )
                 all_segments.append(
                     ImpactAdviceSegment(
                         source_module=s.source_module,
@@ -439,7 +467,7 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
                             }.get(s.source_module, "建议")
                         ),
                         detail=s.text.strip(),
-                        evidence_ids=[],
+                        evidence_ids=evidence_ids[:20],
                     )
                 )
     elif not all_segments:

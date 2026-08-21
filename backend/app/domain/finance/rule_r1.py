@@ -79,10 +79,46 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    # ── 2. 计算 ──
-    t_idx, t4_idx = -1, -5
-    ar_yoy = yoy_growth(acct_rcv[t_idx], acct_rcv[t4_idx])
-    or_yoy = yoy_growth(oper_rev[t_idx], oper_rev[t4_idx])
+    # ── 2. 计算：按报告期配对，禁止不同字段按数组下标错配 ──
+    from app.domain.finance._fetch import align_by_period, prev_year_period
+
+    aligned = align_by_period(ar=acct_rcv_sr, or_=oper_rev_sr)
+    ordered = sorted(aligned)
+    current_period = None
+    prior_year_period = None
+    for period in reversed(ordered):
+        candidate_prior = prev_year_period(period, ordered)
+        if candidate_prior is None:
+            continue
+        current = aligned[period]
+        prior = aligned[candidate_prior]
+        if (
+            current.get("ar") is not None
+            and current.get("or_") is not None
+            and prior.get("ar") is not None
+            and prior.get("or_") is not None
+        ):
+            current_period = period
+            prior_year_period = candidate_prior
+            break
+
+    if current_period is None or prior_year_period is None:
+        result.status = "insufficient_data"
+        result.explanation = "缺少可精确对齐的当期与去年同期应收/营收数据"
+        result.quality = build_parent_scope_quality(
+            coverage=acct_rcv_sr.coverage,
+            data_completeness=round(valid_ar / 4, 2),
+            missing_periods=4 - valid_ar,
+        )
+        result.warnings = field_warnings
+        return result
+
+    ar_yoy = yoy_growth(
+        aligned[current_period].get("ar"), aligned[prior_year_period].get("ar")
+    )
+    or_yoy = yoy_growth(
+        aligned[current_period].get("or_"), aligned[prior_year_period].get("or_")
+    )
     if ar_yoy is None or or_yoy is None:
         result.status = "insufficient_data"
         result.explanation = "分母保护触发，无法计算 YoY"
@@ -99,11 +135,18 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
     # ── 3. 上一期 gap（用于连续背离判断）──
     # 需至少 6 期数据（prev_t=-2, prev_t4=-6）；不足时 prev_gap=None，不越界。
     prev_gap = None
-    if len(acct_rcv) >= 6 and len(oper_rev) >= 6:
-        prev_ar_yoy = yoy_growth(acct_rcv[-2], acct_rcv[-6])
-        prev_or_yoy = yoy_growth(oper_rev[-2], oper_rev[-6])
+    prior_periods = [p for p in ordered if p < current_period]
+    for period in reversed(prior_periods):
+        candidate_prior = prev_year_period(period, ordered)
+        if candidate_prior is None:
+            continue
+        current = aligned[period]
+        prior = aligned[candidate_prior]
+        prev_ar_yoy = yoy_growth(current.get("ar"), prior.get("ar"))
+        prev_or_yoy = yoy_growth(current.get("or_"), prior.get("or_"))
         if prev_ar_yoy is not None and prev_or_yoy is not None:
             prev_gap = (prev_ar_yoy - prev_or_yoy) * 100
+            break
 
     # ── 4. 阈值判断 ──
     severity = "green"
@@ -162,7 +205,7 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
             if t4 is None:
                 continue
             ar_y = yoy_growth(aligned[p].get("ar"), aligned[t4].get("ar"))
-            or_y = yoy_growth(aligned[p].get("or"), aligned[t4].get("or"))
+            or_y = yoy_growth(aligned[p].get("or_"), aligned[t4].get("or_"))
             if ar_y is None or or_y is None:
                 continue
             series.append({"period": p, "gap": round((ar_y - or_y) * 100, 1)})
@@ -190,7 +233,7 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         ar_pct,
         or_pct,
         gap,
-        acct_rcv_sr.periods[-1] if acct_rcv_sr.periods else as_of,
+        current_period or as_of,
     )
     if template:
         result.explanation = template

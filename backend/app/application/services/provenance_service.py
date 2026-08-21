@@ -13,14 +13,12 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-_engines: dict[str, Engine] = {}
 
 
 class EvidenceConflictError(Exception):
@@ -85,22 +83,48 @@ def _gap_fill_evidence(conn, eid: str, ev: dict) -> None:
     )
 
 
+def _load_evidence(conn, eid: str):
+    return conn.execute(
+        text(
+            "SELECT source_type, source_record_id, field_path, "
+            "period, dataset_version, company_code, value "
+            "FROM evidence_refs WHERE evidence_id = :eid LIMIT 1"
+        ),
+        {"eid": eid},
+    ).first()
+
+
+def _reuse_existing_evidence(conn, eid: str, ev: dict, existing) -> None:
+    new_fields = (
+        ev.get("source_type", "unknown"),
+        ev.get("source_record_id", ""),
+        ev.get("field_path"),
+        ev.get("period"),
+        ev.get("dataset_version") or settings.DATASET_VERSION,
+        ev.get("company_code"),
+    )
+    conflict = _evidence_core_conflict(existing[:6], new_fields)
+    if not conflict:
+        old_val = existing[6]
+        new_val = ev.get("value")
+        old_empty = old_val is None or old_val == ""
+        new_empty = new_val is None or new_val == ""
+        conflict = not old_empty and not new_empty and str(old_val) != str(new_val)
+    if conflict:
+        raise EvidenceConflictError(
+            f"evidence {eid} 已存在但 canonical 内容不一致: "
+            f"现有={existing[:6]}，新={new_fields}"
+        )
+    _gap_fill_evidence(conn, eid, ev)
+
+
 def _get_engine() -> Engine:
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False, pool_pre_ping=True)
-    else:
-        _engines[backend] = create_engine(
-            f"sqlite:///{settings.SQLITE_PATH}", echo=False
-        )
-    return _engines[backend]
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+    本服务是写路径（persist_evidence），backend-only key 缓存在切库后会
+    复用旧库 Engine，把证据写进错误数据库（演示库误写）。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _to_json(value) -> str | None:
@@ -141,6 +165,9 @@ class ProvenanceService:
         v3.5：status 可显式传（comparisons 生命周期 running → 完成后
         经 update_analysis_run_status 更新为 completed/partial/failed）。
         """
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         with self._engine.begin() as conn:
             conn.execute(
@@ -168,6 +195,9 @@ class ProvenanceService:
         请求级失败（HTTPException/异常）也须把 running 标记为 failed——
         失败记录不得停留在 running 或误标 completed。
         """
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with self._engine.begin() as conn:
             res = conn.execute(
                 text("UPDATE analysis_runs SET status = :s WHERE run_id = :rid"),
@@ -190,79 +220,57 @@ class ProvenanceService:
         """
         if not evidence:
             return []
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         written: list[str] = []
         with self._engine.begin() as conn:
+            conflict_clause = (
+                "ON DUPLICATE KEY UPDATE evidence_id = evidence_id"
+                if self._engine.dialect.name == "mysql"
+                else "ON CONFLICT(evidence_id) DO NOTHING"
+            )
             for ev in evidence:
                 eid = ev.get("evidence_id")
                 if not eid:
                     continue
-                existing = conn.execute(
-                    text(
-                        "SELECT source_type, source_record_id, field_path, "
-                        "period, dataset_version, company_code, value "
-                        "FROM evidence_refs WHERE evidence_id = :eid LIMIT 1"
-                    ),
-                    {"eid": eid},
-                ).first()
-                if existing is not None:
-                    new_fields = (
-                        ev.get("source_type", "unknown"),
-                        ev.get("source_record_id", ""),
-                        ev.get("field_path"),
-                        ev.get("period"),
-                        ev.get("dataset_version") or settings.DATASET_VERSION,
-                        ev.get("company_code"),
+                existing = _load_evidence(conn, eid)
+                if existing is None:
+                    conn.execute(
+                        text(
+                            "INSERT INTO evidence_refs "
+                            "(evidence_id, source_type, source_record_id, company_code, "
+                            " field_path, period, value, unit, statement_scope, "
+                            " source_title, dataset_version, retrieved_at, "
+                            " turn_id, trace_id, module, source_table) "
+                            "VALUES (:eid, :st, :srid, :cc, :fp, :per, :val, :unit, :scope, "
+                            " :title, :dv, CURRENT_TIMESTAMP, :turn, :trace, :module, :table) "
+                            f"{conflict_clause}"
+                        ),
+                        {
+                            "eid": eid,
+                            "st": ev.get("source_type", "unknown"),
+                            "srid": ev.get("source_record_id", ""),
+                            "cc": ev.get("company_code"),
+                            "fp": ev.get("field_path"),
+                            "per": ev.get("period"),
+                            "val": ev.get("value"),
+                            "unit": ev.get("unit"),
+                            "scope": ev.get("statement_scope", "parent_company"),
+                            "title": ev.get("source_title"),
+                            "dv": ev.get("dataset_version") or settings.DATASET_VERSION,
+                            "turn": turn_id,
+                            "trace": trace_id,
+                            "module": ev.get("module", "finance"),
+                            "table": ev.get("source_table"),
+                        },
                     )
-                    conflict = _evidence_core_conflict(existing[:6], new_fields)
-                    if not conflict:
-                        # value 冲突：双方均非空且不同 → 冲突
-                        old_val = existing[6]
-                        new_val = ev.get("value")
-                        old_empty = old_val is None or old_val == ""
-                        new_empty = new_val is None or new_val == ""
-                        if (
-                            not old_empty
-                            and not new_empty
-                            and str(old_val) != str(new_val)
-                        ):
-                            conflict = True
-                    if conflict:
-                        raise EvidenceConflictError(
-                            f"evidence {eid} 已存在但 canonical 内容不一致: "
-                            f"现有={existing[:6]}，新={new_fields}"
+                    existing = _load_evidence(conn, eid)
+                    if existing is None:
+                        raise RuntimeError(
+                            f"evidence {eid} insert was ignored unexpectedly"
                         )
-                    # gap-fill：一方为空（或 source_type='unknown'）→ UPDATE 补全
-                    _gap_fill_evidence(conn, eid, ev)
-                    written.append(eid)
-                    continue  # 内容一致（或已补全）→ 幂等复用
-                conn.execute(
-                    text(
-                        "INSERT INTO evidence_refs "
-                        "(evidence_id, source_type, source_record_id, company_code, "
-                        " field_path, period, value, unit, statement_scope, "
-                        " source_title, dataset_version, retrieved_at, "
-                        " turn_id, trace_id, module, source_table) "
-                        "VALUES (:eid, :st, :srid, :cc, :fp, :per, :val, :unit, :scope, "
-                        " :title, :dv, CURRENT_TIMESTAMP, :turn, :trace, :module, :table)"
-                    ),
-                    {
-                        "eid": eid,
-                        "st": ev.get("source_type", "unknown"),
-                        "srid": ev.get("source_record_id", ""),
-                        "cc": ev.get("company_code"),
-                        "fp": ev.get("field_path"),
-                        "per": ev.get("period"),
-                        "val": ev.get("value"),
-                        "unit": ev.get("unit"),
-                        "scope": ev.get("statement_scope", "parent_company"),
-                        "title": ev.get("source_title"),
-                        "dv": ev.get("dataset_version") or settings.DATASET_VERSION,
-                        "turn": turn_id,
-                        "trace": trace_id,
-                        "module": ev.get("module", "finance"),
-                        "table": ev.get("source_table"),
-                    },
-                )
+                _reuse_existing_evidence(conn, eid, ev, existing)
                 written.append(eid)
         return written
 
@@ -276,6 +284,9 @@ class ProvenanceService:
         """幂等写入 claims + claim_evidence_links。返回已写入 Claim ID。"""
         if not claims:
             return []
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         ignore = "IGNORE" if settings.SQL_BACKEND == "mysql" else "OR IGNORE"
         written: list[str] = []
         with self._engine.begin() as conn:

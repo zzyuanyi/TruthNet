@@ -71,7 +71,8 @@
 - REST 契约采用 OpenAPI 3.1.x，与 FastAPI 当前自动生成能力一致；
 - WebSocket 事件采用 AsyncAPI 风格的机器可读契约；
 - HTTP 错误采用 RFC 9457 Problem Details；
-- LangGraph 使用 thread/checkpointer 保存短期会话状态和中间执行快照；
+- 多轮会话状态采用应用层数据库持久化：`conversation_turns` 回读近期窗口，
+  `conversation_sessions.metadata.memory_summary` 保存远期摘要；
 - 证据血缘参考 W3C PROV 的 Entity、Activity、Agent 和派生关系思想；
 - AI 风险管理参考 NIST AI RMF 的 Govern、Map、Measure、Manage；
 - API 安全基线覆盖 OWASP API Security Top 10；
@@ -122,7 +123,7 @@
 
 | 赛题痛点           | 问题表现                             | 系统能力                                   | 前端体现                       |
 | ------------------ | ------------------------------------ | ------------------------------------------ | ------------------------------ |
-| 长对话记忆遗忘     | 超过 10 轮后主体、指标和时间范围丢失 | 记忆节点、服务端会话、LangGraph checkpoint | 会话列表、上下文恢复、主体提示 |
+| 长对话记忆遗忘     | 长对话后主体、指标和时间范围丢失 | 记忆节点、服务端会话、数据库近期窗口与摘要 | 会话列表、上下文恢复、主体提示 |
 | 工具路由困难       | 不知道何时查询财务、图谱或舆情       | Planner + 条件编排 + 结果级交叉验证        | 实时展示模块进度               |
 | 隐性资本关系穿透难 | 间接控股、交叉持股、资管计划链路复杂 | Neo4j 多跳路径、权重连乘、实体对齐         | 可拖拽股权穿透图和路径高亮     |
 | 财报粉饰隐蔽       | 单表正常但跨科目矛盾                 | 7 条财务勾稽规则、行业分位、历史趋势       | 规则卡、折线图、风险等级       |
@@ -304,7 +305,7 @@ red / orange / yellow / blue / green / unknown
 | 编号 | 功能                 | 优先级 | 交付标准                               |
 | ---- | -------------------- | :----: | -------------------------------------- |
 | F1   | 自然语言反欺诈问答   |   P0   | 支持简单查询和综合诊断；流式输出       |
-| F2   | 多轮会话记忆         |   P0   | 10 轮以上主体、指标和时间引用可恢复    |
+| F2   | 多轮会话记忆         |   P0   | 默认 20 轮完整上下文，20 轮外摘要兜底    |
 | F3   | 公司主体消歧         |   P0   | 名称或代码模糊搜索、候选确认           |
 | F4   | 股权穿透             |   P0   | 支持 3 层以上、最大深度 10、路径与权重 |
 | F5   | 财务异常检测         |   P0   | 7 条规则、适用性、趋势、行业分位       |
@@ -1171,14 +1172,19 @@ task_key = session_id + turn_id + module + canonical_parameters_hash
 
 ### 短期记忆
 
-- LangGraph checkpointer 按 `thread_id` 保存每个 super-step；
-- 最近 N 轮完整消息进入上下文；
-- 更早消息压缩为结构化事实；
-- 当前主体、指标、时间和口径单独保存，避免仅依赖摘要文本。
+- 每轮从空 `AgentState` 启动，不依赖 LangGraph checkpointer；
+- `persist_turn` 将轮次写入 `conversation_turns`，下一轮由 `load_context`
+  按 `session_id + user_id` 回读最近 `MEMORY_RECENT_TURNS` 轮完整问答；
+- `response_meta.active_company_code` 与 `executed_metrics` 提供结构化主体/指标恢复；
+- 超出近期窗口的轮次由 `memory_distillation` 压缩进
+  `conversation_sessions.metadata.memory_summary`，作为长对话指代兜底；
+- 会话列表、详情、删除均按 `user_id` 隔离；无登录态时使用默认本地用户。
 
 ### 长期语义记忆
 
-ChromaDB 保存可检索事实，但不是会话真实状态：
+当前生产实现不使用 ChromaDB 保存会话事实；长期会话记忆采用 SQL metadata
+中的确定性摘要，避免把未校验事实写入向量库。ChromaDB 仅作为研报/公告等
+外部文本知识的 RAG 检索底座。
 
 ```json
 {
@@ -1629,7 +1635,9 @@ confidence=<score>
 | `announcement_chunks` | 公告标题、摘要或正文块 | source_id、wind_code、ann_dt、fcode、sentiment、hash |
 | `research_report_chunks` | 研报摘要分块 | report_id、wind_code、publish_date、org、rating_change |
 | `evidence_text_chunks` | 可定位原文片段 | evidence_id、source_id、page/span、hash |
-| `conversation_memory` | 长期可检索事实 | session_id、turn_id、fact_type、entity_id |
+
+当前已接线的运行时 collection 为 `research_report_chunks`；公告/证据原文
+collection 作为后续扩展项保留，`conversation_memory` 不作为当前会话记忆方案。
 
 所有 collection metadata 增加：
 
@@ -2439,7 +2447,7 @@ docs/FRONTEND_DESIGN.md
 
 - Reducer；
 - checkpointer；
-- 10 轮恢复；
+- 20 轮近期窗口恢复；
 - task_key 幂等。
 
 ### M4：MySQL Adapter
@@ -2499,7 +2507,7 @@ docs/FRONTEND_DESIGN.md
 
 - 综合诊断可完成主体识别、三模块分析、交叉验证和证据展示；
 - 简单查询不会无意义调用全部模块；
-- 10 轮后仍能正确解析“它”“上一家公司”“刚才的指标”；
+- 默认 20 轮完整窗口内仍能正确解析“它”“上一家公司”“刚才的指标”；
 - 结论不把风险信号描述为已认定事实；
 - 数据不足和模块超时清晰显示。
 

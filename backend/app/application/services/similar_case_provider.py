@@ -29,10 +29,9 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.finance import (
@@ -101,8 +100,6 @@ _TABLE_FIELDS: dict[str, tuple[str, ...]] = {
 
 # 需要去年同期（YoY）计算指标的规则
 _YOY_RULES = {"R1", "R4"}
-
-_ENGINES: dict[str, Engine] = {}
 
 
 class SimilarCaseProvider(Protocol):
@@ -175,41 +172,13 @@ def _is_missing(value: float | None) -> bool:
     return isinstance(value, float) and math.isnan(value)
 
 
-def _repo_root() -> Path:
-    # backend/app/application/services/similar_case_provider.py -> 项目根
-    return Path(__file__).resolve().parents[4]
-
-
-def _engine_profile_key(settings) -> str:
-    backend = settings.SQL_BACKEND
-    if backend == "mysql":
-        return (
-            f"mysql:{settings.MYSQL_USER}:{settings.MYSQL_HOST}:"
-            f"{settings.MYSQL_PORT}:{settings.MYSQL_DATABASE}"
-        )
-    return f"sqlite:{settings.SQLITE_PATH or 'data/truthnet.db'}"
-
-
 def _get_engine() -> Engine:
-    """按 settings.SQL_BACKEND 建 MySQL/SQLite 引擎（参考 _fetch._get_engine 风格）。"""
-    from app.core.config import settings
+    """8/19 全面审查：改用公共工厂（完整 profile key + 切 profile 即 dispose）。
 
-    key = _engine_profile_key(settings)
-    if key in _ENGINES:
-        return _ENGINES[key]
-    if key.startswith("mysql:"):
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _ENGINES[key] = create_engine(url, pool_pre_ping=True)
-    else:  # sqlite
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _ENGINES[key] = create_engine(f"sqlite:///{path.as_posix()}")
-    return _ENGINES[key]
+    原实现自带 profile key 缓存但切库不 dispose 旧 Engine，连接池滞留旧库。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _prev_year(period: str) -> str:
@@ -344,7 +313,9 @@ def _compute_metric(
         if assets is None or assets <= 0:
             return {"cash_to_assets": None, "debt_to_assets": None}
         cash_to_assets = cash / assets * 100 if cash is not None else None
-        debt_to_assets = ((st or 0) + (lt or 0)) / assets * 100
+        if st is None or lt is None:
+            return {"cash_to_assets": cash_to_assets, "debt_to_assets": None}
+        debt_to_assets = (st + lt) / assets * 100
         return {"cash_to_assets": cash_to_assets, "debt_to_assets": debt_to_assets}
     if rule_id == "R4":
         inv_yoy = yoy_growth(
@@ -363,7 +334,9 @@ def _compute_metric(
         cost = _field(cur_rows, "income_statement", wind_code, "less_oper_cost")
         if rev is None or rev <= 0:
             return {"gross_margin": None}
-        return {"gross_margin": (rev - (cost or 0)) / rev * 100}
+        if cost is None:
+            return {"gross_margin": None}
+        return {"gross_margin": (rev - cost) / rev * 100}
     if rule_id == "R6":
         oth = _field(cur_rows, "balance_sheet", wind_code, "oth_rcv")
         assets = _field(cur_rows, "balance_sheet", wind_code, "tot_assets")

@@ -130,7 +130,9 @@ class CompanyResolver:
 
     async def resolve(self, input_value: str) -> CompanyRecord | None:
         """解析任意输入为公司记录；无法唯一解析返回 None."""
-        value = (input_value or "").strip()
+        from app.application.services.company_name_aliases import normalize_company_name
+
+        value = normalize_company_name(input_value)
         if not value:
             return None
 

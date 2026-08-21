@@ -178,6 +178,41 @@ async def test_invalid_evidence_dropped(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_impacts_closes_llm_client(monkeypatch):
+    """events impact 直接创建的 LLM provider 用完必须关闭客户端。"""
+    from app.application.services import events_impact_service as svc
+    from app.application.services.events_impact_service import _ImpactsOutput
+
+    closed = {}
+
+    class _FakeClient:
+        async def close(self):
+            closed["ok"] = True
+
+    class _FakeProvider:
+        _client = _FakeClient()
+
+        async def structured_chat(self, messages, output_schema):
+            return _ImpactsOutput(conclusions=[])
+
+    svc._impact_cache.clear()
+    svc._impact_flights.clear()
+    monkeypatch.setattr(
+        "app.infrastructure.llm.factory.create_llm_provider", lambda: _FakeProvider()
+    )
+    monkeypatch.setattr("app.core.config.settings.LLM_BACKEND", "deepseek")
+
+    await svc.generate_impacts(
+        wind_code="600000.SH",
+        sec_name="关闭测试",
+        facts=[{"text": "f1", "evidence_ids": ["ev_ann_close"]}],
+        input_evidence_ids={"ev_ann_close"},
+    )
+
+    assert closed["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_llm_failure_degrades_gracefully(monkeypatch):
     """LLM 抛异常 → 空 + warning（基础事件保持 200）。"""
     from app.application.services import events_impact_service as svc

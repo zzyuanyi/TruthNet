@@ -5,6 +5,9 @@
 使用临时 SQLite 引擎，无外部依赖。
 """
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -75,6 +78,22 @@ def test_idempotent_reuse_same_content(service):
     service.persist_evidence([_draft()], trace_id="t", turn_id="t")
     written = service.persist_evidence([_draft()], trace_id="t", turn_id="t")
     assert written == ["ev_fin_abc"]  # 复用不重复写入
+
+
+def test_concurrent_same_evidence_is_idempotent(service):
+    barrier = Barrier(4)
+
+    def persist_once(index):
+        barrier.wait()
+        return service.persist_evidence(
+            [_draft()], trace_id=f"t{index}", turn_id=f"t{index}"
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(persist_once, range(4)))
+    assert results == [["ev_fin_abc"]] * 4
+    with service._engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM evidence_refs")).scalar() == 1
 
 
 def test_conflict_raises_and_rolls_back(service):

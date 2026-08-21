@@ -14,6 +14,7 @@
 """
 
 import hashlib
+import asyncio
 import logging
 import threading
 import time
@@ -115,9 +116,9 @@ def _pct_to_neo4j(value: Decimal | float | None) -> str | None:
     return f"{d:.6f}"
 
 
-def _pct_from_neo4j(raw: str | float | int | None) -> Decimal:
+def _pct_from_neo4j(raw: str | float | int | None) -> Decimal | None:
     if raw is None:
-        return Decimal("0")
+        return None
     return Decimal(str(raw))
 
 
@@ -246,7 +247,17 @@ class Neo4jEquityGraph:
             return False
 
     async def check_connection(self) -> bool:
-        return self._check_connection_sync()
+        return await asyncio.to_thread(self._check_connection_sync)
+
+    def _execute_query(self, query: str, parameters: dict | None = None, **kwargs):
+        """执行 Neo4j 查询并统一施加事务超时。"""
+        from neo4j import Query
+
+        return self._driver.execute_query(
+            Query(query, timeout=_QUERY_TIMEOUT),
+            parameters,
+            **kwargs,
+        )
 
     async def ensure_constraints(self) -> None:
         queries = [
@@ -263,7 +274,7 @@ class Neo4jEquityGraph:
         ]
         for q in queries:
             try:
-                self._driver.execute_query(q)
+                self._execute_query(q)
                 logger.debug("Neo4j 约束/索引: %s", q[:60])
             except Exception as e:
                 logger.warning("Neo4j 约束/索引: %s", e)
@@ -299,7 +310,8 @@ class Neo4jEquityGraph:
     ) -> EquityGraph:
         """获取股权穿透图谱（真实 Neo4j 查询）— 异步入口."""
         if True:  # cached entry guard
-            return _cached_get_graph(
+            return await asyncio.to_thread(
+                _cached_get_graph,
                 self,
                 company_code=company_code,
                 depth=depth,
@@ -407,7 +419,7 @@ class Neo4jEquityGraph:
         )
 
         try:
-            records, _, _ = self._driver.execute_query(
+            records, _, _ = self._execute_query(
                 cypher,
                 {
                     "code": resolved_code,
@@ -477,6 +489,12 @@ class Neo4jEquityGraph:
                 tgt_id = rel.end_node.get("entity_id", "")
                 rel_id = rel.get("relationship_id") or ""
                 pct = _pct_from_neo4j(rel.get("ownership_pct"))
+                if pct is None:
+                    logger.warning(
+                        "equity: 持股比例缺失，丢弃不可计算路径 %s", path_node_ids
+                    )
+                    path_consistent = False
+                    break
                 pct_100 = float(pct)
                 rel_period = _clean_period(rel.get("report_period"))
 
@@ -586,7 +604,9 @@ class Neo4jEquityGraph:
 
     async def get_relationship_by_id(self, relationship_id: str) -> dict | None:
         """按 relationship_id 查找原关系（Evidence 来源定位用）— 异步入口."""
-        return self.get_relationship_by_id_sync(relationship_id)
+        return await asyncio.to_thread(
+            self.get_relationship_by_id_sync, relationship_id
+        )
 
     def get_relationship_by_id_sync(self, relationship_id: str) -> dict | None:
         """按 relationship_id 查找原关系（Evidence 来源定位用）.
@@ -598,7 +618,7 @@ class Neo4jEquityGraph:
             if not self._available:
                 return None
         try:
-            records, _, _ = self._driver.execute_query(
+            records, _, _ = self._execute_query(
                 "MATCH (s:Entity)-[r:OWNS {relationship_id: $rid}]->(t:Entity) "
                 "RETURN s.entity_id AS source_entity_id, "
                 "       s.canonical_name AS source_name, "
@@ -670,7 +690,7 @@ class Neo4jEquityGraph:
             """
 
             try:
-                self._driver.execute_query(
+                self._execute_query(
                     cypher,
                     {
                         "entity_id": entity_id,
@@ -800,7 +820,7 @@ class Neo4jEquityGraph:
             """
 
             try:
-                records, _, _ = self._driver.execute_query(
+                records, _, _ = self._execute_query(
                     cypher, {"rels": rows, "run_id": run_id}
                 )
                 merged = records[0]["merged"] if records else 0
@@ -834,7 +854,7 @@ class Neo4jEquityGraph:
         注意：历史关系的属性可能已被本次 MERGE 覆盖，无法回滚。"""
         if not self._driver:
             return {"deleted": 0}
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH ()-[r {created_run_id: $run_id}]->() "
             "DETACH DELETE r "
             "RETURN count(r) AS cnt",
@@ -842,7 +862,7 @@ class Neo4jEquityGraph:
         )
         deleted = records[0]["cnt"] if records else 0
         # 清除本次打上的 seen 标记（防误删保护：旧关系属性不回滚）
-        self._driver.execute_query(
+        self._execute_query(
             "MATCH ()-[r {seen_run_id: $run_id}]->() " "REMOVE r.seen_run_id",
             {"run_id": import_run_id},
         )
@@ -862,7 +882,7 @@ class Neo4jEquityGraph:
             return {"deleted": 0}
         total = 0
         while True:
-            records, _, _ = self._driver.execute_query(
+            records, _, _ = self._execute_query(
                 "MATCH ()-[r {graph_version: $gv}]->() "
                 "WHERE r.seen_run_id IS NULL OR r.seen_run_id <> $run_id "
                 "WITH r LIMIT 20000 "
@@ -875,7 +895,7 @@ class Neo4jEquityGraph:
             if not deleted:
                 break
         # 清理临时标记
-        self._driver.execute_query(
+        self._execute_query(
             "MATCH ()-[r {graph_version: $gv}]->() " "REMOVE r.seen_run_id",
             {"gv": graph_version},
         )
@@ -899,7 +919,7 @@ class Neo4jEquityGraph:
             return cached[1] or None
         if not self._driver:
             return None
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH ()-[r:OWNS {is_latest: true}]->() "
             "WHERE r.graph_version = $gv RETURN max(r.report_period) AS latest",
             {"gv": graph_version},
@@ -924,7 +944,7 @@ class Neo4jEquityGraph:
             return cached[1]
         if not self._driver:
             return {}
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH ()-[r:OWNS]->(tgt:Entity) "
             "WHERE r.graph_version = $gv AND r.mock = false "
             "  AND r.report_period <= $as_of "
@@ -943,7 +963,7 @@ class Neo4jEquityGraph:
         if not self._driver:
             return 0
         gv = graph_version or _DEFAULT_GRAPH_VERSION
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH (e:Entity {graph_version: $gv}) RETURN count(e) AS cnt",
             {"gv": gv},
         )
@@ -953,7 +973,7 @@ class Neo4jEquityGraph:
         if not self._driver:
             return 0
         gv = graph_version or _DEFAULT_GRAPH_VERSION
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH ()-[r {graph_version: $gv}]->() RETURN count(r) AS cnt",
             {"gv": gv},
         )
@@ -967,7 +987,7 @@ class Neo4jEquityGraph:
         nodes_before = await self.count_entities(graph_version)
         rels_before = await self.count_relationships(graph_version)
 
-        self._driver.execute_query(
+        self._execute_query(
             "MATCH (n {graph_version: $gv}) DETACH DELETE n",
             {"gv": graph_version},
         )
@@ -1054,7 +1074,7 @@ class Neo4jEquityGraph:
         # 防自环用实体 ID 比较（上游可能无 wind_code）。
         # 路径节点互异（防循环路径）；count(DISTINCT 节点序列)——
         # 同一节点链的多期历史关系只计一次。
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             f"""
             MATCH p = (a:Entity)-[:OWNS*{int(min_depth)}..{int(max_depth)}]->(b:Entity)
             WHERE b.wind_code <> ''
@@ -1082,7 +1102,7 @@ class Neo4jEquityGraph:
         """幂等增量导入后清除本次打上的 seen_run_id 标记（不删任何关系）。"""
         if not self._driver:
             return 0
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH ()-[r {seen_run_id: $run_id}]->() "
             "REMOVE r.seen_run_id "
             "RETURN count(r) AS cnt",
@@ -1104,7 +1124,7 @@ class Neo4jEquityGraph:
         # 分批删除：单条 DELETE 删除数十万关系会在单事务内爆内存
         # （Neo4j 事务内存上限，如 2.8 GiB）
         while True:
-            records, _, _ = self._driver.execute_query(
+            records, _, _ = self._execute_query(
                 "MATCH ()-[r {graph_version: $gv}]->() "
                 "WITH r LIMIT 20000 "
                 "DETACH DELETE r "
@@ -1130,7 +1150,7 @@ class Neo4jEquityGraph:
         """
         if not self._driver:
             return {"nodes_deleted": 0}
-        records, _, _ = self._driver.execute_query(
+        records, _, _ = self._execute_query(
             "MATCH (n:Entity) "
             "WHERE n.entity_id STARTS WITH 'corp_' "
             "AND NOT EXISTS { MATCH (n)-[r]-() } "

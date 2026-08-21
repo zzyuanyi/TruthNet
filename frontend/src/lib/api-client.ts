@@ -27,6 +27,7 @@ import type {
   EventCluster,
   FinanceRuleItem,
   CompanyRiskSummary,
+  ImpactAdviceData,
 } from '@/types/truthnet';
 
 // 会话列表响应（V12 envelope: data.sessions + data.total）
@@ -270,6 +271,12 @@ export const truthnetAPI = {
   // 风险评估: GET /api/v1/companies/{code}/risk
   getRisk: (code: string) =>
     request<RiskData>('GET', `/companies/${encodeURIComponent(code)}/risk`),
+
+  getImpactAdvice: (code: string) =>
+    request<ImpactAdviceData>(
+      'GET',
+      `/companies/${encodeURIComponent(code)}/impact-advice`,
+    ),
 
   // 行业基准: GET /api/v1/companies/{code}/benchmarks
   getBenchmarks: (code: string) =>

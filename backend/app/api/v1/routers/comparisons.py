@@ -49,6 +49,17 @@ def _indicator_label(rid: str) -> str:
     return meta.name if meta else rid
 
 
+def _metric_label(rid: str, key: str) -> str:
+    """规则中间量标签，供多字段指标对比展示。"""
+    from app.domain.finance.financial_rule_config import load_financial_rules
+
+    meta = load_financial_rules().metadata.get(rid)
+    metric = next(
+        (item for item in (meta.metrics if meta else []) if item.key == key), None
+    )
+    return metric.label if metric else f"{_indicator_label(rid)} · {key}"
+
+
 def _build_rule_details(
     results, rule_evidence_map: dict[str, list[str]], period_ymd: str
 ) -> list[TriggeredRuleDetail]:
@@ -344,52 +355,66 @@ async def _create_comparison_impl(
     # ── 4. 指标对比（复用缓存结果）──
     indicator_compares: list[IndicatorCompare] = []
     for ind in body.indicators:
-        companies: list[CompanyIndicator] = []
-        for code, rec in resolved_map.items():
+        # current 可能包含多个真实中间量（R3/R4/R5 等）。按字段展开，
+        # 不能只取第一个字段，否则对比页会静默丢失指标。
+        metric_keys: list[str] = []
+        for code in resolved_map:
             if code in company_failures:
-                companies.append(
-                    CompanyIndicator(
-                        wind_code=rec.wind_code,
-                        sec_name=rec.sec_name,
-                        status="insufficient_data",
-                    )
-                )
                 continue
-            entry = rule_cache[code]
-            r = entry["results"].get(ind)
-            if r is None:
+            current = rule_cache[code]["results"].get(ind) or None
+            for key in (current.current if current else {}) or {}:
+                if key not in metric_keys:
+                    metric_keys.append(key)
+        if not metric_keys:
+            metric_keys = [""]
+
+        for metric_key in metric_keys:
+            companies: list[CompanyIndicator] = []
+            for code, rec in resolved_map.items():
+                if code in company_failures:
+                    companies.append(
+                        CompanyIndicator(
+                            wind_code=rec.wind_code,
+                            sec_name=rec.sec_name,
+                            status="insufficient_data",
+                        )
+                    )
+                    continue
+                entry = rule_cache[code]
+                r = entry["results"].get(ind)
+                if r is None:
+                    companies.append(
+                        CompanyIndicator(
+                            wind_code=entry["wind_code"],
+                            sec_name=entry["sec_name"],
+                            status="not_applicable",
+                        )
+                    )
+                    continue
+                metric = (r.current or {}).get(metric_key) if metric_key else None
+                value = metric.get("value") if isinstance(metric, dict) else None
+                unit = metric.get("unit", "") if isinstance(metric, dict) else ""
                 companies.append(
                     CompanyIndicator(
                         wind_code=entry["wind_code"],
                         sec_name=entry["sec_name"],
-                        status="not_applicable",
+                        value=value,
+                        unit=unit,
+                        severity=r.severity,
+                        status=r.status if metric_key else "insufficient_data",
                     )
                 )
-                continue
-            value = None
-            unit = ""
-            if r.current:
-                first_key = next(iter(r.current))
-                metric = r.current[first_key]
-                value = metric.get("value") if isinstance(metric, dict) else None
-                unit = metric.get("unit", "") if isinstance(metric, dict) else ""
-            companies.append(
-                CompanyIndicator(
-                    wind_code=entry["wind_code"],
-                    sec_name=entry["sec_name"],
-                    value=value,
-                    unit=unit,
-                    severity=r.severity,
-                    status=r.status,
+            indicator_compares.append(
+                IndicatorCompare(
+                    indicator=f"{ind}.{metric_key}" if metric_key else ind,
+                    label=(
+                        _metric_label(ind, metric_key)
+                        if metric_key
+                        else _indicator_label(ind)
+                    ),
+                    companies=companies,
                 )
             )
-        indicator_compares.append(
-            IndicatorCompare(
-                indicator=ind,
-                label=_indicator_label(ind),
-                companies=companies,
-            )
-        )
 
     # v3.5：完成状态——全失败 failed / 有失败 partial / 全部成功 completed
     if company_failures and len(company_failures) == len(resolved_map):

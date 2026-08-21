@@ -35,6 +35,9 @@ class CompanyCandidatePayload(BaseModel):
 
 class ChatQueryPayload(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
+    user_id: str | None = Field(
+        default=None, max_length=64, description="用户 ID；未传时归属默认本地用户"
+    )
     session_id: str | None = Field(
         default=None, max_length=64, pattern=_SESSION_ID_PATTERN
     )

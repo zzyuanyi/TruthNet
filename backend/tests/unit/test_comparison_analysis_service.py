@@ -154,6 +154,31 @@ def test_llm_unknown_metric_id_falls_back(monkeypatch):
     assert "fake_metric_xyz" not in text  # 模板兜底不含伪造指标
 
 
+def test_llm_new_number_falls_back(monkeypatch):
+    """LLM 新增事实外数字时，必须回到确定性模板。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
+    output = ComparisonAnalysisOutput(
+        overall="贵州茅台毛利率为90.00%，明显更高。",
+        paragraphs=[
+            ComparisonAnalysisParagraph(
+                text="毛利率为90.00%，反映盈利能力更强。",
+                metric_ids=["r5_gross_margin"],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "app.agents.llm_sync.run_llm_structured", lambda *a, **kw: output
+    )
+    result = _result(
+        [_row("r5_gross_margin", "毛利率", Decimal("83.68"), Decimal("17.54"))]
+    )
+    text, warnings = build_comparison_analysis(
+        result=result, company_names=["贵州茅台", "康美药业"]
+    )
+    assert warnings
+    assert "90.00" not in text
+
+
 def test_llm_exception_falls_back(monkeypatch):
     """LLM 异常 → 确定性模板兜底，不阻塞结构化比较。"""
     monkeypatch.setattr(settings, "LLM_BACKEND", "deepseek")
@@ -239,3 +264,44 @@ def test_indicator_mode_uses_participants(monkeypatch):
     assert warnings
     assert "毛利率" in text
     assert "贵州茅台" in text
+
+
+def test_indicator_mode_equal_values_are_close(monkeypatch):
+    """单指标比较值相等时，模板输出接近而非低于。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "mock")
+    result = LightComparisonResult(
+        status="ok",
+        scope="cross_company",
+        operation="difference",
+        comparison_mode="indicator",
+        participants=[
+            ComparisonValue(
+                company_code="600519.SH",
+                sec_name="贵州茅台",
+                metric_id="r5_gross_margin",
+                metric_label="毛利率",
+                period="20251231",
+                value=Decimal("50.00"),
+                unit="percent",
+            ),
+            ComparisonValue(
+                company_code="600518.SH",
+                sec_name="康美药业",
+                metric_id="r5_gross_margin",
+                metric_label="毛利率",
+                period="20251231",
+                value=Decimal("50.00"),
+                unit="percent",
+            ),
+        ],
+        difference=Decimal("0"),
+        difference_unit="percent",
+    )
+
+    text, warnings = build_comparison_analysis(
+        result=result, company_names=["贵州茅台", "康美药业"]
+    )
+
+    assert warnings
+    assert "接近" in text
+    assert "低于" not in text

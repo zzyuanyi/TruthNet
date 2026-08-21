@@ -53,6 +53,14 @@ def _msg(role: str, content: str) -> dict:
         ("查询贵州茅台财务报表", False),
         ("帮我分析一下宁德时代", False),
         ("", False),
+        # 8/19 审查修复反例：单字指代不得误伤"其他/其它/其余"财务术语
+        ("其他应收款占比如何", False),
+        ("其他流动负债怎么看", False),
+        ("其它应收项有哪些", False),
+        ("其余流动资产呢", False),
+        # 正例保持：独立"它"仍判指代（即使句中有"其他"财务词）
+        ("它还有其他风险吗", True),
+        ("它的其他应收款呢", True),
     ],
 )
 def test_anaphora_detection(query: str, expected: bool):
@@ -199,6 +207,49 @@ def test_resolve_lite_indicators_tracking():
     ctx = _resolve_lite("这些指标的趋势", messages, None)
 
     assert "营收" in ctx.referenced_indicators or len(ctx.referenced_indicators) > 0
+
+
+def test_resolve_lite_indicator_fallback_uses_recent_messages():
+    """文本指标 fallback 只看最近 N 轮（MEMORY_RECENT_TURNS*2 条消息），
+    窗口外旧话题不污染当前追问。"""
+    from app.agents.nodes.memory import _resolve_lite
+
+    messages = [_msg("assistant", "很早之前讨论过营收")]
+    # 填充到超过完整回读窗口（每轮 2 条消息，窗口 = MEMORY_RECENT_TURNS*2）
+    window = _resolve_lite.__globals__["settings"].MEMORY_RECENT_TURNS * 2
+    messages.extend(_msg("assistant", "普通回答") for _ in range(window + 5))
+    messages.append(_msg("assistant", "最近讨论的是现金流"))
+
+    ctx = _resolve_lite("这些指标的趋势", messages, None)
+
+    assert "现金流" in ctx.referenced_indicators
+    assert "营收" not in ctx.referenced_indicators
+
+
+def test_resolve_lite_indicator_window_covers_full_recent_turns():
+    """8/19 修复回归：指标提取窗口 = MEMORY_RECENT_TURNS*2 条消息。
+
+    旧实现硬编码 `messages[-20:]` 只覆盖最近 10 轮（20 条消息）；
+    20 轮会话时第 1~10 轮的指标文本被漏掉。修复后窗口读配置，
+    前 10 轮的指标同样可被提取。
+    """
+    from app.agents.nodes.memory import _resolve_lite
+
+    recent = _resolve_lite.__globals__["settings"].MEMORY_RECENT_TURNS
+    # 构造 2*recent 条消息（recent 轮 × 每轮 user+assistant 2 条）；
+    # 第 1 条（最早轮次）含唯一指标词"自由现金流"
+    messages = [_msg("assistant", "第1轮讨论了自由现金流和经营现金流")]
+    messages.extend(
+        _msg("assistant", f"第{i}轮普通回答，不涉及指标") for i in range(2, recent + 1)
+    )
+    messages.extend(_msg("user", f"追问 {i}") for i in range(1, recent + 1))
+
+    ctx = _resolve_lite("这些指标的趋势", messages, None)
+
+    assert "自由现金流" in ctx.referenced_indicators, (
+        f"最早轮次的指标应被提取（窗口 {recent*2} 条消息），"
+        f"实际 indicators={ctx.referenced_indicators}"
+    )
 
 
 def test_resolve_lite_structured_metrics_preferred():
@@ -419,9 +470,9 @@ def test_extract_companies_common_suffix():
 
 
 def test_resolve_lite_summary_last_company_code_fallback():
-    """近期无公司 + 摘要 last_company_code → 指代恢复公司代码（十轮外记忆）。
+    """近期无公司 + 摘要 last_company_code → 指代恢复公司代码（窗口外记忆）。
 
-    覆盖验收：第 11 轮"它现在财务造假的风险还高吗"能恢复康美。
+    覆盖验收：近期窗口外"它现在财务造假的风险还高吗"能恢复康美。
     """
     from app.agents.nodes.memory import _resolve_lite
 
@@ -581,6 +632,7 @@ def test_load_context_recent_codes_desc_order(monkeypatch):
         "_get_engine",
         lambda: type("E", (), {"connect": lambda self: _FakeConn()})(),
     )
+    monkeypatch.setattr(lc, "_session_owned_and_active", lambda *_args: True)
     monkeypatch.setattr(lc.settings, "MEMORY_STRATEGY", "none")
     result = lc.load_context_node({"runtime": type("R", (), {"session_id": "s1"})()})
     assert result["recent_company_codes"] == ["600518.SH", "603180.SH"]

@@ -41,6 +41,7 @@ from app.api.v1.schemas.ws import (
 )
 from app.application.services.ws_session_manager import session_manager
 from app.application.services.ws_turn_runner import run_turn
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,21 @@ def _pending_remaining_ids(snapshot: dict) -> list[str]:
 
 # v3.3 批次 A（P0-1）：resume 启动的结构化结果——停止传播魔法字符串，
 # 路由据此分流且不得再发第二个通用失败事件
+async def _wait_origin_turn_closed(
+    session, origin_turn_id: str, *, timeout: float = 60.0
+) -> None:
+    """Wait for source-turn cleanup before starting a compat resume turn."""
+    origin = session_manager.get_turn(session, origin_turn_id)
+    if origin is None or origin.task is None:
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(origin.task), timeout=timeout)
+    except TimeoutError:
+        logger.warning("chat: origin turn still active before compat resume")
+    except Exception:  # noqa: BLE001
+        logger.warning("chat: origin turn ended with error before compat resume")
+
+
 _RESUME_STARTED = "started"
 _RESUME_WAITING_ORIGIN = "waiting_origin"
 _RESUME_TURN_IN_PROGRESS = "turn_in_progress"
@@ -616,6 +632,7 @@ async def chat_v1(request: ChatRequestV1):
     trace_id = str(uuid.uuid4())
     session_id = request.session_id or str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
+    user_id = (request.user_id or "").strip() or settings.SESSION_DEFAULT_USER_ID
 
     try:
         from app.agents.state import ModuleResults, RuntimeState
@@ -639,7 +656,10 @@ async def chat_v1(request: ChatRequestV1):
             "claims": [],
             "final_response": None,
             "runtime": RuntimeState(
-                trace_id=trace_id, session_id=session_id, turn_id=turn_id
+                trace_id=trace_id,
+                session_id=session_id,
+                user_id=user_id,
+                turn_id=turn_id,
             ),
         }
 
@@ -808,8 +828,37 @@ async def websocket_chat_v1(ws: WebSocket):
                 )
                 continue
 
+            if not isinstance(msg, dict):
+                await _emit(
+                    session_id,
+                    _envelope(
+                        "turn.failed",
+                        {
+                            "error_code": "INVALID_MESSAGE",
+                            "message": "WebSocket 消息必须是 JSON 对象",
+                            "recoverable": True,
+                        },
+                        sid=session_id,
+                    ),
+                )
+                continue
+
             event_type = msg.get("event_type", "")
             payload = msg.get("payload", {})
+            if not isinstance(payload, dict):
+                await _emit(
+                    session_id,
+                    _envelope(
+                        "turn.failed",
+                        {
+                            "error_code": "INVALID_PAYLOAD",
+                            "message": "payload 必须是 JSON 对象",
+                            "recoverable": True,
+                        },
+                        sid=session_id,
+                    ),
+                )
+                continue
 
             # 客户端传入 session_id → 覆盖自动生成的 UUID（多轮记忆前置条件）
             client_sid = payload.get("session_id", "")
@@ -915,6 +964,7 @@ async def websocket_chat_v1(ws: WebSocket):
                 continue
 
             request_context = None
+            origin_turn_to_wait = ""
             if event_type == "company.confirm":
                 try:
                     confirm = CompanyConfirmPayload.model_validate(payload)
@@ -1250,6 +1300,7 @@ async def websocket_chat_v1(ws: WebSocket):
                         request_context = _build_request_context(
                             company_code=company_code
                         )
+                    origin_turn_to_wait = str(pending_turn or "")
                     session_manager.set_pending_disambiguation(session, None)
                 else:
                     # 新结构 pending：仅恰好一个 needs_confirmation 且
@@ -1397,6 +1448,9 @@ async def websocket_chat_v1(ws: WebSocket):
                     continue
                 try:
                     query_payload = ChatQueryPayload.model_validate(payload)
+                    user_id = (
+                        query_payload.user_id or ""
+                    ).strip() or settings.SESSION_DEFAULT_USER_ID
                     request_context = _build_request_context(
                         as_of=query_payload.as_of or ""
                     )
@@ -1418,6 +1472,9 @@ async def websocket_chat_v1(ws: WebSocket):
                 session_manager.set_pending_disambiguation(session, None)
 
             # 每一轮新 turn_id + trace_id
+            if origin_turn_to_wait:
+                await _wait_origin_turn_closed(session, origin_turn_to_wait)
+
             turn_id = str(uuid.uuid4())
             trace_id = str(uuid.uuid4())
 
@@ -1459,6 +1516,7 @@ async def websocket_chat_v1(ws: WebSocket):
                     session_id=sid,
                     turn_id=turn_id,
                     question=question,
+                    user_id=user_id,
                     trace_id=trace_id,
                     request_context=request_context,
                     accepted_at=accepted_at,
@@ -1653,6 +1711,7 @@ async def _run_ws_turn(
     session_id: str,
     turn_id: str,
     question: str,
+    user_id: str = "",
     trace_id: str,
     _envelope,
     _emit,
@@ -1676,7 +1735,10 @@ async def _run_ws_turn(
             "claims": [],
             "final_response": None,
             "runtime": RuntimeState(
-                trace_id=trace_id, session_id=session_id, turn_id=turn_id
+                trace_id=trace_id,
+                session_id=session_id,
+                user_id=(user_id or settings.SESSION_DEFAULT_USER_ID),
+                turn_id=turn_id,
             ),
         }
 

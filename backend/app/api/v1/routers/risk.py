@@ -82,21 +82,13 @@ def _trace() -> str:
     return str(uuid.uuid4())
 
 
-_engine = None
-
-
 def _get_engine():
-    """惰性缓存 MySQL engine（与 sessions.py 同模式）。"""
-    global _engine
-    if _engine is None:
-        from sqlalchemy import create_engine
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
 
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-        )
-        _engine = create_engine(url, echo=False)
-    return _engine
+    原实现以模块级单例缓存且只支持 mysql，进程内切库后复用旧库 Engine。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _summary_from_meta(meta: dict | None) -> str:

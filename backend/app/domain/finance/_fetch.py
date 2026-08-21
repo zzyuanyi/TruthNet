@@ -11,17 +11,14 @@
 """
 
 from dataclasses import dataclass, field
-from pathlib import Path
-
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from app.domain.finance.field_mapping import get_table
 from app.domain.finance.statement_type import (
     PARENT_STATEMENT_SCOPE,
     PARENT_STATEMENT_TYPE,
 )
-
-_ENGINES: dict[str, object] = {}
+from app.domain.finance._engine_utils import _ENGINES
 
 
 @dataclass
@@ -71,52 +68,29 @@ def prev_year_period(period: str, ordered_periods: list[str]) -> str | None:
     return None
 
 
-def _repo_root() -> Path:
-    # backend/app/domain/finance/_fetch.py -> 项目根
-    return Path(__file__).resolve().parents[4]
-
-
 def _engine_profile_key(settings) -> str:
-    """连接 profile 完整身份 key（审查 P2，与 company_resolver._profile_key
-    同契约：mysql = backend/user/host/port/database，sqlite 含路径）。"""
-    backend = settings.SQL_BACKEND
-    if backend == "mysql":
-        return (
-            f"mysql:{settings.MYSQL_USER}:{settings.MYSQL_HOST}:"
-            f"{settings.MYSQL_PORT}:{settings.MYSQL_DATABASE}"
-        )
-    return f"sqlite:{settings.SQLITE_PATH or 'data/truthnet.db'}"
+    """兼容旧调用方，统一使用公共 Engine profile 口径。"""
+    from app.domain.finance._engine_utils import engine_profile_key
+
+    return engine_profile_key(settings)
 
 
 def _get_engine():
-    from app.core.config import settings
+    """保留模块级入口，兼容旧测试和调用方。"""
+    from app.domain.finance._engine_utils import _ENGINES as shared_engines
+    from app.domain.finance._engine_utils import get_engine
 
-    key = _engine_profile_key(settings)
-    if key in _ENGINES:
-        return _ENGINES[key]
-    # 审查 P2：新 profile 建立时 dispose 其他 profile 的旧 Engine，
-    # 避免动态切库后连接池滞留、旧库连接被新 profile 复用（懒重建）。
-    for other, engine in list(_ENGINES.items()):
-        if other == key:
-            continue
-        try:
-            engine.dispose()
-        except Exception:  # noqa: BLE001 — dispose 失败不阻断取数
-            pass
+    # 旧测试会替换本模块的缓存字典；同步清理公共缓存，避免测试间复用
+    # 已释放或指向旧 SQLite 临时库的 Engine。
+    if _ENGINES is not shared_engines:
+        for engine in _ENGINES.values():
+            try:
+                engine.dispose()
+            except Exception:  # noqa: BLE001
+                pass
+        shared_engines.clear()
 
-    if key.startswith("mysql:"):
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _ENGINES[key] = create_engine(url, pool_pre_ping=True)
-    else:  # sqlite（lite profile）
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _ENGINES[key] = create_engine(f"sqlite:///{path.as_posix()}")
-    return _ENGINES[key]
+    return get_engine()
 
 
 def fetch_series(

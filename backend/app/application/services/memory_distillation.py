@@ -27,9 +27,8 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.application.services.response_meta_utils import (
@@ -40,43 +39,28 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_engines: dict[str, Engine] = {}
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
-
 
 def _get_engine() -> Engine:
-    backend = settings.SQL_BACKEND
-    if backend in _engines:
-        return _engines[backend]
-    if backend == "mysql":
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-            "?charset=utf8mb4"
-        )
-        _engines[backend] = create_engine(url, echo=False)
-    else:
-        path = Path(settings.SQLITE_PATH)
-        if not path.is_absolute():
-            path = _repo_root() / path
-        _engines[backend] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
-    return _engines[backend]
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+
+    原实现以 SQL_BACKEND 作缓存键，进程内切库后（conftest 运行时改写
+    MYSQL_DATABASE、验收双库探针）会复用旧库 Engine，把记忆写进错误库。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 @dataclass
 class MemorySummary:
     """远期记忆摘要（memory-v1 结构）。"""
 
-    version: str = "memory-v1"
+    version: str = field(default_factory=lambda: settings.MEMORY_SUMMARY_VERSION)
     text: str = ""
     covered_until_turn_index: int = 0
     source_turn_ids: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
     company_codes: list[str] = field(default_factory=list)
-    # 摘要覆盖的早期轮次中最后出现的公司代码（指代消解兜底，十轮外记忆）
+    # 摘要覆盖的早期轮次中最后出现的公司代码（指代消解兜底，窗口外记忆）
     last_company_code: str = ""
     key_facts: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
@@ -102,7 +86,7 @@ class MemorySummary:
             return None
         try:
             return cls(
-                version=str(data.get("version", "memory-v1")),
+                version=str(data.get("version", settings.MEMORY_SUMMARY_VERSION)),
                 text=str(data.get("text", "")),
                 covered_until_turn_index=int(data.get("covered_until_turn_index", 0)),
                 source_turn_ids=list(data.get("source_turn_ids") or []),
@@ -152,13 +136,19 @@ def _extract_key_facts(rows: list[dict]) -> list[str]:
                     seen.add(f)
                     facts.append(f)
         # 规则触发
+        # 8/19 修复：re.findall(r"R\d+") 会把否定语境误记为触发——
+        # 「R1、R2 未触发」会抽成「触发 R1」「触发 R2」（事实反转）。
+        # 改为分句级否定过滤：含 未/不/无+触发/发现 的句子跳过其中的 R 规则。
         import re
 
-        for rid in re.findall(r"R\d+", a):
-            f = f"触发 {rid}"
-            if f not in seen:
-                seen.add(f)
-                facts.append(f)
+        for clause in re.split(r"[。；;，,]", a):
+            if re.search(r"(?:未|不|无)(?:触发|发现)", clause):
+                continue  # 否定句：该句中的 R 规则视为未触发
+            for rid in re.findall(r"R\d+", clause):
+                f = f"触发 {rid}"
+                if f not in seen:
+                    seen.add(f)
+                    facts.append(f)
         # 公司名（若问题含代码，说明关键主体）
         if q and any(c in q for c in ("康美", "茅台", "五粮液")):
             f = "涉及知名公司"
@@ -345,6 +335,9 @@ def load_or_build_summary(session_id: str) -> MemorySummary | None:
 def _persist_summary(session_id: str, summary: MemorySummary) -> None:
     """写入 conversation_sessions.metadata（不覆盖其他元数据）。"""
     try:
+        from app.core.write_guard import assert_db_writable
+
+        assert_db_writable()  # 8/19 P0：写路径运行时守卫（演示库零写入）
         with _get_engine().connect() as conn:
             meta_row = conn.execute(
                 text(

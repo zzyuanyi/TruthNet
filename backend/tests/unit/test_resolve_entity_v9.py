@@ -116,6 +116,53 @@ def test_explicit_code_highest_priority():
     assert r["company"].sec_name == "康美药业"
 
 
+def test_generic_technology_topic_does_not_become_company(monkeypatch):
+    import app.application.services.exact_company_spotter as spotter
+
+    monkeypatch.setattr(spotter, "spot_exact_company_spans", lambda _query: [])
+    result = resolve_entity_node(_make_state("固态电池技术的最新研发动态有哪些"))
+
+    assert result["company"] is None
+    assert result["company_candidates"] == []
+    assert result["entity_resolution_result"].reason_code == "industry_context"
+
+
+def test_chitchat_and_market_without_company_skip_entity_lookup():
+    chitchat = resolve_entity_node(_make_state("你会什么"))
+    market = resolve_entity_node(_make_state("近一月涨跌幅"))
+
+    assert chitchat["entity_resolution_result"].reason_code == "chitchat"
+    assert market["entity_resolution_result"].reason_code == "company_not_found"
+
+
+def test_market_query_with_exact_company_still_resolves_entity():
+    result = resolve_entity_node(_make_state("贵州茅台近期走势如何"))
+
+    assert result["company"] is not None, result[
+        "entity_resolution_result"
+    ].model_dump()
+    assert result["company"].wind_code == "600519.SH"
+
+
+def test_market_query_with_explicit_code_still_resolves_entity():
+    result = resolve_entity_node(_make_state("600519.SH 近一周涨跌幅"))
+
+    assert result["company"] is not None, result[
+        "entity_resolution_result"
+    ].model_dump()
+    assert result["company"].wind_code == "600519.SH"
+
+
+def test_bare_market_followup_uses_current_company():
+    memory = MemoryContext(current_company_code="600519.SH")
+    result = resolve_entity_node(_make_state("换手率", memory))
+
+    assert result["company"] is not None, result[
+        "entity_resolution_result"
+    ].model_dump()
+    assert result["company"].wind_code == "600519.SH"
+
+
 # ── 多 mention 与确认（MySQL 内存表）────────────────────────
 
 

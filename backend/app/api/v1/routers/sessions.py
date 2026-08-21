@@ -4,6 +4,7 @@ GET  /api/v1/sessions                  → 列表（按 updated_at 倒序）
 POST /api/v1/sessions                  → 创建
 GET  /api/v1/sessions/{session_id}     → 详情 + turns 历史
 
+会话按 user_id 隔离；未传 user_id 时归属默认本地用户。
 SQL_BACKEND != mysql 时返回空列表 / 仅生成 session_id（lite/mock 行为）。
 """
 
@@ -13,7 +14,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
@@ -29,19 +30,14 @@ from app.domain.conversation.models import DEFAULT_SESSION_TITLE
 
 router = APIRouter(tags=["sessions"])
 
-_engine: Engine | None = None
-
 
 def _get_engine() -> Engine:
-    """惰性缓存 MySQL engine。"""
-    global _engine
-    if _engine is None:
-        url = (
-            f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-            f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-        )
-        _engine = create_engine(url, echo=False)
-    return _engine
+    """8/19 全面审查：改用完整 profile key + 切 profile 即 dispose 旧 Engine。
+
+    原实现以模块级单例缓存，进程内切库后复用指向旧库的 Engine。"""
+    from app.domain.finance._engine_utils import get_engine
+
+    return get_engine()
 
 
 def _trace() -> str:
@@ -71,6 +67,22 @@ def _json_value(value, default):
         return json.loads(value)
     except (TypeError, ValueError):
         return default
+
+
+def _user_id(value: str | None = None) -> str:
+    """归一化会话所属用户；无登录态时使用默认本地用户。"""
+    user_id = (value or "").strip()
+    return user_id or settings.SESSION_DEFAULT_USER_ID
+
+
+def _active_session_where(alias: str = "s") -> str:
+    """默认只展示未软删除会话。"""
+    return f"COALESCE({alias}.status, 'active') != 'archived'"
+
+
+def _owned_session_where(alias: str = "s") -> str:
+    """NULL 历史会话归属默认用户，显式 user_id 严格隔离。"""
+    return f"COALESCE({alias}.user_id, :default_user_id) = :user_id"
 
 
 def _build_turn_sources(
@@ -113,9 +125,11 @@ class SessionCreateRequest(BaseModel):
 def list_sessions(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    user_id: str | None = Query(default=None, max_length=64),
 ):
     """会话列表 — V12 §11.2 (P0)。"""
     trace_id = _trace()
+    owner = _user_id(user_id)
 
     sessions: list[dict] = []
     if settings.SQL_BACKEND == "mysql":
@@ -123,7 +137,15 @@ def list_sessions(
             with _get_engine().connect() as conn:
                 total = int(
                     conn.execute(
-                        text("SELECT COUNT(*) FROM conversation_sessions")
+                        text(
+                            "SELECT COUNT(*) FROM conversation_sessions s "
+                            f"WHERE {_active_session_where('s')} "
+                            f"AND {_owned_session_where('s')}"
+                        ),
+                        {
+                            "user_id": owner,
+                            "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                        },
                     ).scalar_one()
                 )
                 rows = (
@@ -135,12 +157,19 @@ def list_sessions(
                             "FROM conversation_sessions s "
                             "LEFT JOIN conversation_turns t "
                             "  ON s.session_id = t.session_id "
+                            f"WHERE {_active_session_where('s')} "
+                            f"AND {_owned_session_where('s')} "
                             "GROUP BY s.session_id, s.user_id, s.title, s.status, "
                             "         s.created_at, s.updated_at "
                             "ORDER BY s.updated_at DESC, s.session_id ASC "
                             "LIMIT :limit OFFSET :offset"
                         ),
-                        {"limit": limit, "offset": offset},
+                        {
+                            "limit": limit,
+                            "offset": offset,
+                            "user_id": owner,
+                            "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                        },
                     )
                     .mappings()
                     .all()
@@ -211,6 +240,7 @@ def create_session(request: SessionCreateRequest):
     session_id = _new_session_id()
     now = datetime.now(timezone.utc).isoformat()
     title = request.title or DEFAULT_SESSION_TITLE
+    owner = _user_id(request.user_id)
 
     if settings.SQL_BACKEND == "mysql":
         try:
@@ -224,7 +254,7 @@ def create_session(request: SessionCreateRequest):
                     ),
                     {
                         "sid": session_id,
-                        "uid": request.user_id,
+                        "uid": owner,
                         "title": title,
                     },
                 )
@@ -245,6 +275,7 @@ def create_session(request: SessionCreateRequest):
     return V12Response(
         data={
             "session_id": session_id,
+            "user_id": owner,
             "title": title,
             "status": "active",
             "created_at": now,
@@ -274,9 +305,13 @@ def create_session(request: SessionCreateRequest):
     response_model=V12Response[SessionDetailDataV1],
     responses={404: {"model": ProblemDetail}, 503: {"model": ProblemDetail}},
 )
-def get_session(session_id: str):
+def get_session(
+    session_id: str,
+    user_id: str | None = Query(default=None, max_length=64),
+):
     """会话详情 + turns 历史 — V12 §11.2 (P0)。"""
     trace_id = _trace()
+    owner = _user_id(user_id)
 
     session: dict | None = None
     turns: list[dict] = []
@@ -289,9 +324,15 @@ def get_session(session_id: str):
                         text(
                             "SELECT session_id, user_id, title, status, "
                             "       created_at, updated_at "
-                            "FROM conversation_sessions WHERE session_id = :sid"
+                            "FROM conversation_sessions s WHERE session_id = :sid "
+                            f"AND {_active_session_where('s')} "
+                            f"AND {_owned_session_where('s')}"
                         ),
-                        {"sid": session_id},
+                        {
+                            "sid": session_id,
+                            "user_id": owner,
+                            "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                        },
                     )
                     .mappings()
                     .first()
@@ -448,14 +489,18 @@ def get_session(session_id: str):
     response_model=V12Response[SessionDeleteDataV1],
     responses={404: {"model": ProblemDetail}, 503: {"model": ProblemDetail}},
 )
-def delete_session(session_id: str):
-    """删除会话（级联清理：links → claims → evidence → turns → session）.
+def delete_session(
+    session_id: str,
+    user_id: str | None = Query(default=None, max_length=64),
+):
+    """软删除会话。
 
-    单独删除只清理该会话 turns 关联的证据（evidence_refs.turn_id）；
-    与 claims 无关的全局 evidence 不在删除范围（批量清理见
-    scripts/cleanup_sessions.py：白名单 + --dry-run）。
+    只将会话标记为 archived，并在 metadata.deleted_at 记录删除时间；
+    列表/详情默认不可见。物理级联清理保留在 SessionCleanupService，
+    供 TTL/脚本在宽限期后执行。
     """
     trace_id = _trace()
+    owner = _user_id(user_id)
 
     if settings.SQL_BACKEND != "mysql":
         return V12Response(
@@ -469,17 +514,23 @@ def delete_session(session_id: str):
         )
 
     try:
-        # v3.4：级联删除复用共享 SessionCleanupService（单事务，共享
-        # Evidence 保留 turn_id=NULL、无引用才删除），不在此复制 SQL。
         from app.application.services.session_cleanup_service import (
             SessionCleanupService,
         )
 
         with _get_engine().connect() as conn:
-            # 先确认会话存在（不能以 turn_rows 判断：零轮次会话也应可删除）
             exists = conn.execute(
-                text("SELECT 1 FROM conversation_sessions " "WHERE session_id = :sid"),
-                {"sid": session_id},
+                text(
+                    "SELECT 1 FROM conversation_sessions s "
+                    "WHERE session_id = :sid "
+                    f"AND {_active_session_where('s')} "
+                    f"AND {_owned_session_where('s')}"
+                ),
+                {
+                    "sid": session_id,
+                    "user_id": owner,
+                    "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                },
             ).scalar()
             if not exists:
                 raise HTTPException(
@@ -494,8 +545,9 @@ def delete_session(session_id: str):
                         "recoverable": True,
                     },
                 )
-        # 传入 router 引擎：测试 fixture 注入 SQLite 时保持一致
-        SessionCleanupService(engine=_get_engine()).cleanup_session(session_id)
+        SessionCleanupService(engine=_get_engine()).soft_delete_session(
+            session_id, user_id=owner
+        )
     except HTTPException:
         raise
     except Exception:

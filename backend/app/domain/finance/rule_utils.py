@@ -55,6 +55,45 @@ def single_quarter(cumulative_values: list) -> list:
     return result
 
 
+def previous_quarter_period(period: str | None) -> str | None:
+    """返回同一财年的上一季度报告期；Q1 没有上一季度累计可减。"""
+    p = str(period or "")
+    if len(p) != 8 or not p.isdigit():
+        return None
+    year = p[:4]
+    mmdd = p[4:]
+    previous = {
+        "0630": "0331",
+        "0930": "0630",
+        "1231": "0930",
+    }.get(mmdd)
+    return f"{year}{previous}" if previous else None
+
+
+def single_quarter_by_period(cumulative_values: list, periods: list) -> list:
+    """按报告期还原单季度值，缺相邻季度时返回 None。
+
+    与 single_quarter(list) 的兼容实现不同，这里不会把数组里的上一条记录
+    当成上一季度，避免缺期或错期时盲目相减。
+    """
+    value_by_period = {
+        str(p): v for p, v in zip(periods, cumulative_values, strict=False)
+    }
+    result: list = []
+    for period, current in zip(periods, cumulative_values, strict=False):
+        p = str(period or "")
+        if current is None:
+            result.append(None)
+            continue
+        if p.endswith("0331"):
+            result.append(current)
+            continue
+        previous_period = previous_quarter_period(p)
+        previous = value_by_period.get(previous_period) if previous_period else None
+        result.append(current - previous if previous is not None else None)
+    return result
+
+
 def safe_div(a: float | None, b: float | None) -> float | None:
     """安全除法."""
     if a is None or b is None or b == 0:
