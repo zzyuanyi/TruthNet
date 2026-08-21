@@ -106,3 +106,5 @@ public/*.tar.gz
 data/backups/
 .cozeproj/reduction
 .codegraph
+
+frontend/public/*.tar.gz
