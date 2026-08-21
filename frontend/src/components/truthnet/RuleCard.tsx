@@ -142,8 +142,10 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail, evidenceSummaries
   const currentValue = currentMetric ? rule.current[currentMetric] : undefined;
 
   return (
-    <Card className={cn(
-      'transition-all hover:shadow-md',
+    <Card
+      id={`rule-${rule.rule_id}`}
+      className={cn(
+      'transition-all hover:shadow-md scroll-mt-20',
       rule.status === 'triggered' && 'border-red-500/50'
     )}>
       <CardHeader className="pb-3">

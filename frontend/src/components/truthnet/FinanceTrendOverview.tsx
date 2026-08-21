@@ -123,7 +123,14 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
             const rising = s.trendPct > 0.05;
             const falling = s.trendPct < -0.05;
             return (
-              <div key={s.ruleId} className="rounded-lg border border-border/60 bg-muted/10 p-3">
+              <div
+                key={s.ruleId}
+                className="rounded-lg border border-border/60 bg-muted/10 p-3 cursor-pointer transition-colors hover:border-primary/50 hover:bg-muted/20"
+                title={`定位到「${s.name}」明细`}
+                onClick={() => {
+                  document.getElementById(`rule-${s.ruleId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-xs font-medium text-foreground">{s.name}</p>

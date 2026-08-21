@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Graph } from '@antv/g6';
+import { Circle, ExtensionCategory, Graph, register } from '@antv/g6';
 import type { EquityNodeDTO, EquityEdgeDTO } from '@/types/truthnet';
 
 interface EquityGraphProps {
@@ -154,6 +154,31 @@ function tooltipContent(d: GraphLayoutNode): string {
   return `<div style="font-weight:600;margin-bottom:4px">${d.name}（第 ${d.hop} 层）</div><div>类型：${typeLabel}</div>${risk ? `<div>${risk}</div>` : ''}`;
 }
 
+function isRiskNode(d: GraphLayoutNode): boolean {
+  return d.risk_level === 'red' || d.risk_level === 'orange' || d.risk_level === 'yellow';
+}
+
+// 风险节点呼吸光环：创建后让 halo 光晕循环放大呼吸
+class BreathingCircle extends Circle {
+  onCreate() {
+    const halo = (
+      this as unknown as {
+        shapeMap?: { halo?: { animate: (keyframes: unknown[], options: unknown) => void } };
+      }
+    ).shapeMap?.halo;
+    if (halo) {
+      halo.animate([{ opacity: 0.5 }, { opacity: 0.05 }], {
+        duration: 1500,
+        iterations: Infinity,
+        direction: 'alternate',
+        easing: 'ease-in-out',
+      });
+    }
+  }
+}
+
+register(ExtensionCategory.NODE, 'breathing-circle', BreathingCircle);
+
 export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
@@ -205,14 +230,15 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
         })),
       },
       node: {
-        type: 'circle',
+        type: (d: any) =>
+          isRiskNode(d.data as GraphLayoutNode) ? 'breathing-circle' : 'circle',
         style: {
           x: (d: any) => d.data.x as number,
           y: (d: any) => d.data.y as number,
           r: (d: any) => (NODE_RADIUS[d.data.nodeType] || 20) * layout.radiusScale,
           fill: (d: any) => nodeFill(d.data as GraphLayoutNode),
           stroke: '#ffffff',
-          lineWidth: 2.5,
+          lineWidth: (d: any) => (isRiskNode(d.data as GraphLayoutNode) ? 3.5 : 2.5),
           fillOpacity: 0.92,
           labelText: (d: any) =>
             truncateLabel(d.data.name, layout.radiusScale < 1 ? 8 : 10),
@@ -223,6 +249,20 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
           iconText: (d: any) => nodeInnerText(d.data as GraphLayoutNode),
           iconFill: '#ffffff',
           iconFontSize: 10,
+          halo: (d: any) => isRiskNode(d.data as GraphLayoutNode),
+          haloFill: (d: any) => nodeFill(d.data as GraphLayoutNode),
+          haloStroke: (d: any) => nodeFill(d.data as GraphLayoutNode),
+          haloLineWidth: 2,
+          haloOpacity: 0.4,
+        },
+        state: {
+          active: { lineWidth: 4, fillOpacity: 1, haloOpacity: 0.9 },
+          inactive: {
+            fillOpacity: 0.12,
+            opacity: 0.3,
+            labelOpacity: 0.15,
+            haloOpacity: 0.05,
+          },
         },
       },
       edge: {
@@ -243,8 +283,23 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
           labelBackgroundFill: bgColor,
           labelBackgroundOpacity: 0.85,
         },
+        state: {
+          active: { strokeOpacity: 0.95, lineWidth: 2.6 },
+          inactive: { strokeOpacity: 0.06, labelOpacity: 0.05 },
+        },
       },
-      behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
+      behaviors: [
+        'drag-canvas',
+        'zoom-canvas',
+        'drag-element',
+        {
+          type: 'hover-activate',
+          degree: 1,
+          state: 'active',
+          inactiveState: 'inactive',
+          enable: (e: any) => e.targetType === 'node',
+        },
+      ],
       plugins: [
         {
           type: 'tooltip',
