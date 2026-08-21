@@ -344,6 +344,7 @@ def _web_search_company_news(
                     source_record_id=company.wind_code,
                     field_path=f"news_{i}",
                     company_code=company.wind_code,
+                    turn_id=turn_id,
                 ),
                 source_type="web_search",
                 source_record_id=company.wind_code,

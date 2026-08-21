@@ -102,6 +102,7 @@ def _web_search_fill_company_fact(
             source_record_id=wind_code,
             field_path=field,
             company_code=wind_code,
+            turn_id=turn_id,
         ),
         source_type="web_search",
         source_record_id=wind_code,
@@ -166,6 +167,7 @@ def _web_search_fill_metric(
                 source_record_id=wind_code,
                 field_path=f"metric_{metric_label}",
                 company_code=wind_code,
+                turn_id=turn_id,
             ),
             source_type="web_search",
             source_record_id=wind_code,
@@ -432,6 +434,7 @@ def _answer_market_quote(state: AgentState, field: str) -> dict:
         field_path=f"market_quote.{field}",
         period=result.trade_date,
         company_code=company.wind_code,
+        turn_id=turn_id,
     )
     quote_evidence = EvidenceRef(
         evidence_id=evidence_id,

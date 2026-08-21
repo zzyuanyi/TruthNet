@@ -119,6 +119,56 @@ def test_claim_id_no_collision_multiple_rules_same_turn():
     assert len(ids) == 3
 
 
+def test_evidence_id_turn_id_same_turn_retry():
+    """同一轮次重试（输入一致）→ 相同 Evidence ID（幂等落库）。"""
+    kwargs = dict(
+        source_namespace="ws",
+        source_type="web_search",
+        source_record_id="601919.SH",
+        field_path="metric_毛利率",
+        company_code="601919.SH",
+        turn_id="turn_01",
+    )
+    assert make_evidence_id(**kwargs) == make_evidence_id(**kwargs)
+
+
+def test_evidence_id_turn_id_differs_across_turns():
+    """不同轮次同公司同指标 → 不同 Evidence ID（动态来源内容每次不同）。"""
+    a = make_evidence_id(
+        source_namespace="ws",
+        source_type="web_search",
+        source_record_id="601919.SH",
+        field_path="metric_毛利率",
+        company_code="601919.SH",
+        turn_id="turn_01",
+    )
+    b = make_evidence_id(
+        source_namespace="ws",
+        source_type="web_search",
+        source_record_id="601919.SH",
+        field_path="metric_毛利率",
+        company_code="601919.SH",
+        turn_id="turn_02",
+    )
+    assert a != b
+
+
+def test_evidence_id_turn_id_backward_compatible():
+    """不传 turn_id → ID 与旧算法完全一致（静态来源行为不变）。"""
+    kwargs = dict(
+        source_namespace="fin",
+        source_type="financial_statement",
+        source_record_id="600518.SH|20260331|408006000",
+        field_path="acct_rcv",
+        period="20260331",
+        dataset_version="competition-2026",
+        company_code="600518.SH",
+    )
+    assert make_evidence_id(**kwargs) == make_evidence_id(**kwargs)
+    # turn_id 参与 digest：同一静态证据带 turn_id 也不同于不带
+    assert make_evidence_id(**kwargs, turn_id="turn_01") != make_evidence_id(**kwargs)
+
+
 def test_legacy_id_detection():
     assert is_legacy_claim_id("claim_R1_01")
     assert is_legacy_claim_id("claim_eq_01")
