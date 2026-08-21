@@ -181,12 +181,13 @@ def test_load_context_filters_by_user_id(monkeypatch, sqlite_engine):
             )
         )
 
-    assert lc.load_context_node(_make_state("ses_user", user_id="user_b"))[
-        "messages"
-    ] == []
-    assert lc.load_context_node(_make_state("ses_user", user_id="user_a"))[
-        "messages"
-    ][0] == {"role": "user", "content": "A 的问题"}
+    assert (
+        lc.load_context_node(_make_state("ses_user", user_id="user_b"))["messages"]
+        == []
+    )
+    assert lc.load_context_node(_make_state("ses_user", user_id="user_a"))["messages"][
+        0
+    ] == {"role": "user", "content": "A 的问题"}
 
 
 # ── 中间验收批次 A4：response_meta 双形态读取（P1-4）────────────

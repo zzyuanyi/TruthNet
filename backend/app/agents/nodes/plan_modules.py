@@ -106,7 +106,9 @@ def parse_query_period(
             if date(year, month, day) > anchor:
                 year -= 1
         return date(year, month, day), "report_period", m.group(0)
-    if re.search(r"(?:今年|去年|前年).*(?:营收|营业收入|利润|总资产|负债|毛利率|现金流)", query):
+    if re.search(
+        r"(?:今年|去年|前年).*(?:营收|营业收入|利润|总资产|负债|毛利率|现金流)", query
+    ):
         m = re.search(r"今年|去年|前年", query)
         relative = m.group(0)
         year = anchor.year - {"今年": 0, "去年": 1, "前年": 2}[relative]
@@ -579,7 +581,9 @@ def _detect_event_list_requested(user_query: str) -> bool:
         )
     ):
         return True
-    return "公告" in query and any(cue in query for cue in ("有没有", "有哪些", "发布", "最近"))
+    return "公告" in query and any(
+        cue in query for cue in ("有没有", "有哪些", "发布", "最近")
+    )
 
 
 def _detect_impact_requested(user_query: str) -> bool:
@@ -613,19 +617,20 @@ def _detect_answer_operation(user_query: str) -> str:
         return "industry_total"
     if "最大的个股" in query or "最高的个股" in query:
         return "industry_leader"
-    if any(cue in query for cue in ("连续", "持续", "近三年", "最近三年", "趋势")) and any(
-        cue in query for cue in ("原因", "为何", "为什么", "怎么回事")
-    ):
+    if any(
+        cue in query for cue in ("连续", "持续", "近三年", "最近三年", "趋势")
+    ) and any(cue in query for cue in ("原因", "为何", "为什么", "怎么回事")):
         return "causal_trend"
     if any(cue in query for cue in ("原因", "为何", "为什么", "怎么回事")):
         return "causal"
     if any(cue in query for cue in ("影响", "后果", "会受", "风险")):
         return "impact"
-    if "环比" in query and ("单季度" in query or "最近季度" in query or "最新季度" in query):
+    if "环比" in query and (
+        "单季度" in query or "最近季度" in query or "最新季度" in query
+    ):
         return "quarter_mom"
-    if (
-        ("单季度" in query or "最近季度" in query or "最新季度" in query)
-        and any(cue in query for cue in ("同比", "增长率", "增速"))
+    if ("单季度" in query or "最近季度" in query or "最新季度" in query) and any(
+        cue in query for cue in ("同比", "增长率", "增速")
     ):
         return "quarter_yoy"
     if "单季度" in query:
@@ -948,8 +953,7 @@ class _QuerySemanticContext:
                 or (
                     operation == "impact"
                     and any(
-                        cue in query
-                        for cue in ("价格上涨", "价格下跌", "原材料价格")
+                        cue in query for cue in ("价格上涨", "价格下跌", "原材料价格")
                     )
                     and not any(cue in query for cue in _IMPACT_EVENT_REF_CUES)
                 )
@@ -1018,10 +1022,14 @@ def plan_modules_node(state: AgentState) -> dict:
             )
         }
 
-    if company is None and any(cue in user_query for cue in _MARKET_WIDE_CUES) and not (
-        ("个股" in user_query or "股票" in user_query)
-        and any(cue in user_query for cue in ("行业", "板块", "领域"))
-        and "自选" not in user_query
+    if (
+        company is None
+        and any(cue in user_query for cue in _MARKET_WIDE_CUES)
+        and not (
+            ("个股" in user_query or "股票" in user_query)
+            and any(cue in user_query for cue in ("行业", "板块", "领域"))
+            and "自选" not in user_query
+        )
     ):
         return {
             "plan": ExecutionPlan(
@@ -1051,7 +1059,7 @@ def plan_modules_node(state: AgentState) -> dict:
                 as_of_kind=as_of_kind,
                 requested_period_text=period_text,
             )
-            }
+        }
 
     if company is not None and semantics.is_market_price_boundary:
         return {
@@ -1068,7 +1076,8 @@ def plan_modules_node(state: AgentState) -> dict:
     # 单公司行情快照由 AnySearch 精准查询，不启动财务/股权/舆情模块。
     # 多指标混合题仍交给既有 multi_metric 边界处理，避免只答其中一个字段。
     market_causal = any(
-        cue in user_query for cue in ("原因", "为何", "为什么", "怎么回事", "驱动", "影响")
+        cue in user_query
+        for cue in ("原因", "为何", "为什么", "怎么回事", "驱动", "影响")
     )
     if (
         company is not None
@@ -1098,7 +1107,6 @@ def plan_modules_node(state: AgentState) -> dict:
                 requested_period_text=period_text,
             )
         }
-
 
     if company is not None and market_decision_intent:
         return {
@@ -1433,9 +1441,9 @@ def plan_modules_node(state: AgentState) -> dict:
                     requested_period_text=period_text,
                 )
             }
-        if any(cue in user_query for cue in ("研报", "机构评级", "券商评级")) and not any(
-            cue in user_query for cue in _IMPACT_REQUEST_CUES
-        ):
+        if any(
+            cue in user_query for cue in ("研报", "机构评级", "券商评级")
+        ) and not any(cue in user_query for cue in _IMPACT_REQUEST_CUES):
             return {
                 "plan": ExecutionPlan(
                     intent="research",
@@ -1497,9 +1505,13 @@ def plan_modules_node(state: AgentState) -> dict:
                     answer_operation=operation,
                 )
             }
-        if "行业" in user_query and re.search(r"所属|所在", user_query) and (
-            operation in ("assessment", "industry_total", "industry_leader")
-            or "整体" in user_query
+        if (
+            "行业" in user_query
+            and re.search(r"所属|所在", user_query)
+            and (
+                operation in ("assessment", "industry_total", "industry_leader")
+                or "整体" in user_query
+            )
         ):
             return {
                 "plan": ExecutionPlan(
@@ -1549,9 +1561,7 @@ def plan_modules_node(state: AgentState) -> dict:
             and any(cue in user_query for cue in ("上涨", "下跌", "涨", "跌"))
         ) or (
             operation == "impact"
-            and any(
-                cue in user_query for cue in ("价格上涨", "价格下跌", "原材料价格")
-            )
+            and any(cue in user_query for cue in ("价格上涨", "价格下跌", "原材料价格"))
             and not any(cue in user_query for cue in _IMPACT_EVENT_REF_CUES)
         )
         if indicator == "unsupported" and not causal_boundary:
@@ -1576,8 +1586,10 @@ def plan_modules_node(state: AgentState) -> dict:
             semantic = resolve_indicator_semantics(user_query)
             if semantic.executable and semantic.metric_ids:
                 indicator = semantic.metric_ids[0]
-        if not indicator and operation == "causal" and any(
-            cue in user_query for cue in ("上涨", "下跌", "涨", "跌")
+        if (
+            not indicator
+            and operation == "causal"
+            and any(cue in user_query for cue in ("上涨", "下跌", "涨", "跌"))
         ):
             return {
                 "plan": ExecutionPlan(
@@ -1667,7 +1679,8 @@ def plan_modules_node(state: AgentState) -> dict:
         # unsupported 复用现有 intent；公司分析类但实体缺失 → guide）
         fallback_intent = _fallback_no_company_intent(user_query)
         if plan_hint == "research" or (
-            plan_hint not in {
+            plan_hint
+            not in {
                 "",
                 "chitchat",
                 "unsupported",

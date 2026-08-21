@@ -509,7 +509,9 @@ def test_company_research_returns_source_table_without_generic_risk(monkeypatch)
     assert len(result["evidence"]) == 1
 
 
-def test_continuous_loss_answer_counts_latest_negative_years_and_uses_table(monkeypatch):
+def test_continuous_loss_answer_counts_latest_negative_years_and_uses_table(
+    monkeypatch,
+):
     from app.application.services.indicator_query_service import IndicatorQueryResult
 
     monkeypatch.setattr(
@@ -601,9 +603,7 @@ def test_module_failure_no_signal_conclusion_is_degraded():
     """模块失败且无 claim 时，头行不得 fail-open 为未发现异常。"""
     plan = ExecutionPlan(requested_modules=["finance"])
     module_status = {
-        "finance": ModuleStatus(
-            state="failed", error_code="DB_ERROR", recoverable=True
-        )
+        "finance": ModuleStatus(state="failed", error_code="DB_ERROR", recoverable=True)
     }
     result = generate_answer_node(
         _make_state(company=_company(), plan=plan, module_status=module_status)

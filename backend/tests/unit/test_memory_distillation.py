@@ -135,7 +135,9 @@ def test_key_facts_negated_rules_not_recorded():
         }
     ]
     facts = _extract_key_facts(rows)
-    assert not any(f.startswith("触发 R") for f in facts), f"未触发被误记为触发: {facts}"
+    assert not any(
+        f.startswith("触发 R") for f in facts
+    ), f"未触发被误记为触发: {facts}"
     assert "风险等级 green" in facts
 
     # 混合：R1 未触发、R3 触发 → 只记 R3
@@ -167,7 +169,9 @@ def test_key_facts_discovery_words():
         }
     ]
     facts = _extract_key_facts(rows)
-    assert not any(f.startswith("触发 R") for f in facts), f"未发现被误记为触发: {facts}"
+    assert not any(
+        f.startswith("触发 R") for f in facts
+    ), f"未发现被误记为触发: {facts}"
 
 
 def test_summary_truncated():

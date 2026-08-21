@@ -25,6 +25,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 def _history_limit() -> int:
     """回读最近轮次上限（默认 20 轮，由 MEMORY_RECENT_TURNS 配置）。"""
     return max(int(settings.MEMORY_RECENT_TURNS), 0)

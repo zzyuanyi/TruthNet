@@ -54,7 +54,9 @@ def _metric_label(rid: str, key: str) -> str:
     from app.domain.finance.financial_rule_config import load_financial_rules
 
     meta = load_financial_rules().metadata.get(rid)
-    metric = next((item for item in (meta.metrics if meta else []) if item.key == key), None)
+    metric = next(
+        (item for item in (meta.metrics if meta else []) if item.key == key), None
+    )
     return metric.label if metric else f"{_indicator_label(rid)} · {key}"
 
 
@@ -359,7 +361,7 @@ async def _create_comparison_impl(
         for code in resolved_map:
             if code in company_failures:
                 continue
-            current = (rule_cache[code]["results"].get(ind) or None)
+            current = rule_cache[code]["results"].get(ind) or None
             for key in (current.current if current else {}) or {}:
                 if key not in metric_keys:
                     metric_keys.append(key)
@@ -405,7 +407,11 @@ async def _create_comparison_impl(
             indicator_compares.append(
                 IndicatorCompare(
                     indicator=f"{ind}.{metric_key}" if metric_key else ind,
-                    label=(_metric_label(ind, metric_key) if metric_key else _indicator_label(ind)),
+                    label=(
+                        _metric_label(ind, metric_key)
+                        if metric_key
+                        else _indicator_label(ind)
+                    ),
                     companies=companies,
                 )
             )

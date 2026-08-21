@@ -604,9 +604,7 @@ def test_explicit_period_and_scope_words_do_not_become_company_mentions():
         extract_company_mention_result,
     )
 
-    result = extract_company_mention_result(
-        "中兴通讯2024财年第1季度销售毛利率是多少"
-    )
+    result = extract_company_mention_result("中兴通讯2024财年第1季度销售毛利率是多少")
     assert [item.text for item in result.mentions] == ["中兴通讯"]
     plan = plan_modules_node(
         {
@@ -620,12 +618,18 @@ def test_explicit_period_and_scope_words_do_not_become_company_mentions():
 
 def test_high_risk_query_operations_are_not_plain_value():
     company = _state("x")["company"]
-    assert plan_modules_node(
-        {"user_query": "比亚迪毛利率连续三年下降原因", "company": company}
-    )["plan"].answer_operation == "causal_trend"
-    assert plan_modules_node(
-        {"user_query": "贵州茅台现金流会受影响吗", "company": company}
-    )["plan"].answer_operation == "impact"
+    assert (
+        plan_modules_node(
+            {"user_query": "比亚迪毛利率连续三年下降原因", "company": company}
+        )["plan"].answer_operation
+        == "causal_trend"
+    )
+    assert (
+        plan_modules_node(
+            {"user_query": "贵州茅台现金流会受影响吗", "company": company}
+        )["plan"].answer_operation
+        == "impact"
+    )
 
 
 def test_industry_average_without_company_uses_benchmark_plan():
@@ -740,9 +744,7 @@ def test_generic_research_questions_do_not_fall_back_to_company_guide():
         "有哪些医疗器械技术正在研发中？",
         "大数据安全领域的技术趋势有哪些？",
     ):
-        plan = plan_modules_node(
-            {"user_query": question, "company": None}
-        )["plan"]
+        plan = plan_modules_node({"user_query": question, "company": None})["plan"]
         assert plan.intent == "research"
 
 
@@ -864,9 +866,17 @@ def test_company_research_advantage_routes_to_research():
 
 
 def test_company_fact_boundaries_use_fact_or_research_routes():
-    assert plan_modules_node(_state("中国重工是退市了？"))["plan"].intent == "company_fact"
-    assert plan_modules_node(_state("新光制药属于哪个细分板块"))["plan"].intent == "company_fact"
-    assert plan_modules_node(_state("海能达最新的财务报告有哪些？"))["plan"].intent == "research"
+    assert (
+        plan_modules_node(_state("中国重工是退市了？"))["plan"].intent == "company_fact"
+    )
+    assert (
+        plan_modules_node(_state("新光制药属于哪个细分板块"))["plan"].intent
+        == "company_fact"
+    )
+    assert (
+        plan_modules_node(_state("海能达最新的财务报告有哪些？"))["plan"].intent
+        == "research"
+    )
 
 
 def test_market_price_prediction_does_not_start_financial_diagnosis():

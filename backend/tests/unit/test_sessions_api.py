@@ -403,16 +403,23 @@ def test_delete_session_soft_deletes_and_preserves_audit_chain(mysql_client):
 
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT status, metadata FROM conversation_sessions WHERE session_id='ses_del'")
+            text(
+                "SELECT status, metadata FROM conversation_sessions WHERE session_id='ses_del'"
+            )
         ).first()
         assert row[0] == "archived"
         import json
 
         meta = json.loads(row[1]) if isinstance(row[1], str) else row[1]
         assert meta["deleted_at"]
-        assert conn.execute(text("SELECT COUNT(*) FROM conversation_turns")).scalar() == 1
+        assert (
+            conn.execute(text("SELECT COUNT(*) FROM conversation_turns")).scalar() == 1
+        )
         assert conn.execute(text("SELECT COUNT(*) FROM claims")).scalar() == 1
-        assert conn.execute(text("SELECT COUNT(*) FROM claim_evidence_links")).scalar() == 1
+        assert (
+            conn.execute(text("SELECT COUNT(*) FROM claim_evidence_links")).scalar()
+            == 1
+        )
         assert conn.execute(text("SELECT COUNT(*) FROM evidence_refs")).scalar() == 4
         assert conn.execute(text("SELECT COUNT(*) FROM rating_changes")).scalar() == 1
         assert (
@@ -432,7 +439,9 @@ def test_delete_empty_session(mysql_client):
     assert resp.json()["data"] == {"deleted": True, "session_id": "ses_empty"}
     with engine.connect() as conn:
         status = conn.execute(
-            text("SELECT status FROM conversation_sessions WHERE session_id='ses_empty'")
+            text(
+                "SELECT status FROM conversation_sessions WHERE session_id='ses_empty'"
+            )
         ).scalar()
         assert status == "archived"
 
@@ -471,9 +480,13 @@ def test_purge_expired_soft_deleted_sessions(mysql_client):
     assert stats["scanned"] == 2
     assert stats["purged"] == 1
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT session_id FROM conversation_sessions ORDER BY session_id")
-        ).scalars().all()
+        rows = (
+            conn.execute(
+                text("SELECT session_id FROM conversation_sessions ORDER BY session_id")
+            )
+            .scalars()
+            .all()
+        )
     assert rows == ["ses_recent_deleted"]
 
 

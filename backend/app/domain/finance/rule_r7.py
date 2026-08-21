@@ -107,9 +107,7 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     prior_year_period = (
         prev_year_period(current_period, ordered) if current_period else None
     )
-    np_current = (
-        aligned[current_period].get("net_profit") if current_period else None
-    )
+    np_current = aligned[current_period].get("net_profit") if current_period else None
     if np_current is None or np_current <= 0:
         result.status = "not_applicable"
         result.explanation = "公司亏损，盈利质量规则不适用"
@@ -129,7 +127,11 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     core_ratio = None
     current_row = aligned[current_period]
     prior_row = aligned.get(prior_year_period, {})
-    if core_available and current_row.get("core_profit") is not None and np_current != 0:
+    if (
+        core_available
+        and current_row.get("core_profit") is not None
+        and np_current != 0
+    ):
         core_ratio = current_row["core_profit"] / abs(np_current)
 
     # 非经常性损益占比
@@ -141,9 +143,11 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         )
 
     # YoY 增速对比
-    np_yoy = yoy_growth(
-        current_row.get("net_profit"), prior_row.get("net_profit")
-    ) if prior_year_period else None
+    np_yoy = (
+        yoy_growth(current_row.get("net_profit"), prior_row.get("net_profit"))
+        if prior_year_period
+        else None
+    )
     core_yoy = (
         yoy_growth(current_row.get("core_profit"), prior_row.get("core_profit"))
         if core_available and prior_year_period
@@ -296,9 +300,7 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
         if np_v is None or cp_v is None or np_v == 0:
             continue
         label = (
-            str(periods_hist[i])
-            if i < len(periods_hist)
-            else f"t-{len(ordered)-1-i}Q"
+            str(periods_hist[i]) if i < len(periods_hist) else f"t-{len(ordered)-1-i}Q"
         )
         r7_series.append(
             {"period": label, "core_profit_ratio": round(cp_v / abs(np_v) * 100, 1)}

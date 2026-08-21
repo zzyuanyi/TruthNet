@@ -435,9 +435,22 @@ def extract_company_mention_result(
         # 无公司行业问法（如“家电行业平均毛利率”）的行业名称不是公司。
         # 只处理段首连续的“X行业”，公司名后的“行业对比”仍保留。
         industry_match = _INDUSTRY_PREFIX_RE.match(q[seg_start:seg_end])
-        industry_tail = q[seg_start + industry_match.end() : seg_end] if industry_match else ""
+        industry_tail = (
+            q[seg_start + industry_match.end() : seg_end] if industry_match else ""
+        )
         if industry_match and any(
-            cue in industry_tail for cue in ("平均", "对比", "高于", "低于", "水平", "趋势", "变化", "增速", "最大")
+            cue in industry_tail
+            for cue in (
+                "平均",
+                "对比",
+                "高于",
+                "低于",
+                "水平",
+                "趋势",
+                "变化",
+                "增速",
+                "最大",
+            )
         ):
             _mask_out(mask, seg_start, seg_start + industry_match.end())
         slot_end = _subject_slot_start(q[seg_start:seg_end], seg_start)
@@ -488,11 +501,7 @@ def extract_company_mention_result(
         for sm in _SPECIAL_STATUS_NAME_RE.finditer(q, seg_start, seg_end):
             prefix_len = 3 if sm.group(0).startswith("*") else 2
             name_end = sm.start() + prefix_len
-            while (
-                name_end < sm.end()
-                and mask[name_end]
-                and _is_cn(q[name_end])
-            ):
+            while name_end < sm.end() and mask[name_end] and _is_cn(q[name_end]):
                 name_end += 1
             if name_end - sm.start() < prefix_len + 2:
                 continue

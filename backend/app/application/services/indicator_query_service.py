@@ -89,7 +89,9 @@ def _series_values(series: SeriesResult) -> dict[str, float]:
     }
 
 
-def _inconsistent_annual_revenue(period: str, value: float, values: dict[str, float]) -> bool:
+def _inconsistent_annual_revenue(
+    period: str, value: float, values: dict[str, float]
+) -> bool:
     """年报营收远低于同年三季报，视为源数据占位值而非真实数值。"""
     if not period.endswith("1231"):
         return False
@@ -169,7 +171,10 @@ def query_indicator(
 
     # 上市公司年度营业收入为 0 通常是测试库占位值或缺失映射；
     # 不把它展示成真实的“0.00 元”。
-    if indicator == "operating_revenue" and values_by_field[spec.fields[0]][period] == 0:
+    if (
+        indicator == "operating_revenue"
+        and values_by_field[spec.fields[0]][period] == 0
+    ):
         return IndicatorQueryResult(
             status="insufficient_data",
             indicator=indicator,
@@ -370,8 +375,12 @@ def query_indicator_cagr(
         value=value,
         unit="percent",
         observations=[
-            IndicatorObservation(spec.fields[0], spec.source_tables[0], start_value, start_period),
-            IndicatorObservation(spec.fields[0], spec.source_tables[0], end_value, end_period),
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], start_value, start_period
+            ),
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], end_value, end_period
+            ),
         ],
         available_periods=periods,
     )
@@ -401,7 +410,9 @@ def query_indicator_trend(
         return []
     series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
     rows = [
-        IndicatorObservation(spec.fields[0], spec.source_tables[0], float(value), str(period))
+        IndicatorObservation(
+            spec.fields[0], spec.source_tables[0], float(value), str(period)
+        )
         for period, value in zip(series.periods, series.values)
         if value is not None and (not annual_only or str(period).endswith("1231"))
     ]
@@ -432,8 +443,7 @@ def query_registry_metric_trend(
             company_code, field_name, periods=fetch_periods, as_of=as_of
         )
         sequences[field_name] = [
-            (str(period), value)
-            for period, value in zip(series.periods, series.values)
+            (str(period), value) for period, value in zip(series.periods, series.values)
         ]
 
     rows = evaluate_metric_per_period(metric, sequences)
@@ -515,10 +525,14 @@ def query_quarter_yoy(
     spec = _INDICATORS.get(base_indicator)
     if spec is None or len(spec.fields) != 1:
         return IndicatorQueryResult(
-            status="unsupported", indicator=f"{base_indicator}_quarter_growth", label="单季度同比"
+            status="unsupported",
+            indicator=f"{base_indicator}_quarter_growth",
+            label="单季度同比",
         )
     series = fetch_series(company_code, spec.fields[0], periods=40, as_of=as_of)
-    values = {str(p): float(v) for p, v in zip(series.periods, series.values) if v is not None}
+    values = {
+        str(p): float(v) for p, v in zip(series.periods, series.values) if v is not None
+    }
 
     def quarter_value(period: str) -> float | None:
         if len(period) != 8 or period[4:] not in ("0331", "0630", "0930", "1231"):
@@ -539,7 +553,11 @@ def query_quarter_yoy(
     previous_year = f"{int(target[:4]) - 1}{target[4:]}" if target else ""
     current_value = quarter_value(target) if target else None
     previous_value = quarter_value(previous_year) if previous_year else None
-    growth = yoy_growth(current_value, previous_value) if current_value is not None and previous_value is not None else None
+    growth = (
+        yoy_growth(current_value, previous_value)
+        if current_value is not None and previous_value is not None
+        else None
+    )
     if growth is None:
         return IndicatorQueryResult(
             status="insufficient_data",
@@ -556,8 +574,12 @@ def query_quarter_yoy(
         value=growth * 100,
         unit="percent",
         observations=[
-            IndicatorObservation(spec.fields[0], spec.source_tables[0], current_value, target),
-            IndicatorObservation(spec.fields[0], spec.source_tables[0], previous_value, previous_year),
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], current_value, target
+            ),
+            IndicatorObservation(
+                spec.fields[0], spec.source_tables[0], previous_value, previous_year
+            ),
         ],
         comparison_period=previous_year,
         available_periods=candidates,
@@ -814,22 +836,26 @@ def query_industry_benchmark(
         return None
     try:
         with _company_engine().connect() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT sample_count, mean_value, p25, p50, p75, p95 "
-                    "FROM industry_benchmarks "
-                    "WHERE industry_l1 = :ind AND metric_id = :mid "
-                    "AND period = :p "
-                    "AND statement_scope = 'parent_company' "
-                    "AND dataset_version = :dv LIMIT 1"
-                ),
-                {
-                    "ind": industry_l1,
-                    "mid": metric_id,
-                    "p": period,
-                    "dv": settings.DATASET_VERSION,
-                },
-            ).mappings().first()
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT sample_count, mean_value, p25, p50, p75, p95 "
+                        "FROM industry_benchmarks "
+                        "WHERE industry_l1 = :ind AND metric_id = :mid "
+                        "AND period = :p "
+                        "AND statement_scope = 'parent_company' "
+                        "AND dataset_version = :dv LIMIT 1"
+                    ),
+                    {
+                        "ind": industry_l1,
+                        "mid": metric_id,
+                        "p": period,
+                        "dv": settings.DATASET_VERSION,
+                    },
+                )
+                .mappings()
+                .first()
+            )
         if row is None:
             return None
         return {
@@ -851,21 +877,25 @@ def query_industry_benchmark_series(
     clause = " AND period <= :as_of" if as_of else ""
     try:
         with _company_engine().connect() as conn:
-            rows = conn.execute(
-                text(
-                    "SELECT period, sample_count, mean_value, p25, p50, p75 "
-                    "FROM industry_benchmarks "
-                    "WHERE industry_l1 = :ind AND metric_id = :mid "
-                    "AND statement_scope = 'parent_company' "
-                    "AND dataset_version = :dv" + clause + " ORDER BY period"
-                ),
-                {
-                    "ind": industry_l1,
-                    "mid": metric_id,
-                    "dv": settings.DATASET_VERSION,
-                    "as_of": as_of,
-                },
-            ).mappings().all()
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT period, sample_count, mean_value, p25, p50, p75 "
+                        "FROM industry_benchmarks "
+                        "WHERE industry_l1 = :ind AND metric_id = :mid "
+                        "AND statement_scope = 'parent_company' "
+                        "AND dataset_version = :dv" + clause + " ORDER BY period"
+                    ),
+                    {
+                        "ind": industry_l1,
+                        "mid": metric_id,
+                        "dv": settings.DATASET_VERSION,
+                        "as_of": as_of,
+                    },
+                )
+                .mappings()
+                .all()
+            )
         return [dict(row) for row in rows]
     except Exception:  # noqa: BLE001 — 行业基准缺失按空结果处理
         return []

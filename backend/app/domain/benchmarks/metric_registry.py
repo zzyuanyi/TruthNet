@@ -306,13 +306,7 @@ def _compute_r5_expense_ratio(series: dict[str, list]) -> float | None:
     selling = (series.get("less_selling_dist_exp") or [None])[-1]
     admin = (series.get("less_gerl_admin_exp") or [None])[-1]
     fin = (series.get("less_fin_exp") or [None])[-1]
-    if (
-        rev is None
-        or rev <= 0
-        or selling is None
-        or admin is None
-        or fin is None
-    ):
+    if rev is None or rev <= 0 or selling is None or admin is None or fin is None:
         return None
     expense = selling + admin + fin
     return round(expense / rev, 4)

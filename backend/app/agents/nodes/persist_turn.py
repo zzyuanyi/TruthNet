@@ -496,7 +496,7 @@ def persist_turn_node(state: AgentState) -> dict:
                 {"sid": session_id},
             ).first()
             if existing:
-                existing_user = (existing[1] or settings.SESSION_DEFAULT_USER_ID)
+                existing_user = existing[1] or settings.SESSION_DEFAULT_USER_ID
                 if existing_user != user_id:
                     raise PermissionError(
                         f"session belongs to another user: {session_id}"

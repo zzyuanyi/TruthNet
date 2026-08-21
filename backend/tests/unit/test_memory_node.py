@@ -240,12 +240,9 @@ def test_resolve_lite_indicator_window_covers_full_recent_turns():
     # 第 1 条（最早轮次）含唯一指标词"自由现金流"
     messages = [_msg("assistant", "第1轮讨论了自由现金流和经营现金流")]
     messages.extend(
-        _msg("assistant", f"第{i}轮普通回答，不涉及指标")
-        for i in range(2, recent + 1)
+        _msg("assistant", f"第{i}轮普通回答，不涉及指标") for i in range(2, recent + 1)
     )
-    messages.extend(
-        _msg("user", f"追问 {i}") for i in range(1, recent + 1)
-    )
+    messages.extend(_msg("user", f"追问 {i}") for i in range(1, recent + 1))
 
     ctx = _resolve_lite("这些指标的趋势", messages, None)
 

@@ -20,6 +20,7 @@ from app.domain.finance.statement_type import (
 )
 from app.domain.finance._engine_utils import _ENGINES
 
+
 @dataclass
 class SeriesResult:
     """字段时序读取结果 — 携带口径与覆盖率信息."""
@@ -90,6 +91,8 @@ def _get_engine():
         shared_engines.clear()
 
     return get_engine()
+
+
 def fetch_series(
     company_code: str,
     field_name: str,

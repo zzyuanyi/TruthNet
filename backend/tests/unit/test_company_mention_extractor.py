@@ -203,8 +203,12 @@ def test_existing_cases_no_regression():
 
 
 def test_research_and_event_words_are_not_second_company_mentions():
-    assert [m.text for m in extract_company_mentions("东吴证券的最新研报")] == ["东吴证券"]
-    assert [m.text for m in extract_company_mentions("双良节能最新的市场动态是什么")] == ["双良节能"]
+    assert [m.text for m in extract_company_mentions("东吴证券的最新研报")] == [
+        "东吴证券"
+    ]
+    assert [
+        m.text for m in extract_company_mentions("双良节能最新的市场动态是什么")
+    ] == ["双良节能"]
 
 
 def test_continuous_loss_years_does_not_become_company_mention():
@@ -225,7 +229,9 @@ def test_market_and_research_fillers_do_not_become_company_mentions():
 def test_market_followup_fields_are_not_company_mentions():
     assert extract_company_mentions("换手率") == []
     assert extract_company_mention_result("换手率").had_subject_terminator
-    assert extract_company_mentions("汤姆猫是哪个板块，近期表现如何")[0].text == "汤姆猫"
-    assert [m.text for m in extract_company_mentions("今年以来，贵州茅台的最高价是多少？")] == [
-        "贵州茅台"
-    ]
+    assert (
+        extract_company_mentions("汤姆猫是哪个板块，近期表现如何")[0].text == "汤姆猫"
+    )
+    assert [
+        m.text for m in extract_company_mentions("今年以来，贵州茅台的最高价是多少？")
+    ] == ["贵州茅台"]

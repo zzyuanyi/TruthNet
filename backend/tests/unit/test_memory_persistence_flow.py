@@ -96,8 +96,7 @@ def test_twenty_turns_anaphora_via_persistence(conv_engine):
         ("之前分析的结论是什么", "康美药业综合风险为红色预警..."),
     ]
     turns.extend(
-        (f"第{i}轮继续核查", "康美药业仍作为当前分析对象。")
-        for i in range(10, 20)
+        (f"第{i}轮继续核查", "康美药业仍作为当前分析对象。") for i in range(10, 20)
     )
     # 前 19 轮逐轮持久化
     for q, a in turns:

@@ -29,6 +29,7 @@ def _history_message_limit() -> int:
     """
     return max(int(settings.MEMORY_RECENT_TURNS) * 2, 0)
 
+
 # ── 指代消解关键词表 ────────────────────────────────────────
 # 明确指代（直接指向上一轮主体）
 # 8/19 审查修复：单字"它/他/她/其"用子串匹配会误伤"其他/其它/其余"
@@ -240,7 +241,7 @@ def _resolve_lite(
     # 覆盖完整回读窗口；旧实现硬编码 20 条 = 10 轮，20 轮时漏掉前 10 轮）
     referenced_indicators: list[str] = []
     if messages:
-        for msg in reversed(messages[-_history_message_limit():]):
+        for msg in reversed(messages[-_history_message_limit() :]):
             if hasattr(msg, "content"):
                 text = str(getattr(msg, "content", ""))
             elif isinstance(msg, dict):

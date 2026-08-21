@@ -138,14 +138,18 @@ def test_chitchat_and_market_without_company_skip_entity_lookup():
 def test_market_query_with_exact_company_still_resolves_entity():
     result = resolve_entity_node(_make_state("贵州茅台近期走势如何"))
 
-    assert result["company"] is not None, result["entity_resolution_result"].model_dump()
+    assert result["company"] is not None, result[
+        "entity_resolution_result"
+    ].model_dump()
     assert result["company"].wind_code == "600519.SH"
 
 
 def test_market_query_with_explicit_code_still_resolves_entity():
     result = resolve_entity_node(_make_state("600519.SH 近一周涨跌幅"))
 
-    assert result["company"] is not None, result["entity_resolution_result"].model_dump()
+    assert result["company"] is not None, result[
+        "entity_resolution_result"
+    ].model_dump()
     assert result["company"].wind_code == "600519.SH"
 
 
@@ -153,7 +157,9 @@ def test_bare_market_followup_uses_current_company():
     memory = MemoryContext(current_company_code="600519.SH")
     result = resolve_entity_node(_make_state("换手率", memory))
 
-    assert result["company"] is not None, result["entity_resolution_result"].model_dump()
+    assert result["company"] is not None, result[
+        "entity_resolution_result"
+    ].model_dump()
     assert result["company"].wind_code == "600519.SH"
 
 

@@ -76,7 +76,9 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.warnings = field_warnings
         return result
 
-    aligned = align_by_period(inv=inventories_sr, or_=oper_rev_sr, cost=less_oper_cost_sr)
+    aligned = align_by_period(
+        inv=inventories_sr, or_=oper_rev_sr, cost=less_oper_cost_sr
+    )
     ordered = sorted(aligned.keys())
     current_period = None
     prior_year_period = None

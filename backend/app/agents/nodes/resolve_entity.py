@@ -155,7 +155,9 @@ def resolve_entity_node(state: AgentState) -> dict:
         )
 
         has_exact_company = bool(spot_exact_company_spans(user_query))
-    has_explicit_code = bool(re.search(r"(?<!\d)\d{6}(?:\.[A-Za-z]{2})?(?!\d)", user_query))
+    has_explicit_code = bool(
+        re.search(r"(?<!\d)\d{6}(?:\.[A-Za-z]{2})?(?!\d)", user_query)
+    )
     if (
         not explicit_company_code
         and not has_exact_company
@@ -211,9 +213,7 @@ def resolve_entity_node(state: AgentState) -> dict:
             "工艺",
             "应用领域",
         )
-    ) and not any(
-        marker in user_query for marker in ("所属", "所在")
-    ):
+    ) and not any(marker in user_query for marker in ("所属", "所在")):
         from app.application.services.exact_company_spotter import (
             spot_exact_company_spans,
         )

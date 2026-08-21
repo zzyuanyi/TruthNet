@@ -437,10 +437,15 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
         if used:
             overall_text = output.overall.strip()
             method = "llm"
-            module_evidence: dict[str, list[str]] = {module: [] for module in valid_modules}
+            module_evidence: dict[str, list[str]] = {
+                module: [] for module in valid_modules
+            }
             for segment in all_segments:
                 for evidence_id in segment.evidence_ids:
-                    if evidence_id and evidence_id not in module_evidence[segment.source_module]:
+                    if (
+                        evidence_id
+                        and evidence_id not in module_evidence[segment.source_module]
+                    ):
                         module_evidence[segment.source_module].append(evidence_id)
             all_evidence_ids = list(all_evidence)
             for s in output.suggestions:

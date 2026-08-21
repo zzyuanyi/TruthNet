@@ -102,7 +102,9 @@ def detect_market_quote_field(query: str) -> str | None:
 def requires_market_history(query: str) -> bool:
     """判断问题是否需要完整历史序列，避免用单日快照冒充区间结果。"""
     text = query or ""
-    return bool(_HISTORY_RANGE_RE.search(text)) or any(cue in text for cue in _HISTORY_CUES)
+    return bool(_HISTORY_RANGE_RE.search(text)) or any(
+        cue in text for cue in _HISTORY_CUES
+    )
 
 
 def _history_period(query: str) -> str:
@@ -191,11 +193,11 @@ def query_market_quote(
     return MarketQuoteResult(
         status="ok",
         field=field,
-                value=value,
-                raw_value=raw_value,
-                trade_date=trade_date,
-                period_start=snapshots[-1][0],
-                hit=hit,
+        value=value,
+        raw_value=raw_value,
+        trade_date=trade_date,
+        period_start=snapshots[-1][0],
+        hit=hit,
     )
 
 

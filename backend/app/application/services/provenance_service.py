@@ -109,9 +109,7 @@ def _reuse_existing_evidence(conn, eid: str, ev: dict, existing) -> None:
         new_val = ev.get("value")
         old_empty = old_val is None or old_val == ""
         new_empty = new_val is None or new_val == ""
-        conflict = (
-            not old_empty and not new_empty and str(old_val) != str(new_val)
-        )
+        conflict = not old_empty and not new_empty and str(old_val) != str(new_val)
     if conflict:
         raise EvidenceConflictError(
             f"evidence {eid} 已存在但 canonical 内容不一致: "
@@ -241,12 +239,12 @@ class ProvenanceService:
                     conn.execute(
                         text(
                             "INSERT INTO evidence_refs "
-                                    "(evidence_id, source_type, source_record_id, company_code, "
-                                    " field_path, period, value, unit, statement_scope, "
-                                    " source_title, dataset_version, retrieved_at, "
-                                    " turn_id, trace_id, module, source_table) "
-                                    "VALUES (:eid, :st, :srid, :cc, :fp, :per, :val, :unit, :scope, "
-                                    " :title, :dv, CURRENT_TIMESTAMP, :turn, :trace, :module, :table) "
+                            "(evidence_id, source_type, source_record_id, company_code, "
+                            " field_path, period, value, unit, statement_scope, "
+                            " source_title, dataset_version, retrieved_at, "
+                            " turn_id, trace_id, module, source_table) "
+                            "VALUES (:eid, :st, :srid, :cc, :fp, :per, :val, :unit, :scope, "
+                            " :title, :dv, CURRENT_TIMESTAMP, :turn, :trace, :module, :table) "
                             f"{conflict_clause}"
                         ),
                         {
@@ -269,7 +267,9 @@ class ProvenanceService:
                     )
                     existing = _load_evidence(conn, eid)
                     if existing is None:
-                        raise RuntimeError(f"evidence {eid} insert was ignored unexpectedly")
+                        raise RuntimeError(
+                            f"evidence {eid} insert was ignored unexpectedly"
+                        )
                 _reuse_existing_evidence(conn, eid, ev, existing)
                 written.append(eid)
         return written

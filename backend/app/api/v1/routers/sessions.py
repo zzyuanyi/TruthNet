@@ -142,7 +142,10 @@ def list_sessions(
                             f"WHERE {_active_session_where('s')} "
                             f"AND {_owned_session_where('s')}"
                         ),
-                        {"user_id": owner, "default_user_id": settings.SESSION_DEFAULT_USER_ID},
+                        {
+                            "user_id": owner,
+                            "default_user_id": settings.SESSION_DEFAULT_USER_ID,
+                        },
                     ).scalar_one()
                 )
                 rows = (

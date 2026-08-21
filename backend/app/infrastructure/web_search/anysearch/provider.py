@@ -72,7 +72,17 @@ _EXCHANGE_NAME_QUOTE_CUES = ("上交所", "深交所", "北交所")  # 交易所
 # "上市公告"语义 = 上市日期/公告历史，优先上市日期分支（P1-2：含"公告"的
 # "上市公告书/上市公告日"不应被 announcement 抢占）
 _LISTING_FIRST_CUES = ("上市公告", "上市日期", "什么时候上市", "何时上市")
-_FUNDAMENTAL_CUES = ("财报", "三表", "营收", "净利润", "毛利率", "资产负债", "现金流", "指标", "股东")
+_FUNDAMENTAL_CUES = (
+    "财报",
+    "三表",
+    "营收",
+    "净利润",
+    "毛利率",
+    "资产负债",
+    "现金流",
+    "指标",
+    "股东",
+)
 # 其余带代码 → finance.quote（行情）
 
 # finance.fundamental 子类型细分（P2-11：按 cue 映射 holder/cashflow/balance）
@@ -200,7 +210,9 @@ class AnySearchWebSearchProvider:
             data = resp.json()
             code = data.get("code") if isinstance(data, dict) else None
             if code not in (None, 0, 200):
-                raise _AnySearchRPCError(str(data.get("message") or data.get("msg") or code))
+                raise _AnySearchRPCError(
+                    str(data.get("message") or data.get("msg") or code)
+                )
         except _AnySearchHTTPError as exc:
             self._classify_http(exc.status_code)
             return []
@@ -225,7 +237,7 @@ class AnySearchWebSearchProvider:
 
         hits = _parse_rest_results(data)
         if not hits:
-            raw_results = (((data or {}).get("data") or {}).get("results") or [])
+            raw_results = ((data or {}).get("data") or {}).get("results") or []
             if raw_results:
                 self._stat_inc("parse_empty")
             else:
@@ -376,9 +388,7 @@ class AnySearchWebSearchProvider:
                 raise _AnySearchHTTPError(resp.status_code)
             data = resp.json()
             if "error" in data:
-                raise _AnySearchRPCError(
-                    str(data["error"].get("message", "unknown"))
-                )
+                raise _AnySearchRPCError(str(data["error"].get("message", "unknown")))
             result = data.get("result") or {}
             for part in result.get("content") or []:
                 if part.get("type") == "text":
@@ -461,9 +471,7 @@ def _fundamental_type(ql: str) -> str:
     return "indicator"
 
 
-def _parse_mcp_text_results(
-    text: str, query: str, code: str
-) -> list[SearchResult]:
+def _parse_mcp_text_results(text: str, query: str, code: str) -> list[SearchResult]:
     """MCP 垂类搜索结果（Markdown 文本）→ SearchResult 列表。
 
     MCP search 返回渲染 Markdown：`### N. <标题>\n- {"json":...}`——
@@ -633,7 +641,9 @@ def _filter_relevant_results(
     return relevant
 
 
-_EMPTY_RESULTS_HEADER_RE = re.compile(r"^##\s*Search Results\s*\(\s*0\s*\)", re.IGNORECASE)
+_EMPTY_RESULTS_HEADER_RE = re.compile(
+    r"^##\s*Search Results\s*\(\s*0\s*\)", re.IGNORECASE
+)
 
 
 def _is_empty_results_header(text: str) -> bool:
@@ -735,10 +745,7 @@ def _search_result_from_vertical_json(
     url = str(obj.get("url") or obj.get("link") or "")
     item_title = str(obj.get("title") or obj.get("name") or title or code)
     snippet = str(
-        obj.get("snippet")
-        or obj.get("description")
-        or obj.get("summary")
-        or ""
+        obj.get("snippet") or obj.get("description") or obj.get("summary") or ""
     )
     if not snippet:
         parts = []

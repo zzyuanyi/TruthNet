@@ -21,4 +21,6 @@ def unlocked_numbers(texts: list[str], locked_facts: str) -> set[str]:
         return values
 
     allowed = _values(locked_facts)
-    return {str(value) for text in texts for value in _values(text) if value not in allowed}
+    return {
+        str(value) for text in texts for value in _values(text) if value not in allowed
+    }

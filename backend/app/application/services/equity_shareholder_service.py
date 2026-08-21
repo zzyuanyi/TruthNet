@@ -218,7 +218,11 @@ def materialize_equity_evidence(
                     ),
                     {"eid": eid},
                 ).first()
-                if existing is not None and existing[0] == rel_id and str(existing[2] or "") == value:
+                if (
+                    existing is not None
+                    and existing[0] == rel_id
+                    and str(existing[2] or "") == value
+                ):
                     if result.rowcount:
                         added += 1
                     continue

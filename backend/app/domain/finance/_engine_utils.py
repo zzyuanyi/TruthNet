@@ -89,9 +89,7 @@ def get_engine(settings=None):
             path = Path(settings.SQLITE_PATH)
             if not path.is_absolute():
                 path = _repo_root() / path
-            _ENGINES[key] = create_engine(
-                f"sqlite:///{path.as_posix()}", echo=False
-            )
+            _ENGINES[key] = create_engine(f"sqlite:///{path.as_posix()}", echo=False)
         return _ENGINES[key]
 
 

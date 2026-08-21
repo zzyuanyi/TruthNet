@@ -300,9 +300,17 @@ def _build_cross_module_observation(state: AgentState, claims: list) -> str:
     plan = state.get("plan")
     if plan is None or len(getattr(plan, "requested_modules", []) or []) < 2:
         return ""
-    financial = [c for c in claims if c.claim_type == "financial" and c.severity in _RISK_SEVERITIES]
-    equity = [c for c in claims if c.claim_type == "equity" and c.severity in _RISK_SEVERITIES]
-    events = [c for c in claims if c.claim_type == "event" and c.severity in _RISK_SEVERITIES]
+    financial = [
+        c
+        for c in claims
+        if c.claim_type == "financial" and c.severity in _RISK_SEVERITIES
+    ]
+    equity = [
+        c for c in claims if c.claim_type == "equity" and c.severity in _RISK_SEVERITIES
+    ]
+    events = [
+        c for c in claims if c.claim_type == "event" and c.severity in _RISK_SEVERITIES
+    ]
     cross = [c for c in claims if c.claim_type == "cross_validation"]
     observations: list[str] = []
     if financial and events:
@@ -315,11 +323,17 @@ def _build_cross_module_observation(state: AgentState, claims: list) -> str:
             "财务与股权维度同时出现风险信号，建议把控制关系、关联方和异常科目放在同一证据链中复核"
         )
     if cross:
-        observations.append(f"已有 {len(cross)} 项跨模块不一致，结论应以原始披露核验为先")
+        observations.append(
+            f"已有 {len(cross)} 项跨模块不一致，结论应以原始披露核验为先"
+        )
     if not observations:
         active = [
             label
-            for label, items in (("财务", financial), ("股权", equity), ("事件", events))
+            for label, items in (
+                ("财务", financial),
+                ("股权", equity),
+                ("事件", events),
+            )
             if items
         ]
         if active:
@@ -1036,7 +1050,11 @@ def _company_fact_search_queries(
     """
     base = f"{sec_name} {wind_code} {label} 交易所"
     if fact_key == "listing_date":
-        return [base, f"{sec_name} 上市日期 上市公告书", f"{sec_name} 上市公告 上市日期"]
+        return [
+            base,
+            f"{sec_name} 上市日期 上市公告书",
+            f"{sec_name} 上市公告 上市日期",
+        ]
     if fact_key == "ipo_price":
         return [
             f"{sec_name} {wind_code} 首发价格 发行价 公告",
@@ -1381,7 +1399,9 @@ def _answer_directional_events(state: AgentState) -> dict | None:
     """只渲染用户请求方向的事件，避免混入相反情绪。"""
     plan = state.get("plan")
     direction = getattr(plan, "event_sentiment", "all") if plan else "all"
-    list_requested = bool(getattr(plan, "event_list_requested", False)) if plan else False
+    list_requested = (
+        bool(getattr(plan, "event_list_requested", False)) if plan else False
+    )
     if direction == "all" and not list_requested:
         return None
     results = state.get("results")
@@ -1392,8 +1412,7 @@ def _answer_directional_events(state: AgentState) -> dict | None:
         (
             item
             for item in (events.timeline or [])
-            if direction == "all"
-            or str(item.get("sentiment", "") or "") == direction
+            if direction == "all" or str(item.get("sentiment", "") or "") == direction
         ),
         key=lambda item: str(item.get("date") or ""),
         reverse=True,
@@ -1412,7 +1431,9 @@ def _answer_directional_events(state: AgentState) -> dict | None:
             date_text = str(item.get("date") or "")
             title = str(item.get("title") or item.get("category") or "公告")
             category = str(item.get("category") or "")
-            evidence_id = ", ".join(str(i) for i in (item.get("evidence_ids") or []) if i)
+            evidence_id = ", ".join(
+                str(i) for i in (item.get("evidence_ids") or []) if i
+            )
             detail = f"{date_text} {title}".strip()
             if category and category not in title:
                 detail += f"（{category}）"
@@ -1480,9 +1501,7 @@ def _format_research_insights(query: str, insights: list[dict]) -> str:
             title = str(item.get("source_title") or "研报").strip()
             source = f"{org} · {title}" if org else title
             content = (
-                str(item.get("content") or title)
-                .replace("\n", " ")
-                .replace("|", "｜")
+                str(item.get("content") or title).replace("\n", " ").replace("|", "｜")
             )
             rows.append(
                 f"| {date_text} | {source.replace('|', '｜')} | {content[:140]} |"
@@ -1644,7 +1663,9 @@ def _indicator_impact_text(
     if len(trend_rows) >= 2 and trend_rows[-2].value:
         previous, current = trend_rows[-2], trend_rows[-1]
         growth = (current.value / abs(previous.value) - 1) * 100
-        change = f"{previous.period[:4]}年至{current.period[:4]}年{_format_growth(growth)}"
+        change = (
+            f"{previous.period[:4]}年至{current.period[:4]}年{_format_growth(growth)}"
+        )
         if "激增" in query and growth <= 20:
             return f"现有年度序列显示{change}，不支持“应收账款激增”这一前提。"
         return (
@@ -1830,7 +1851,11 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
                 f"{row.period[:4]}年 {_format_indicator_value(row.value, result.unit)}"
                 for row in rows
             )
-            direction = "持续下降" if all(a.value > b.value for a, b in zip(rows, rows[1:])) else "未呈连续下降"
+            direction = (
+                "持续下降"
+                if all(a.value > b.value for a, b in zip(rows, rows[1:]))
+                else "未呈连续下降"
+            )
             answer = f"{name_code}的{result.label}年度序列：{values}。{direction}。"
             if answer_operation == "causal_trend":
                 answer += "仅凭该指标序列无法确认原因，需要结合成本结构和公告证据。"
@@ -1883,7 +1908,9 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
 
     if answer_operation == "cagr":
         start_period = result.observations[0].period if result.observations else ""
-        end_period = result.observations[-1].period if result.observations else result.period
+        end_period = (
+            result.observations[-1].period if result.observations else result.period
+        )
         answer = (
             f"{name_code}的{result.label}为 {result.value:.2f}%"
             f"（{start_period[:4]}-{end_period[:4]}年，母公司口径）。"
@@ -2988,7 +3015,9 @@ def generate_answer_node(state: AgentState) -> dict:
         if intent == "industry_benchmark":
             return _answer_industry_benchmark(state)
         if intent == "unsupported_indicator":
-            answer = f"当前数据覆盖范围暂不支持查询「{user_query}」，无法可靠返回该指标。"
+            answer = (
+                f"当前数据覆盖范围暂不支持查询「{user_query}」，无法可靠返回该指标。"
+            )
             _emit_segment(state, answer)
             return {
                 "claims": [],
@@ -3331,7 +3360,9 @@ def generate_answer_node(state: AgentState) -> dict:
             if plan.intent == "trade_execution"
             else f"{name_code}：系统不提供是否买入或卖出的投资建议。"
         )
-        answer = boundary + "可以继续查询客观行情，或核查财务、股权与公告风险后自行判断。"
+        answer = (
+            boundary + "可以继续查询客观行情，或核查财务、股权与公告风险后自行判断。"
+        )
         _emit_segment(state, answer)
         return {
             "claims": [],
@@ -3492,7 +3523,9 @@ def generate_answer_node(state: AgentState) -> dict:
 
     append_segment(conclusion)
     requested_period = getattr(plan, "requested_period_text", "") if plan else ""
-    financial_claims = [c for c in claims if getattr(c, "claim_type", "") == "financial"]
+    financial_claims = [
+        c for c in claims if getattr(c, "claim_type", "") == "financial"
+    ]
     if (
         requested_period
         and getattr(plan, "as_of_kind", "") == "report_period"
@@ -3537,7 +3570,14 @@ def generate_answer_node(state: AgentState) -> dict:
             as_of_r = plan_r.as_of.strftime("%Y%m%d") if plan_r and plan_r.as_of else ""
             list_query = any(
                 cue in user_query
-                for cue in ("哪些个股", "竞争者", "竞争对手", "新兴公司", "新兴企业", "值得关注")
+                for cue in (
+                    "哪些个股",
+                    "竞争者",
+                    "竞争对手",
+                    "新兴公司",
+                    "新兴企业",
+                    "值得关注",
+                )
             )
             insights = search_research_insights_sync(
                 user_query, top_k=8 if list_query else 3, as_of=as_of_r

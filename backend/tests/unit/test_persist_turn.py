@@ -252,7 +252,9 @@ def test_persist_turn_writes_explicit_user_id(monkeypatch, sqlite_engine):
     pt.persist_turn_node(_make_state(user_id="user_a"))
     with sqlite_engine.connect() as conn:
         user_id = conn.execute(
-            text("SELECT user_id FROM conversation_sessions WHERE session_id='ses_test'")
+            text(
+                "SELECT user_id FROM conversation_sessions WHERE session_id='ses_test'"
+            )
         ).scalar_one()
     assert user_id == "user_a"
 
@@ -267,7 +269,9 @@ def test_persist_turn_rejects_cross_user_session_reuse(monkeypatch, sqlite_engin
 
     assert result["module_status"]["persist_turn"].state == "partial"
     with sqlite_engine.connect() as conn:
-        count = conn.execute(text("SELECT COUNT(*) FROM conversation_turns")).scalar_one()
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM conversation_turns")
+        ).scalar_one()
     assert count == 1
 
 

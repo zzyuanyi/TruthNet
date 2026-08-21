@@ -76,7 +76,9 @@ def single_quarter_by_period(cumulative_values: list, periods: list) -> list:
     与 single_quarter(list) 的兼容实现不同，这里不会把数组里的上一条记录
     当成上一季度，避免缺期或错期时盲目相减。
     """
-    value_by_period = {str(p): v for p, v in zip(periods, cumulative_values, strict=False)}
+    value_by_period = {
+        str(p): v for p, v in zip(periods, cumulative_values, strict=False)
+    }
     result: list = []
     for period, current in zip(periods, cumulative_values, strict=False):
         p = str(period or "")

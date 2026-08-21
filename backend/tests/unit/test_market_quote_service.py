@@ -76,7 +76,9 @@ def test_historical_range_does_not_use_daily_snapshot(monkeypatch):
     monkeypatch.setattr(
         service,
         "web_search",
-        lambda query, **kwargs: (calls.append(query) or [_hit("20260820", "close=110")]),
+        lambda query, **kwargs: (
+            calls.append(query) or [_hit("20260820", "close=110")]
+        ),
     )
 
     result = service.query_market_quote(
@@ -96,7 +98,9 @@ def test_history_period_preserves_week_and_three_month_ranges(monkeypatch):
     monkeypatch.setattr(
         service,
         "web_search",
-        lambda query, **kwargs: (calls.append(query) or [_hit("20260820", "close=110")]),
+        lambda query, **kwargs: (
+            calls.append(query) or [_hit("20260820", "close=110")]
+        ),
     )
     for query, expected in (("近一周涨跌幅", "7d"), ("近3月涨跌幅", "90d")):
         service.query_market_quote(

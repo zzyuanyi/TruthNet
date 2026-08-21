@@ -85,12 +85,18 @@ def test_extract_ipo_price_from_hits():
 
 
 def test_extract_executive_compensation_excerpt_requires_salary_context():
-    assert extract_executive_compensation_excerpt(
-        [_hit(snippet="公司2024年度高管薪酬披露摘要")]
-    ) == "公司2024年度高管薪酬披露摘要"
-    assert extract_executive_compensation_excerpt(
-        [_hit(snippet="公司2024年度营业收入增长")]
-    ) is None
+    assert (
+        extract_executive_compensation_excerpt(
+            [_hit(snippet="公司2024年度高管薪酬披露摘要")]
+        )
+        == "公司2024年度高管薪酬披露摘要"
+    )
+    assert (
+        extract_executive_compensation_excerpt(
+            [_hit(snippet="公司2024年度营业收入增长")]
+        )
+        is None
+    )
 
 
 # ── 8/19 审查：上市语义负例（非上市日期不得误填）─────────────

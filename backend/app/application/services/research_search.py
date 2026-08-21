@@ -242,7 +242,9 @@ def _pass_answer_type_gate(hit: dict, query: str) -> bool:
     if any(cue in query for cue in ("首发价格", "首发价", "发行价格", "发行价")):
         return any(
             (not anchor or anchor in sentence)
-            and any(cue in sentence for cue in ("首发价格", "首发价", "发行价格", "发行价"))
+            and any(
+                cue in sentence for cue in ("首发价格", "首发价", "发行价格", "发行价")
+            )
             for sentence in sentences
         )
     if "产业链" in query:
@@ -255,42 +257,62 @@ def _pass_answer_type_gate(hit: dict, query: str) -> bool:
     if "市场规模" in query or "市场空间" in query or "市场容量" in query:
         return any(
             (not anchor or anchor in sentence)
-            and
-            any(cue in sentence for cue in ("市场规模", "市场空间", "市场容量", "行业规模"))
+            and any(
+                cue in sentence
+                for cue in ("市场规模", "市场空间", "市场容量", "行业规模")
+            )
             for sentence in sentences
         )
     if "生产工艺" in query:
         return bool(anchor) and any(
             anchor in sentence
-            and any(cue in sentence for cue in ("生产工艺", "制备工艺", "生产流程", "制备流程"))
+            and any(
+                cue in sentence
+                for cue in ("生产工艺", "制备工艺", "生产流程", "制备流程")
+            )
             for sentence in sentences
         )
     if "应用领域" in query:
         return bool(anchor) and any(
             anchor in sentence
-            and any(cue in sentence for cue in ("应用领域", "应用于", "用于", "应用场景"))
+            and any(
+                cue in sentence for cue in ("应用领域", "应用于", "用于", "应用场景")
+            )
             for sentence in sentences
         )
     if "挑战" in query:
         return any(
             (not anchor or anchor in sentence)
-            and
-            any(cue in sentence for cue in ("挑战", "风险", "压力", "瓶颈", "集采", "降价", "监管", "竞争加剧"))
+            and any(
+                cue in sentence
+                for cue in (
+                    "挑战",
+                    "风险",
+                    "压力",
+                    "瓶颈",
+                    "集采",
+                    "降价",
+                    "监管",
+                    "竞争加剧",
+                )
+            )
             for sentence in sentences
         )
     if "整体表现" in query:
         return any(
             (not anchor or anchor in sentence)
             and "行业" in sentence
-            and any(cue in sentence for cue in ("增长", "下降", "回升", "承压", "景气", "增速", "表现"))
+            and any(
+                cue in sentence
+                for cue in ("增长", "下降", "回升", "承压", "景气", "增速", "表现")
+            )
             for sentence in sentences
         )
     if any(cue in query for cue in ("技术", "研发", "创新")):
         progress_cues = ("技术", "研发", "在研", "开发", "创新", "临床", "试验", "迭代")
         return any(
             (not anchor or anchor in sentence)
-            and
-            any(cue in sentence for cue in progress_cues)
+            and any(cue in sentence for cue in progress_cues)
             and any(cue in sentence for cue in _TECH_OBJECT_CUES)
             for sentence in sentences
         )

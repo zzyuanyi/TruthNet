@@ -34,9 +34,7 @@ def _reset_settings(monkeypatch):
 
 
 def _warnings(caplog) -> list[logging.LogRecord]:
-    return [
-        r for r in caplog.records if r.name == "app.core.write_guard"
-    ]
+    return [r for r in caplog.records if r.name == "app.core.write_guard"]
 
 
 class TestAssertDbWritable:
@@ -187,6 +185,8 @@ class TestWriteGuardWiring:
             "company": None,
         }
         result = pt.persist_turn_node(state)
-        assert result.get("module_status", {}).get("persist_turn", {}).get(
-            "state"
-        ) in (None, "ok", "partial")
+        assert result.get("module_status", {}).get("persist_turn", {}).get("state") in (
+            None,
+            "ok",
+            "partial",
+        )

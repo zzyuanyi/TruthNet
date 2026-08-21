@@ -260,7 +260,10 @@ def test_mcp_rpc_error_returns_empty(monkeypatch):
         status_code = 200
 
         def json(self):
-            return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "bad params"}}
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32602, "message": "bad params"},
+            }
 
     class _FakeClient:
         def __init__(self, *a, **k):
@@ -396,7 +399,11 @@ def test_parse_rest_results_contract():
                     "snippet": "医疗器械行业趋势摘要",
                     "content": "长正文",
                 },
-                {"name": "备用标题", "link": "https://example.com/b", "content": "正文"},
+                {
+                    "name": "备用标题",
+                    "link": "https://example.com/b",
+                    "content": "正文",
+                },
             ]
         },
     }
@@ -436,7 +443,9 @@ def test_relevance_terms_keep_subject_drop_generic_words():
 
 def test_relevance_filter_accepts_subject_hit():
     hits = [
-        SearchResult(title="医疗器械行业观察", snippet="智能化趋势", source="anysearch"),
+        SearchResult(
+            title="医疗器械行业观察", snippet="智能化趋势", source="anysearch"
+        ),
         SearchResult(title="无关新闻", snippet="旅游与体育", source="anysearch"),
     ]
     out = _filter_relevant_results("医疗器械行业技术趋势", hits)
@@ -507,7 +516,10 @@ def test_mcp_empty_text_counts_real_empty(monkeypatch):
         monkeypatch,
         resp=_FakeResp(
             status_code=200,
-            payload={"jsonrpc": "2.0", "result": {"content": [{"type": "text", "text": ""}]}},
+            payload={
+                "jsonrpc": "2.0",
+                "result": {"content": [{"type": "text", "text": ""}]},
+            },
         ),
     )
     provider = AnySearchWebSearchProvider(api_key="")
@@ -525,7 +537,9 @@ def test_mcp_text_no_parse_counts_parse_empty(monkeypatch):
             status_code=200,
             payload={
                 "jsonrpc": "2.0",
-                "result": {"content": [{"type": "text", "text": "## Search Results (0)"}]},
+                "result": {
+                    "content": [{"type": "text", "text": "## Search Results (0)"}]
+                },
             },
         ),
     )
@@ -539,7 +553,8 @@ def test_mcp_text_no_parse_counts_parse_empty(monkeypatch):
 def test_search_results_truncated_to_count(monkeypatch):
     """审查 P2-1：解析后防御性截断到 count。"""
     text = "## Search Results (5 results)\n\n" + "\n".join(
-        f"### {i}. t{i}\n- {{\"close\":{i},\"trade_date\":\"2026081{i}\"}}" for i in range(1, 6)
+        f'### {i}. t{i}\n- {{"close":{i},"trade_date":"2026081{i}"}}'
+        for i in range(1, 6)
     )
     provider = AnySearchWebSearchProvider(api_key="")
 
@@ -555,14 +570,16 @@ def test_search_none_query_returns_empty(monkeypatch):
     """审查 P2-4：query=None 不抛异常，返回 []。"""
     provider = AnySearchWebSearchProvider(api_key="")
     monkeypatch.setattr(
-        provider, "_vertical_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError())
+        provider,
+        "_vertical_search",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError()),
     )
     assert _run(provider.search(None)) == []
 
 
 def test_search_bad_max_results_defaults(monkeypatch):
     """审查 P2-5：max_results 非数值 → 默认值不抛异常。"""
-    text = "## Search Results (1)\n\n### 1. t\n- {\"close\":1,\"trade_date\":\"20260818\"}"
+    text = '## Search Results (1)\n\n### 1. t\n- {"close":1,"trade_date":"20260818"}'
     provider = AnySearchWebSearchProvider(api_key="")
 
     async def _fake_mcp_call(tool, args):
