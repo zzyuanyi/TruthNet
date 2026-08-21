@@ -1,0 +1,2712 @@
+{
+  "schema_version": "phasee-member-a-v1",
+  "generated_at": "2026-08-21T23:04:17+08:00",
+  "git_sha": "571be864238b400f17e56e587efe402435934f2f",
+  "facts": {
+    "database": "truthnet_test",
+    "mysql_version": "8.0.46",
+    "dataset_versions": [
+      {
+        "dataset_version": "competition-2026",
+        "row_count": 6134
+      }
+    ],
+    "table_counts": {
+      "companies": 6134,
+      "balance_sheet": 39001,
+      "income_statement": 38210,
+      "cash_flow": 39965,
+      "top_shareholders": 646449,
+      "announcements": 7311,
+      "research_reports": 55214
+    },
+    "graph_backend": "networkx",
+    "llm_backend": "mock",
+    "web_search_backend": "off",
+    "configured_dataset_version": "competition-2026"
+  },
+  "route": {
+    "metrics": {
+      "total": 13,
+      "required_hits": 10,
+      "required_hit_rate": 0.7692307692307693,
+      "exact_matches": 10,
+      "exact_match_rate": 0.7692307692307693,
+      "micro_precision": 1.0,
+      "by_category": {
+        "财务": {
+          "total": 4,
+          "required_hit": 1,
+          "exact_match": 1
+        },
+        "综合诊断": {
+          "total": 3,
+          "required_hit": 3,
+          "exact_match": 3
+        },
+        "股权": {
+          "total": 3,
+          "required_hit": 3,
+          "exact_match": 3
+        },
+        "舆情": {
+          "total": 3,
+          "required_hit": 3,
+          "exact_match": 3
+        }
+      },
+      "by_module": {
+        "finance": {
+          "tp": 4,
+          "fp": 0,
+          "fn": 3,
+          "tn": 6,
+          "precision": 1.0,
+          "recall": 0.5714285714285714
+        },
+        "equity": {
+          "tp": 6,
+          "fp": 0,
+          "fn": 0,
+          "tn": 7,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "events": {
+          "tp": 6,
+          "fp": 0,
+          "fn": 0,
+          "tn": 7,
+          "precision": 1.0,
+          "recall": 1.0
+        }
+      }
+    },
+    "records": [
+      {
+        "case_id": "F01",
+        "category": "财务",
+        "question": "康美药业营业收入如何？",
+        "company_code": "600518.SH",
+        "plan_intent": "indicator",
+        "planned_modules": [],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "finance"
+        ],
+        "actual_modules": [],
+        "missing_modules": [
+          "finance"
+        ],
+        "extra_modules": [],
+        "required_hit": false,
+        "exact_match": false
+      },
+      {
+        "case_id": "F02",
+        "category": "财务",
+        "question": "康美药业资产负债情况如何？",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "finance"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 1162
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "finance"
+        ],
+        "actual_modules": [
+          "finance"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "F03",
+        "category": "财务",
+        "question": "康美药业经营现金流如何？",
+        "company_code": "600518.SH",
+        "plan_intent": "indicator",
+        "planned_modules": [],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "finance"
+        ],
+        "actual_modules": [],
+        "missing_modules": [
+          "finance"
+        ],
+        "extra_modules": [],
+        "required_hit": false,
+        "exact_match": false
+      },
+      {
+        "case_id": "F04",
+        "category": "财务",
+        "question": "康美药业应收账款情况如何？",
+        "company_code": "600518.SH",
+        "plan_intent": "indicator",
+        "planned_modules": [],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "finance"
+        ],
+        "actual_modules": [],
+        "missing_modules": [
+          "finance"
+        ],
+        "extra_modules": [],
+        "required_hit": false,
+        "exact_match": false
+      },
+      {
+        "case_id": "D01",
+        "category": "综合诊断",
+        "question": "康美药业有造假风险吗？",
+        "company_code": "600518.SH",
+        "plan_intent": "diagnose",
+        "planned_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 529
+          },
+          "equity": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 200
+          },
+          "events": {
+            "state": "partial",
+            "error_code": "NO_ANNOUNCEMENT_DATA",
+            "recoverable": true,
+            "duration_ms": 12
+          }
+        },
+        "expected_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "actual_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "D02",
+        "category": "综合诊断",
+        "question": "综合分析康美药业的财务、股权和舆情风险",
+        "company_code": "600518.SH",
+        "plan_intent": "diagnose",
+        "planned_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 507
+          },
+          "equity": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 200
+          },
+          "events": {
+            "state": "partial",
+            "error_code": "NO_ANNOUNCEMENT_DATA",
+            "recoverable": true,
+            "duration_ms": 2
+          }
+        },
+        "expected_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "actual_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "D03",
+        "category": "综合诊断",
+        "question": "康美药业是否存在财务、股权和公告综合风险？",
+        "company_code": "600518.SH",
+        "plan_intent": "diagnose",
+        "planned_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 511
+          },
+          "equity": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 200
+          },
+          "events": {
+            "state": "partial",
+            "error_code": "NO_ANNOUNCEMENT_DATA",
+            "recoverable": true,
+            "duration_ms": 2
+          }
+        },
+        "expected_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "actual_modules": [
+          "finance",
+          "equity",
+          "events"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "E01",
+        "category": "股权",
+        "question": "康美药业的前十大股东是谁？",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "equity"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 200
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "equity"
+        ],
+        "actual_modules": [
+          "equity"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "E02",
+        "category": "股权",
+        "question": "查询康美药业的股权结构",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "equity"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 200
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "equity"
+        ],
+        "actual_modules": [
+          "equity"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "E03",
+        "category": "股权",
+        "question": "查一下康美药业主要股东持股比例",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "equity"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "success",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": 200
+          },
+          "events": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          }
+        },
+        "expected_modules": [
+          "equity"
+        ],
+        "actual_modules": [
+          "equity"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "V01",
+        "category": "舆情",
+        "question": "康美药业最近有哪些公告？",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "events"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "partial",
+            "error_code": "NO_ANNOUNCEMENT_DATA",
+            "recoverable": true,
+            "duration_ms": 2
+          }
+        },
+        "expected_modules": [
+          "events"
+        ],
+        "actual_modules": [
+          "events"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "V02",
+        "category": "舆情",
+        "question": "康美药业是否有负面舆情？",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "events"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "partial",
+            "error_code": "NO_ANNOUNCEMENT_DATA",
+            "recoverable": true,
+            "duration_ms": 2
+          }
+        },
+        "expected_modules": [
+          "events"
+        ],
+        "actual_modules": [
+          "events"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      },
+      {
+        "case_id": "V03",
+        "category": "舆情",
+        "question": "查看康美药业近期事件",
+        "company_code": "600518.SH",
+        "plan_intent": "simple_query",
+        "planned_modules": [
+          "events"
+        ],
+        "module_status": {
+          "finance": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "equity": {
+            "state": "skipped",
+            "error_code": null,
+            "recoverable": false,
+            "duration_ms": null
+          },
+          "events": {
+            "state": "partial",
+            "error_code": "NO_ANNOUNCEMENT_DATA",
+            "recoverable": true,
+            "duration_ms": 2
+          }
+        },
+        "expected_modules": [
+          "events"
+        ],
+        "actual_modules": [
+          "events"
+        ],
+        "missing_modules": [],
+        "extra_modules": [],
+        "required_hit": true,
+        "exact_match": true
+      }
+    ]
+  },
+  "blind_review": {
+    "diagnostics": {
+      "candidate_count": 55,
+      "company_errors": [],
+      "candidate_rule_counts": {
+        "R3": 10,
+        "R5": 10,
+        "R4": 8,
+        "R2": 5,
+        "R1": 8,
+        "R6": 14
+      }
+    },
+    "records": [
+      {
+        "company_code": "000860.SZ",
+        "company_name": "顺鑫农业",
+        "question": "顺鑫农业财务风险如何？",
+        "numeric_mentions": [
+          "36.8%",
+          "-26.2%",
+          "63.1%"
+        ],
+        "claim": {
+          "claim_id": "clm_4a4c4be8e4eebbc5",
+          "text": "顺鑫农业：应收账款增速（36.8%）显著高于营业收入增速（-26.2%），增速差达 63.1%，收入质量存在明显下降风险（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R1",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_2418297e34e2b51e",
+            "ev_fin_1c347803fe40849e"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_005",
+          "trace_id": "phasee_blind_trace_005",
+          "company_code": "000860.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_2418297e34e2b51e",
+            "source_type": "financial_statement",
+            "source_record_id": "000860.SZ|20260331|408006000",
+            "field_path": "acct_rcv",
+            "period": "20260331",
+            "value": "105248000.0",
+            "source_title": "应收–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_005",
+            "trace_id": "phasee_blind_trace_005",
+            "company_code": "000860.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（36.8%）显著高于营业收入增速（-26.2%），增速差达 63.1%，收入质量存在明显下降风险（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_1c347803fe40849e",
+            "source_type": "financial_statement",
+            "source_record_id": "000860.SZ|20260331|408006000",
+            "field_path": "oper_rev",
+            "period": "20260331",
+            "value": "2343220000.0",
+            "source_title": "应收–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_005",
+            "trace_id": "phasee_blind_trace_005",
+            "company_code": "000860.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（36.8%）显著高于营业收入增速（-26.2%），增速差达 63.1%，收入质量存在明显下降风险（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "增速差需要当前期与同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 1
+      },
+      {
+        "company_code": "688266.SH",
+        "company_name": "泽璟制药",
+        "question": "泽璟制药财务风险如何？",
+        "numeric_mentions": [
+          "0 个季度"
+        ],
+        "claim": {
+          "claim_id": "clm_5925b03a1eab9182",
+          "text": "泽璟制药：净利润为正但经营现金流近 0 个季度为负，现金流/利润比（0.28）低于健康水平（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R2",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_13e55d7077812d01",
+            "ev_fin_2c7e75deaf1bf79e"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_004",
+          "trace_id": "phasee_blind_trace_004",
+          "company_code": "688266.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_13e55d7077812d01",
+            "source_type": "financial_statement",
+            "source_record_id": "688266.SH|20260331|408006000",
+            "field_path": "net_profit",
+            "period": "20260331",
+            "value": "636523000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_004",
+            "trace_id": "phasee_blind_trace_004",
+            "company_code": "688266.SH",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "净利润为正但经营现金流近 0 个季度为负，现金流/利润比（0.28）低于健康水平（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_2c7e75deaf1bf79e",
+            "source_type": "financial_statement",
+            "source_record_id": "688266.SH|20260331|408006000",
+            "field_path": "oper",
+            "period": "20260331",
+            "value": "841868000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_004",
+            "trace_id": "phasee_blind_trace_004",
+            "company_code": "688266.SH",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "cash_flow",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "净利润为正但经营现金流近 0 个季度为负，现金流/利润比（0.28）低于健康水平（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "连续季度结论需要多期利润/现金流，证据仅含单一期次"
+        },
+        "plausibility_flags": [
+          "触发风险 Claim 却写成“近 0 个季度为负”，需核对模板分支"
+        ],
+        "sample_index": 2
+      },
+      {
+        "company_code": "600476.SH",
+        "company_name": "*ST湘邮",
+        "question": "*ST湘邮财务风险如何？",
+        "numeric_mentions": [
+          "18.6%",
+          "76.3%"
+        ],
+        "claim": {
+          "claim_id": "clm_60769469a269d0f6",
+          "text": "*ST湘邮：货币资金（18.6%）和有息负债（76.3%）占总资产比例均偏高，'存贷双高'需要关注。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R3",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_9091b0eeaab029ad",
+            "ev_fin_08d7165f761b1159"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_001",
+          "trace_id": "phasee_blind_trace_001",
+          "company_code": "600476.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_9091b0eeaab029ad",
+            "source_type": "financial_statement",
+            "source_record_id": "600476.SH|20260331|408006000",
+            "field_path": "monetary_cap",
+            "period": "20260331",
+            "value": "81988800.0",
+            "source_title": "存贷双高 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_001",
+            "trace_id": "phasee_blind_trace_001",
+            "company_code": "600476.SH",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金（18.6%）和有息负债（76.3%）占总资产比例均偏高，'存贷双高'需要关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_08d7165f761b1159",
+            "source_type": "financial_statement",
+            "source_record_id": "600476.SH|20260331|408006000",
+            "field_path": "borrow",
+            "period": "20260331",
+            "value": "301341000.0|34446800.0",
+            "source_title": "存贷双高 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_001",
+            "trace_id": "phasee_blind_trace_001",
+            "company_code": "600476.SH",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金（18.6%）和有息负债（76.3%）占总资产比例均偏高，'存贷双高'需要关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "占总资产比例无法复算，缺少字段：tot_assets"
+        },
+        "plausibility_flags": [],
+        "sample_index": 3
+      },
+      {
+        "company_code": "920680.BJ",
+        "company_name": "广道退",
+        "question": "广道退财务风险如何？",
+        "numeric_mentions": [
+          "-46.0%",
+          "-96.3%",
+          "50.3%"
+        ],
+        "claim": {
+          "claim_id": "clm_02d867a27972ec24",
+          "text": "广道退：存货增速（-46.0%）远超营业收入增速（-96.3%），增速差达 50.3%，存货积压风险显著（数据期：2025-06-30，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R4",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_68acc39a3670c232",
+            "ev_fin_e86151a3bf94fb8d"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_003",
+          "trace_id": "phasee_blind_trace_003",
+          "company_code": "920680.BJ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_68acc39a3670c232",
+            "source_type": "financial_statement",
+            "source_record_id": "920680.BJ|20250630|408006000",
+            "field_path": "inventories",
+            "period": "20250630",
+            "value": "11436300.0",
+            "source_title": "存货–营收背离 · 2025-06-30 · 母公司报表",
+            "turn_id": "phasee_blind_turn_003",
+            "trace_id": "phasee_blind_trace_003",
+            "company_code": "920680.BJ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速（-46.0%）远超营业收入增速（-96.3%），增速差达 50.3%，存货积压风险显著（数据期：2025-06-30，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_e86151a3bf94fb8d",
+            "source_type": "financial_statement",
+            "source_record_id": "920680.BJ|20250630|408006000",
+            "field_path": "oper_rev",
+            "period": "20250630",
+            "value": "2648730.0",
+            "source_title": "存货–营收背离 · 2025-06-30 · 母公司报表",
+            "turn_id": "phasee_blind_turn_003",
+            "trace_id": "phasee_blind_trace_003",
+            "company_code": "920680.BJ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速（-46.0%）远超营业收入增速（-96.3%），增速差达 50.3%，存货积压风险显著（数据期：2025-06-30，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "存货/营收增速差需要同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 4
+      },
+      {
+        "company_code": "600476.SH",
+        "company_name": "*ST湘邮",
+        "question": "*ST湘邮财务风险如何？",
+        "numeric_mentions": [
+          "+5.3pp"
+        ],
+        "claim": {
+          "claim_id": "clm_72e2b16f32ecdb17",
+          "text": "*ST湘邮：毛利率（+5.3pp）明显偏离历史水平，建议关注。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R5",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_d1ed841f47fe4a4e",
+            "ev_fin_3d52b3160eff6e81"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_001",
+          "trace_id": "phasee_blind_trace_001",
+          "company_code": "600476.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_d1ed841f47fe4a4e",
+            "source_type": "financial_statement",
+            "source_record_id": "600476.SH|20260331|408006000",
+            "field_path": "oper_rev",
+            "period": "20260331",
+            "value": "91684800.0",
+            "source_title": "毛利率/费用率异常 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_001",
+            "trace_id": "phasee_blind_trace_001",
+            "company_code": "600476.SH",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率（+5.3pp）明显偏离历史水平，建议关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_3d52b3160eff6e81",
+            "source_type": "financial_statement",
+            "source_record_id": "600476.SH|20260331|408006000",
+            "field_path": "oper_cost",
+            "period": "20260331",
+            "value": "73188300.0",
+            "source_title": "毛利率/费用率异常 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_001",
+            "trace_id": "phasee_blind_trace_001",
+            "company_code": "600476.SH",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率（+5.3pp）明显偏离历史水平，建议关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "历史偏离需要历史序列，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 5
+      },
+      {
+        "company_code": "600466.SH",
+        "company_name": "*ST蓝光",
+        "question": "*ST蓝光财务风险如何？",
+        "numeric_mentions": [
+          "0.6%"
+        ],
+        "claim": {
+          "claim_id": "clm_485440114e4058da",
+          "text": "*ST蓝光：其他应收款增速较快（0.6%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R6",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_1c694b4ef81940e7",
+            "ev_fin_92d095993be0ab7f"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_011",
+          "trace_id": "phasee_blind_trace_011",
+          "company_code": "600466.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_1c694b4ef81940e7",
+            "source_type": "financial_statement",
+            "source_record_id": "600466.SH|20251231|408006000",
+            "field_path": "oth_rcv",
+            "period": "20251231",
+            "value": "47801500000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_011",
+            "trace_id": "phasee_blind_trace_011",
+            "company_code": "600466.SH",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（0.6%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_92d095993be0ab7f",
+            "source_type": "financial_statement",
+            "source_record_id": "600466.SH|20251231|408006000",
+            "field_path": "tot_assets",
+            "period": "20251231",
+            "value": "49063100000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_011",
+            "trace_id": "phasee_blind_trace_011",
+            "company_code": "600466.SH",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（0.6%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "其他应收款增速需要基期值，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 6
+      },
+      {
+        "company_code": "002432.SZ",
+        "company_name": "九安医疗",
+        "question": "九安医疗财务风险如何？",
+        "numeric_mentions": [
+          "239.2%",
+          "91.4%",
+          "147.8%"
+        ],
+        "claim": {
+          "claim_id": "clm_1d29e2b8fdec6890",
+          "text": "九安医疗：应收账款增速（239.2%）显著高于营业收入增速（91.4%），增速差达 147.8%，收入质量存在明显下降风险（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R1",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_99a448a6e47242a5",
+            "ev_fin_be7651aaf0a166ca"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_006",
+          "trace_id": "phasee_blind_trace_006",
+          "company_code": "002432.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_99a448a6e47242a5",
+            "source_type": "financial_statement",
+            "source_record_id": "002432.SZ|20260331|408006000",
+            "field_path": "acct_rcv",
+            "period": "20260331",
+            "value": "1539760000.0",
+            "source_title": "应收–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_006",
+            "trace_id": "phasee_blind_trace_006",
+            "company_code": "002432.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（239.2%）显著高于营业收入增速（91.4%），增速差达 147.8%，收入质量存在明显下降风险（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_be7651aaf0a166ca",
+            "source_type": "financial_statement",
+            "source_record_id": "002432.SZ|20260331|408006000",
+            "field_path": "oper_rev",
+            "period": "20260331",
+            "value": "76923900.0",
+            "source_title": "应收–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_006",
+            "trace_id": "phasee_blind_trace_006",
+            "company_code": "002432.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（239.2%）显著高于营业收入增速（91.4%），增速差达 147.8%，收入质量存在明显下降风险（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "增速差需要当前期与同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 7
+      },
+      {
+        "company_code": "000860.SZ",
+        "company_name": "顺鑫农业",
+        "question": "顺鑫农业财务风险如何？",
+        "numeric_mentions": [
+          "2 个季度"
+        ],
+        "claim": {
+          "claim_id": "clm_b81bddc266ed8036",
+          "text": "顺鑫农业：净利润为正但经营现金流近 2 个季度为负，现金流/利润比（-6.26）低于健康水平（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R2",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_7a87de20c5c91a1d",
+            "ev_fin_f9312fcfdbceca9e"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_005",
+          "trace_id": "phasee_blind_trace_005",
+          "company_code": "000860.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_7a87de20c5c91a1d",
+            "source_type": "financial_statement",
+            "source_record_id": "000860.SZ|20260331|408006000",
+            "field_path": "net_profit",
+            "period": "20260331",
+            "value": "113479000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_005",
+            "trace_id": "phasee_blind_trace_005",
+            "company_code": "000860.SZ",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "净利润为正但经营现金流近 2 个季度为负，现金流/利润比（-6.26）低于健康水平（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_f9312fcfdbceca9e",
+            "source_type": "financial_statement",
+            "source_record_id": "000860.SZ|20260331|408006000",
+            "field_path": "oper",
+            "period": "20260331",
+            "value": "-397471000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_005",
+            "trace_id": "phasee_blind_trace_005",
+            "company_code": "000860.SZ",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "cash_flow",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "净利润为正但经营现金流近 2 个季度为负，现金流/利润比（-6.26）低于健康水平（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "连续季度结论需要多期利润/现金流，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 8
+      },
+      {
+        "company_code": "688443.SH",
+        "company_name": "智翔金泰",
+        "question": "智翔金泰财务风险如何？",
+        "numeric_mentions": [
+          "47.9%",
+          "27.6%"
+        ],
+        "claim": {
+          "claim_id": "clm_962af0bc5d77b676",
+          "text": "智翔金泰：货币资金（47.9%）和有息负债（27.6%）占总资产比例均偏高，'存贷双高'需要关注。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R3",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_54eb2b5deede107c",
+            "ev_fin_713cd88915f7a094"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_002",
+          "trace_id": "phasee_blind_trace_002",
+          "company_code": "688443.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_54eb2b5deede107c",
+            "source_type": "financial_statement",
+            "source_record_id": "688443.SH|20251231|408006000",
+            "field_path": "monetary_cap",
+            "period": "20251231",
+            "value": "1533930000.0",
+            "source_title": "存贷双高 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_002",
+            "trace_id": "phasee_blind_trace_002",
+            "company_code": "688443.SH",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金（47.9%）和有息负债（27.6%）占总资产比例均偏高，'存贷双高'需要关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_713cd88915f7a094",
+            "source_type": "financial_statement",
+            "source_record_id": "688443.SH|20251231|408006000",
+            "field_path": "borrow",
+            "period": "20251231",
+            "value": "884819000.0",
+            "source_title": "存贷双高 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_002",
+            "trace_id": "phasee_blind_trace_002",
+            "company_code": "688443.SH",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金（47.9%）和有息负债（27.6%）占总资产比例均偏高，'存贷双高'需要关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "占总资产比例无法复算，缺少字段：tot_assets"
+        },
+        "plausibility_flags": [],
+        "sample_index": 9
+      },
+      {
+        "company_code": "000860.SZ",
+        "company_name": "顺鑫农业",
+        "question": "顺鑫农业财务风险如何？",
+        "numeric_mentions": [
+          "31.7%"
+        ],
+        "claim": {
+          "claim_id": "clm_7d263b05663670ba",
+          "text": "顺鑫农业：存货增速快于营收增速（增速差 31.7%），建议持续关注（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R4",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_50e8a6237ebcd1a8",
+            "ev_fin_67d3dd161f76e0ba"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_005",
+          "trace_id": "phasee_blind_trace_005",
+          "company_code": "000860.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_50e8a6237ebcd1a8",
+            "source_type": "financial_statement",
+            "source_record_id": "000860.SZ|20260331|408006000",
+            "field_path": "inventories",
+            "period": "20260331",
+            "value": "1348820000.0",
+            "source_title": "存货–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_005",
+            "trace_id": "phasee_blind_trace_005",
+            "company_code": "000860.SZ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速快于营收增速（增速差 31.7%），建议持续关注（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_67d3dd161f76e0ba",
+            "source_type": "financial_statement",
+            "source_record_id": "000860.SZ|20260331|408006000",
+            "field_path": "oper_rev",
+            "period": "20260331",
+            "value": "2343220000.0",
+            "source_title": "存货–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_005",
+            "trace_id": "phasee_blind_trace_005",
+            "company_code": "000860.SZ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速快于营收增速（增速差 31.7%），建议持续关注（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "存货/营收增速差需要同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 10
+      },
+      {
+        "company_code": "688443.SH",
+        "company_name": "智翔金泰",
+        "question": "智翔金泰财务风险如何？",
+        "numeric_mentions": [
+          "28.0pp",
+          "-168509.0pp"
+        ],
+        "claim": {
+          "claim_id": "clm_c858b7a674d75a5a",
+          "text": "智翔金泰：毛利率较历史均值偏离 28.0pp，费用率下降 -168509.0pp，利润两端同时优化，异常信号叠加。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R5",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_97fb0a7ccfbd58ca",
+            "ev_fin_ba0f74214d82fe0a"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_002",
+          "trace_id": "phasee_blind_trace_002",
+          "company_code": "688443.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_97fb0a7ccfbd58ca",
+            "source_type": "financial_statement",
+            "source_record_id": "688443.SH|20251231|408006000",
+            "field_path": "oper_rev",
+            "period": "20251231",
+            "value": "230727000.0",
+            "source_title": "毛利率/费用率异常 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_002",
+            "trace_id": "phasee_blind_trace_002",
+            "company_code": "688443.SH",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率较历史均值偏离 28.0pp，费用率下降 -168509.0pp，利润两端同时优化，异常信号叠加。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_ba0f74214d82fe0a",
+            "source_type": "financial_statement",
+            "source_record_id": "688443.SH|20251231|408006000",
+            "field_path": "oper_cost",
+            "period": "20251231",
+            "value": "16093700.0",
+            "source_title": "毛利率/费用率异常 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_002",
+            "trace_id": "phasee_blind_trace_002",
+            "company_code": "688443.SH",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率较历史均值偏离 28.0pp，费用率下降 -168509.0pp，利润两端同时优化，异常信号叠加。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "历史偏离需要历史序列，证据仅含单一期次"
+        },
+        "plausibility_flags": [
+          "百分点绝对值 -168509.0pp 超过 100，需核对单位/缩放"
+        ],
+        "sample_index": 11
+      },
+      {
+        "company_code": "600656.SH",
+        "company_name": "退市博元",
+        "question": "退市博元财务风险如何？",
+        "numeric_mentions": [
+          "-2.3%"
+        ],
+        "claim": {
+          "claim_id": "clm_16cd80fad2c61e1e",
+          "text": "退市博元：其他应收款增速较快（-2.3%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R6",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_00e4d618562e1e9a",
+            "ev_fin_311cac6f8747281e"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_012",
+          "trace_id": "phasee_blind_trace_012",
+          "company_code": "600656.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_00e4d618562e1e9a",
+            "source_type": "financial_statement",
+            "source_record_id": "600656.SH|20251231|408006000",
+            "field_path": "oth_rcv",
+            "period": "20251231",
+            "value": "205777000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_012",
+            "trace_id": "phasee_blind_trace_012",
+            "company_code": "600656.SH",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（-2.3%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_311cac6f8747281e",
+            "source_type": "financial_statement",
+            "source_record_id": "600656.SH|20251231|408006000",
+            "field_path": "tot_assets",
+            "period": "20251231",
+            "value": "215448000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_012",
+            "trace_id": "phasee_blind_trace_012",
+            "company_code": "600656.SH",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（-2.3%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "其他应收款增速需要基期值，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 12
+      },
+      {
+        "company_code": "603886.SH",
+        "company_name": "元祖股份",
+        "question": "元祖股份财务风险如何？",
+        "numeric_mentions": [
+          "20.8%"
+        ],
+        "claim": {
+          "claim_id": "clm_e90d1dc0160ae8e9",
+          "text": "元祖股份：应收账款增速略高于营业收入增速，增速差 20.8%，建议持续关注后续季度变化（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R1",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_e36bee6ad4d0c831",
+            "ev_fin_34d0cdd375076d5c"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_007",
+          "trace_id": "phasee_blind_trace_007",
+          "company_code": "603886.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_e36bee6ad4d0c831",
+            "source_type": "financial_statement",
+            "source_record_id": "603886.SH|20251231|408006000",
+            "field_path": "acct_rcv",
+            "period": "20251231",
+            "value": "102130000.0",
+            "source_title": "应收–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_007",
+            "trace_id": "phasee_blind_trace_007",
+            "company_code": "603886.SH",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速略高于营业收入增速，增速差 20.8%，建议持续关注后续季度变化（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_34d0cdd375076d5c",
+            "source_type": "financial_statement",
+            "source_record_id": "603886.SH|20251231|408006000",
+            "field_path": "oper_rev",
+            "period": "20251231",
+            "value": "856317000.0",
+            "source_title": "应收–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_007",
+            "trace_id": "phasee_blind_trace_007",
+            "company_code": "603886.SH",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速略高于营业收入增速，增速差 20.8%，建议持续关注后续季度变化（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "增速差需要当前期与同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 13
+      },
+      {
+        "company_code": "002594.SZ",
+        "company_name": "比亚迪",
+        "question": "比亚迪财务风险如何？",
+        "numeric_mentions": [
+          "4 个季度"
+        ],
+        "claim": {
+          "claim_id": "clm_2fa048e4de07910d",
+          "text": "比亚迪：最近 4 个季度净利润为正但经营现金流为负，平均现金流/利润比仅 -937.35，盈利缺乏现金支撑（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R2",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_6dbad986bf9698bd",
+            "ev_fin_eb0c1cf62d7ac150"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_024",
+          "trace_id": "phasee_blind_trace_024",
+          "company_code": "002594.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_6dbad986bf9698bd",
+            "source_type": "financial_statement",
+            "source_record_id": "002594.SZ|20260331|408006000",
+            "field_path": "net_profit",
+            "period": "20260331",
+            "value": "4293000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_024",
+            "trace_id": "phasee_blind_trace_024",
+            "company_code": "002594.SZ",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "最近 4 个季度净利润为正但经营现金流为负，平均现金流/利润比仅 -937.35，盈利缺乏现金支撑（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_eb0c1cf62d7ac150",
+            "source_type": "financial_statement",
+            "source_record_id": "002594.SZ|20260331|408006000",
+            "field_path": "oper",
+            "period": "20260331",
+            "value": "-15572100000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_024",
+            "trace_id": "phasee_blind_trace_024",
+            "company_code": "002594.SZ",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "cash_flow",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "最近 4 个季度净利润为正但经营现金流为负，平均现金流/利润比仅 -937.35，盈利缺乏现金支撑（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "连续季度结论需要多期利润/现金流，证据仅含单一期次"
+        },
+        "plausibility_flags": [
+          "现金流/利润比 -937.35 为极端值，需核对分母与单位"
+        ],
+        "sample_index": 14
+      },
+      {
+        "company_code": "920680.BJ",
+        "company_name": "广道退",
+        "question": "广道退财务风险如何？",
+        "numeric_mentions": [
+          "25.8%",
+          "46.9%"
+        ],
+        "claim": {
+          "claim_id": "clm_495100459d3f5d61",
+          "text": "广道退：货币资金占总资产 25.8%，有息负债占 46.9%，'存贷双高'特征明显，不符合商业逻辑。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R3",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_98610f05d3cb21da",
+            "ev_fin_d390a484d031e99c"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_003",
+          "trace_id": "phasee_blind_trace_003",
+          "company_code": "920680.BJ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_98610f05d3cb21da",
+            "source_type": "financial_statement",
+            "source_record_id": "920680.BJ|20250630|408006000",
+            "field_path": "monetary_cap",
+            "period": "20250630",
+            "value": "47339600.0",
+            "source_title": "存贷双高 · 2025-06-30 · 母公司报表",
+            "turn_id": "phasee_blind_turn_003",
+            "trace_id": "phasee_blind_trace_003",
+            "company_code": "920680.BJ",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金占总资产 25.8%，有息负债占 46.9%，'存贷双高'特征明显，不符合商业逻辑。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_d390a484d031e99c",
+            "source_type": "financial_statement",
+            "source_record_id": "920680.BJ|20250630|408006000",
+            "field_path": "borrow",
+            "period": "20250630",
+            "value": "81092900.0|5000000.0",
+            "source_title": "存贷双高 · 2025-06-30 · 母公司报表",
+            "turn_id": "phasee_blind_turn_003",
+            "trace_id": "phasee_blind_trace_003",
+            "company_code": "920680.BJ",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金占总资产 25.8%，有息负债占 46.9%，'存贷双高'特征明显，不符合商业逻辑。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "占总资产比例无法复算，缺少字段：tot_assets"
+        },
+        "plausibility_flags": [],
+        "sample_index": 15
+      },
+      {
+        "company_code": "920149.BJ",
+        "company_name": "旭杰科技",
+        "question": "旭杰科技财务风险如何？",
+        "numeric_mentions": [
+          "85.8%",
+          "-30.6%",
+          "116.4%"
+        ],
+        "claim": {
+          "claim_id": "clm_e4b7ec4d8d92d371",
+          "text": "旭杰科技：存货增速（85.8%）远超营业收入增速（-30.6%），增速差达 116.4%，存货积压风险显著（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R4",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_bba0483d70bdd8be",
+            "ev_fin_95278135b266d53f"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_010",
+          "trace_id": "phasee_blind_trace_010",
+          "company_code": "920149.BJ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_bba0483d70bdd8be",
+            "source_type": "financial_statement",
+            "source_record_id": "920149.BJ|20260331|408006000",
+            "field_path": "inventories",
+            "period": "20260331",
+            "value": "4573050.0",
+            "source_title": "存货–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_010",
+            "trace_id": "phasee_blind_trace_010",
+            "company_code": "920149.BJ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速（85.8%）远超营业收入增速（-30.6%），增速差达 116.4%，存货积压风险显著（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_95278135b266d53f",
+            "source_type": "financial_statement",
+            "source_record_id": "920149.BJ|20260331|408006000",
+            "field_path": "oper_rev",
+            "period": "20260331",
+            "value": "18862900.0",
+            "source_title": "存货–营收背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_010",
+            "trace_id": "phasee_blind_trace_010",
+            "company_code": "920149.BJ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速（85.8%）远超营业收入增速（-30.6%），增速差达 116.4%，存货积压风险显著（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "存货/营收增速差需要同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 16
+      },
+      {
+        "company_code": "688266.SH",
+        "company_name": "泽璟制药",
+        "question": "泽璟制药财务风险如何？",
+        "numeric_mentions": [
+          "+8.5pp"
+        ],
+        "claim": {
+          "claim_id": "clm_38ddf10c4b73b50e",
+          "text": "泽璟制药：毛利率（+8.5pp）明显偏离历史水平，建议关注。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R5",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_ee5a8b6440460994",
+            "ev_fin_c74cbdd4fc358f63"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_004",
+          "trace_id": "phasee_blind_trace_004",
+          "company_code": "688266.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_ee5a8b6440460994",
+            "source_type": "financial_statement",
+            "source_record_id": "688266.SH|20260331|408006000",
+            "field_path": "oper_rev",
+            "period": "20260331",
+            "value": "905391000.0",
+            "source_title": "毛利率/费用率异常 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_004",
+            "trace_id": "phasee_blind_trace_004",
+            "company_code": "688266.SH",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率（+8.5pp）明显偏离历史水平，建议关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_c74cbdd4fc358f63",
+            "source_type": "financial_statement",
+            "source_record_id": "688266.SH|20260331|408006000",
+            "field_path": "oper_cost",
+            "period": "20260331",
+            "value": "27037500.0",
+            "source_title": "毛利率/费用率异常 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_004",
+            "trace_id": "phasee_blind_trace_004",
+            "company_code": "688266.SH",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率（+8.5pp）明显偏离历史水平，建议关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "历史偏离需要历史序列，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 17
+      },
+      {
+        "company_code": "000918.SZ",
+        "company_name": "*ST嘉凯",
+        "question": "*ST嘉凯财务风险如何？",
+        "numeric_mentions": [
+          "-1.7%"
+        ],
+        "claim": {
+          "claim_id": "clm_8ea3ca51276e90f3",
+          "text": "*ST嘉凯：其他应收款增速较快（-1.7%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R6",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_448b1add3cec5108",
+            "ev_fin_934309c968834f4d"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_013",
+          "trace_id": "phasee_blind_trace_013",
+          "company_code": "000918.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_448b1add3cec5108",
+            "source_type": "financial_statement",
+            "source_record_id": "000918.SZ|20251231|408006000",
+            "field_path": "oth_rcv",
+            "period": "20251231",
+            "value": "6705210000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_013",
+            "trace_id": "phasee_blind_trace_013",
+            "company_code": "000918.SZ",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（-1.7%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_934309c968834f4d",
+            "source_type": "financial_statement",
+            "source_record_id": "000918.SZ|20251231|408006000",
+            "field_path": "tot_assets",
+            "period": "20251231",
+            "value": "7272290000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_013",
+            "trace_id": "phasee_blind_trace_013",
+            "company_code": "000918.SZ",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（-1.7%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "其他应收款增速需要基期值，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 18
+      },
+      {
+        "company_code": "001330.SZ",
+        "company_name": "博纳影业",
+        "question": "博纳影业财务风险如何？",
+        "numeric_mentions": [
+          "28.3%",
+          "-96.3%",
+          "124.5%"
+        ],
+        "claim": {
+          "claim_id": "clm_8a2325053b3c62c3",
+          "text": "博纳影业：应收账款增速（28.3%）显著高于营业收入增速（-96.3%），增速差达 124.5%，收入质量存在明显下降风险（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R1",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_f215393c6ba63620",
+            "ev_fin_713debe764cf277b"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_019",
+          "trace_id": "phasee_blind_trace_019",
+          "company_code": "001330.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_f215393c6ba63620",
+            "source_type": "financial_statement",
+            "source_record_id": "001330.SZ|20251231|408006000",
+            "field_path": "acct_rcv",
+            "period": "20251231",
+            "value": "2552590.0",
+            "source_title": "应收–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_019",
+            "trace_id": "phasee_blind_trace_019",
+            "company_code": "001330.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（28.3%）显著高于营业收入增速（-96.3%），增速差达 124.5%，收入质量存在明显下降风险（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_713debe764cf277b",
+            "source_type": "financial_statement",
+            "source_record_id": "001330.SZ|20251231|408006000",
+            "field_path": "oper_rev",
+            "period": "20251231",
+            "value": "217999.0",
+            "source_title": "应收–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_019",
+            "trace_id": "phasee_blind_trace_019",
+            "company_code": "001330.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（28.3%）显著高于营业收入增速（-96.3%），增速差达 124.5%，收入质量存在明显下降风险（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "增速差需要当前期与同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 19
+      },
+      {
+        "company_code": "600373.SH",
+        "company_name": "中文传媒",
+        "question": "中文传媒财务风险如何？",
+        "numeric_mentions": [
+          "4 个季度"
+        ],
+        "claim": {
+          "claim_id": "clm_fc7a2e4136dd123f",
+          "text": "中文传媒：最近 4 个季度净利润为正但经营现金流为负，平均现金流/利润比仅 -216.55，盈利缺乏现金支撑（数据期：2026-03-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R2",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_f985606ef4e5abbc",
+            "ev_fin_4062b8f905132bdd"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_026",
+          "trace_id": "phasee_blind_trace_026",
+          "company_code": "600373.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_f985606ef4e5abbc",
+            "source_type": "financial_statement",
+            "source_record_id": "600373.SH|20260331|408006000",
+            "field_path": "net_profit",
+            "period": "20260331",
+            "value": "2239010.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_026",
+            "trace_id": "phasee_blind_trace_026",
+            "company_code": "600373.SH",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "最近 4 个季度净利润为正但经营现金流为负，平均现金流/利润比仅 -216.55，盈利缺乏现金支撑（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_4062b8f905132bdd",
+            "source_type": "financial_statement",
+            "source_record_id": "600373.SH|20260331|408006000",
+            "field_path": "oper",
+            "period": "20260331",
+            "value": "-1927970000.0",
+            "source_title": "现金流–利润背离 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_026",
+            "trace_id": "phasee_blind_trace_026",
+            "company_code": "600373.SH",
+            "module": "finance",
+            "rule_id": "R2",
+            "source_table": "cash_flow",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "最近 4 个季度净利润为正但经营现金流为负，平均现金流/利润比仅 -216.55，盈利缺乏现金支撑（数据期：2026-03-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "连续季度结论需要多期利润/现金流，证据仅含单一期次"
+        },
+        "plausibility_flags": [
+          "现金流/利润比 -216.55 为极端值，需核对分母与单位"
+        ],
+        "sample_index": 20
+      },
+      {
+        "company_code": "688266.SH",
+        "company_name": "泽璟制药",
+        "question": "泽璟制药财务风险如何？",
+        "numeric_mentions": [
+          "47.1%",
+          "24.4%"
+        ],
+        "claim": {
+          "claim_id": "clm_7a29edc4cf4103c4",
+          "text": "泽璟制药：货币资金（47.1%）和有息负债（24.4%）占总资产比例均偏高，'存贷双高'需要关注。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R3",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_383205c02edfd611",
+            "ev_fin_3364a142a9d747e7"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_004",
+          "trace_id": "phasee_blind_trace_004",
+          "company_code": "688266.SH",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_383205c02edfd611",
+            "source_type": "financial_statement",
+            "source_record_id": "688266.SH|20260331|408006000",
+            "field_path": "monetary_cap",
+            "period": "20260331",
+            "value": "1753590000.0",
+            "source_title": "存贷双高 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_004",
+            "trace_id": "phasee_blind_trace_004",
+            "company_code": "688266.SH",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金（47.1%）和有息负债（24.4%）占总资产比例均偏高，'存贷双高'需要关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_3364a142a9d747e7",
+            "source_type": "financial_statement",
+            "source_record_id": "688266.SH|20260331|408006000",
+            "field_path": "borrow",
+            "period": "20260331",
+            "value": "823995000.0|84000000.0",
+            "source_title": "存贷双高 · 2026-03-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_004",
+            "trace_id": "phasee_blind_trace_004",
+            "company_code": "688266.SH",
+            "module": "finance",
+            "rule_id": "R3",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "货币资金（47.1%）和有息负债（24.4%）占总资产比例均偏高，'存贷双高'需要关注。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "占总资产比例无法复算，缺少字段：tot_assets"
+        },
+        "plausibility_flags": [],
+        "sample_index": 21
+      },
+      {
+        "company_code": "001330.SZ",
+        "company_name": "博纳影业",
+        "question": "博纳影业财务风险如何？",
+        "numeric_mentions": [
+          "95.4%"
+        ],
+        "claim": {
+          "claim_id": "clm_8bda270750553aea",
+          "text": "博纳影业：存货增速快于营收增速（增速差 95.4%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R4",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_c5c33af6659a755b",
+            "ev_fin_df7294318f81fe2d"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_019",
+          "trace_id": "phasee_blind_trace_019",
+          "company_code": "001330.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_c5c33af6659a755b",
+            "source_type": "financial_statement",
+            "source_record_id": "001330.SZ|20251231|408006000",
+            "field_path": "inventories",
+            "period": "20251231",
+            "value": "8700430.0",
+            "source_title": "存货–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_019",
+            "trace_id": "phasee_blind_trace_019",
+            "company_code": "001330.SZ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速快于营收增速（增速差 95.4%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_df7294318f81fe2d",
+            "source_type": "financial_statement",
+            "source_record_id": "001330.SZ|20251231|408006000",
+            "field_path": "oper_rev",
+            "period": "20251231",
+            "value": "217999.0",
+            "source_title": "存货–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_019",
+            "trace_id": "phasee_blind_trace_019",
+            "company_code": "001330.SZ",
+            "module": "finance",
+            "rule_id": "R4",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "存货增速快于营收增速（增速差 95.4%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "存货/营收增速差需要同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 22
+      },
+      {
+        "company_code": "002482.SZ",
+        "company_name": "广田集团",
+        "question": "广田集团财务风险如何？",
+        "numeric_mentions": [
+          "24.1pp",
+          "-88.4pp"
+        ],
+        "claim": {
+          "claim_id": "clm_9738a6b916b7482a",
+          "text": "广田集团：毛利率较历史均值偏离 24.1pp，费用率下降 -88.4pp，利润两端同时优化，异常信号叠加。",
+          "claim_type": "financial",
+          "severity": "red",
+          "confidence": null,
+          "rule_id": "R5",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_a1c6c8b4626ce7c5",
+            "ev_fin_717b3e9302f608ed"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_008",
+          "trace_id": "phasee_blind_trace_008",
+          "company_code": "002482.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_a1c6c8b4626ce7c5",
+            "source_type": "financial_statement",
+            "source_record_id": "002482.SZ|20251231|408006000",
+            "field_path": "oper_rev",
+            "period": "20251231",
+            "value": "1572150000.0",
+            "source_title": "毛利率/费用率异常 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_008",
+            "trace_id": "phasee_blind_trace_008",
+            "company_code": "002482.SZ",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率较历史均值偏离 24.1pp，费用率下降 -88.4pp，利润两端同时优化，异常信号叠加。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_717b3e9302f608ed",
+            "source_type": "financial_statement",
+            "source_record_id": "002482.SZ|20251231|408006000",
+            "field_path": "oper_cost",
+            "period": "20251231",
+            "value": "1467170000.0",
+            "source_title": "毛利率/费用率异常 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_008",
+            "trace_id": "phasee_blind_trace_008",
+            "company_code": "002482.SZ",
+            "module": "finance",
+            "rule_id": "R5",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "毛利率较历史均值偏离 24.1pp，费用率下降 -88.4pp，利润两端同时优化，异常信号叠加。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "历史偏离需要历史序列，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 23
+      },
+      {
+        "company_code": "002217.SZ",
+        "company_name": "ST合力泰",
+        "question": "ST合力泰财务风险如何？",
+        "numeric_mentions": [
+          "10.4%"
+        ],
+        "claim": {
+          "claim_id": "clm_1f76aa0a8df7b69a",
+          "text": "ST合力泰：其他应收款增速较快（10.4%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "yellow",
+          "confidence": null,
+          "rule_id": "R6",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_493dc4a0f174242c",
+            "ev_fin_064e171819aaff0c"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_014",
+          "trace_id": "phasee_blind_trace_014",
+          "company_code": "002217.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_493dc4a0f174242c",
+            "source_type": "financial_statement",
+            "source_record_id": "002217.SZ|20251231|408006000",
+            "field_path": "oth_rcv",
+            "period": "20251231",
+            "value": "5401360000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_014",
+            "trace_id": "phasee_blind_trace_014",
+            "company_code": "002217.SZ",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（10.4%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_064e171819aaff0c",
+            "source_type": "financial_statement",
+            "source_record_id": "002217.SZ|20251231|408006000",
+            "field_path": "tot_assets",
+            "period": "20251231",
+            "value": "5990900000.0",
+            "source_title": "其他应收款与关联占用风险 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_014",
+            "trace_id": "phasee_blind_trace_014",
+            "company_code": "002217.SZ",
+            "module": "finance",
+            "rule_id": "R6",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "其他应收款增速较快（10.4%），建议持续关注（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "其他应收款增速需要基期值，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 24
+      },
+      {
+        "company_code": "000042.SZ",
+        "company_name": "中洲控股",
+        "question": "中洲控股财务风险如何？",
+        "numeric_mentions": [
+          "33.3%",
+          "-20.8%",
+          "54.0%"
+        ],
+        "claim": {
+          "claim_id": "clm_300c96d9c87eb5c9",
+          "text": "中洲控股：应收账款增速（33.3%）明显高于营业收入增速（-20.8%），增速差达 54.0%，需关注收入确认节奏（数据期：2025-12-31，母公司报表）。",
+          "claim_type": "financial",
+          "severity": "orange",
+          "confidence": null,
+          "rule_id": "R1",
+          "rule_version": "1.0.0",
+          "evidence_ids": [
+            "ev_fin_34457dfbd3194d87",
+            "ev_fin_a292ca1ea0f705bb"
+          ],
+          "verification_status": "pending",
+          "limitations": [
+            "结论仅基于母公司报表，不包含合并范围内子公司。"
+          ],
+          "turn_id": "phasee_blind_turn_022",
+          "trace_id": "phasee_blind_trace_022",
+          "company_code": "000042.SZ",
+          "module": "financial",
+          "generated_at": ""
+        },
+        "evidence": [
+          {
+            "evidence_id": "ev_fin_34457dfbd3194d87",
+            "source_type": "financial_statement",
+            "source_record_id": "000042.SZ|20251231|408006000",
+            "field_path": "acct_rcv",
+            "period": "20251231",
+            "value": "31760700.0",
+            "source_title": "应收–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_022",
+            "trace_id": "phasee_blind_trace_022",
+            "company_code": "000042.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "balance_sheet",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（33.3%）明显高于营业收入增速（-20.8%），增速差达 54.0%，需关注收入确认节奏（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          },
+          {
+            "evidence_id": "ev_fin_a292ca1ea0f705bb",
+            "source_type": "financial_statement",
+            "source_record_id": "000042.SZ|20251231|408006000",
+            "field_path": "oper_rev",
+            "period": "20251231",
+            "value": "121636000.0",
+            "source_title": "应收–营收背离 · 2025-12-31 · 母公司报表",
+            "turn_id": "phasee_blind_turn_022",
+            "trace_id": "phasee_blind_trace_022",
+            "company_code": "000042.SZ",
+            "module": "finance",
+            "rule_id": "R1",
+            "source_table": "income_statement",
+            "unit": "CNY",
+            "statement_scope": "parent_company",
+            "source_uri": null,
+            "source_excerpt": "应收账款增速（33.3%）明显高于营业收入增速（-20.8%），增速差达 54.0%，需关注收入确认节奏（数据期：2025-12-31，母公司报表）。",
+            "dataset_version": "competition-2026",
+            "retrieved_at": ""
+          }
+        ],
+        "assessment": {
+          "all_evidence_ids_resolved": true,
+          "excerpt_replay": true,
+          "raw_traceable": false,
+          "reason": "增速差需要当前期与同比基期，证据仅含单一期次"
+        },
+        "plausibility_flags": [],
+        "sample_index": 25
+      }
+    ]
+  }
+}
