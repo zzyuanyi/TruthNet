@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as d3 from 'd3';
+import { Circle, ExtensionCategory, Graph, register } from '@antv/g6';
 import type { EquityNodeDTO, EquityEdgeDTO } from '@/types/truthnet';
 
 interface EquityGraphProps {
@@ -122,19 +122,66 @@ function computeGraphLayout(
       const y = 64 + spacing * (i + 0.5);
       const placed = { ...n, x, y };
       layoutNodes.push(placed);
-      byHop.set(h, byHop.get(h)!);
-      const arr = byHop.get(h)!;
-      arr[i] = placed;
+      byHop.get(h)![i] = placed;
     });
   });
 
   return { width, height, nodes: layoutNodes, layerCount, maxHop, radiusScale };
 }
 
+function nodeFill(d: GraphLayoutNode): string {
+  if (d.risk_level && RISK_LEVEL_COLORS[d.risk_level]) return RISK_LEVEL_COLORS[d.risk_level];
+  return d.nodeType === 'target' ? '#ef4444' : '#94a3b8';
+}
+
+function nodeInnerText(d: GraphLayoutNode): string {
+  if (d.nodeType === 'target') return '目标';
+  if (d.nodeType === 'person') return '人';
+  if (d.nodeType === 'fund') return '机构';
+  return '';
+}
+
+function tooltipContent(d: GraphLayoutNode): string {
+  const typeLabel =
+    d.nodeType === 'target'
+      ? '目标公司'
+      : d.nodeType === 'person'
+        ? '自然人'
+        : d.nodeType === 'fund'
+          ? '机构投资者'
+          : '公司';
+  const risk = d.risk_level ? `风险等级：${RISK_LEVEL_LABELS[d.risk_level] || d.risk_level}` : '';
+  return `<div style="font-weight:600;margin-bottom:4px">${d.name}（第 ${d.hop} 层）</div><div>类型：${typeLabel}</div>${risk ? `<div>${risk}</div>` : ''}`;
+}
+
+function isRiskNode(d: GraphLayoutNode): boolean {
+  return d.risk_level === 'red' || d.risk_level === 'orange' || d.risk_level === 'yellow';
+}
+
+// 风险节点呼吸光环：创建后让 halo 光晕循环放大呼吸
+class BreathingCircle extends Circle {
+  onCreate() {
+    const halo = (
+      this as unknown as {
+        shapeMap?: { halo?: { animate: (keyframes: unknown[], options: unknown) => void } };
+      }
+    ).shapeMap?.halo;
+    if (halo) {
+      halo.animate([{ opacity: 0.5 }, { opacity: 0.05 }], {
+        duration: 1500,
+        iterations: Infinity,
+        direction: 'alternate',
+        easing: 'ease-in-out',
+      });
+    }
+  }
+}
+
+register(ExtensionCategory.NODE, 'breathing-circle', BreathingCircle);
 
 export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<Graph | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 520 });
 
   // Handle resize
@@ -156,411 +203,141 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
     [nodes, edges, targetId, dimensions.width],
   );
 
-
+  // 用 G6 渲染（Canvas 渲染器）；主题色经 getComputedStyle 读取，主题切换时需重新渲染
   useEffect(() => {
-    if (!svgRef.current || nodes.length === 0) return;
-      return; // 旧布局逻辑已被下方 computeGraphLayout effect 替代（保留仅为最小 diff）
+    if (!containerRef.current || layout.nodes.length === 0) return;
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+    const cs = getComputedStyle(document.documentElement);
+    const textColor = cs.getPropertyValue('--color-foreground').trim() || '#0a0a0a';
+    const mutedColor = cs.getPropertyValue('--color-muted-foreground').trim() || '#64748b';
+    const bgColor = cs.getPropertyValue('--color-background').trim() || '#ffffff';
 
-    const { width, height } = dimensions;
-
-    // Create zoom behavior
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 3])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-
-    svg.call(zoom);
-
-    const g = svg.append('g');
-
-    // Create arrow markers
-    svg.append('defs').append('marker')
-      .attr('id', 'arrowhead')
-      .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 28)
-      .attr('refY', 0)
-      .attr('orient', 'auto')
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .append('path')
-      .attr('d', 'M 0,-5 L 10,0 L 0,5')
-      .attr('fill', '#94a3b8');
-
-    // ── C2（8/9 老师要求）：按距目标公司的 hop 分层布局 ──
-    // 1) 无向 BFS 计算每个节点距目标公司的跳数（不可达节点排到最右）
-    const adj = new Map<string, string[]>();
-    nodes.forEach(n => adj.set(n.id, []));
-    edges.forEach(e => {
-      adj.get(e.source)?.push(e.target);
-      adj.get(e.target)?.push(e.source);
+    const graph = new Graph({
+      container: containerRef.current,
+      width: layout.width,
+      height: layout.height,
+      autoFit: 'view',
+      data: {
+        nodes: layout.nodes.map(n => ({
+          id: n.id,
+          data: { ...n },
+        })),
+        edges: edges.map(e => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          data: { ...e },
+        })),
+      },
+      node: {
+        type: (d: any) =>
+          isRiskNode(d.data as GraphLayoutNode) ? 'breathing-circle' : 'circle',
+        style: {
+          x: (d: any) => d.data.x as number,
+          y: (d: any) => d.data.y as number,
+          r: (d: any) => (NODE_RADIUS[d.data.nodeType] || 20) * layout.radiusScale,
+          fill: (d: any) => nodeFill(d.data as GraphLayoutNode),
+          stroke: '#ffffff',
+          lineWidth: (d: any) => (isRiskNode(d.data as GraphLayoutNode) ? 3.5 : 2.5),
+          fillOpacity: 0.92,
+          labelText: (d: any) =>
+            truncateLabel(d.data.name, layout.radiusScale < 1 ? 8 : 10),
+          labelPlacement: 'bottom',
+          labelFill: textColor,
+          labelFontSize: layout.radiusScale < 1 ? 10 : 11,
+          labelOffsetY: 6,
+          iconText: (d: any) => nodeInnerText(d.data as GraphLayoutNode),
+          iconFill: '#ffffff',
+          iconFontSize: 10,
+          halo: (d: any) => isRiskNode(d.data as GraphLayoutNode),
+          haloFill: (d: any) => nodeFill(d.data as GraphLayoutNode),
+          haloStroke: (d: any) => nodeFill(d.data as GraphLayoutNode),
+          haloLineWidth: 2,
+          haloOpacity: 0.4,
+        },
+        state: {
+          active: { lineWidth: 4, fillOpacity: 1, haloOpacity: 0.9 },
+          inactive: {
+            fillOpacity: 0.12,
+            opacity: 0.3,
+            labelOpacity: 0.15,
+            haloOpacity: 0.05,
+          },
+        },
+      },
+      edge: {
+        type: 'line',
+        style: {
+          stroke: mutedColor,
+          lineWidth: 1.6,
+          strokeOpacity: 0.65,
+          endArrow: true,
+          labelText: (d: any) => {
+            const rel = d.data.relation_type || '持股';
+            const pct = d.data.ownership_pct != null ? ` ${d.data.ownership_pct.toFixed(1)}%` : '';
+            return `${rel}${pct}`;
+          },
+          labelFill: textColor,
+          labelFontSize: 10,
+          labelBackground: true,
+          labelBackgroundFill: bgColor,
+          labelBackgroundOpacity: 0.85,
+        },
+        state: {
+          active: { strokeOpacity: 0.95, lineWidth: 2.6 },
+          inactive: { strokeOpacity: 0.06, labelOpacity: 0.05 },
+        },
+      },
+      behaviors: [
+        'drag-canvas',
+        'zoom-canvas',
+        'drag-element',
+        {
+          type: 'hover-activate',
+          degree: 1,
+          state: 'active',
+          inactiveState: 'inactive',
+          enable: (e: any) => e.targetType === 'node',
+        },
+      ],
+      plugins: [
+        {
+          type: 'tooltip',
+          getContent: (_evt: any, items: any[]) => {
+            const first = items && items[0];
+            if (!first || !first.data) return '';
+            const d = first.data as GraphLayoutNode;
+            if (d.hop === undefined) {
+              const e = first.data as EquityEdgeDTO & { relation_type?: string };
+              const rel = e.relation_type || '持股';
+              const pct = e.ownership_pct != null ? `${e.ownership_pct.toFixed(1)}%` : '';
+              return `<div style="font-weight:600">${rel}${pct ? ` ${pct}` : ''}</div>`;
+            }
+            return tooltipContent(d);
+          },
+        },
+      ] as any,
     });
-    const hops = new Map<string, number>();
-    const targetNode = nodes.find(n => n.id === targetId || n.entity_id === targetId);
-    if (targetNode) {
-      const queue: string[] = [targetNode.id];
-      hops.set(targetNode.id, 0);
-      while (queue.length > 0) {
-        const cur = queue.shift()!;
-        const curHop = hops.get(cur)!;
-        for (const nb of adj.get(cur) || []) {
-          if (!hops.has(nb)) {
-            hops.set(nb, curHop + 1);
-            queue.push(nb);
-          }
-        }
-      }
-    }
-    const maxHop = Math.max(0, ...hops.values());
-    nodes.forEach(n => {
-      if (!hops.has(n.id)) hops.set(n.id, maxHop + 1);
-    });
 
-    // 2) 每层内纵向均布（x 按 hop 从左到右）
-    const byHop = new Map<number, (EquityNodeDTO & { nodeType: string })[]>();
-    nodes.forEach(n => {
-      const nodeType = (n.id === targetId || n.entity_id === targetId)
-        ? 'target'
-        : mapEntityType(n.entity_type || '');
-      const h = hops.get(n.id)!;
-      if (!byHop.has(h)) byHop.set(h, []);
-      byHop.get(h)!.push({ ...n, nodeType });
-    });
-
-    const layerCount = Math.max(1, ...byHop.keys());
-    const layerWidth = (width - 120) / layerCount;
-    const layout = new Map<string, { x: number; y: number }>();
-    byHop.forEach((group, h) => {
-      const x = 70 + h * layerWidth;
-      const spacing = Math.min(95, (height - 90) / Math.max(1, group.length));
-      group.forEach((n, i) => {
-        layout.set(n.id, { x, y: 55 + spacing * (i + 0.5) });
-      });
-    });
-
-    // 3) 连线（股东 → 被持股公司，标注关系类型与持股比例）
-    const link = g.append('g')
-      .selectAll('line')
-      .data(edges)
-      .join('line')
-      .attr('stroke', '#94a3b8')
-      .attr('stroke-width', 1.8)
-      .attr('stroke-opacity', 0.7)
-      .attr('marker-end', 'url(#arrowhead)')
-      .attr('x1', (d: any) => layout.get(d.source)?.x ?? 0)
-      .attr('y1', (d: any) => layout.get(d.source)?.y ?? 0)
-      .attr('x2', (d: any) => layout.get(d.target)?.x ?? 0)
-      .attr('y2', (d: any) => layout.get(d.target)?.y ?? 0);
-
-    const linkLabel = g.append('g')
-      .selectAll('g')
-      .data(edges)
-      .join('g')
-      .attr('transform', (d: any) => {
-        const s = layout.get(d.source) || { x: 0, y: 0 };
-        const t = layout.get(d.target) || { x: 0, y: 0 };
-        return `translate(${(s.x + t.x) / 2},${(s.y + t.y) / 2})`;
-      });
-
-    linkLabel.append('text')
-      .attr('font-size', '10px')
-      .attr('fill', '#64748b')
-      .attr('text-anchor', 'middle')
-      .attr('dy', -4)
-      .text((d: any) => d.relation_type || '持股');
-
-    linkLabel.append('text')
-      .attr('font-size', '11px')
-      .attr('font-weight', '600')
-      .attr('fill', '#475569')
-      .attr('text-anchor', 'middle')
-      .attr('dy', 10)
-      .text((d: any) => (d.ownership_pct != null ? `${d.ownership_pct.toFixed(1)}%` : ''));
-
-    // 4) 节点（固定分层坐标，颜色按风险等级；未评级回退灰色/目标红）
-    const node = g.append('g')
-      .selectAll('g')
-      .data(Array.from(byHop.values()).flat())
-      .join('g')
-      .attr('transform', (d: any) => {
-        const p = layout.get(d.id) || { x: 0, y: 0 };
-        return `translate(${p.x},${p.y})`;
-      });
-
-    node.append('circle')
-      .attr('r', (d: any) => NODE_RADIUS[d.nodeType] || 20)
-      .attr('fill', (d: any) => {
-        if (d.risk_level && RISK_LEVEL_COLORS[d.risk_level]) return RISK_LEVEL_COLORS[d.risk_level];
-        return d.nodeType === 'target' ? '#ef4444' : '#94a3b8';
-      })
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 2.5)
-      .attr('opacity', 0.92);
-
-    // 层级标注（第 0 层 = 目标公司，逐层向外）
-    node.append('text')
-      .attr('dy', (d: any) => (NODE_RADIUS[d.nodeType] || 20) + 15)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', '12px')
-      .attr('font-weight', '500')
-      .attr('fill', '#1e293b')
-      .text((d: any) => d.name);
-
-    node.append('text')
-      .attr('dy', 4)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', '10px')
-      .attr('fill', '#fff')
-      .attr('font-weight', 'bold')
-      .text((d: any) => {
-        if (d.nodeType === 'target') return '目标';
-        if (d.nodeType === 'person') return '人';
-        if (d.nodeType === 'fund') return '机构';
-        return '';
-      });
-
-    node.append('title')
-      .text((d: any) => {
-        let text = `${d.name}`;
-        if (d.nodeType === 'target') text += '\n类型: 目标公司';
-        else if (d.nodeType === 'person') text += '\n类型: 自然人';
-        else if (d.nodeType === 'fund') text += '\n类型: 机构投资者';
-        else text += '\n类型: 公司';
-        if (d.risk_level) text += `\n风险等级: ${RISK_LEVEL_LABELS[d.risk_level] || d.risk_level}`;
-        return text;
-      });
-
-    // 层级列标注（第 0 层/第 N 层）
-    g.append('text')
-      .attr('x', 70)
-      .attr('y', 22)
-      .attr('font-size', '11px')
-      .attr('fill', '#64748b')
-      .text('目标公司');
-
-    if (layerCount >= 1) {
-      g.append('text')
-        .attr('x', 70 + layerCount * layerWidth)
-        .attr('y', 22)
-        .attr('text-anchor', 'end')
-        .attr('font-size', '11px')
-        .attr('fill', '#64748b')
-        .text(`第 ${layerCount} 层（向上穿透）`);
-    }
-
-    // Store zoom functions for external access
-    (svgRef.current as any).__zoomIn = () => svg.transition().duration(300).call(zoom.scaleBy, 1.3);
-    (svgRef.current as any).__zoomOut = () => svg.transition().duration(300).call(zoom.scaleBy, 0.7);
-    (svgRef.current as any).__resetZoom = () => svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity);
+    graph.render();
+    graphRef.current = graph;
 
     return () => {
-      svg.selectAll('*').remove();
-    };
-  }, [nodes, edges, dimensions, targetId]);
-
-  // 2026-08-16 修复：使用 computeGraphLayout 预计算动态宽高/间距；
-  // 先创建 g 再注册 zoom，并显式设置 touch-action/pointer-events，
-  // 解决江苏新能等大图"拖不动、字符重叠"问题。
-  useEffect(() => {
-    if (!svgRef.current || layout.nodes.length === 0) return;
-
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-
-    const { width, height, nodes: layoutNodes, layerCount, radiusScale } = layout;
-    const position = new Map(layoutNodes.map(n => [n.id, { x: n.x, y: n.y }]));
-
-    svg
-      .attr('width', width)
-      .attr('height', height)
-      .style('touch-action', 'none')
-      .attr('pointer-events', 'all');
-
-    const g = svg.append('g');
-
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.25, 4])
-      .filter((event: any) => {
-        if (event.type === 'wheel') return true;
-        return event.type === 'mousedown' ? event.button === 0 : !event.button;
-      })
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-
-    svg.call(zoom).on('dblclick.zoom', null);
-
-    svg.append('defs').append('marker')
-      .attr('id', 'arrowhead')
-      .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 28)
-      .attr('refY', 0)
-      .attr('orient', 'auto')
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .append('path')
-      .attr('d', 'M 0,-5 L 10,0 L 0,5')
-      .attr('fill', '#94a3b8');
-
-    const link = g.append('g')
-      .selectAll('line')
-      .data(edges)
-      .join('line')
-      .attr('stroke', '#94a3b8')
-      .attr('stroke-width', 1.6)
-      .attr('stroke-opacity', 0.65)
-      .attr('marker-end', 'url(#arrowhead)')
-      .attr('x1', (d: any) => position.get(d.source)?.x ?? 0)
-      .attr('y1', (d: any) => position.get(d.source)?.y ?? 0)
-      .attr('x2', (d: any) => position.get(d.target)?.x ?? 0)
-      .attr('y2', (d: any) => position.get(d.target)?.y ?? 0);
-
-    const linkLabel = g.append('g')
-      .selectAll('g')
-      .data(edges)
-      .join('g')
-      .attr('transform', (d: any) => {
-        const s = position.get(d.source) || { x: 0, y: 0 };
-        const t = position.get(d.target) || { x: 0, y: 0 };
-        return `translate(${(s.x + t.x) / 2},${(s.y + t.y) / 2})`;
-      });
-
-    linkLabel.append('text')
-      .attr('font-size', '10px')
-      .style('fill', 'var(--color-foreground)')
-      .style('paint-order', 'stroke')
-      .style('stroke', 'var(--color-background)')
-      .style('stroke-width', 3)
-      .style('stroke-linejoin', 'round')
-      .attr('text-anchor', 'middle')
-      .attr('dy', -1)
-      .text((d: any) => d.relation_type || '持股');
-
-    linkLabel.append('text')
-      .attr('font-size', '10px')
-      .attr('font-weight', '600')
-      .style('fill', 'var(--color-foreground)')
-      .style('paint-order', 'stroke')
-      .style('stroke', 'var(--color-background)')
-      .style('stroke-width', 3)
-      .style('stroke-linejoin', 'round')
-      .attr('text-anchor', 'middle')
-      .attr('dy', 9)
-      .text((d: any) => (d.ownership_pct != null ? `${d.ownership_pct.toFixed(1)}%` : ''));
-
-    const node = g.append('g')
-      .selectAll('g')
-      .data(layoutNodes)
-      .join('g')
-      .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
-
-    node.append('circle')
-      .attr('r', (d: any) => (NODE_RADIUS[d.nodeType] || 20) * radiusScale)
-      .attr('fill', (d: any) => {
-        if (d.risk_level && RISK_LEVEL_COLORS[d.risk_level]) return RISK_LEVEL_COLORS[d.risk_level];
-        return d.nodeType === 'target' ? '#ef4444' : '#94a3b8';
-      })
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 2.5)
-      .attr('opacity', 0.92);
-
-    // 节点名称放在圆下方，用前景色 + 背景描边 halo（CSS 变量经 style 注入；本主题变量为 --color-*）
-    node.append('text')
-        .attr('class', 'equity-node-name')
-      .attr('dy', (d: any) => (NODE_RADIUS[d.nodeType] || 20) * radiusScale + 14)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', radiusScale < 1 ? '10px' : '11px')
-      .attr('font-weight', '500')
-      .style('fill', 'var(--color-foreground)')
-      .style('paint-order', 'stroke')
-      .style('stroke', 'var(--color-background)')
-      .style('stroke-width', 3)
-      .style('stroke-linejoin', 'round')
-      .text((d: any) => truncateLabel(d.name, radiusScale < 1 ? 8 : 10))
-
-    node.append('text')
-      .attr('dy', 4)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', '10px')
-      .attr('fill', '#fff')
-      .attr('font-weight', 'bold')
-      .text((d: any) => {
-        if (d.nodeType === 'target') return '目标';
-        if (d.nodeType === 'person') return '人';
-        if (d.nodeType === 'fund') return '机构';
-        return '';
-      });
-
-    node.append('title')
-      .text((d: any) => {
-        let text = `${d.name}（第 ${d.hop} 层）`;
-        if (d.nodeType === 'target') text += '\n类型: 目标公司';
-        else if (d.nodeType === 'person') text += '\n类型: 自然人';
-        else if (d.nodeType === 'fund') text += '\n类型: 机构投资者';
-        else text += '\n类型: 公司';
-        if (d.risk_level) text += `\n风险等级: ${RISK_LEVEL_LABELS[d.risk_level] || d.risk_level}`;
-        return text;
-      });
-
-    g.append('text')
-      .attr('x', 70)
-      .attr('y', 22)
-      .attr('font-size', '11px')
-      .attr('fill', '#64748b')
-      .text('目标公司');
-
-    if (layerCount >= 1) {
-      g.append('text')
-        .attr('x', width - 90)
-        .attr('y', 22)
-        .attr('text-anchor', 'end')
-        .attr('font-size', '11px')
-        .attr('fill', '#64748b')
-        .text(`第 ${layout.maxHop} 层（向上穿透）`);
-    }
-
-    (svgRef.current as any).__zoomIn = () => svg.transition().duration(300).call(zoom.scaleBy, 1.3);
-    (svgRef.current as any).__zoomOut = () => svg.transition().duration(300).call(zoom.scaleBy, 0.7);
-    (svgRef.current as any).__resetZoom = () => svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity);
-
-    return () => {
-      svg.selectAll('*').remove();
+      graph.destroy();
+      graphRef.current = null;
     };
   }, [layout, edges]);
 
-
-  const handleZoomIn = () => {
-    if (svgRef.current && (svgRef.current as any).__zoomIn) {
-      (svgRef.current as any).__zoomIn();
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (svgRef.current && (svgRef.current as any).__zoomOut) {
-      (svgRef.current as any).__zoomOut();
-    }
-  };
-
-  const handleResetZoom = () => {
-    if (svgRef.current && (svgRef.current as any).__resetZoom) {
-      (svgRef.current as any).__resetZoom();
-    }
-  };
+  const handleZoomIn = () => graphRef.current?.zoomBy(1.3);
+  const handleZoomOut = () => graphRef.current?.zoomBy(0.7);
+  const handleResetZoom = () => graphRef.current?.zoomTo(1);
 
   return (
     <div ref={containerRef} className="relative border border-border rounded-md bg-muted/20">
-      <svg
-        ref={svgRef}
-        width={layout.width}
-        height={layout.height}
-        className="cursor-grab active:cursor-grabbing text-foreground" style={{ touchAction: 'none' }}
-      />
+      {/* G6 canvas 将挂载于此容器，overlay 元素（图例/按钮）absolute 叠于其上 */}
 
       {/* 风险等级图例（节点颜色语义） */}
-      <div className="absolute bottom-3 left-3 flex flex-wrap gap-2 bg-background/90 backdrop-blur-sm border border-border rounded-md p-2 text-xs">
+      <div className="absolute bottom-3 left-3 z-10 flex flex-wrap gap-2 bg-background/90 backdrop-blur-sm border border-border rounded-md p-2 text-xs">
         {Object.entries(RISK_LEVEL_LABELS).map(([level, label]) => (
           <span key={level} className="flex items-center gap-1">
             <span className="w-3 h-3 rounded-full" style={{ backgroundColor: RISK_LEVEL_COLORS[level] }} />
@@ -574,7 +351,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
       </div>
 
       {/* Zoom controls */}
-      <div className="absolute top-3 left-3 flex flex-col gap-1">
+      <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
         <button
           onClick={handleZoomIn}
           className="w-8 h-8 bg-background/90 backdrop-blur-sm border border-border rounded-md flex items-center justify-center hover:bg-muted transition-colors"
@@ -605,7 +382,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
       </div>
 
       {/* Hint */}
-      <div className="absolute top-3 right-3 bg-background/90 backdrop-blur-sm border border-border rounded-md px-2 py-1 text-xs text-muted-foreground">
+      <div className="absolute top-3 right-3 z-10 bg-background/90 backdrop-blur-sm border border-border rounded-md px-2 py-1 text-xs text-muted-foreground">
         分层穿透视图 · 滚轮缩放 · 拖拽平移
       </div>
     </div>

@@ -1,6 +1,6 @@
-@import "tw-animate-css";
-@import "https://fonts.googleapis.cn/css2?family=Inter:wght@400;500;600;700&display=swap";
+@import url("https://fonts.googleapis.cn/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
+@import "tw-animate-css";
 
 @theme {
   --color-background: #ffffff;
@@ -115,4 +115,134 @@ body::before {
   overflow-y: visible;
   max-width: 100%;
   word-break: break-word;
+}
+
+/* ─── 动效增强：卡片入场浮入 ─── */
+[data-slot="card"] {
+  animation: card-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: border-color 0.2s ease, box-shadow 0.25s ease;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── 动效增强：卡片 hover 微交互（仅边框高亮+柔化阴影，不做位移，避免误导可点性） ─── */
+[data-slot="card"]:hover {
+  border-color: color-mix(in srgb, var(--color-border) 45%, var(--color-primary) 55%);
+  box-shadow: 0 10px 30px -14px color-mix(in srgb, var(--color-foreground) 22%, transparent);
+}
+
+/* ─── 动效增强：骨架屏 shimmer 扫光 ─── */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+[data-slot="skeleton"] {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-muted) 25%,
+    color-mix(in srgb, var(--color-foreground) 8%, var(--color-muted)) 50%,
+    var(--color-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ─── 动效增强：尊重「减少动画」设置 ─── */
+[style*="--reduce-motion: reduce"] *,
+[style*="--reduce-motion: reduce"] *::before,
+[style*="--reduce-motion: reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ─── 报告快照导出：打印样式 ─── */
+@media print {
+  /* 强制浅色主题，保证打印可读（覆盖暗色模式） */
+  :root,
+  :root.dark,
+  .dark {
+    --color-background: #ffffff;
+    --color-foreground: #0a0a0a;
+    --color-card: #ffffff;
+    --color-card-foreground: #0a0a0a;
+    --color-popover: #ffffff;
+    --color-popover-foreground: #0a0a0a;
+    --color-primary: #2563eb;
+    --color-primary-foreground: #ffffff;
+    --color-secondary: #f1f5f9;
+    --color-secondary-foreground: #0f172a;
+    --color-muted: #f1f5f9;
+    --color-muted-foreground: #64748b;
+    --color-accent: #f1f5f9;
+    --color-accent-foreground: #0f172a;
+    --color-destructive: #ef4444;
+    --color-destructive-foreground: #ffffff;
+    --color-border: #e2e8f0;
+    --color-input: #e2e8f0;
+    --color-ring: #2563eb;
+  }
+
+  /* 保留必要的背景色（badge / 图表） */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 关闭微纹理背景 */
+  body::before {
+    display: none !important;
+  }
+
+  /* 隐藏导航与操作元素 */
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* 展开滚动容器，避免打印内容被截断 */
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+  .overflow-auto,
+  .overflow-x-auto,
+  .overflow-y-auto {
+    overflow: visible !important;
+  }
+  [class*="h-[calc(100dvh"] {
+    height: auto !important;
+  }
+
+  /* 卡片去除磨砂/入场动画/阴影，避免分页碎裂 */
+  [data-slot="card"] {
+    background: var(--color-card) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    animation: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .recharts-wrapper,
+  .recharts-responsive-container {
+    break-inside: avoid;
+  }
 }

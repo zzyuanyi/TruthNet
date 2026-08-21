@@ -8,7 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText } from 'lucide-react';
+import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText, Info } from 'lucide-react';
 import type { Message, RiskLevel, ComparisonNextStep, PendingCompanyCandidates } from '@/types/truthnet';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
 
@@ -488,6 +488,19 @@ function MessageBubble({
                 </span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* 会4 收口：数据与口径限制说明模块 */}
+        {!isUser && (
+          <div className="mt-2 pt-2 border-t border-border/30">
+            <div className="flex items-start gap-2 rounded-md bg-muted/40 px-3 py-2">
+              <Info className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                数据与口径限制：以上分析基于已接入的财报及公开披露数据，可能存在数据时滞或缺失；
+                触发阈值与规则口径为团队配置，结果仅供参考，不构成投资建议。
+              </p>
+            </div>
           </div>
         )}
       </div>
