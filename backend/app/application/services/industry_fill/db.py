@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 
 from sqlalchemy import Engine, text
@@ -77,17 +78,38 @@ def fetch_report_industry_map(engine: Engine) -> dict[str, dict]:
     return out
 
 
+# 标准可查询 A 股代码：6 位 ASCII 数字 + 可选交易所后缀（.SH/.SZ/.BJ）。
+# A 前缀退市改写码（A04024.SZ）、垃圾码（0000EA）等不匹配 → 结构性不可查询。
+_QUERYABLE_WIND_CODE = re.compile(r"[0-9]{6}(\.(SH|SZ|BJ))?")
+
+
+def _is_queryable(wind_code: str) -> bool:
+    """是否可交给 provider 查询：仅标准 6 位 A 股代码（含可选后缀）。
+
+    数据治理红线 #26：A 前缀码（如 A04024.SZ）是 Wind 退市证券改写码，无正式
+    6 位码，eastmoney/akshare 永远查不到。若把它们送进 provider 会永久 ERROR，
+    而 apply readiness 门禁要求 error_count=0 → 门禁被永久卡死。因此这类
+    结构性不可查询代码应在缺失快照阶段直接排除（industry 缺失可接受，标
+    delisted 保留即可）。
+    """
+    return bool(_QUERYABLE_WIND_CODE.fullmatch((wind_code or "").strip()))
+
+
 def compute_missing_codes(
     snapshot: dict[str, dict], report_map: dict[str, dict]
 ) -> tuple[list[str], dict[str, dict]]:
-    """缺失代码快照 + 研报可直接确定性补全的行（档案 §3 链路）。"""
+    """缺失代码快照 + 研报可直接确定性补全的行（档案 §3 链路）。
+
+    非标准代码（A 前缀退市改写码、垃圾码等）不进入查询候选：结构性不可查询，
+    不产生无意义的 provider error，也不阻塞 apply readiness 门禁。
+    """
     missing: list[str] = []
     research_fills: dict[str, dict] = {}
     for code, info in snapshot.items():
         if not (info.get("industry_l1") or "").strip():
             if code in report_map:
                 research_fills[code] = report_map[code]
-            else:
+            elif _is_queryable(code):
                 missing.append(code)
     return sorted(missing), research_fills
 
