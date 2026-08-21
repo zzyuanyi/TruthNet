@@ -13,18 +13,41 @@ REPORT_METRIC_KEYS = [
     "research_report_codes",
     "research_report_matched",
     "candidate_missing_count",
+    "candidate_query_count",
+    "raw_missing_industry_l1",
+    "not_current_universe_missing_l1",
+    "current_universe_count",
+    "current_universe_source",
+    "current_universe_provider_version",
+    "current_universe_retrieved_at",
+    "current_universe_sha256",
+    "current_universe_in_companies",
+    "current_universe_missing_from_companies",
+    "current_universe_missing_company_codes",
+    "current_universe_missing_l1",
+    "current_universe_missing_l2",
+    "current_universe_l1_coverage",
+    "current_universe_l2_coverage",
+    "current_universe_projected_missing_l1",
+    "current_universe_projected_missing_l2",
+    "current_universe_classification_complete",
+    "current_universe_company_master_complete",
     "akshare_success",
     "akshare_empty",
     "akshare_unmapped",
     "akshare_error",
     "name_inference_success",
     "staging_rows",
+    "verified_existing_rows",
     "eligible_apply_rows",
     "companies_updated",
     "companies_with_industry_after",
     "final_coverage",
     "source_distribution",
     "existing_values_overwritten",
+    "existing_source_upgrades",
+    "existing_l1_mismatches",
+    "existing_l2_mismatches",
     "duplicate_wind_codes",
     "nan_source_count",
     # provider 运行统计（档案 v1.1 §6.4 收口批次）
@@ -64,7 +87,11 @@ def render_text(report: dict, *, title: str) -> str:
     lines = [f"=== {title} ==="]
     for key in REPORT_METRIC_KEYS:
         value = report.get(key)
-        if key in ("source_distribution", "provider_host_distribution"):
+        if key in (
+            "source_distribution",
+            "provider_host_distribution",
+            "current_universe_missing_company_codes",
+        ):
             lines.append(f"{key}: {json.dumps(value or {}, ensure_ascii=False)}")
         elif key == "post_apply_steps":
             lines.append(f"{key}: {json.dumps(value or [], ensure_ascii=False)}")

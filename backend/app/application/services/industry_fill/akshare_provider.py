@@ -104,6 +104,20 @@ def _bare_number(wind_code: str) -> str:
     return wind_code.split(".")[0] if "." in wind_code else wind_code
 
 
+def _eastmoney_secid(bare: str) -> str:
+    """东财市场标识：沪市为 1，深市/北交所为 0。
+
+    北交所统一代码以 92 开头，不能按首位 ``9`` 误归上海市场；上海 B 股
+    的 900xxx 不在本 A 股补全范围内，但仍保留为市场 1。
+    """
+    market = (
+        "0"
+        if bare.startswith("92")
+        else ("1" if bare.startswith(("6", "9")) else "0")
+    )
+    return f"{market}.{bare}"
+
+
 class AkShareProvider:
     """行业数据源适配器：逐股东财 push2 直连为主，akshare 包装兜底。"""
 
@@ -313,7 +327,7 @@ class AkShareProvider:
         throttled_flag 为可选单元素列表：轮换中任一主机限流则置 True
         （即使最终由其他主机/兜底恢复，调用方也据此降并发）。
         """
-        secid = f"{1 if bare.startswith(('6', '9')) else 0}.{bare}"
+        secid = _eastmoney_secid(bare)
         hosts = self._ordered_hosts()
         if not hosts:
             # 全部主机在冷却窗口内：不重锤，直接判限流（resume 会重试，对抗审查 H7）
@@ -528,8 +542,7 @@ class AkShareProvider:
             raise _Push2Throttled("push2 批量熔断打开，fail-fast（resume 会重试）")
         secids = []
         for bare in bare_codes:
-            market = "1" if bare.startswith(("6", "9")) else "0"
-            secids.append(f"{market}.{bare}")
+            secids.append(_eastmoney_secid(bare))
         hosts = self._ordered_hosts()
         if not hosts:
             # 全部主机在冷却窗口内：不重锤，直接判限流（对抗审查 H7）
@@ -676,6 +689,7 @@ class AkShareProvider:
         cached = cached or {}
         counter = ProgressCounter()
         by_code: dict[str, ProviderResult] = {}
+        persisted_codes: set[str] = set()
         controller = self._controller
         # set_capacity 同时把恢复上限钳到 concurrency（--concurrency 即天花板，审查 B）
         controller.set_capacity(concurrency)
@@ -720,10 +734,17 @@ class AkShareProvider:
                 counter.cached += 1
             else:
                 self._count(counter, res)
-            if on_result is not None:
-                on_result(res)  # 逐码回调：每查询完成一个代码即落盘（档案 §6.2）
+            if on_result is not None and code not in persisted_codes:
+                on_result(res)
+                persisted_codes.add(code)
             if on_progress is not None:
                 on_progress(done, len(codes), counter.as_dict())
+
+        def persist_queried(code: str, res: ProviderResult) -> None:
+            """查询一完成就落盘；最终按输入序装配时不得重复回调。"""
+            if on_result is not None and code not in persisted_codes:
+                on_result(res)
+                persisted_codes.add(code)
 
         n = len(codes)
         if n == 0:
@@ -761,6 +782,7 @@ class AkShareProvider:
                         )
                         res.attempts = sum(attempts)
                         batch_results[code] = res
+                        persist_queried(code, res)
                     else:
                         batch_miss.append(code)
                 # 批量级节流记账：一次请求计一次，避免把 60 个代码放大成 60 次降并发
@@ -813,12 +835,14 @@ class AkShareProvider:
                 for code in batch_miss:
                     _c, res, _w = per_stock(code)
                     fallback_results[code] = res
+                    persist_queried(code, res)
             else:
                 with ThreadPoolExecutor(max_workers=max_workers) as pool:
                     futures = [pool.submit(per_stock, code) for code in batch_miss]
                     for fut in as_completed(futures):
                         _c, res, _w = fut.result()
                         fallback_results[_c] = res
+                        persist_queried(_c, res)
 
         # 3) 限流整块 → ERROR(throttled) 结果（不逐股，resume 会重试）
         throttled_results: dict[str, ProviderResult] = {}
@@ -833,6 +857,7 @@ class AkShareProvider:
             res.throttled = True
             res.last_error = "批量限流，整块未转逐股（防风暴，resume 重试）"
             throttled_results[code] = res
+            persist_queried(code, res)
 
         # 4) 按输入序装配（缓存直出 / 批量 / 限流整块 / 逐股）
         done = 0
