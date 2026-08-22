@@ -356,6 +356,98 @@ _UNSUPPORTED_KW = (
     "自选股中",
     "走势预测",
     "预测走势",
+    # 8/22 晚全量 1410 分析：券商业务操作/账户类问题（定位外）——
+    # 之前落"未能识别到公司"或公司综合分析答非所问，补词后合理拒答。
+    "两融",
+    "开户",
+    "调整佣金",
+    "我的佣金",
+    "降佣金",
+    "费率",
+    "账号",
+    "密码",
+    "转账",
+    "委托流水",
+    "定投",
+    "缴款",
+    "客户经理",
+    "股东号",
+    "存管",
+    "撤单",
+    "风险测评",
+    "网络投票",
+    "现金选择权",
+    "网格交易",
+    "银证",
+    "北交所",
+    "新三板",
+    "etf",
+    "reits",
+    "货币基金",
+    "b股",
+    "中签",
+    "秀财",
+    "受益标的",
+    "注册制",
+    "macd",
+    "rsi",
+    "rs1",
+    "dea",
+    "kdj",
+    "boll",
+    "多头排列",
+    "生命线",
+    "卖空",
+    "贴息",
+    "低价股",
+    "小面值",
+    "公募基金",
+    "重仓",
+    "卖出全部",
+    "加入自选",
+    "添加到自选",
+    "加入自选股",
+    "个股数量",
+    "涨停股票有哪些",
+    "买入信号",
+    "卖出信号",
+    "操作策略",
+    # 8/22 晚全量 1410 分析（第二批）：账户/权限/界面操作类具体名词——
+    # 只收明确券商业务名词，不收"如何查看"等宽泛前缀（会误伤
+    # "如何查看康美药业年报"类合法问题）。
+    "权限",
+    "账户",
+    "浏览记录",
+    "基金转换",
+    "股东账户",
+    "外部风险包括",
+    "提供策略",
+    "psr",
+    "roa",
+    "机构调研",
+    # 8/22 晚全量 1410 分析（第三批）：剩余券商操作/账户词
+    "添加联系人",
+    "委托方式",
+    "调整佣金",
+    "的佣金",
+    "佣金怎么",
+    "佣金是多少",
+    "查佣金",
+    "开两融",
+    "开通两融",
+    "两融怎么",
+    "怎么开通",
+    "如何开通",
+    "怎么开户",
+    "如何开户",
+    # 8/22 晚全量 1410 分析（第四批）：基金/收益率/形态等定位外词
+    "的基金",
+    "支基金",
+    "收益率",
+    "是什么形态",
+    "什么形态",
+    "形态分析",
+    "形态如何",
 )
 
 _MARKET_WIDE_CUES = (
@@ -402,6 +494,86 @@ _MARKET_WIDE_CUES = (
     "涨的好的",
     "涨得好",
     "主要应用领域",
+)
+
+# 8/22 晚全量 1410 分析：市场整体/全市场聚合类词（无公司时合理拒答）。
+# 与 _MARKET_WIDE_CUES 的区别：这里只在 company is None 时短路（见
+# _detect_macro_market_intent），避免误伤"东吴证券近期有利好消息吗"
+# （有公司、属 events/公告范围）等带主体的问题。
+# 注意：行业/概念主题词（新能源汽车/5G/区块链/AI 等）不在此表——
+# 那些应走 research 研报检索链路（研报可答行业动态），归 unsupported
+# 会误伤"新能源汽车产业链的最新动态是什么"（test 锁定 research）。
+_MACRO_MARKET_CUES = (
+    # 市场整体动态/消息/热点（无公司、无主体）
+    "今天市场",
+    "今日市场",
+    "最近市场",
+    "市场动态",
+    "市场消息",
+    "消息面",
+    "有什么热点",
+    "有什么消息",
+    "有什么利好",
+    "有什么利空",
+    "利好事件",
+    "利空消息",
+    "利好消息",
+    "热点信息",
+    "热点事件",
+    "市场事件",
+    "重要事件",
+    "今日事件",
+    "最新消息",
+    "有什么消息和政策",
+    # 全市场统计/排名（非个股、非研报可答；"全市场/市场整体"
+    # 已在 _MARKET_WIDE_CUES，不重复）
+    "沪深两市",
+    "大盘走势",
+    "大盘表现",
+    "指数行情",
+    "市场排名",
+    "涨幅排名",
+    "跌幅排名",
+    # 8/22 晚全量 1410 分析（第二批）：贵金属/商品市场、选股筛选类
+    "贵金属",
+    "黄金白银",
+    "市场分析",
+    "有什么市场热点",
+    "值得关注",
+    "热门股票",
+    "横盘",
+    "筹码",
+    "流通股本",
+    "相关的股票",
+    "黄金相关",
+    "板块资金",
+    "板块排名",
+    "资金流入排名",
+    "成交量排名",
+    "换手率排名",
+    # 8/22 晚全量 1410 分析（第三批）：宏观政策/行业趋势/销量类——
+    # 官方数据为公司研报，检索只会返回公司经营数据答非所问
+    # （row 484/486/489/490/493/496），与 8/22 宏观政策合理拒答
+    # 原则一致，归 unsupported 而非 research。
+    "政策支持",
+    "政策变化",
+    "政策汇总",
+    "行业消息",
+    "行业政策",
+    "行业前景",
+    "行业趋势",
+    "行业动态",
+    "消费趋势",
+    "竞争态势",
+    "市场趋势",
+    "销量数据",
+    "市场走势",
+    "行业走势",
+    "市场前景",
+    "行业现状",
+    "市场规模",
+    "市场容量",
+    "行业规模",
 )
 
 # 公司事实轻量查询（R9）：只匹配明确模板，禁止裸"行业/股本"包含匹配
@@ -501,6 +673,27 @@ _RESEARCH_CUES = (
     "题材",
     "政策",
     "发展趋势",
+    # 8/22 晚全量 1410 分析：研报可答的行业/事件/资讯类问题——
+    # 之前无公司时落 guide（"未能识别到公司"错误），补词后走 research。
+    "研究报告",
+    "重要消息",
+    "最新进展",
+    "最新发展",
+    "最新动态",
+    "热门资讯",
+    "产业链",
+    "上下游",
+    "换电模式",
+    "目标价",
+    "核心竞争",
+    "竞争力",
+    "竞争对手",
+    "产品计划",
+    "业务拓展",
+    "国际业务",
+    "行业布局",
+    "领域布局",
+    "未来趋势",
 )
 
 _COMPANY_RESEARCH_CUES = (
@@ -923,6 +1116,20 @@ def _detect_chitchat_with_llm(user_query: str) -> str | None:
 def _fallback_no_company_intent(user_query: str) -> str | None:
     """LLM 失败后的无实体语义兜底，不重新覆盖成功的 LLM 判定。"""
     ql = (user_query or "").lower()
+    # 8/22 晚全量 1410 分析：无公司时市场宏观/全市场聚合类问题
+    # （"今天市场有哪些消息""最近有哪些利好事件"）落 guide 会答
+    # "未能识别到公司"（错误），此处优先归 unsupported 合理拒答。
+    # 注意 _MACRO_MARKET_CUES 的词都带"市场/大盘/指数/利好利空"语境，
+    # 不会误伤 research 行业动态类（那类走 _RESEARCH_CUES）。
+    if any(cue in ql for cue in _MACRO_MARKET_CUES):
+        return "unsupported"
+    # 8/22 晚全量 1410 分析：无公司时券商业务/盘口/账户操作类
+    # （"如何调整佣金""688001卖盘"）同样应归 unsupported 而非 guide；
+    # 公告类豁免与 detect_chitchat_intent 保持一致。
+    if any(kw in ql for kw in _UNSUPPORTED_KW) and not any(
+        cue in ql for cue in ("公告", "公布", "披露")
+    ):
+        return "unsupported"
     if any(cue in ql for cue in _RESEARCH_CUES):
         return "research"
     if any(cue in ql for cue in _ANALYSIS_CUES) or any(
@@ -1058,7 +1265,10 @@ def plan_modules_node(state: AgentState) -> dict:
 
     if (
         company is None
-        and any(cue in user_query for cue in _MARKET_WIDE_CUES)
+        and (
+            any(cue in user_query for cue in _MARKET_WIDE_CUES)
+            or any(cue in user_query for cue in _MACRO_MARKET_CUES)
+        )
         and not (
             ("个股" in user_query or "股票" in user_query)
             and any(cue in user_query for cue in ("行业", "板块", "领域"))
@@ -1742,7 +1952,13 @@ def plan_modules_node(state: AgentState) -> dict:
             # 明确 research 关键词（板块/技术/产业等）可能返回泛化
             # "analysis"——此时以高置信关键词兜底 research 为准（8/20 CI 修复：
             # 测试在 LLM_BACKEND=mock 下 "AI医疗板块有哪些个股" 等被误判 guide）。
-            if fallback_intent == "research":
+            # 8/22 晚全量 1410：无公司市场宏观/券商业务类（_MACRO_MARKET_CUES /
+            # _UNSUPPORTED_KW）同样会被 mock LLM 泛化为 analysis → 误落
+            # guide（"未能识别到公司"错误）；fallback 已判定 unsupported 时
+            # 以此为准，避免答非所问。
+            if fallback_intent == "unsupported":
+                detected = "unsupported"
+            elif fallback_intent == "research":
                 detected = "research"
             else:
                 detected = "guide"  # 公司分析诉求但实体缺失，转为可执行引导
@@ -1758,7 +1974,11 @@ def plan_modules_node(state: AgentState) -> dict:
                 # （板块/技术/产业/热点资讯等）返回泛化 "analysis"——此时
                 # 以高置信关键词兜底 research 为准，否则 "AI医疗板块有
                 # 哪些个股" 等被误判为 guide。
-                if fallback_intent == "research":
+                # 8/22 晚全量 1410：同样处理 fallback 已判定 unsupported
+                # 的定位外问题（市场宏观/券商业务），不落 guide 答非所问。
+                if fallback_intent == "unsupported":
+                    detected = "unsupported"
+                elif fallback_intent == "research":
                     detected = "research"
                 else:
                     detected = "guide"
