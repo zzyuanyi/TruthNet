@@ -48,11 +48,12 @@ class TestArgParserContract:
         with pytest.raises(SystemExit):
             cli_mod._validate_args(args)
 
-    def test_replace_requires_apply(self, cli_mod):
+    def test_replace_can_be_dry_run_audit(self, cli_mod):
         ap = cli_mod.build_arg_parser()
         args = ap.parse_args(["--database", "truthnet_test", "--replace"])
-        with pytest.raises(SystemExit):
-            cli_mod._validate_args(args)
+        cli_mod._validate_args(args)
+        assert args.replace is True
+        assert args.apply is False
 
     def test_apply_with_skip_benchmark_rebuild_rejected(self, cli_mod):
         """审查整改 P2：--apply 与 --skip-benchmark-rebuild 必须互斥。"""

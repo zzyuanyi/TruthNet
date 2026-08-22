@@ -20,6 +20,27 @@ class TestBuildReport:
         ):
             assert key in REPORT_METRIC_KEYS
 
+    def test_whitelist_includes_current_universe_quality_keys(self):
+        for key in (
+            "raw_missing_industry_l1",
+            "candidate_query_count",
+            "not_current_universe_missing_l1",
+            "current_universe_missing_from_companies",
+            "current_universe_missing_company_codes",
+            "current_universe_l1_coverage",
+            "current_universe_l2_coverage",
+            "current_universe_projected_missing_l1",
+            "current_universe_projected_missing_l2",
+            "current_universe_classification_complete",
+            "current_universe_company_master_complete",
+            "current_universe_sha256",
+            "verified_existing_rows",
+            "existing_source_upgrades",
+            "existing_l1_mismatches",
+            "existing_l2_mismatches",
+        ):
+            assert key in REPORT_METRIC_KEYS
+
     def test_build_report_passes_through_known_keys(self):
         metrics = {
             "akshare_success": 5,

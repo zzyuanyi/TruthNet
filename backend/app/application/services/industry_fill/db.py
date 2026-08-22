@@ -147,7 +147,8 @@ def apply_industry_fill(
             result = conn.execute(
                 text(
                     "UPDATE companies SET industry_l1=:l1, industry_l2=:l2, "
-                    "sw_indu_code=:sw, industry_source=:src, industry_as_of=:asof "
+                    "sw_indu_code=COALESCE(:sw, sw_indu_code), "
+                    "industry_source=:src, industry_as_of=:asof "
                     f"{clause}"
                 ),
                 {

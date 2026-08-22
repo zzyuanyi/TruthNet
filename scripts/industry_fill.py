@@ -87,7 +87,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--replace",
         action="store_true",
-        help="允许覆盖已有行业（必须与 --apply 同时使用，默认关闭）",
+        help="核验当前上市公司并计划修正不一致行业；加 --apply 才实际写入",
     )
     ap.add_argument(
         "--max-retries",
@@ -145,8 +145,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def _validate_args(args: argparse.Namespace) -> None:
     if args.apply and args.dry_run:
         raise SystemExit("--dry-run 与 --apply 互斥（档案 §4）")
-    if args.replace and not args.apply:
-        raise SystemExit("--replace 必须与 --apply 一起使用（档案 §4）")
     if args.apply and args.skip_benchmark_rebuild:
         raise SystemExit(
             "--skip-benchmark-rebuild 不得与 --apply 同时使用："
@@ -221,12 +219,27 @@ def main(argv: list[str] | None = None) -> int:
         RunConfig,
         run_pipeline,
     )
+    from backend.app.application.services.industry_fill.universe import (
+        fetch_current_a_share_universe,
+    )
 
     provider = AkShareProvider(
         mapping_version=mapping_version(),
         dataset_version=settings.DATASET_VERSION,
     )
     provider_version = akshare_version() or "not-installed"
+    try:
+        current_universe = fetch_current_a_share_universe()
+    except RuntimeError as exc:
+        print(f"[FAIL] {exc}")
+        engine.dispose()
+        return 1
+    log.info(
+        "当前沪深京 A 股范围: %d 码, source=%s, sha256=%s",
+        len(current_universe.codes),
+        current_universe.source,
+        current_universe.sha256[:16],
+    )
 
     # resume：复用既有 run 目录（元数据不匹配 fail-closed）
     if args.resume:
@@ -263,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         mapping_csv_path=_REPO_ROOT / "data" / "processed" / "industry_mapping.csv",
         allow_unmapped=args.allow_unmapped,
+        current_universe=current_universe,
     )
 
     # 步骤 6：执行链路
@@ -287,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                 "provider": args.provider,
                 "retry_empty": args.retry_empty,
                 "allow_unmapped": args.allow_unmapped,
+                "current_universe_sha256": current_universe.sha256,
             },
         )
     except RuntimeError as exc:

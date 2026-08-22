@@ -13,6 +13,7 @@ import pytest
 from backend.app.application.services.industry_fill import akshare_provider
 from backend.app.application.services.industry_fill.akshare_provider import (
     AkShareProvider,
+    _eastmoney_secid,
 )
 from backend.app.application.services.industry_fill.constants import QueryStatus
 from backend.app.application.services.industry_fill.provider import (
@@ -49,6 +50,13 @@ def _provider() -> AkShareProvider:
     return AkShareProvider(
         mapping_version="sw-l2-to-l1-v1", dataset_version="official-2026-07-12"
     )
+
+
+def test_eastmoney_secid_distinguishes_bse_from_shanghai_b_share():
+    assert _eastmoney_secid("920006") == "0.920006"
+    assert _eastmoney_secid("600519") == "1.600519"
+    assert _eastmoney_secid("900901") == "1.900901"
+    assert _eastmoney_secid("000001") == "0.000001"
 
 
 def _batch_empty(self, bares, **kwargs):
@@ -119,6 +127,25 @@ class TestCallWithRetry:
 
 
 class TestQueryOneDirect:
+    def test_bse_direct_uses_market_zero(self, monkeypatch):
+        captured: dict = {}
+
+        class _Resp:
+            text = (
+                '{"rc":0,"data":{"f57":"920006","f58":"晟楠科技","f127":"航空装备Ⅱ"}}'
+            )
+
+        class _SessionStub:
+            def get(self, *args, **kwargs):
+                captured.update(kwargs["params"])
+                return _Resp()
+
+        monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
+        result = _provider()._fetch_direct("920006", max_retries=0, backoff_seconds=0)
+
+        assert captured["secid"] == "0.920006"
+        assert result["f127"] == "航空装备Ⅱ"
+
     def test_success_via_direct(self, monkeypatch):
         def fake_direct(self, bare, **kwargs):
             assert bare == "600519"
@@ -336,6 +363,55 @@ class TestRetryThreading:
 
 
 class TestQueryMany:
+    def test_each_fallback_result_is_persisted_before_next_query(self, monkeypatch):
+        """中途失败时，已完成代码必须已写 staging，不能等全批结束才回调。"""
+        monkeypatch.setattr(AkShareProvider, "_fetch_batch", _batch_empty)
+        events: list[str] = []
+
+        def fake_query_one(self, code, **kwargs):
+            events.append(f"query:{code}")
+            if code == "000002.SZ":
+                raise RuntimeError("模拟第二码意外中断")
+            return ProviderResult(
+                wind_code=code,
+                security_number=code.split(".")[0],
+                query_status=QueryStatus.SUCCESS,
+                industry_l1="银行",
+            )
+
+        monkeypatch.setattr(AkShareProvider, "_query_one", fake_query_one)
+
+        with pytest.raises(RuntimeError, match="模拟第二码意外中断"):
+            _provider().query_many(
+                ["000001.SZ", "000002.SZ"],
+                max_retries=0,
+                backoff_seconds=0,
+                concurrency=1,
+                on_result=lambda result: events.append(f"persist:{result.wind_code}"),
+            )
+
+        assert events == [
+            "query:000001.SZ",
+            "persist:000001.SZ",
+            "query:000002.SZ",
+        ]
+
+    def test_batch_result_callback_is_not_emitted_twice(self, monkeypatch):
+        def batch_ok(self, bares, **kwargs):
+            return {"600519": {"f100": "白酒Ⅱ", "f14": "贵州茅台"}}
+
+        monkeypatch.setattr(AkShareProvider, "_fetch_batch", batch_ok)
+        persisted: list[str] = []
+        results = _provider().query_many(
+            ["600519.SH"],
+            max_retries=0,
+            backoff_seconds=0,
+            on_result=lambda result: persisted.append(result.wind_code),
+        )
+
+        assert results[0].wind_code == "600519.SH"
+        assert persisted == ["600519.SH"]
+
     def test_cached_success_not_requeried(self, monkeypatch):
         cached = {
             "600519.SH": ProviderResult(
@@ -575,6 +651,27 @@ class TestBatchPrimary:
         assert all(r.provider_endpoint == "eastmoney.push2.batch" for r in results)
         assert results[0].industry_l1 == "食品饮料"  # 白酒Ⅱ → 食品饮料
         assert results[1].industry_l1 == "银行"  # 银行 → 银行
+
+    def test_bse_batch_uses_market_zero(self, monkeypatch):
+        captured: dict = {}
+
+        class _Resp:
+            text = (
+                '{"rc":0,"data":{"diff":['
+                '{"f12":"920006","f14":"晟楠科技","f100":"航空装备Ⅱ"}'
+                "]}}"
+            )
+
+        class _SessionStub:
+            def get(self, *args, **kwargs):
+                captured.update(kwargs["params"])
+                return _Resp()
+
+        monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
+        result = _provider()._fetch_batch(["920006"], max_retries=0, backoff_seconds=0)
+
+        assert captured["secids"] == "0.920006"
+        assert result == {"920006": "航空装备Ⅱ"}
 
     def test_batch_miss_falls_back_to_per_stock(self, monkeypatch):
         """批量只覆盖部分 → 未覆盖代码逐股 f127 回退（同源确定性口径）。"""

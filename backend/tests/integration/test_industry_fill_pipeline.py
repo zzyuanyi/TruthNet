@@ -24,6 +24,9 @@ from backend.app.application.services.industry_fill.service import (
     RunConfig,
     run_pipeline,
 )
+from backend.app.application.services.industry_fill.universe import (
+    build_current_universe_snapshot,
+)
 
 DDL = """
 CREATE TABLE companies (
@@ -204,6 +207,158 @@ class TestPipelineSqlite:
         assert result.report["eligible_apply_rows"] == 1
         assert result.report["dry_run_no_change_ok"] is True
         assert stats["missing"] == 2
+
+    def test_current_universe_filters_historical_missing_codes(self, engine, tmp_path):
+        _seed(engine, ["000001.SZ", "600001.SH"])
+        provider = FakeProvider(
+            {
+                "000001.SZ": ProviderResult(
+                    wind_code="000001.SZ",
+                    security_number="000001",
+                    query_status=QueryStatus.SUCCESS,
+                    industry_l1="银行",
+                    industry_l2="股份制银行Ⅱ",
+                )
+            }
+        )
+        universe = build_current_universe_snapshot(
+            [("000001", "平安银行")],
+            provider_version="test-1",
+            retrieved_at="2026-08-21T00:00:00+00:00",
+            min_size=1,
+        )
+        result = run_pipeline(
+            engine,
+            _config(
+                engine,
+                provider,
+                cache_dir=tmp_path,
+                current_universe=universe,
+            ),
+        )
+
+        assert provider.queried == ["000001.SZ"]
+        assert result.report["raw_missing_industry_l1"] == 2
+        assert result.report["not_current_universe_missing_l1"] == 1
+        assert result.report["candidate_missing_count"] == 1
+        assert result.report["current_universe_in_companies"] == 1
+        assert result.report["current_universe_missing_from_companies"] == 0
+        assert result.report["current_universe_missing_company_codes"] == []
+        assert result.report["current_universe_projected_missing_l1"] == 0
+        assert result.report["current_universe_projected_missing_l2"] == 0
+        assert result.report["current_universe_classification_complete"] is True
+        assert result.report["current_universe_company_master_complete"] is True
+
+    def test_historical_research_fill_is_excluded_by_current_universe(
+        self, engine, tmp_path
+    ):
+        _seed(engine, ["000001.SZ", "600001.SH"])
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO research_reports "
+                    "(wind_code, sec_name, industry_l1, sw_indu_code) "
+                    "VALUES ('600001.SH', '历史公司', '银行', '801780')"
+                )
+            )
+        provider = FakeProvider(
+            {
+                "000001.SZ": ProviderResult(
+                    wind_code="000001.SZ",
+                    security_number="000001",
+                    query_status=QueryStatus.SUCCESS,
+                    industry_l1="银行",
+                    industry_l2="股份制银行Ⅱ",
+                )
+            }
+        )
+        universe = build_current_universe_snapshot(
+            [("000001", "平安银行")],
+            provider_version="test-1",
+            retrieved_at="2026-08-21T00:00:00+00:00",
+            min_size=1,
+        )
+
+        result = run_pipeline(
+            engine,
+            _config(
+                engine,
+                provider,
+                cache_dir=tmp_path,
+                current_universe=universe,
+            ),
+        )
+
+        assert result.research_filled == 0
+        assert result.report["eligible_apply_rows"] == 1
+        assert provider.queried == ["000001.SZ"]
+
+    def test_replace_audits_current_rows_and_plans_only_changes(self, engine, tmp_path):
+        _seed(
+            engine,
+            ["000001.SZ", "600519.SH", "600001.SH"],
+            with_industry=True,
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE companies SET industry_l1='房地产', "
+                    "industry_l2='房地产开发', industry_source='research_report' "
+                    "WHERE wind_code='000001.SZ'"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE companies SET industry_l1='食品饮料', "
+                    "industry_l2='白酒Ⅱ', industry_source='name_inference' "
+                    "WHERE wind_code='600519.SH'"
+                )
+            )
+        provider = FakeProvider(
+            {
+                "000001.SZ": ProviderResult(
+                    wind_code="000001.SZ",
+                    security_number="000001",
+                    query_status=QueryStatus.SUCCESS,
+                    industry_l1="银行",
+                    industry_l2="股份制银行Ⅱ",
+                ),
+                "600519.SH": ProviderResult(
+                    wind_code="600519.SH",
+                    security_number="600519",
+                    query_status=QueryStatus.SUCCESS,
+                    industry_l1="食品饮料",
+                    industry_l2="白酒Ⅱ",
+                ),
+            }
+        )
+        universe = build_current_universe_snapshot(
+            [("000001", "平安银行"), ("600519", "贵州茅台")],
+            provider_version="test-1",
+            retrieved_at="2026-08-21T00:00:00+00:00",
+            min_size=1,
+        )
+
+        result = run_pipeline(
+            engine,
+            _config(
+                engine,
+                provider,
+                cache_dir=tmp_path,
+                current_universe=universe,
+                replace=True,
+            ),
+        )
+
+        assert provider.queried == ["000001.SZ", "600519.SH"]
+        assert result.report["verified_existing_rows"] == 2
+        assert result.report["candidate_missing_count"] == 0
+        assert result.report["candidate_query_count"] == 2
+        assert result.report["eligible_apply_rows"] == 2
+        assert result.report["existing_values_overwritten"] == 1
+        assert result.report["existing_source_upgrades"] == 1
+        assert result.report["existing_l1_mismatches"] == 1
+        assert result.report["existing_l2_mismatches"] == 1
 
     def test_apply_fills_only_missing_and_cleans_nan(self, engine, tmp_path):
         _seed(

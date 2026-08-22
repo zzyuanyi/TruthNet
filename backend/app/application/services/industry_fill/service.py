@@ -44,6 +44,11 @@ from backend.app.application.services.industry_fill.staging import (
     RunMetadata,
     StagingStore,
 )
+from backend.app.application.services.industry_fill.universe import (
+    CurrentUniverseSnapshot,
+    bare_security_code,
+    partition_missing_codes,
+)
 from backend.app.application.services.industry_fill.validation import (
     check_apply_readiness,
     check_dry_run_no_change,
@@ -115,6 +120,8 @@ class RunConfig:
     concurrency: int = 4
     # apply readiness 门禁人工例外：默认 unmapped_count==0 强制；显式开启才放行
     allow_unmapped: bool = False
+    # CLI 正式链路必须传入带来源/哈希的当前沪深京 A 股快照；直接单测可留空。
+    current_universe: CurrentUniverseSnapshot | None = None
 
 
 @dataclass
@@ -149,19 +156,107 @@ def run_pipeline(
     # 1) 快照、缺失代码、研报确定性补全
     snapshot = fetch_companies_snapshot(engine)
     report_map = fetch_report_industry_map(engine)
-    missing, research_fills = compute_missing_codes(snapshot, report_map)
+    raw_missing, research_fills = compute_missing_codes(snapshot, report_map)
+    all_missing_l1 = sorted(
+        code
+        for code, info in snapshot.items()
+        if not (info.get("industry_l1") or "").strip()
+    )
+    not_current_universe: list[str] = []
+    missing = raw_missing
+    current_wind_codes: list[str] = []
+    current_missing_l1_codes: set[str] = set()
+    current_missing_l2_codes: set[str] = set()
+    if config.current_universe is not None:
+        missing, not_current_universe = partition_missing_codes(
+            all_missing_l1, config.current_universe
+        )
+        queryable_missing = set(raw_missing)
+        missing = [code for code in missing if code in queryable_missing]
+        research_fills = {
+            code: fill
+            for code, fill in research_fills.items()
+            if bare_security_code(code) in config.current_universe.codes
+        }
+        current_codes_in_db = {
+            bare_security_code(code)
+            for code in snapshot
+            if bare_security_code(code) in config.current_universe.codes
+        }
+        current_rows = [
+            (code, info)
+            for code, info in snapshot.items()
+            if bare_security_code(code) in config.current_universe.codes
+        ]
+        current_wind_codes = sorted(code for code, _info in current_rows)
+        current_missing_l1_codes = {
+            code
+            for code, info in current_rows
+            if not (info.get("industry_l1") or "").strip()
+        }
+        current_missing_l2_codes = {
+            code
+            for code, info in current_rows
+            if not (info.get("industry_l2") or "").strip()
+        }
+        current_missing_l1 = len(current_missing_l1_codes)
+        current_missing_l2 = len(current_missing_l2_codes)
+        current_count = len(current_rows)
+        missing_company_codes = sorted(
+            config.current_universe.codes - current_codes_in_db
+        )
+        result.report.update(config.current_universe.report_fields())
+        result.report.update(
+            {
+                "current_universe_in_companies": current_count,
+                "current_universe_missing_from_companies": len(missing_company_codes),
+                "current_universe_missing_company_codes": [
+                    {
+                        "code": code,
+                        "name": config.current_universe.names.get(code, ""),
+                    }
+                    for code in missing_company_codes
+                ],
+                "current_universe_missing_l1": current_missing_l1,
+                "current_universe_missing_l2": current_missing_l2,
+                "current_universe_l1_coverage": round(
+                    100.0 * (current_count - current_missing_l1) / current_count, 2
+                )
+                if current_count
+                else 0.0,
+                "current_universe_l2_coverage": round(
+                    100.0 * (current_count - current_missing_l2) / current_count, 2
+                )
+                if current_count
+                else 0.0,
+                "raw_missing_industry_l1": len(all_missing_l1),
+                "not_current_universe_missing_l1": len(not_current_universe),
+                "current_universe_company_master_complete": not missing_company_codes,
+            }
+        )
+    candidate_missing_count = len(missing)
+    if config.replace:
+        if config.current_universe is None:
+            raise RuntimeError("--replace 必须带当前 A 股范围快照，禁止覆盖历史证券")
+        # 显式 refresh：核验全部当前上市公司；历史/退市证券永不进入覆盖候选。
+        missing = current_wind_codes
+        research_fills = {}
     result.research_filled = len(research_fills)
     log.info(
-        "companies=%d, 研报可确定性补全=%d, 待查询缺失=%d",
+        "companies=%d, 研报可确定性补全=%d, 原始缺失=%d, 当前上市待查询=%d, "
+        "非当前上市豁免=%d",
         len(snapshot),
         len(research_fills),
+        len(all_missing_l1),
         len(missing),
+        len(not_current_universe),
     )
 
     # 2) 本次候选集合（offset/limit 只控制本次，不改变全量缺失清单，档案 §4）
     candidate = missing[config.offset :]
     if config.limit is not None:
         candidate = candidate[: config.limit]
+    result.report["candidate_query_count"] = len(candidate)
     log.info(
         "本次候选=%d（offset=%d, limit=%s），全量缺失=%d",
         len(candidate),
@@ -216,6 +311,7 @@ def run_pipeline(
         concurrency=config.concurrency,
     )
     result.report["staging_rows"] = len(store.records())
+    result.report["verified_existing_rows"] = len(results) if config.replace else 0
 
     # provider 运行统计（自适应节流/主机分布/有效并发，档案 v1.1 §6.4）
     if hasattr(config.provider, "report_stats"):
@@ -264,9 +360,29 @@ def run_pipeline(
                 (code, l1, None, fill.get("sw_indu_code"), SOURCE_RESEARCH_REPORT)
             )
     provider_rows: list[ApplyRow] = []
+    existing_overwrites = 0
+    source_upgrades = 0
+    existing_l1_mismatches = 0
+    existing_l2_mismatches = 0
     for res in results:
         if res.query_status != QueryStatus.SUCCESS or not res.industry_l1:
             continue
+        if config.replace:
+            existing = snapshot[res.wind_code]
+            l1_changed = (existing.get("industry_l1") or "").strip() != res.industry_l1
+            l2_changed = (existing.get("industry_l2") or "").strip() != (
+                res.industry_l2 or ""
+            ).strip()
+            fields_changed = l1_changed or l2_changed
+            existing_l1_mismatches += int(l1_changed)
+            existing_l2_mismatches += int(l2_changed)
+            source_upgrade = (existing.get("industry_source") or "").startswith(
+                "name_inference"
+            )
+            if not fields_changed and not source_upgrade:
+                continue
+            existing_overwrites += int(fields_changed)
+            source_upgrades += int(source_upgrade)
         provider_rows.append(
             (
                 res.wind_code,
@@ -279,8 +395,34 @@ def run_pipeline(
     eligible_rows = len(research_rows) + len(provider_rows)
     result.eligible_rows = eligible_rows
     result.report["eligible_apply_rows"] = eligible_rows
-    # 默认模式计划内零覆盖（已按缺失预筛；--replace 语义见 CLI 层）
-    result.report["existing_values_overwritten"] = 0
+    result.report["existing_values_overwritten"] = existing_overwrites
+    result.report["existing_source_upgrades"] = source_upgrades
+    result.report["existing_l1_mismatches"] = existing_l1_mismatches
+    result.report["existing_l2_mismatches"] = existing_l2_mismatches
+
+    if config.current_universe is not None:
+        planned_l1 = {
+            row[0] for row in research_rows + provider_rows if (row[1] or "").strip()
+        }
+        planned_l2 = {
+            row[0] for row in research_rows + provider_rows if (row[2] or "").strip()
+        }
+        projected_missing_l1 = current_missing_l1_codes - planned_l1
+        projected_missing_l2 = current_missing_l2_codes - planned_l2
+        classification_complete = not projected_missing_l1 and not projected_missing_l2
+        result.report.update(
+            {
+                "current_universe_projected_missing_l1": len(projected_missing_l1),
+                "current_universe_projected_missing_l2": len(projected_missing_l2),
+                "current_universe_classification_complete": classification_complete,
+            }
+        )
+        if config.apply and not classification_complete:
+            raise RuntimeError(
+                "当前上市且已入 companies 的证券仍存在行业缺口，拒绝 apply："
+                f"projected_missing_l1={len(projected_missing_l1)}, "
+                f"projected_missing_l2={len(projected_missing_l2)}"
+            )
 
     before = fetch_coverage_stats(engine)
     result.report.update(
@@ -289,7 +431,7 @@ def run_pipeline(
             "companies_with_industry_before": before["companies_with_industry_before"],
             "research_report_codes": before["research_report_codes"],
             "research_report_matched": before["research_report_matched"],
-            "candidate_missing_count": len(missing),
+            "candidate_missing_count": candidate_missing_count,
             "duplicate_wind_codes": before["duplicate_wind_codes"],
             "nan_source_count": before["nan_source_count"],
         }
