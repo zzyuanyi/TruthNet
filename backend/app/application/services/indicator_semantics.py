@@ -81,6 +81,11 @@ _UNSUPPORTED_PHRASES: tuple[str, ...] = (
     "研发投入占比",
     "均线",
     "操盘",
+    # 8/22 后测集分析（row 897）：股东户数/散户数量无数据列，
+    # 显式 unsupported，避免落入股权穿透答非所问。
+    "散户数量",
+    "股东户数",
+    "股东人数",
 )
 
 # 基础报表指标集合：与 indicator_query_service._INDICATORS 的键保持一致。

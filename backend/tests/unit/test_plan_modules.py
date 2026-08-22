@@ -805,6 +805,41 @@ def test_market_field_without_company_is_explicitly_unsupported():
     assert plan.intent == "unsupported"
 
 
+def test_sector_performance_without_company_is_unsupported():
+    """8/22 后测集 row 19：板块行情/表现（无公司）归 unsupported，
+    不再落入 research 研报检索拒答。"""
+    for question in (
+        "今天证券板块的表现如何？",
+        "半导体板块今天涨跌如何",
+        "板块走势怎么样",
+    ):
+        plan = plan_modules_node({"user_query": question, "company": None})["plan"]
+        assert plan.intent == "unsupported", question
+
+
+def test_macro_policy_question_is_unsupported():
+    """8/22 后测集 row 66/67/759/1030/1192：宏观政策/产业扶持/应用领域
+    （无公司）归 unsupported 合理拒答，不返回公司研报摘要答非所问。"""
+    for question in (
+        "AI行业近期有哪些新政策？",
+        "苏州对人工智能产业有什么政策扶持",
+        "哪些地方出台了5G支持政策？",
+        "推荐一些涨的好的产业",
+        "固态电池的主要应用领域有哪些？",
+    ):
+        plan = plan_modules_node({"user_query": question, "company": None})["plan"]
+        assert plan.intent == "unsupported", question
+
+
+def test_convertible_bond_announcement_is_not_unsupported():
+    """8/22 后测集 row 732：可转债赎回公告属 events/公告范围，
+    "赎回"交易词不得把公告查询短路为 unsupported。"""
+    from app.agents.nodes.plan_modules import _detect_event_list_requested
+
+    assert _detect_event_list_requested("游族网络是什么时候公布的提前赎回可转债的")
+    assert _detect_event_list_requested("贵州茅台何时披露回购公告")
+
+
 def test_account_and_trading_rules_are_unsupported_before_entity_error():
     for question in (
         "如何查询国债逆回购的成交记录",

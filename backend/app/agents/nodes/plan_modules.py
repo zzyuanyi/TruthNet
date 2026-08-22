@@ -376,6 +376,32 @@ _MARKET_WIDE_CUES = (
     "资金进入的股票",
     "大宗交易成交额最大",
     "多晶硅价格上涨",
+    # 8/22 后测集分析（row 19）：板块行情/表现类问题（非个股、非研报）
+    # 归 unsupported——"今天证券板块的表现如何"不应落到研报检索拒答。
+    "板块的表现",
+    "板块行情",
+    "板块走势",
+    "板块表现",
+    "板块涨",
+    "板块跌",
+    "板块今天",
+    # 8/22 后测集分析：宏观政策/产业扶持/应用领域类问题（无公司、
+    # 官方数据集为公司研报无法回答政策汇总）→ 归 unsupported 合理拒答，
+    # 不再落入 research 返回公司研报摘要答非所问（row 66/67/759/1030/1192）。
+    "出台",
+    "政策扶持",
+    "扶持政策",
+    "产业政策",
+    "补贴政策",
+    "支持政策",
+    "新政策",
+    "政策汇总",
+    "哪些城市",
+    "哪些地方",
+    "哪些地区",
+    "涨的好的",
+    "涨得好",
+    "主要应用领域",
 )
 
 # 公司事实轻量查询（R9）：只匹配明确模板，禁止裸"行业/股本"包含匹配
@@ -580,6 +606,10 @@ def _detect_event_list_requested(user_query: str) -> bool:
             "监管问询",
         )
     ):
+        return True
+    # 8/22 修复：公告事件时点问法（"什么时候公布的提前赎回可转债"）
+    # 应走 events 时间线而非被 unsupported 短路或落入综合诊断。
+    if re.search(r"(?:什么时候|何时|几号).{0,6}(?:公布|发布|披露|公告)", query):
         return True
     return "公告" in query and any(
         cue in query for cue in ("有没有", "有哪些", "发布", "最近")
@@ -828,8 +858,12 @@ def detect_chitchat_intent(user_query: str) -> str | None:
 
     # 范围外问题（天气/编程/翻译等）先于问候宽松判定：
     # "你好，今天天气怎么样"应归 unsupported，而非被"你好"抢先为 chitchat。
+    # 8/22 修复（P0-3 后测集分析）：公告类查询豁免 unsupported 词表——
+    # "提前赎回可转债的公告"含"赎回"（交易词），但问的是公告事件，
+    # 属 events/公告舆情范围，不应被短路为"超出服务范围"。
     if any(kw in ql for kw in _UNSUPPORTED_KW):
-        return "unsupported"
+        if not any(cue in ql for cue in ("公告", "公布", "披露")):
+            return "unsupported"
 
     # 无实体荐股/使用请求优先归 guide；系统只分析用户指定的公司，不荐股。
     if any(kw in ql for kw in _GUIDE_KW) and not any(
