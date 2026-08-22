@@ -956,3 +956,120 @@ def test_account_and_unsupported_analysis_boundaries_do_not_diagnose():
     for question in cases:
         plan = plan_modules_node(_state(question))["plan"]
         assert plan.intent in {"unsupported", "unsupported_indicator"}, question
+
+
+# ── 8/22 晚全量 1410 分析：定位外问题补词批（券商操作/市场宏观/盘口/指标） ──
+# 这些之前落"未能识别到公司"（guide）或公司综合分析答非所问（错误），
+# 补词后应合理拒答（unsupported / unsupported_indicator），且不误伤有公司问题。
+
+
+def test_full1410_broker_operations_are_unsupported_without_company():
+    """券商业务/账户操作类（无公司）：归 unsupported，不再落 guide。"""
+    cases = (
+        "如何开通两融",
+        "如何调整佣金",
+        "如何交易B股",
+        "如何开通北交所权限",
+        "如何交易ETF基金",
+        "如何操作银证转账",
+        "如何添加联系人",
+        "A股交易的委托方式",
+        "如何找回账号和密码",
+        "新股新债中签如何缴款",
+        "融券费率如何计算",
+        "如何开通新三板权限",
+        "如何查询转账流水",
+        "如何操作基金定投",
+        "我如何开通两融",
+        "帮我开通北交所",
+        "如何更新风险测评",
+        "如何行使现金选择权",
+        "如何设置网格交易",
+        "如何操作网络投票",
+    )
+    for question in cases:
+        plan = plan_modules_node(_no_company_state(question))["plan"]
+        assert plan.intent in {"unsupported", "unsupported_indicator"}, question
+
+
+def test_full1410_market_macro_are_unsupported_without_company():
+    """市场整体/宏观类（无公司）：归 unsupported，不再落 guide。"""
+    cases = (
+        "今天市场有哪些消息需要关注",
+        "最近有哪些利好事件",
+        "最近有哪些市场动态",
+        "今天有什么热点需要关注",
+        "今天市场有什么利空消息",
+        "有什么利好利空消息",
+        "最近有什么利好事件",
+        "今天市场有哪些事件需要关注",
+        "沪深两市的最新个股数量",
+        "今天市场对金杯汽车的关注度如何",
+    )
+    for question in cases:
+        plan = plan_modules_node(_no_company_state(question))["plan"]
+        assert plan.intent == "unsupported", question
+
+
+def test_full1410_market_wide_select_stock_is_unsupported_without_company():
+    """选股/筛选类（无公司）：归 unsupported。"""
+    cases = (
+        "现在市场上有哪些热门低价股",
+        "有哪些低价股值得关注",
+        "小面值股票有哪些",
+        "流通股本100亿以下的股票有哪些",
+        "连续横盘30个交易日",
+        "近1月横盘且筹码集中的股票有哪些",
+        "帮我找几只与黄金相关的股票",
+    )
+    for question in cases:
+        plan = plan_modules_node(_no_company_state(question))["plan"]
+        assert plan.intent == "unsupported", question
+
+
+def test_full1410_indicator_unsupported_with_company():
+    """盘口/资金面指标（有公司）：unsupported_indicator，不落综合分析。"""
+    cases = (
+        "688001卖盘",
+        "002392内盘",
+        "002392委比是多少",
+        "大北农主力成本是多少",
+        "华工科技的主力控盘度如何",
+        "当虹科技当日资金流向如何",
+    )
+    for question in cases:
+        plan = plan_modules_node(_state(question))["plan"]
+        assert plan.intent == "unsupported_indicator", question
+
+
+def test_full1410_broker_ops_with_company_not_diagnose():
+    """券商操作类（有公司也不应做成公司诊断）。"""
+    cases = (
+        "如何调整东吴证券的佣金",
+        "如何联系东吴证券客户经理",
+        "把贵州茅台加入自选",
+        "卖出全部的万科",
+    )
+    for question in cases:
+        plan = plan_modules_node(_state(question))["plan"]
+        assert plan.intent in {"unsupported", "unsupported_indicator"}, question
+
+
+def test_full1410_market_macro_with_company_not_shortcut():
+    """市场宏观词 + 有公司：不得短路（"东吴证券利好事件"属 events 范围）。"""
+    for question in (
+        "东吴证券最近有利好消息吗",
+        "贵州茅台最近有分红吗",
+        "比亚迪的分红融资情况如何",
+    ):
+        plan = plan_modules_node(_state(question))["plan"]
+        assert plan.intent not in {"unsupported", "unsupported_indicator"}, question
+
+
+def test_full1410_quote_alias_expansions():
+    """行情别名扩展：今开价/今日表现/ttm 走行情链路而非综合分析。"""
+    from app.application.services.market_quote_service import detect_market_quote_field
+
+    assert detect_market_quote_field("002392今开价") == "open"
+    assert detect_market_quote_field("平安银行今日表现") == "pct_chg"
+    assert detect_market_quote_field("002392ttm") == "pe_ttm"
