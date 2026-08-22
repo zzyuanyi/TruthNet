@@ -210,8 +210,67 @@ def test_latest_announcement_states_dataset_coverage():
     answer = result["final_response"].answer
     assert "数据集内最新可回查" in answer
     assert "截至 2025-01-09" in answer
-    assert "不能把上述记录表述为当前市场的最新公告" in answer
-    assert "未取回公告正文" in answer
+
+
+def test_announcement_empty_with_web_hits_renders_clues():
+    """8/23 会5 呈现修复：库内无公告但联网检索到线索（web_search 证据）
+    → 结构化列出线索，不再只说"未检出"（避免与证据列表矛盾）。"""
+    from app.agents.state import EvidenceRef
+
+    web_evidence = [
+        EvidenceRef(
+            evidence_id="ev_ws_1",
+            source_type="web_search",
+            source_record_id="600519.SH",
+            field_path="news_0",
+            source_title="贵州茅台1309.22(0.05%)_公司公告",
+            source_uri="https://example.com/announcement",
+            source_excerpt="贵州茅台发布关于……的公告",
+            company_code="600519.SH",
+            module="events",
+        )
+    ]
+    events = EventsResult(timeline=[], evidence=web_evidence)
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("贵州茅台", "600519.SH"),
+                plan=ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    event_list_requested=True,
+                ),
+                results=ModuleResults(events=events),
+            ),
+            "user_query": "贵州茅台近期有哪些公告",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "本地公告数据集中暂无近期可回查的公告或事件记录" in answer
+    assert "联网检索到以下线索" in answer
+    assert "贵州茅台1309.22" in answer
+    assert "请以官方公告为准" in answer
+
+
+def test_announcement_empty_no_web_hits_honest_fallback():
+    """库内无公告且无联网线索 → 仍诚实"未检出"。"""
+    events = EventsResult(timeline=[])
+    result = generate_answer_node(
+        {
+            **_make_state(
+                company=_company("贵州茅台", "600519.SH"),
+                plan=ExecutionPlan(
+                    intent="simple_query",
+                    requested_modules=["events"],
+                    event_list_requested=True,
+                ),
+                results=ModuleResults(events=events),
+            ),
+            "user_query": "贵州茅台近期有哪些公告",
+        }
+    )
+    answer = result["final_response"].answer
+    assert "近期未检出可回查的公告或事件" in answer
 
 
 def test_market_wide_announcement_query_explains_scope():
@@ -885,9 +944,10 @@ def test_follow_up_dedup():
 
 
 def test_follow_up_fallback():
-    """无任何触发 → 兜底追问。"""
+    """无任何触发 → 空追问列表（8/23 收敛：不再给发散兜底
+    "查看企业画像详情"，前端 follow_ups 为空时自动隐藏按钮区）。"""
     fr = generate_answer_node(_make_state(company=_company()))["final_response"]
-    assert fr.follow_ups == ["查看企业画像详情"]
+    assert fr.follow_ups == []
 
 
 def test_follow_up_adds_available_industry_percentile():
@@ -921,6 +981,108 @@ def _rule_state(rule_details, rule_statuses=None, claims=None):
         claims=claims or [_claim("c1", "financial", "red", "R1")],
         results=ModuleResults(finance=fin),
     )
+
+
+def test_rule_detail_intent_renders_specified_rule_only():
+    """8/23 follow-up 定向路由：intent=rule_detail 直接渲染指定规则明细，
+    不输出综合分析模板（"查看其他应收款明细"答非所问的修复）。"""
+    rule_details = {
+        "R6": {
+            "rule_name": "其他应收款与关联占用风险",
+            "severity": "orange",
+            "current": {
+                "oth_rcv_to_assets": {"value": 13.9, "unit": "percent"},
+                "oth_rcv_large": {"value": True, "unit": "bool"},
+                "oth_rcv_yoy": {"value": -11.8, "unit": "percent"},
+                "oth_rcv_to_acct_rcv": {"value": 0.55, "unit": "ratio"},
+            },
+        },
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
+            },
+        },
+    }
+    state = {
+        **_rule_state(rule_details),
+        "plan": ExecutionPlan(
+            intent="rule_detail",
+            requested_modules=["finance"],
+            rule_id="R6",
+        ),
+        "user_query": "查看其他应收款明细",
+    }
+    result = generate_answer_node(state)
+    answer = result["final_response"].answer
+    assert "R6 其他应收款与关联占用风险（中风险）" in answer
+    assert "其他应收款占总资产 13.9%" in answer
+    assert "存在大额其他应收款：是" in answer
+    # 指定规则时不得顺带渲染其他规则
+    assert "R1" not in answer
+
+
+def test_rule_detail_intent_empty_rule_id_renders_all_triggered():
+    """rule_id="" → 渲染全部已触发规则（"查看财务规则详情"）。"""
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "current": {
+                "acct_rcv_growth": {"value": 149.6, "unit": "percent"},
+            },
+        },
+        "R2": {
+            "rule_name": "现金流-利润背离",
+            "severity": "orange",
+            "current": {
+                "cf_to_profit_ratio": {"value": -21.6, "unit": "ratio"},
+            },
+        },
+    }
+    state = {
+        **_rule_state(
+            rule_details,
+            rule_statuses={"R1": "triggered", "R2": "not_triggered"},
+        ),
+        "plan": ExecutionPlan(
+            intent="rule_detail",
+            requested_modules=["finance"],
+            rule_id="",
+        ),
+        "user_query": "查看财务规则详情",
+    }
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "R1 应收-营收背离（高风险）" in answer
+    # 未触发规则不渲染
+    assert "R2 现金流-利润背离" not in answer
+
+
+def test_rule_detail_intent_no_data_is_honest():
+    """rule_detail 意图下规则未触发/数据不足 → 诚实说明，不伪造数值。"""
+    rule_details = {
+        "R5": {
+            "rule_name": "毛利率/费用率异常",
+            "severity": "",
+            "current": {},
+        },
+    }
+    state = {
+        **_rule_state(
+            rule_details,
+            rule_statuses={"R5": "insufficient_data"},
+        ),
+        "plan": ExecutionPlan(
+            intent="rule_detail",
+            requested_modules=["finance"],
+            rule_id="R5",
+        ),
+        "user_query": "查看费用明细数据",
+    }
+    answer = generate_answer_node(state)["final_response"].answer
+    assert "R5 毛利率/费用率异常" in answer
+    assert "数据覆盖不足以计算" in answer
 
 
 def test_rule_details_only_triggered():
@@ -1024,6 +1186,93 @@ def test_rule_details_no_metrics_no_section():
         "触发规则明细"
         not in generate_answer_node(state_no_details)["final_response"].answer
     )
+
+
+# ── 8/23 展示格式：预警点/可能模式编号换行 + 覆盖率聚合 ──────
+
+
+def test_interpretation_warnings_numbered_and_bucketed():
+    """【预警点】/【可能模式】编号换行；覆盖率 warnings 按覆盖值聚合
+    （相同覆盖率多字段合并为一条，避免字段级刷屏）。"""
+    rule_details = {
+        "R1": {
+            "rule_name": "应收-营收背离",
+            "severity": "red",
+            "explanation": "应收账款增速（122.2%）明显高于营业收入增速（31.6%），增速差达 90.6%。",
+            "current": {
+                "acct_rcv_growth": {"value": 122.2, "unit": "percent"},
+            },
+        },
+        "R2": {
+            "rule_name": "现金流-利润背离",
+            "severity": "orange",
+            "explanation": "本期经营现金流为负，与正利润背离，建议关注。",
+            "current": {},
+        },
+        "R6": {
+            "rule_name": "其他应收款与关联占用风险",
+            "severity": "orange",
+            "explanation": "其他应收款占总资产 11.1%，同比增速 8.6%，建议关注具体构成。",
+            "current": {
+                "oth_rcv_to_assets": {"value": 11.1, "unit": "percent"},
+            },
+        },
+    }
+    warnings = [
+        "acct_rcv 覆盖率仅 38%（有效 3/8 期）",
+        "oper_rev 覆盖率仅 38%（有效 3/8 期）",
+        "monetary_cap 覆盖率仅 38%（有效 3/8 期）",
+        "lt_borrow 覆盖率仅 0%（有效 0/8 期）",
+        "net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）",
+        "扣非净利润字段不可用，使用简化版判断（上限 orange）。",
+    ]
+    fin = FinanceResult(
+        rule_statuses={"R1": "triggered", "R2": "triggered", "R6": "triggered"},
+        rule_details=rule_details,
+        warnings=warnings,
+    )
+    state = {
+        **_make_state(
+            company=_company(),
+            claims=[
+                _claim("c1", "financial", "red", "R1"),
+                _claim("c2", "financial", "orange", "R2"),
+                _claim("c6", "financial", "orange", "R6"),
+            ],
+            results=ModuleResults(finance=fin),
+        ),
+        "pattern_matches": [
+            {
+                "pattern_name": "收入虚增型",
+                "confidence": "medium",
+                "phase": "收入端异常信号已检测",
+                "alternative_explanation": "应收飙升可能源于大客户账期延长",
+                "regulatory_hint": "建议核查收入确认政策",
+            },
+            {
+                "pattern_name": "综合粉饰型",
+                "confidence": "medium",
+                "phase": "多维度信号叠加已检测",
+            },
+        ],
+    }
+    answer = generate_answer_node(state)["final_response"].answer
+
+    # 预警点编号换行
+    assert "【预警点】\n1. R1：" in answer
+    assert "【预警点】\n1. R1：" in answer and "\n2. R2：" in answer
+    assert "\n3. R6：" in answer
+    # 可能模式编号换行
+    assert "【可能模式】\n1. 收入虚增型" in answer
+    assert "\n2. 综合粉饰型" in answer
+    # 覆盖率聚合：38% 三条 → 一条；0% 两条 → 一条；非覆盖 warning 保留
+    assert "3 个字段覆盖率仅 38%（有效 3/8 期）" in answer
+    assert "2 个字段覆盖率仅 0%（有效 0/8 期）" in answer
+    assert "acct_rcv 覆盖率仅 38%" not in answer  # 不再逐字段刷屏
+    assert "扣非净利润字段不可用" in answer  # 非覆盖 warning 原样保留
+    # 8/23 句号修复：warning 自带"。"不得与分隔符"；"叠用
+    assert "。。" not in answer
+    assert "。；" not in answer
 
 
 # ── Phase D #13: LLM 问答润色 ─────────────────────────────

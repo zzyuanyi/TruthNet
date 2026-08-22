@@ -25,6 +25,25 @@ import type {
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+// 8/23：本对话涉及公司（code + 名称，侧边栏展示"名称（代码）"）。
+// 名称缺失（公司不在库中/旧数据）时回退纯代码。
+export interface InvolvedCompany {
+  code: string;
+  name: string;
+}
+
+function collectInvolvedCompanies(
+  turns: Array<{ company_code?: string | null; company_name?: string | null }>,
+): InvolvedCompany[] {
+  const seen = new Map<string, string>();
+  for (const t of turns) {
+    const code = t.company_code;
+    if (!code || seen.has(code)) continue;
+    seen.set(code, t.company_name || '');
+  }
+  return [...seen.entries()].map(([code, name]) => ({ code, name }));
+}
+
 export default function ChatPage() {
   useDocumentTitle('智能问答');
   const navigate = useNavigate();
@@ -48,11 +67,10 @@ export default function ChatPage() {
   // v3.3.1 §8.2：分段歧义澄清提示（后端 entity.clarification_required，无可点选候选）
   const [clarificationIssue, setClarificationIssue] = useState<string | null>(null);
   // 8.11（C9）：本对话涉及的公司列表（按 company_code 去重，每公司一个画像入口）
-  const [involvedCompanies, setInvolvedCompanies] = useState<string[]>([]);
+  const [involvedCompanies, setInvolvedCompanies] = useState<InvolvedCompany[]>([]);
 
-  // Task 7: 面板联动状态
-  const [activeRuleId, setActiveRuleId] = useState<string | null>(null);
-  const [filteredEvidenceIds, setFilteredEvidenceIds] = useState<string[] | null>(null);
+  // Task 7: 面板联动状态（8/23：删除规则点击→证据定位联动——证据 ID
+  // 对用户无意义，面板卡片改为只读展示）
 
   // Phase D: 模块进度追踪
   const [moduleStatus, setModuleStatus] = useState<Record<string, ModuleStatusV1> | null>(null);
@@ -93,12 +111,8 @@ export default function ChatPage() {
           .reverse()
           .find(turn => turn.company_code)?.company_code || null;
         setCurrentCompanyCode(latestCompanyCode);
-        // 8.11（C9）：聚合本对话涉及的公司（去重）
-        setInvolvedCompanies(
-          [...new Set(
-            turns.map(t => t.company_code).filter((c): c is string => Boolean(c)),
-          )],
-        );
+        // 8.11（C9）：聚合本对话涉及的公司（去重；8/23 带公司名展示）
+        setInvolvedCompanies(collectInvolvedCompanies(turns));
         const msgs: Message[] = turns.flatMap(t => [
           {
             id: `q-${t.turn_id}`,
@@ -172,9 +186,7 @@ export default function ChatPage() {
     setIsLoading(false);
     setPanelState('empty');
     setCurrentSessionId(sessionId);
-    // 切换会话时清空规则筛选（对齐审计 P1-3）、待确认候选（8.11）与澄清提示
-    setActiveRuleId(null);
-    setFilteredEvidenceIds(null);
+    // 切换会话时清空待确认候选（8.11）与澄清提示
     setPendingCandidates(null);
     setClarificationIssue(null);
   };
@@ -227,7 +239,7 @@ export default function ChatPage() {
       case 'evidence': {
         const ev = payload as { evidence_ids: string[] };
         if (ev.evidence_ids) {
-          setFilteredEvidenceIds(ev.evidence_ids);
+          // 8/23：不再联动筛选证据（证据 ID 对用户无意义），仅回填消息证据链
           setMessages(prev => {
             const updated = [...prev];
             for (let i = updated.length - 1; i >= 0; i--) {
@@ -453,11 +465,7 @@ export default function ChatPage() {
             .reverse()
             .find(turn => turn.company_code)?.company_code || null;
           setCurrentCompanyCode(latestCompanyCode);
-          setInvolvedCompanies(
-            [...new Set(
-              turns.map(t => t.company_code).filter((c): c is string => Boolean(c)),
-            )],
-          );
+          setInvolvedCompanies(collectInvolvedCompanies(turns));
         }).catch(() => undefined);
         break;
       }
@@ -638,8 +646,6 @@ export default function ChatPage() {
     setIsLoading(true);
     setPanelData(null);
     setPanelState('loading');
-    setActiveRuleId(null);
-    setFilteredEvidenceIds(null);
 
     try {
       wsRef.current?.send(content);
@@ -680,28 +686,6 @@ export default function ChatPage() {
     [navigate],
   );
 
-  // Task 7: 面板联动 - 点击规则（对齐审计 P1-3：筛选证据而非仅滚动）
-  const handleRuleClick = useCallback((ruleId: string) => {
-    // 再次点击已激活规则 → 取消筛选
-    if (activeRuleId === ruleId) {
-      setActiveRuleId(null);
-      setFilteredEvidenceIds(null);
-      return;
-    }
-    setActiveRuleId(ruleId);
-    const rule = (panelData?.triggered_rules || []).find(r => r.rule_id === ruleId);
-    const ids = rule?.evidence_ids && rule.evidence_ids.length > 0 ? rule.evidence_ids : null;
-    setFilteredEvidenceIds(ids);
-    const msgIndex = messages.findIndex(m =>
-      m.role === 'assistant' && m.evidence_ids && m.evidence_ids.length > 0
-    );
-    if (msgIndex >= 0) {
-      const msgElement = document.getElementById(`msg-${msgIndex}`);
-      msgElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-    setPanelCollapsed(false);
-  }, [activeRuleId, panelData, messages]);
-
   useEffect(() => {
     if (currentCompanyCode) {
       sessionStorage.setItem('truthnet.currentCompanyCode', currentCompanyCode);
@@ -710,10 +694,6 @@ export default function ChatPage() {
     }
     window.dispatchEvent(new Event('truthnet:company-change'));
   }, [currentCompanyCode]);
-
-  const activeRuleName = panelData?.triggered_rules?.find(
-    rule => rule.rule_id === activeRuleId,
-  )?.rule_name || null;
 
   return (
     <div className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden">
@@ -735,12 +715,6 @@ export default function ChatPage() {
           messages={messages}
           onSendMessage={handleSendMessage}
           isLoading={isLoading}
-          highlightedEvidenceIds={filteredEvidenceIds}
-          activeRuleName={activeRuleName}
-          onClearEvidenceHighlight={() => {
-            setActiveRuleId(null);
-            setFilteredEvidenceIds(null);
-          }}
           pendingCandidates={pendingCandidates}
           onConfirmCompany={handleConfirmCompany}
           clarificationIssue={clarificationIssue}
@@ -761,11 +735,9 @@ export default function ChatPage() {
             state={panelState}
             data={panelData}
             company={undefined}
-            activeRuleId={activeRuleId}
             moduleStatus={moduleStatus}
             missingModules={missingModules}
             onFollowUp={handleFollowUp}
-            onRuleClick={handleRuleClick}
             onNavigateStep={handleNavigateStep}
           />
         )}

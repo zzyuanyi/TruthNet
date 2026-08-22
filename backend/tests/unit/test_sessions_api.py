@@ -247,6 +247,41 @@ def test_get_session_empty_turns(mysql_client):
     assert resp.json()["data"]["turns"] == []
 
 
+def test_get_session_turns_carry_company_name(mysql_client):
+    """8/23：会话详情 turns 携带 company_name（侧边栏"名称（代码）"）；
+    无 companies 表/查不到公司时 company_name 为 None 不报错。"""
+    engine = sessions_router._get_engine()
+    _seed_session(engine, sid="ses_cn", turns=1)
+    # turn 的 company_code 由 _seed_session 默认写入（查看其实现）——
+    # 此处显式更新为已知代码，并创建 companies 表模拟真实库
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS companies ("
+                "wind_code TEXT PRIMARY KEY, sec_name TEXT)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT OR IGNORE INTO companies (wind_code, sec_name) "
+                "VALUES ('002583.SZ', '海能达')"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE conversation_turns SET company_code = '002583.SZ' "
+                "WHERE session_id = 'ses_cn'"
+            )
+        )
+
+    resp = mysql_client.get("/api/v1/sessions/ses_cn")
+    assert resp.status_code == 200
+    turns = resp.json()["data"]["turns"]
+    assert len(turns) == 1
+    assert turns[0]["company_code"] == "002583.SZ"
+    assert turns[0]["company_name"] == "海能达"
+
+
 # ── 列表 ────────────────────────────────────────────────────
 
 

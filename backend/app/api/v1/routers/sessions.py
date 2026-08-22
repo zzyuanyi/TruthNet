@@ -363,6 +363,29 @@ def get_session(
                         .mappings()
                         .all()
                     )
+                    # 8/23：涉及公司展示用名称——单独查 companies（不 JOIN，
+                    # 兼容无 companies 表的测试环境；查不到返回 None 由前端
+                    # 回退纯代码）。
+                    company_names: dict[str, str] = {}
+                    try:
+                        company_codes = [
+                            str(t["company_code"])
+                            for t in turn_rows
+                            if t["company_code"]
+                        ]
+                        if company_codes:
+                            name_rows = conn.execute(
+                                text(
+                                    "SELECT wind_code, sec_name FROM companies "
+                                    "WHERE wind_code IN :codes"
+                                ).bindparams(bindparam("codes", expanding=True)),
+                                {"codes": company_codes},
+                            ).all()
+                            company_names = {
+                                str(r[0]): str(r[1]) for r in name_rows if r[1]
+                            }
+                    except Exception:  # noqa: BLE001 — 公司名缺失不阻塞会话详情
+                        company_names = {}
                     # 每轮证据 ID 列表（前端证据链按 evidence_ids 展示，
                     # 历史会话必须携带，否则一律显示"无直接证据支撑"）。
                     # 证据来源 = turn 直接关联 ∪ 该轮 claims 的证据链接
@@ -418,6 +441,12 @@ def get_session(
                             "question": t["question"],
                             "answer": t["answer"],
                             "company_code": t["company_code"],
+                            # 8/23：涉及公司展示用（侧边栏"名称（代码）"），
+                            # 公司不在库中时为 None（前端回退纯代码）
+                            "company_name": company_names.get(
+                                str(t["company_code"]) if t["company_code"] else "", ""
+                            )
+                            or None,
                             "trace_id": t["trace_id"],
                             # MySQL text() 对 JSON 列不做类型解析，需手动反序列化
                             "module_status": _json_value(t["module_status"], None),

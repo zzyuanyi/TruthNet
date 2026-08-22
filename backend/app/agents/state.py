@@ -201,6 +201,9 @@ class ExecutionPlan(BaseModel):
     # v3.3.3 批次 C（方案 §5.1）：结构化比较规格（唯一比较入口，
     # 禁止散装字段形成非法组合）
     comparison: ComparisonSpec | None = None
+    # 8/23 follow-up 适配：规则明细查询目标规则 ID（intent="rule_detail"）。
+    # 空串表示"全部已触发规则"（"查看财务规则详情"）。
+    rule_id: str = ""
 
 
 class ModuleStatus(BaseModel):

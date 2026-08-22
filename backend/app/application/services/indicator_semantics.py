@@ -46,6 +46,34 @@ _METRIC_PHRASES: list[tuple[str, str, str]] = [
     ("现金流", "operating_cash_flow", "alias"),
     ("负债率", "debt_to_assets", "alias"),
     ("存货", "inventories", "exact"),
+    # 8/23 指标语义全库覆盖：balance_sheet / income_statement / cash_flow
+    # 三表有字段的科目全部可查（缺数据走 insufficient_data 诚实拒答）。
+    # 只收明确科目名，不收"现金/应付/扣非"等裸词（防误伤现金流/应付账款
+    # 衍生语境）；商誉由词表精确命中（原 LLM fallback 触发词不再需要）。
+    ("货币资金", "monetary_capital", "exact"),
+    ("其他应收款", "other_receivables", "exact"),
+    ("流动资产", "current_assets", "exact"),
+    ("流动资产合计", "current_assets", "exact"),
+    ("固定资产", "fixed_assets", "exact"),
+    ("商誉", "goodwill", "exact"),
+    ("短期借款", "short_borrow", "exact"),
+    ("长期借款", "long_borrow", "exact"),
+    ("应付账款", "accounts_payable", "exact"),
+    ("流动负债", "current_liabilities", "exact"),
+    ("流动负债合计", "current_liabilities", "exact"),
+    ("营业成本", "operating_cost", "exact"),
+    ("销售费用", "selling_expense", "exact"),
+    ("管理费用", "admin_expense", "exact"),
+    ("财务费用", "finance_expense", "exact"),
+    ("营业利润", "operating_profit", "exact"),
+    ("利润总额", "total_profit", "exact"),
+    ("扣非净利润", "deducted_net_profit", "exact"),
+    ("投资活动现金流", "investing_cash_flow", "exact"),
+    ("投资现金流", "investing_cash_flow", "alias"),
+    ("筹资活动现金流", "financing_cash_flow", "exact"),
+    ("筹资现金流", "financing_cash_flow", "alias"),
+    ("自由现金流", "free_cash_flow", "exact"),
+    ("现金净增加额", "cash_net_increase", "exact"),
 ]
 
 # 已知但暂不支持的精确短语：与指标短语同表竞争（方案 §4.3 第 5 层），
@@ -127,6 +155,27 @@ _BASE_INDICATORS: frozenset[str] = frozenset(
         "operating_revenue",
         "net_profit",
         "operating_cash_flow",
+        # 8/23 指标语义全库覆盖：三表字段科目同样支持同比/环比修饰
+        "monetary_capital",
+        "other_receivables",
+        "current_assets",
+        "fixed_assets",
+        "goodwill",
+        "short_borrow",
+        "long_borrow",
+        "accounts_payable",
+        "current_liabilities",
+        "operating_cost",
+        "selling_expense",
+        "admin_expense",
+        "finance_expense",
+        "operating_profit",
+        "total_profit",
+        "deducted_net_profit",
+        "investing_cash_flow",
+        "financing_cash_flow",
+        "free_cash_flow",
+        "cash_net_increase",
     }
 )
 

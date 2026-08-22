@@ -49,6 +49,19 @@ _FIN_ALLOW = {
     "net_cash_flows_oper_act",
     "net_cash_flows_inv_act",
     "net_cash_flows_fnc_act",
+    # 8/23 指标语义全库覆盖：新增可查科目一并允许公开（证据展示）
+    "tot_cur_assets",
+    "fix_assets",
+    "goodwill",
+    "acct_payable",
+    "tot_cur_liab",
+    "tot_liab",
+    "tot_shrhldr_eqy_incl_min_int",
+    "less_selling_dist_exp",
+    "less_gerl_admin_exp",
+    "less_fin_exp",
+    "free_cash_flow",
+    "net_incr_cash_cash_equ",
 }
 
 
