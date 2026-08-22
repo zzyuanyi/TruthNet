@@ -369,9 +369,7 @@ def run_pipeline(
             continue
         if config.replace:
             existing = snapshot[res.wind_code]
-            l1_changed = (
-                (existing.get("industry_l1") or "").strip() != res.industry_l1
-            )
+            l1_changed = (existing.get("industry_l1") or "").strip() != res.industry_l1
             l2_changed = (existing.get("industry_l2") or "").strip() != (
                 res.industry_l2 or ""
             ).strip()
@@ -404,14 +402,10 @@ def run_pipeline(
 
     if config.current_universe is not None:
         planned_l1 = {
-            row[0]
-            for row in research_rows + provider_rows
-            if (row[1] or "").strip()
+            row[0] for row in research_rows + provider_rows if (row[1] or "").strip()
         }
         planned_l2 = {
-            row[0]
-            for row in research_rows + provider_rows
-            if (row[2] or "").strip()
+            row[0] for row in research_rows + provider_rows if (row[2] or "").strip()
         }
         projected_missing_l1 = current_missing_l1_codes - planned_l1
         projected_missing_l2 = current_missing_l2_codes - planned_l2

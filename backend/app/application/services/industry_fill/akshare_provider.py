@@ -111,9 +111,7 @@ def _eastmoney_secid(bare: str) -> str:
     的 900xxx 不在本 A 股补全范围内，但仍保留为市场 1。
     """
     market = (
-        "0"
-        if bare.startswith("92")
-        else ("1" if bare.startswith(("6", "9")) else "0")
+        "0" if bare.startswith("92") else ("1" if bare.startswith(("6", "9")) else "0")
     )
     return f"{market}.{bare}"
 

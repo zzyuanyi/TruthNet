@@ -131,7 +131,9 @@ class TestQueryOneDirect:
         captured: dict = {}
 
         class _Resp:
-            text = '{"rc":0,"data":{"f57":"920006","f58":"晟楠科技","f127":"航空装备Ⅱ"}}'
+            text = (
+                '{"rc":0,"data":{"f57":"920006","f58":"晟楠科技","f127":"航空装备Ⅱ"}}'
+            )
 
         class _SessionStub:
             def get(self, *args, **kwargs):
@@ -139,9 +141,7 @@ class TestQueryOneDirect:
                 return _Resp()
 
         monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
-        result = _provider()._fetch_direct(
-            "920006", max_retries=0, backoff_seconds=0
-        )
+        result = _provider()._fetch_direct("920006", max_retries=0, backoff_seconds=0)
 
         assert captured["secid"] == "0.920006"
         assert result["f127"] == "航空装备Ⅱ"
@@ -668,9 +668,7 @@ class TestBatchPrimary:
                 return _Resp()
 
         monkeypatch.setattr(AkShareProvider, "_session", lambda self: _SessionStub())
-        result = _provider()._fetch_batch(
-            ["920006"], max_retries=0, backoff_seconds=0
-        )
+        result = _provider()._fetch_batch(["920006"], max_retries=0, backoff_seconds=0)
 
         assert captured["secids"] == "0.920006"
         assert result == {"920006": "航空装备Ⅱ"}

@@ -293,9 +293,7 @@ class TestPipelineSqlite:
         assert result.report["eligible_apply_rows"] == 1
         assert provider.queried == ["000001.SZ"]
 
-    def test_replace_audits_current_rows_and_plans_only_changes(
-        self, engine, tmp_path
-    ):
+    def test_replace_audits_current_rows_and_plans_only_changes(self, engine, tmp_path):
         _seed(
             engine,
             ["000001.SZ", "600519.SH", "600001.SH"],
