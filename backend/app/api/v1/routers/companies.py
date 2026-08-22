@@ -184,15 +184,26 @@ async def _web_search_fill_profile_listing_date(
     )
     from app.application.services.web_search_service import web_search_async
 
-    hits = await web_search_async(
-        f"{company.sec_name} {company.wind_code} 上市日期 上市公告书 交易所"
-    )
-    if not hits:
-        return False
-    value = extract_listing_date_from_hits(hits)
+    # 与对话链路 company_fact 一致的候选 query（实测带「交易所」的 query
+    # 会命中公告列表页而非行情页，提取失败；去交易所后缀代码避免串线）。
+    code_short = (company.wind_code or "").split(".")[0]
+    queries = [
+        f"{company.sec_name} {code_short} 上市日期 交易所",
+        f"{company.sec_name} {code_short} 上市日期 上市公告书",
+        f"{company.sec_name} {code_short} 上市公告 上市日期",
+    ]
+    value = ""
+    for query in queries:
+        hits = await web_search_async(query)
+        if not hits:
+            continue
+        candidate = extract_listing_date_from_hits(hits)
+        if candidate:
+            value = candidate
+            hit = next((h for h in hits if (h.snippet or h.title)), None)
+            break
     if not value:
         return False
-    hit = next((h for h in hits if (h.snippet or h.title)), None)
     profile["listing_date"] = value
     warnings.append(
         WarningItem(
