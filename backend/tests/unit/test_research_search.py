@@ -463,7 +463,7 @@ def test_no_company_single_report_query_returns_honest_fallback(monkeypatch):
     他司研报摘要冒充答案——检索结果应被清空走诚实拒答。"""
     from app.agents.nodes.generate_answer import generate_answer_node
     from app.agents.nodes.plan_modules import plan_modules_node
-    from app.agents.state import ExecutionPlan, RuntimeState
+    from app.agents.state import RuntimeState
 
     state = {
         "user_query": "成飞集成近期有研报吗？",

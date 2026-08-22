@@ -142,7 +142,6 @@ def resolve_entity_node(state: AgentState) -> dict:
     # 保护：query 含明确公司名/代码时不得短路（"查看海能达的其他应收款
     # 明细"必须解析出海能达，而不是沿用上一轮主体）。
     from app.agents.nodes.plan_modules import (
-        _detect_rule_detail_follow_up,
         _detect_system_follow_up,
     )
 

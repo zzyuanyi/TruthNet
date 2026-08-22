@@ -283,7 +283,6 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
         # 覆盖率警告（"XX 覆盖率仅 38%（有效 3/8 期）"）按覆盖值聚合：
         # 相同覆盖率的多字段合并为一条"N 个字段覆盖率仅 X%（有效 a/b 期）"，
         # 避免 14+ 条字段级刷屏。其他 warning（口径/字段不可用等）保留原样。
-        import re as _re
 
         cov_pattern = re.compile(r"^(\w+) 覆盖率仅 (\d+)%（有效 (\d+)/(\d+) 期）$")
         cov_buckets: dict[tuple[str, str, str], list[str]] = {}
