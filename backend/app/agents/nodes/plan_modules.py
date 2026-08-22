@@ -1269,6 +1269,11 @@ def _detect_chitchat_with_llm(user_query: str) -> str | None:
 def _fallback_no_company_intent(user_query: str) -> str | None:
     """LLM 失败后的无实体语义兜底，不重新覆盖成功的 LLM 判定。"""
     ql = (user_query or "").lower()
+    # 8/22 晚全量 1410（row 611）：无公司 + 利好/利空/资讯泛化问题
+    # （"利好的资讯？"）落 guide 会被记忆上下文劫持（擅自答上一轮公司）
+    # → 归 unsupported 合理拒答。此函数只在 company is None 时调用，安全。
+    if re.search(r"(利好|利空).{0,6}(资讯|消息|事件|新闻)?$", user_query or ""):
+        return "unsupported"
     # 8/22 晚全量 1410 分析：无公司时市场宏观/全市场聚合类问题
     # （"今天市场有哪些消息""最近有哪些利好事件"）落 guide 会答
     # "未能识别到公司"（错误），此处优先归 unsupported 合理拒答。

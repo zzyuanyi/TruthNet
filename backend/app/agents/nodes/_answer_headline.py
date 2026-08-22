@@ -110,57 +110,10 @@ def _build_company_brief_analysis(
         stance = "数据覆盖仍有限，暂不能下定论"
 
     parts: list[str] = [f"【简要分析】{company.sec_name}整体判断：{stance}"]
-    # 8/22 晚全量 1410（row 729/710）：请求期次与数据覆盖期不一致时必须
-    # 显式提示——问"2025年一季度季报"不能用 2024-12-31 数据冒充。
-    # 仅当请求期文本可解析出年份且与数据覆盖年份不同（或请求季度晚于
-    # 数据覆盖季度）时提示，避免"2024年报+2024-12-31"误报缺失。
-    requested_period = getattr(plan, "requested_period_text", "") or ""
-    data_as_of = ""
-    if risk_output is not None:
-        data_as_of = getattr(risk_output, "as_of", "") or ""
-    if requested_period and data_as_of:
-        req_year_m = re.search(r"(\d{4})\s*年", requested_period)
-        if req_year_m:
-            req_year = int(req_year_m.group(1))
-            data_year = int(data_as_of[:4])
-            if req_year > data_year:
-                parts.append(
-                    f"请求期次为「{requested_period}」，当前数据仅覆盖至 "
-                    f"{data_as_of[:4]}-{data_as_of[4:6]}-{data_as_of[6:]}，"
-                    f"请求期数据可能缺失"
-                )
-            elif req_year == data_year:
-                # 同年比较季度：请求"一季度"而数据覆盖至 6/30 前 → 可满足；
-                # 请求"年报"而数据覆盖至 3/31 → 缺失
-                req_q_m = re.search(
-                    r"([一二三四1-4])季度|([一二三1-3])季报", requested_period
-                )
-                data_month = int(data_as_of[4:6])
-                if (
-                    req_q_m
-                    and data_month < 3
-                    and "一" in (req_q_m.group(1) or req_q_m.group(2) or "")
-                ):
-                    pass  # 一季度+3/31 前属正常披露节奏
-                elif (
-                    req_q_m
-                    and data_month < 6
-                    and "二" in (req_q_m.group(1) or req_q_m.group(2) or "")
-                ):
-                    pass  # 二季度+6/30 前属正常
-                elif (
-                    req_q_m
-                    and data_month < 9
-                    and "三" in (req_q_m.group(1) or req_q_m.group(2) or "")
-                ):
-                    pass  # 三季度+9/30 前属正常
-                elif "年报" in requested_period or "四季度" in requested_period:
-                    if data_month < 12:
-                        parts.append(
-                            f"请求期次为「{requested_period}」，当前数据仅覆盖至 "
-                            f"{data_as_of[:4]}-{data_as_of[4:6]}-{data_as_of[6:]}，"
-                            f"请求期数据可能缺失"
-                        )
+    # 8/22 晚全量 1410（row 729/710）复盘：期次缺失提示已统一在
+    # generate_answer 主流程（conclusion 后、summary 前）输出，覆盖
+    # diagnose/analysis 全路径；此处不再重复提示（避免同一回答出现
+    # 两段"请求期数据可能缺失"），仅保留数据截止日信息。
     if risk_output is not None:
         as_of = getattr(risk_output, "as_of", "") or ""
         if as_of:
