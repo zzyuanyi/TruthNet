@@ -114,7 +114,11 @@ def risk_node(state: AgentState) -> dict:
     # 若仍填请求期会"冒充"数据期（诚实性问题）。此处把评分 as_of 回退到
     # 库内 <=请求期 的最大真实期次：risk_output.as_of 即实际数据覆盖期，
     # 回答端据此提示「请求期数据可能缺失」。
-    if as_of and plan is not None and getattr(plan, "as_of_kind", "") == "report_period":
+    if (
+        as_of
+        and plan is not None
+        and getattr(plan, "as_of_kind", "") == "report_period"
+    ):
         try:
             from app.domain.finance._fetch import _get_engine
             from sqlalchemy import text

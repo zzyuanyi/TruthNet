@@ -132,13 +132,27 @@ def _build_company_brief_analysis(
             elif req_year == data_year:
                 # 同年比较季度：请求"一季度"而数据覆盖至 6/30 前 → 可满足；
                 # 请求"年报"而数据覆盖至 3/31 → 缺失
-                req_q_m = re.search(r"([一二三四1-4])季度|([一二三1-3])季报", requested_period)
+                req_q_m = re.search(
+                    r"([一二三四1-4])季度|([一二三1-3])季报", requested_period
+                )
                 data_month = int(data_as_of[4:6])
-                if req_q_m and data_month < 3 and "一" in (req_q_m.group(1) or req_q_m.group(2) or ""):
+                if (
+                    req_q_m
+                    and data_month < 3
+                    and "一" in (req_q_m.group(1) or req_q_m.group(2) or "")
+                ):
                     pass  # 一季度+3/31 前属正常披露节奏
-                elif req_q_m and data_month < 6 and "二" in (req_q_m.group(1) or req_q_m.group(2) or ""):
+                elif (
+                    req_q_m
+                    and data_month < 6
+                    and "二" in (req_q_m.group(1) or req_q_m.group(2) or "")
+                ):
                     pass  # 二季度+6/30 前属正常
-                elif req_q_m and data_month < 9 and "三" in (req_q_m.group(1) or req_q_m.group(2) or ""):
+                elif (
+                    req_q_m
+                    and data_month < 9
+                    and "三" in (req_q_m.group(1) or req_q_m.group(2) or "")
+                ):
                     pass  # 三季度+9/30 前属正常
                 elif "年报" in requested_period or "四季度" in requested_period:
                     if data_month < 12:
