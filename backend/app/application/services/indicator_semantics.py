@@ -79,8 +79,13 @@ _UNSUPPORTED_PHRASES: tuple[str, ...] = (
     "量价关系",
     "外盘",
     "研发投入占比",
-    "均线",
-    "操盘",
+    # 8/22 词表审查：均线/操盘已在 plan_modules._UNSUPPORTED_KW
+    # （意图层，先命中走 unsupported），此处删除避免双源维护漂移。
+    # 8/22 后测集分析（row 897）：股东户数/散户数量无数据列，
+    # 显式 unsupported，避免落入股权穿透答非所问。
+    "散户数量",
+    "股东户数",
+    "股东人数",
 )
 
 # 基础报表指标集合：与 indicator_query_service._INDICATORS 的键保持一致。

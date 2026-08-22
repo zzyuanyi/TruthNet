@@ -61,6 +61,10 @@ def _msg(role: str, content: str) -> dict:
         # 正例保持：独立"它"仍判指代（即使句中有"其他"财务词）
         ("它还有其他风险吗", True),
         ("它的其他应收款呢", True),
+        # 8/22 row 703：无公司名追问句式回指上一轮（"分别是哪几片研报"）
+        ("分别是哪几片研报？", True),
+        ("具体是哪几篇？", True),
+        ("分别介绍下康美和茅台", False),  # 含公司名，不判指代
     ],
 )
 def test_anaphora_detection(query: str, expected: bool):

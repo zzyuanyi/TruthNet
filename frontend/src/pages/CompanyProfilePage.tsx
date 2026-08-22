@@ -298,34 +298,9 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-screen bg-background">
-        <div className="w-40 border-r border-border p-4">
-          <Skeleton className="h-full w-full" />
-        </div>
-        <div className="flex-1 overflow-auto p-6">
-          <Skeleton className="mb-4 h-8 w-64" />
-          <Skeleton className="mb-4 h-32 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !profile) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Card className="w-96">
-          <CardContent className="pt-6 text-center">
-            <p className="text-destructive">{error || '加载失败'}</p>
-            <Button className="mt-4" onClick={() => navigate(-1)}>返回</Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
+  // Rules of Hooks：以下全部派生计算与 useMemo 必须在任何 early return
+  // （loading/error 分支）之前注册，否则第二次渲染 Hook 数量不一致，
+  // React 报 "Rendered more hooks than during the previous render"。
   const riskConfig = riskLevelConfig[(riskData?.risk_level || 'unknown') as RiskLevel];
   // A3（8/9 老师要求）：触发的规则（风险提示集中展示 + 财务区筛选口径一致）
   const triggeredRules = financialAnomalies.filter(r => r.status === 'triggered');
@@ -433,6 +408,34 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
     coverageGapText,
     impactAdvice?.overall_advice,
   ]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen bg-background">
+        <div className="w-40 border-r border-border p-4">
+          <Skeleton className="h-full w-full" />
+        </div>
+        <div className="flex-1 overflow-auto p-6">
+          <Skeleton className="mb-4 h-8 w-64" />
+          <Skeleton className="mb-4 h-32 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !profile) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <Card className="w-96">
+          <CardContent className="pt-6 text-center">
+            <p className="text-destructive">{error || '加载失败'}</p>
+            <Button className="mt-4" onClick={() => navigate(-1)}>返回</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 bg-background">

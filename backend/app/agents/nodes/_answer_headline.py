@@ -332,7 +332,9 @@ def _build_equity_overview(state: AgentState) -> str:
             f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(period) == 8 else "最新期"
         )
         items = []
-        for item in shareholders[:5]:
+        # 8/22 后测集 row 998：十大股东明细只列 5 家 → 展示上限与
+        # _latest_shareholders（数据侧 10 家）对齐。
+        for item in shareholders[:10]:
             name = item.get("holder_name") or "未命名股东"
             pct = item.get("ownership_pct")
             items.append(f"{name} {pct:.2f}%" if pct is not None else str(name))

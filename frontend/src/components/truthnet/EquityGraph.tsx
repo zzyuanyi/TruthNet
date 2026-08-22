@@ -212,8 +212,16 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
     const mutedColor = cs.getPropertyValue('--color-muted-foreground').trim() || '#64748b';
     const bgColor = cs.getPropertyValue('--color-background').trim() || '#ffffff';
 
+    // P0-3 修复：render() 为异步（G6 v5 generator，内部 await animation/autoFit）。
+    // effect 重跑（layout 变化）时 cleanup 会 destroy 旧实例，旧 render 恢复时
+    // 访问已销毁的 context 会抛 "Cannot read properties of undefined (reading
+    // 'draw')"——必须 .catch 吞掉该 rejection（销毁后完成属预期）。
+    // disposed 标记 + 强制清空容器 canvas 兜底。
+    let disposed = false;
+    const container = containerRef.current;
+
     const graph = new Graph({
-      container: containerRef.current,
+      container,
       width: layout.width,
       height: layout.height,
       autoFit: 'view',
@@ -319,12 +327,27 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
       ] as any,
     });
 
-    graph.render();
+    // render 为异步：销毁后完成的 promise 属预期（.catch 吞掉 rejection），
+    // 未销毁时若失败则静默降级（图不渲染但页面不崩）。
+    graph.render().catch(() => {
+      if (disposed) return;
+      // 非销毁导致的失败：清空容器 canvas，避免残留半渲染状态
+      container?.querySelectorAll('canvas').forEach(c => c.remove());
+    });
     graphRef.current = graph;
 
     return () => {
-      graph.destroy();
-      graphRef.current = null;
+      disposed = true;
+      if (graphRef.current === graph) graphRef.current = null;
+      try {
+        graph.destroy();
+      } catch {
+        /* 已销毁 */
+      }
+      // 兜底：清空容器内残留 canvas（G6 destroy 与异步 render 竞态时可能遗留）
+      if (container) {
+        container.querySelectorAll('canvas').forEach(c => c.remove());
+      }
     };
   }, [layout, edges]);
 

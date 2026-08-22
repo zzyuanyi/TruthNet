@@ -98,7 +98,24 @@ def _contains_anaphora(query: str | None) -> bool:
     all_keywords = _VAGUE_ANAPHORA + _BACK_REFERENCE
     if any(kw in query for kw in all_keywords):
         return True
-    return bool(_EXPLICIT_ANAPHORA_RE.search(query))
+    if _EXPLICIT_ANAPHORA_RE.search(query):
+        return True
+    # 8/22 后测集 row 703：无公司名的追问句式（"分别是哪几片研报"、
+    # "都有哪些"、"具体是哪几篇"）回指上一轮主体——仅当 query 不含
+    # 公司名且不含"介绍/分析/看下"等新请求动词时生效，避免
+    # "分别介绍康美和茅台"（新请求，含明确对象）被误判指代。
+    if (
+        not _extract_companies_from_text(query)
+        and not any(
+            kw in query for kw in ("介绍", "分析", "看下", "看看", "说明", "讲")
+        )
+        and any(
+            kw in query
+            for kw in ("分别", "哪几", "几篇", "几片", "哪几篇", "哪几片", "具体是哪些")
+        )
+    ):
+        return True
+    return False
 
 
 def _extract_anaphora_type(query: str | None) -> str:
@@ -113,6 +130,18 @@ def _extract_anaphora_type(query: str | None) -> str:
             return "vague"
     if _EXPLICIT_ANAPHORA_RE.search(query):
         return "explicit"
+    # 8/22 row 703：无公司名追问句式归 back_reference（回指上一轮）
+    if (
+        not _extract_companies_from_text(query)
+        and not any(
+            kw in query for kw in ("介绍", "分析", "看下", "看看", "说明", "讲")
+        )
+        and any(
+            kw in query
+            for kw in ("分别", "哪几", "几篇", "几片", "哪几篇", "哪几片", "具体是哪些")
+        )
+    ):
+        return "back_reference"
     return "none"
 
 
