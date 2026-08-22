@@ -32,6 +32,10 @@ _METRIC_PHRASES: list[tuple[str, str, str]] = [
     ("经营活动现金流", "operating_cash_flow", "exact"),
     ("经营现金流", "operating_cash_flow", "alias"),
     ("营业收入", "operating_revenue", "exact"),
+    # 8/22 晚全量 1410（row 256）："最新收入/收入"口语缺别名，落 diagnose
+    # 答非所问——补 operating_revenue 别名。
+    ("最新收入", "operating_revenue", "alias"),
+    ("收入", "operating_revenue", "alias"),
     ("应收账款", "accounts_receivable", "exact"),
     ("总资产", "total_assets", "exact"),
     ("总负债", "total_liabilities", "exact"),
@@ -86,6 +90,28 @@ _UNSUPPORTED_PHRASES: tuple[str, ...] = (
     "散户数量",
     "股东户数",
     "股东人数",
+    # 8/22 晚全量 1410 分析（row 1153）："净毛利率"口语通常指净利率
+    # （net margin），库内无此字段——显式 unsupported，避免答成毛利率
+    # （口径不符，裁判判错误）。
+    "净毛利率",
+    "净利率",
+    "净利润率",
+    "销售净利率",
+    # 8/22 晚全量 1410 分析（row 144/151/974/976/907/1121）：盘口/资金面
+    # 字段无数据列 → 显式 unsupported_indicator（诚实短答，不再落综合
+    # 风险分析答非所问）。与"外盘"同款处理。
+    "内盘",
+    "卖盘",
+    "买盘",
+    "委比",
+    "主力成本",
+    "主力控盘",
+    "控盘度",
+    "资金流向",
+    "盘口",
+    # 8/22 晚全量 1410 分析（row 781/797）：研发投入/市场份额无数据列
+    "研发投入",
+    "市场份额",
 )
 
 # 基础报表指标集合：与 indicator_query_service._INDICATORS 的键保持一致。

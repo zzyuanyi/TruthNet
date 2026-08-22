@@ -109,6 +109,37 @@ def risk_node(state: AgentState) -> dict:
         except Exception:  # noqa: BLE001
             as_of = ""
 
+    # 8/22 晚全量 1410（row 729/710）：请求期（如 2025年一季度）库内可能
+    # 无数据——规则引擎会回退用 <=请求期 的最近期计算，但 RiskOutput.as_of
+    # 若仍填请求期会"冒充"数据期（诚实性问题）。此处把评分 as_of 回退到
+    # 库内 <=请求期 的最大真实期次：risk_output.as_of 即实际数据覆盖期，
+    # 回答端据此提示「请求期数据可能缺失」。
+    if (
+        as_of
+        and plan is not None
+        and getattr(plan, "as_of_kind", "") == "report_period"
+    ):
+        try:
+            from app.domain.finance._fetch import _get_engine
+            from sqlalchemy import text
+
+            engine = _get_engine()
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT MAX(report_period) AS p FROM income_statement "
+                        "WHERE wind_code = :code AND report_period <= :as_of"
+                    ),
+                    {"code": company.wind_code, "as_of": as_of},
+                ).fetchone()
+            real_as_of = str(row[0]) if row and row[0] else ""
+            req_ym = int(as_of[:6])
+            real_ym = int(real_as_of[:6]) if len(real_as_of) >= 6 else 0
+            if real_ym and real_ym < req_ym:
+                as_of = real_as_of
+        except Exception:  # noqa: BLE001 — 回退失败保持原 as_of
+            pass
+
     # 评级拐点 + 行业基准
     rating_inflections = _fetch_rating_inflections(company.wind_code, as_of=as_of)
     benchmarks = _fetch_benchmarks(company.wind_code, as_of, company.industry_l1 or "")

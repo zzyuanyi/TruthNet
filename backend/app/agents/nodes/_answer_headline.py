@@ -110,6 +110,10 @@ def _build_company_brief_analysis(
         stance = "数据覆盖仍有限，暂不能下定论"
 
     parts: list[str] = [f"【简要分析】{company.sec_name}整体判断：{stance}"]
+    # 8/22 晚全量 1410（row 729/710）复盘：期次缺失提示已统一在
+    # generate_answer 主流程（conclusion 后、summary 前）输出，覆盖
+    # diagnose/analysis 全路径；此处不再重复提示（避免同一回答出现
+    # 两段"请求期数据可能缺失"），仅保留数据截止日信息。
     if risk_output is not None:
         as_of = getattr(risk_output, "as_of", "") or ""
         if as_of:

@@ -30,7 +30,7 @@ MARKET_FIELD_LABELS: dict[str, str] = {
 
 # AnySearch finance.quote 沿用 A 股日线常用字段单位。
 _FIELD_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("pe_ttm", ("滚动市盈率", "市盈率ttm", "市盈率 ttm", "pe_ttm")),
+    ("pe_ttm", ("滚动市盈率", "市盈率ttm", "市盈率 ttm", "pe_ttm", "ttm")),
     ("dividend_yield", ("股息率", "股息")),
     ("circ_mv", ("流通市值",)),
     ("total_mv", ("总市值", "市值")),
@@ -48,10 +48,14 @@ _FIELD_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "近期表现",
             "近期走势",
             "最近走势",
+            "今日表现",
+            "今天表现",
+            "表现如何",
+            "表现怎么样",
         ),
     ),
     ("pre_close", ("昨收价", "前收盘价", "昨收")),
-    ("open", ("开盘价", "开盘")),
+    ("open", ("开盘价", "开盘", "今开价", "今开")),
     ("high", ("最高价",)),
     ("low", ("最低价",)),
     ("amount", ("成交额",)),

@@ -559,6 +559,10 @@ def test_company_research_returns_source_table_without_generic_risk(monkeypatch)
                 "source_org": "测试证券",
                 "source_title": "公司评级更新",
                 "content": "盈利预测维持稳定，评级由增持调整为中性。",
+                # 8/22 晚全量 1410（row 360/1085）：研报渲染前按公司过滤
+                # （filter_insights_by_company），mock 数据需带归属字段
+                "wind_code": "600664.SH",
+                "sec_name": "哈药股份",
             }
         ],
     )

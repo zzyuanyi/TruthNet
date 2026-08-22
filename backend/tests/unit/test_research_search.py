@@ -413,3 +413,43 @@ def test_sync_executor_is_singleton(monkeypatch):
     first = rs._SYNC_EXECUTOR
     rs.search_research_insights_sync("x")
     assert rs._SYNC_EXECUTOR is first, "executor 应为模块级单例"
+
+
+# ── 8/22 晚全量 1410（row 360/1085）：研报结果按公司过滤 ──
+
+
+def test_filter_insights_by_company_keeps_matching_code():
+    from app.agents.nodes._answer_research import filter_insights_by_company
+
+    rows = [
+        {"wind_code": "002583.SZ", "source_title": "海能达研报", "sec_name": "海能达"},
+        {
+            "wind_code": "603129.SH",
+            "source_title": "春风动力研报",
+            "sec_name": "春风动力",
+        },
+    ]
+    out = filter_insights_by_company(rows, wind_code="002583.SZ", sec_name="海能达")
+    assert len(out) == 1 and out[0]["wind_code"] == "002583.SZ"
+
+
+def test_filter_insights_by_company_keeps_title_match_when_no_code():
+    from app.agents.nodes._answer_research import filter_insights_by_company
+
+    rows = [
+        {"wind_code": "", "source_title": "海能达：业绩点评", "sec_name": ""},
+        {"wind_code": "", "source_title": "春风动力：摩托车销量", "sec_name": ""},
+    ]
+    out = filter_insights_by_company(rows, wind_code="002583.SZ", sec_name="海能达")
+    assert len(out) == 1 and "海能达" in out[0]["source_title"]
+
+
+def test_filter_insights_by_company_drops_unknown_ownership():
+    from app.agents.nodes._answer_research import filter_insights_by_company
+
+    rows = [
+        {"wind_code": "600000.SH", "source_title": "某银行研报", "sec_name": "某银行"},
+        {"wind_code": "", "source_title": "行业综述", "sec_name": ""},
+    ]
+    out = filter_insights_by_company(rows, wind_code="002583.SZ", sec_name="海能达")
+    assert out == []
