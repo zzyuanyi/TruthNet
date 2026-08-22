@@ -731,6 +731,28 @@ def generate_answer_node(state: AgentState) -> dict:
             f"未提取到{requested_period}可核验的财务指标；本次股权或事件信号"
             "不能替代该报告期的财务分析。"
         )
+    # 8/22 晚全量 1410（row 729/710）：有财务 claims 但数据期早于请求期时
+    # 同样要提示——问"2025年一季度季报"不能用 2024-12-31 数据冒充。
+    elif requested_period and getattr(plan, "as_of_kind", "") == "report_period":
+        req_as_of = getattr(plan, "as_of", None)
+        # 数据覆盖期取 risk_output.as_of（证据期最大值，P2-4 契约）
+        data_as_of = ""
+        risk_output_local = state.get("risk_output")
+        if risk_output_local is not None:
+            data_as_of = getattr(risk_output_local, "as_of", "") or ""
+        if req_as_of and data_as_of and len(data_as_of) >= 8:
+            try:
+                req_ym = int(req_as_of.strftime("%Y%m"))
+                data_ym = int(str(data_as_of)[:6])
+                if data_ym < req_ym:
+                    append_segment(
+                        f"请求期次为「{requested_period}」，但可用财务数据最新仅至 "
+                        f"{str(data_as_of)[:4]}-{str(data_as_of)[4:6]}-"
+                        f"{str(data_as_of)[6:8]}，请求期数据可能缺失，"
+                        "以上信号基于最近可用期。"
+                    )
+            except (ValueError, TypeError):
+                pass
     if summary:
         seg = summary + "。"
         append_segment(seg)
