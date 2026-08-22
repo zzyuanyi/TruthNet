@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     WEB_SEARCH_TIMEOUT_SECONDS: float = 15.0  # 单次联网墙钟预算（秒）
     WEB_SEARCH_MAX_RESULTS: int = 5  # 每 query 最多返回命中数
     WEB_SEARCH_RATE_LIMIT_RPM: int = 30  # 限流：每分钟最多请求数（fail-fast）
+    # 会5 深化（2026-08-21）：本地财务指标数据不足时允许联网搜索回填。
+    # 回填结果带来源证据与「非母公司口径」披露；提取失败/搜索不可用
+    # （WEB_SEARCH_BACKEND=off）时保持原「数据不足」拒答（fail-closed）。
+    WEB_SEARCH_FILL_FINANCE_METRIC: bool = True
 
     # ===== 舆情影响分析（B2 批次 C）=====
     # 有界执行器 worker 数 + 有界信号量在途数上限。在途数（信号量）满时

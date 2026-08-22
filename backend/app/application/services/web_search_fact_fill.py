@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import re
 
+from pydantic import BaseModel
+
 from app.application.ports.web_search_provider import SearchResult
 
 # 匹配 2024-03-19 / 2024.03.19 / 2024/03/19 / 2024年3月19日
@@ -134,3 +136,96 @@ def extract_executive_compensation_excerpt(
             ):
                 return value[:300]
     return None
+
+
+class _MetricExtraction(BaseModel):
+    """财务指标联网提取结果（数字锁定：value 必须原样出现在 snippet 中）。"""
+
+    value: str = ""  # 数值+单位原文，如 "77.54%" / "89.54亿元"
+    period: str = ""  # 来源期次表述，如 "2025H1" / "2025-12-31" / "最新"
+    quote: str = ""  # 支持该值的 snippet 原文片段
+    source_title: str = ""
+    source_url: str = ""
+
+
+def _is_placeholder_value(value: str) -> bool:
+    """占位值过滤：'0.00%'/'--'/'-' 等是财务页占位符，不是真值。
+
+    真实 0% 毛利率的公司极罕见（营收>0 则毛利通常非 0），且 0% 对
+    财务分析无信息量；宁可拒答也不把占位符当事实。
+    """
+    norm = value.strip().replace(",", "").replace(" ", "")
+    if norm in ("0", "0%", "0.0%", "0.00%", "--", "-", "None", "null", "无", "暂无"):
+        return True
+    return False
+
+
+def extract_metric_from_hits(
+    hits: list[SearchResult], metric_label: str
+) -> dict | None:
+    """从联网结果提取财务指标数值（会5 回填；数字锁定 + fail-closed）。
+
+    - 相关性 Gate：仅保留 snippet/title 含指标标签的结果；
+    - LLM 结构化提取 value/period/quote；**数字锁定**：value 中的数字必须
+      原样出现在结果文本里（_llm_numeric_lock），quote 必须逐字出现在
+      结果文本中——防编造；
+    - 无命中 / LLM 失败 / 数字无法锁定 / 多来源冲突 → None，调用方保持
+      原「数据不足」拒答（fail-closed，不猜测）。
+    """
+    from app.agents.llm_sync import run_llm_structured
+    from app.application.services._llm_numeric_lock import unlocked_numbers
+
+    candidates = [
+        h
+        for h in (hits or [])
+        if metric_label in (h.snippet or "") or metric_label in (h.title or "")
+    ]
+    if not candidates:
+        return None
+    locked_text = "\n".join(
+        f"- [{h.title}]({h.url})\n{h.snippet}"
+        for h in candidates
+        if (h.snippet or h.title or h.url)
+    )
+    if not locked_text.strip():
+        return None
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是金融数据提取器。从联网搜索结果中提取指定财务指标的最新数值。"
+                "只输出 JSON。value 必须原样取自下方搜索结果文本，禁止计算、"
+                "换算、四舍五入或编造；period 用来源中的期次表述（如 2025H1、"
+                "2025-12-31，无期次则填「最新」）；quote 是从搜索结果原文逐字"
+                "复制、能支撑该数值的片段。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"指标：{metric_label}\n搜索结果：\n{locked_text}",
+        },
+    ]
+    try:
+        out = run_llm_structured(messages, _MetricExtraction)
+    except Exception:  # noqa: BLE001 — 提取失败不阻断主链路
+        return None
+    if out is None or not str(out.value or "").strip():
+        return None
+    value = " ".join(str(out.value).split())
+    # 占位值过滤：0.00%/--/None 等财务页占位符（含"毛利率 0.00%"页）
+    if _is_placeholder_value(value):
+        return None
+    # 数字锁定：提取值中的数字必须都在结果文本中（非空即存在编造数字）
+    if unlocked_numbers([value], locked_text):
+        return None
+    # quote 必须逐字出现在结果文本中（防拼接/改写）
+    quote = " ".join(str(out.quote or "").split()).strip()
+    if quote and quote not in " ".join(locked_text.split()):
+        return None
+    return {
+        "value": value,
+        "period": " ".join(str(out.period or "").split()) or "最新",
+        "quote": quote,
+        "source_title": str(out.source_title or ""),
+        "source_url": str(out.source_url or ""),
+    }
