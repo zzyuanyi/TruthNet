@@ -423,7 +423,11 @@ def test_filter_insights_by_company_keeps_matching_code():
 
     rows = [
         {"wind_code": "002583.SZ", "source_title": "海能达研报", "sec_name": "海能达"},
-        {"wind_code": "603129.SH", "source_title": "春风动力研报", "sec_name": "春风动力"},
+        {
+            "wind_code": "603129.SH",
+            "source_title": "春风动力研报",
+            "sec_name": "春风动力",
+        },
     ]
     out = filter_insights_by_company(rows, wind_code="002583.SZ", sec_name="海能达")
     assert len(out) == 1 and out[0]["wind_code"] == "002583.SZ"
