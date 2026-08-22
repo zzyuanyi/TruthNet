@@ -803,6 +803,31 @@ def generate_answer_node(state: AgentState) -> dict:
             insights = search_research_insights_sync(
                 user_query, top_k=8 if list_query else 3, as_of=as_of_r
             )
+            # 8/22 晚全量 1410（row 360 海能达→春风动力 / 1085 成飞集成→
+            # 中航成飞）：问题含公司名时按公司过滤，杜绝他司研报冒充。
+            if company is not None:
+                from app.agents.nodes._answer_research import (
+                    filter_insights_by_company,
+                )
+
+                insights = filter_insights_by_company(
+                    insights,
+                    wind_code=company.wind_code or "",
+                    sec_name=company.sec_name or "",
+                )
+            else:
+                # row 1085 兜底：单公司研报询问（"XX近期有研报吗"）但实体
+                # 解析失败（库内 sec_name 缺失如 002190.SZ 名称=代码）时，
+                # 检索会命中近名公司（中航成飞）——诚实拒答优于渲染他司
+                # 研报冒充答案（回答端对空 insights 已输出"未找到可回查
+                # 研报"）。
+                import re as _re
+
+                if _re.search(
+                    r"[\u4e00-\u9fff]{2,12}(?:近期|最近)?(?:有|有没有)(?:什么)?研报",
+                    user_query,
+                ):
+                    insights = []
             # P2-1：先过滤可回查结果，只渲染成功生成 Evidence 的 insight
             company_code_r = company.wind_code if company else ""
             runtime_r = state.get("runtime")

@@ -182,6 +182,8 @@ def _research_relevant_excerpt(query: str, content: str) -> str:
 
 def _format_research_insights(query: str, insights: list[dict]) -> str:
     """按问题类型整理研报结果，避免只拼接截断段落。"""
+    if not insights:
+        return "当前数据覆盖范围内未找到匹配的研报或评级记录。"
     if any(
         cue in query
         for cue in (
@@ -255,6 +257,36 @@ def _format_research_insights(query: str, insights: list[dict]) -> str:
     return result
 
 
+def filter_insights_by_company(
+    insights: list[dict], *, wind_code: str = "", sec_name: str = ""
+) -> list[dict]:
+    """8/22 晚全量 1410（row 360/1085）：研报结果按公司过滤，杜绝他司
+    研报冒充（Chroma 语义召回 / SQL 主题词命中他司时）。
+
+    - wind_code 严格匹配（研报有归属代码且不匹配 → 排除）；
+    - 无 wind_code 时标题/公司名含查询公司简称才保留；
+    - 宁缺毋滥：过滤后为空即诚实拒答，不渲染他司研报。
+    """
+    code = (wind_code or "").strip()
+    name = (sec_name or "").strip()
+    filtered: list[dict] = []
+    for it in insights:
+        it_code = str(it.get("wind_code") or "").strip()
+        it_name = str(it.get("sec_name") or "").strip()
+        it_title = str(it.get("source_title") or "")
+        if it_code and code and it_code == code:
+            filtered.append(it)
+        elif it_code and code and it_code != code:
+            continue  # 明确属于他司 → 排除
+        elif it_name and name and name in it_name:
+            filtered.append(it)
+        elif it_title and name and name in it_title:
+            filtered.append(it)
+        else:
+            continue  # 无归属信息且标题不含公司名 → 排除
+    return filtered
+
+
 def _answer_company_research(state: AgentState) -> dict:
     """直接回答单公司研报/评级问题，不先输出无关的综合风险模板。"""
     company = state.get("company")
@@ -281,6 +313,16 @@ def _answer_company_research(state: AgentState) -> dict:
             if report_insights_enabled()
             else []
         )
+        # 8/22 晚全量 1410（row 360 海能达→春风动力 / 1085 成飞集成→中航
+        # 成飞）：检索结果可能混入无关公司研报（Chroma 语义召回 / SQL 主题
+        # 词命中他司），渲染前按公司过滤——wind_code 严格匹配；无 wind_code
+        # 时标题/公司名含查询公司简称才保留。宁缺毋滥：过滤后为空即诚实
+        # 拒答，不渲染他司研报冒充答案。
+        insights = filter_insights_by_company(
+            insights,
+            wind_code=company.wind_code or "",
+            sec_name=company.sec_name or "",
+        )[:5]
         evidence, claims, valid = _research_evidence_and_claims(
             insights,
             company_code=company.wind_code,
