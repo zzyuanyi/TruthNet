@@ -448,6 +448,27 @@ _UNSUPPORTED_KW = (
     "什么形态",
     "形态分析",
     "形态如何",
+    # 8/22 晚全量 1410 分析（第五批）：公司数据缺字段类——管理层/
+    # 股东大会/投资者活动/减持进展等当前 answer 链路无数据支撑，落综合
+    # 分析答非所问（row 380/1147/1200/1201/1219），改为诚实拒答。
+    # 注意："分红/融资"不在此表——分红/融资公告属 events 公告舆情可答
+    # 范围（row 278/749/752 应走 events 查询而非拒答）；"减持/增持/
+    # 质押/回购"同理保留 events/equity 路径，只收"减持情况/减持完了"
+    # 等问法短语。
+    "管理层",
+    "股东大会",
+    "投资者活动",
+    "减持情况",
+    "减持完了",
+    "减持计划",
+    "减持进展",
+    "关键行业",
+    "关联行业",
+    "主要股东减持",
+    "股东减持",
+    "高管减持",
+    "机构调研明细",
+    "调研明细",
 )
 
 _MARKET_WIDE_CUES = (
@@ -574,6 +595,38 @@ _MACRO_MARKET_CUES = (
     "市场规模",
     "市场容量",
     "行业规模",
+)
+
+# 8/22 晚全量 1410：无条件短路安全的市场宏观词子集——纯市场语境、
+# 不会与公司主体共存的词（"今天市场""利好事件""热点信息""贵金属"
+# 等）。供 detect_chitchat_intent 在实体解析前短路（解决"今天市场"
+# 被误提为疑似公司后落 guide 的问题）；带主体风险的词（值得关注/
+# 横盘/筹码/流通股本）留在 _MACRO_MARKET_CUES 由 company is None
+# 守卫处理。
+_MACRO_MARKET_NO_SUBJECT_CUES = (
+    # 纯市场语境词——出现在问题中即指全市场，不会与公司主体共存。
+    # 只收"市场/大盘/指数/排名/贵金属"开头的确定性市场词；
+    # "有什么热点/有什么消息/热点信息"等问句短语可带公司主体
+    # （"东吴证券有什么消息"→ events 可答），不在此表——由
+    # company is None 守卫的 _MACRO_MARKET_CUES 处理。
+    "今天市场",
+    "今日市场",
+    "最近市场",
+    "沪深两市",
+    "大盘走势",
+    "大盘表现",
+    "指数行情",
+    "市场排名",
+    "涨幅排名",
+    "跌幅排名",
+    "贵金属",
+    "黄金白银",
+    "有什么市场热点",
+    "板块资金",
+    "板块排名",
+    "资金流入排名",
+    "成交量排名",
+    "换手率排名",
 )
 
 # 公司事实轻量查询（R9）：只匹配明确模板，禁止裸"行业/股本"包含匹配
@@ -1035,6 +1088,19 @@ def detect_chitchat_intent(user_query: str) -> str | None:
         return "chitchat"  # 空问题按寒暄引导
 
     if any(cue in ql for cue in _MARKET_WIDE_CUES) and not (
+        ("个股" in ql or "股票" in ql)
+        and any(cue in ql for cue in ("行业", "板块", "领域"))
+        and "自选" not in ql
+    ):
+        return "unsupported"
+
+    # 8/22 晚全量 1410：市场宏观词（今天市场/利好事件/热点信息等）即使被
+    # 实体解析器误提"疑似公司"也应归 unsupported 合理拒答——此处无条件
+    # 短路（与 _MARKET_WIDE_CUES 同款豁免）。注意只检查无主体市场词子集
+    # （_MACRO_MARKET_NO_SUBJECT_CUES）："值得关注/横盘/流通股本"等可带
+    # 公司主体的词不在此表（由 company is None 守卫的 _MACRO_MARKET_CUES
+    # 处理），避免误伤"东吴证券值得关注吗""比亚迪流通股本"。
+    if any(cue in ql for cue in _MACRO_MARKET_NO_SUBJECT_CUES) and not (
         ("个股" in ql or "股票" in ql)
         and any(cue in ql for cue in ("行业", "板块", "领域"))
         and "自选" not in ql
@@ -1982,6 +2048,12 @@ def plan_modules_node(state: AgentState) -> dict:
                     detected = "research"
                 else:
                     detected = "guide"
+            elif detected in (None, "guide") and fallback_intent == "unsupported":
+                # 8/22 晚全量 1410：真实 LLM 对市场宏观类问题
+                # （"今天市场有哪些消息"）可能返回 guide/None——高置信
+                # 定位外关键词（_MACRO_MARKET_CUES/_UNSUPPORTED_KW）优先，
+                # 不落"未能识别到公司"答非所问。
+                detected = "unsupported"
         return {
             "plan": ExecutionPlan(
                 intent=detected or "simple_query",
