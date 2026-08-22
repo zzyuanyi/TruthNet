@@ -253,3 +253,79 @@ def test_llm_fallback_trigger_guard_zero_call(monkeypatch):
     result = resolve_indicator_semantics("康美和茅台对比")
     assert result.reason == "no_match"
     assert calls == []
+
+
+# ── 8/23 指标语义全库覆盖 ──────────────────────────────────
+
+
+def test_full_coverage_balance_sheet_subjects():
+    """balance_sheet 有字段科目全部可查：货币资金/其他应收款/流动资产/
+    固定资产/商誉/短长期借款/应付账款/流动负债。"""
+    cases = {
+        "货币资金是多少": "monetary_capital",
+        "其他应收款是多少": "other_receivables",
+        "流动资产合计": "current_assets",
+        "固定资产净值": "fixed_assets",
+        "商誉有多少": "goodwill",
+        "短期借款": "short_borrow",
+        "长期借款": "long_borrow",
+        "应付账款": "accounts_payable",
+        "流动负债合计": "current_liabilities",
+    }
+    for question, expected in cases.items():
+        result = resolve_indicator_semantics(question)
+        assert result.metric_ids == [expected], question
+        assert result.executable is True, question
+
+
+def test_full_coverage_income_statement_subjects():
+    """income_statement 有字段科目全部可查：营业成本/销售费用/管理费用/
+    财务费用/营业利润/利润总额/扣非净利润。"""
+    cases = {
+        "营业成本": "operating_cost",
+        "销售费用": "selling_expense",
+        "管理费用": "admin_expense",
+        "财务费用": "finance_expense",
+        "营业利润": "operating_profit",
+        "利润总额": "total_profit",
+        "扣非净利润": "deducted_net_profit",
+    }
+    for question, expected in cases.items():
+        result = resolve_indicator_semantics(question)
+        assert result.metric_ids == [expected], question
+        assert result.executable is True, question
+
+
+def test_full_coverage_cash_flow_subjects():
+    """cash_flow 有字段科目全部可查：投资/筹资现金流、自由现金流、
+    现金净增加额（含别名）。"""
+    cases = {
+        "投资活动现金流": "investing_cash_flow",
+        "投资现金流": "investing_cash_flow",
+        "筹资活动现金流": "financing_cash_flow",
+        "筹资现金流": "financing_cash_flow",
+        "自由现金流": "free_cash_flow",
+        "现金净增加额": "cash_net_increase",
+    }
+    for question, expected in cases.items():
+        result = resolve_indicator_semantics(question)
+        assert result.metric_ids == [expected], question
+        assert result.executable is True, question
+
+
+def test_full_coverage_growth_modifiers():
+    """新科目同样支持同比修饰（_BASE_INDICATORS 同步）。"""
+    result = resolve_indicator_semantics("货币资金同比增速")
+    assert result.metric_ids == ["monetary_capital_growth"]
+    assert result.operation == "yoy_growth"
+    result = resolve_indicator_semantics("扣非净利润同比")
+    assert result.metric_ids == ["deducted_net_profit_growth"]
+
+
+def test_full_coverage_short_words_not_overshadowed():
+    """裸词不收：'现金' 不得命中货币资金（防'现金流'语境误伤）；
+    '应付' 不命中应付账款（防'应付债券'等衍生语境）。"""
+    result = resolve_indicator_semantics("现金")
+    assert result.metric_ids != ["monetary_capital"]
+    result = resolve_indicator_semantics("应付")
+    assert result.metric_ids != ["accounts_payable"]

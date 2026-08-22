@@ -231,7 +231,7 @@ def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
     if not text or not _validate_interpretation(text, source_json):
         # 回退：规则 explanation 串（LLM 失败/无 key/输出未过验收时保持信息不丢失）
         parts = [
-            rule_details[rid].get("explanation", "")
+            str(rule_details[rid].get("explanation", "")).rstrip("。；; ")
             for rid in sorted(triggered)
             if rule_details[rid].get("explanation")
         ]

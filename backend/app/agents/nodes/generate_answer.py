@@ -63,6 +63,7 @@ from ._answer_common import (
 )
 from ._answer_headline import (
     _answer_risk_level,
+    _answer_rule_detail,
     _build_company_brief_analysis,
     _build_cross_module_observation,
     _build_equity_overview,
@@ -470,6 +471,15 @@ def generate_answer_node(state: AgentState) -> dict:
                 insights = search_research_insights_sync(
                     user_query, top_k=8 if list_query else 3, as_of=as_of
                 )
+                # 8/23（row 1085 同款，company None 分支补齐）：单公司研报
+                # 询问（"XX近期有研报吗"）但实体解析失败（库内名称缺失如
+                # 成飞集成→中航成飞）时，检索会命中近名/他司研报——渲染
+                # 泛化摘要答非所问，诚实拒答优于冒充答案。
+                if re.search(
+                    r"[\u4e00-\u9fff]{2,12}(?:近期|最近)?(?:有|有没有)(?:什么)?研报",
+                    user_query,
+                ):
+                    insights = []
                 # P2-1：先过滤可回查结果——只渲染成功生成 Evidence 的 insight
                 research_evidence, research_claims, valid_insights = (
                     _research_evidence_and_claims(
@@ -481,10 +491,12 @@ def generate_answer_node(state: AgentState) -> dict:
                 )
                 if valid_insights:
                     parts = _format_research_insights(user_query, valid_insights)
+                    # 8/23 展示修复：表格必须与引导语分行（Markdown 表格
+                    # 解析要求表头前有空行/换行），否则前端渲染为原始竖线文本
                     answer = (
-                        "当前问题未指定具体公司，以下是相关研报观点摘要："
+                        "当前问题未指定具体公司，以下是相关研报观点摘要：\n\n"
                         + parts.rstrip("。")
-                        + "。如需针对某家公司分析，请提供公司名称或股票代码。"
+                        + "\n如需针对某家公司分析，请提供公司名称或股票代码。"
                     )
                     # #4：研报可回查 Evidence + research Claim（写入 AgentState + FinalResponse）
                     _emit_segment(state, answer)
@@ -534,6 +546,11 @@ def generate_answer_node(state: AgentState) -> dict:
     plan = state.get("plan")
     if getattr(plan, "intent", "") == "research":
         return _answer_company_research(state)
+    # 8/23 follow-up 定向路由：系统生成的规则明细 follow-up 文案
+    # （"查看其他应收款明细"等）→ 直接渲染对应规则指标明细，不重新
+    # 执行综合分析（点击 follow-up 后答非所问的修复）。
+    if getattr(plan, "intent", "") == "rule_detail":
+        return _answer_rule_detail(state, getattr(plan, "rule_id", "") or "")
     if getattr(plan, "intent", "") == "industry_benchmark":
         return _answer_industry_benchmark(state)
     if getattr(plan, "intent", "") == "market_quote":
@@ -840,7 +857,7 @@ def generate_answer_node(state: AgentState) -> dict:
                 )
             )
             if valid_insights:
-                research_seg = "近期研报观点：" + _format_research_insights(
+                research_seg = "近期研报观点：\n\n" + _format_research_insights(
                     user_query, valid_insights
                 )
                 append_segment(research_seg)

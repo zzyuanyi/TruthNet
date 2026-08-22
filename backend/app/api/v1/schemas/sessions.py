@@ -59,6 +59,8 @@ class SessionTurnV1(BaseModel):
     question: str
     answer: str | None = None
     company_code: str | None = None
+    # 8/23：涉及公司展示用名称（侧边栏"名称（代码）"）；查不到为 None
+    company_name: str | None = None
     trace_id: str | None = None
     module_status: dict | None = None
     panel_data: dict | None = None  # 面板摘要（v7；旧数据为 None）

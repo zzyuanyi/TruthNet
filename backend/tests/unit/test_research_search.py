@@ -453,3 +453,106 @@ def test_filter_insights_by_company_drops_unknown_ownership():
     ]
     out = filter_insights_by_company(rows, wind_code="002583.SZ", sec_name="海能达")
     assert out == []
+
+
+# ── 8/23：无公司单公司研报询问 → 诚实拒答（不渲染泛化研报） ──
+
+
+def test_no_company_single_report_query_returns_honest_fallback(monkeypatch):
+    """'成飞集成近期有研报吗'（实体解析失败、company None）：不得渲染
+    他司研报摘要冒充答案——检索结果应被清空走诚实拒答。"""
+    from app.agents.nodes.generate_answer import generate_answer_node
+    from app.agents.nodes.plan_modules import plan_modules_node
+    from app.agents.state import RuntimeState
+
+    state = {
+        "user_query": "成飞集成近期有研报吗？",
+        "company": None,
+        "plan": plan_modules_node(
+            {"user_query": "成飞集成近期有研报吗？", "company": None}
+        )["plan"],
+        "messages": [],
+        "claims": [],
+        "evidence": [],
+        "module_status": {},
+        "results": __import__(
+            "app.agents.state", fromlist=["ModuleResults"]
+        ).ModuleResults(),
+        "runtime": RuntimeState(trace_id="t", session_id="s", turn_id="t1"),
+    }
+    assert state["plan"].intent == "research"
+
+    # mock 检索返回他司研报（中航成飞）——兜底应清空
+    def _fake_search(query, top_k=3, as_of=""):
+        return [
+            {
+                "report_id": "rp_cf_1",
+                "source_title": "中航成飞：产品交付节奏修复",
+                "source_org": "国金证券",
+                "source_date": "2025-08-28",
+                "content": "中航成飞长期战略定位看好。",
+                "sec_name": "中航成飞",
+                "wind_code": "302132.SZ",
+            }
+        ]
+
+    import app.application.services.research_search as rs_mod
+
+    monkeypatch.setattr(rs_mod, "search_research_insights_sync", _fake_search)
+    # 打开研报检索开关（report_insights_enabled 读 VECTOR_BACKEND）
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "VECTOR_BACKEND", "chroma")
+
+    result = generate_answer_node(state)
+    answer = result["final_response"].answer
+    assert "中航成飞" not in answer, "不得渲染他司研报冒充答案"
+    assert "未找到" in answer or "未匹配" in answer
+
+
+def test_no_company_table_answer_has_line_breaks(monkeypatch):
+    """无公司 research 表格回答：引导语与表格间必须有换行（前端
+    Markdown 渲染成表格的前提），不得粘连同一行。"""
+    from app.agents.nodes.generate_answer import generate_answer_node
+    from app.agents.nodes.plan_modules import plan_modules_node
+    from app.agents.state import RuntimeState
+
+    state = {
+        "user_query": "白酒行业近期研报观点",
+        "company": None,
+        "plan": plan_modules_node(
+            {"user_query": "白酒行业近期研报观点", "company": None}
+        )["plan"],
+        "messages": [],
+        "claims": [],
+        "evidence": [],
+        "module_status": {},
+        "results": __import__(
+            "app.agents.state", fromlist=["ModuleResults"]
+        ).ModuleResults(),
+        "runtime": RuntimeState(trace_id="t", session_id="s", turn_id="t2"),
+    }
+
+    def _fake_search(query, top_k=3, as_of=""):
+        return [
+            {
+                "report_id": "rp_wine_1",
+                "source_title": "白酒行业 2025 年中期策略",
+                "source_org": "中信证券",
+                "source_date": "2025-06-30",
+                "content": "白酒行业动销平稳，龙头库存良性。",
+            }
+        ]
+
+    import app.application.services.research_search as rs_mod
+
+    monkeypatch.setattr(rs_mod, "search_research_insights_sync", _fake_search)
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "VECTOR_BACKEND", "chroma")
+
+    result = generate_answer_node(state)
+    answer = result["final_response"].answer
+    assert (
+        "摘要：\n\n| 日期" in answer
+    ), "引导语与表格间必须有空行（Markdown 表格渲染前提）"

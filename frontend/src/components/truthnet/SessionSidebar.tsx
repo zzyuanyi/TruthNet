@@ -9,13 +9,15 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, MessageSquare, Trash2, Building2, BarChart3 } from 'lucide-react';
 import type { Session } from '@/types/truthnet';
+import type { InvolvedCompany } from '@/pages/ChatPage';
 
 interface SessionSidebarProps {
   sessions: Session[];
   currentSessionId: string;
   currentCompanyCode?: string | null;
   // 8.11（C9）：本对话涉及的公司（去重后的 code 列表，每公司一个画像入口）
-  involvedCompanies?: string[];
+  // 8/23：携带公司名，展示"名称（代码）"
+  involvedCompanies?: InvolvedCompany[];
   isBusy?: boolean;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -58,17 +60,19 @@ export function SessionSidebar({
             <p className="px-2 pt-1 text-[10px] text-muted-foreground">
               本对话涉及公司（{involvedCompanies.length}）
             </p>
-            {involvedCompanies.map(code => (
+            {involvedCompanies.map(company => (
               <Button
-                key={code}
+                key={company.code}
                 variant="ghost"
                 className="w-full justify-start gap-2 h-9"
-                onClick={() => navigate(`/company/${encodeURIComponent(code)}`)}
+                onClick={() => navigate(`/company/${encodeURIComponent(company.code)}`)}
                 disabled={isBusy}
-                title={`查看 ${code} 企业画像`}
+                title={`查看 ${company.name || company.code} 企业画像`}
               >
                 <Building2 className="h-4 w-4 shrink-0" />
-                <span className="truncate text-xs">{code}</span>
+                <span className="truncate text-xs">
+                  {company.name ? `${company.name}（${company.code}）` : company.code}
+                </span>
               </Button>
             ))}
           </>

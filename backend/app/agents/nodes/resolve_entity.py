@@ -134,6 +134,69 @@ def resolve_entity_node(state: AgentState) -> dict:
             ),
         }
 
+    # 8/23 follow-up 定向路由：系统生成的 follow-up 文案（"查看其他应收款
+    # 明细"/"查看公司事件时间线"/"查看实控人控制的其他上市公司"等）本身
+    # 不含公司名，但必须延续会话当前主体——否则"公司/存贷双高/扣非"等词
+    # 会被实体提取器当成疑似公司名（"公司"→中金公司/中微公司），落
+    # entity_error/company_disambiguation 答非所问。
+    # 保护：query 含明确公司名/代码时不得短路（"查看海能达的其他应收款
+    # 明细"必须解析出海能达，而不是沿用上一轮主体）。
+    from app.agents.nodes.plan_modules import (
+        _detect_system_follow_up,
+    )
+
+    has_explicit_code_in_query = bool(
+        re.search(r"(?<!\d)\d{6}(?:\.[A-Za-z]{2})?(?!\d)", user_query)
+    )
+    if (
+        not explicit_company_code
+        and not has_explicit_code_in_query
+        and _detect_system_follow_up(user_query)
+    ):
+        from app.application.services.exact_company_spotter import (
+            spot_exact_company_spans,
+        )
+
+        if not spot_exact_company_spans(user_query):
+            memory_context = state.get("memory_context")
+            current_code = ""
+            if memory_context is not None:
+                current_code = str(
+                    getattr(memory_context, "current_company_code", "") or ""
+                ).strip()
+                if not current_code:
+                    prev = getattr(memory_context, "previous_company_codes", None) or []
+                    current_code = str(prev[0]).strip() if prev else ""
+            if current_code:
+                resolver = CompanyEntityResolver(
+                    get_company_repository(),
+                    selector=CompanySemanticSelector(),
+                    mentionness=CompanyMentionnessClassifier(),
+                )
+                company = resolver._resolve_code_or_name(current_code)
+                if company is not None:
+                    return {
+                        "company": company,
+                        "company_candidates": [],
+                        "comparison_targets": [],
+                        "comparison_requested": False,
+                        "candidates_truncated": False,
+                        "entity_resolution_error": "",
+                        "unresolved_fragments": [],
+                        "suggested_company_code": "",
+                        "entity_resolution_result": resolver._history_result(
+                            company, "follow_up_system"
+                        ),
+                    }
+            # 无当前主体：交给 plan_modules 走 guide（要求先提供公司名）
+            return {
+                "company": None,
+                "company_candidates": [],
+                "entity_resolution_result": EntityResolutionResult(
+                    intent="no_company", reason_code="chitchat"
+                ),
+            }
+
     from app.application.services.market_quote_service import (
         detect_market_quote_field,
     )
