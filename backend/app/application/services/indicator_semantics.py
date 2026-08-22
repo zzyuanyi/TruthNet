@@ -32,6 +32,10 @@ _METRIC_PHRASES: list[tuple[str, str, str]] = [
     ("经营活动现金流", "operating_cash_flow", "exact"),
     ("经营现金流", "operating_cash_flow", "alias"),
     ("营业收入", "operating_revenue", "exact"),
+    # 8/22 晚全量 1410（row 256）："最新收入/收入"口语缺别名，落 diagnose
+    # 答非所问——补 operating_revenue 别名。
+    ("最新收入", "operating_revenue", "alias"),
+    ("收入", "operating_revenue", "alias"),
     ("应收账款", "accounts_receivable", "exact"),
     ("总资产", "total_assets", "exact"),
     ("总负债", "total_liabilities", "exact"),

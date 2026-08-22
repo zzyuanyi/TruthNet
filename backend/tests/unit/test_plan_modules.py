@@ -677,14 +677,17 @@ def test_announcement_list_query_uses_events_only():
 
 
 def test_market_wide_announcement_query_does_not_require_fake_company():
+    # 8/22 晚全量 1410（row 284）修正：全市场质押/公告汇总官方数据（公司
+    # 研报）无法回答，原 research（单公司公告检索）答非所问判错误——
+    # 改归 unsupported 合理拒答。
     plan = plan_modules_node(
         {
             "user_query": "最近有没有上市公司发布了控股股东股权质押公告",
             "company": None,
         }
     )["plan"]
-    assert plan.intent == "research"
-    assert plan.event_list_requested
+    assert plan.intent == "unsupported"
+    assert not plan.event_list_requested
 
 
 def test_unsupported_indicator_precedes_entity_resolution():
@@ -1056,14 +1059,22 @@ def test_full1410_broker_ops_with_company_not_diagnose():
 
 
 def test_full1410_market_macro_with_company_not_shortcut():
-    """市场宏观词 + 有公司：不得短路（"东吴证券利好事件"属 events 范围）。"""
+    """市场宏观词 + 有公司：不得短路（"东吴证券利好消息"属 events 范围）。"""
+    plan = plan_modules_node(_state("东吴证券最近有利好消息吗"))["plan"]
+    assert plan.intent not in {"unsupported", "unsupported_indicator"}
+
+
+def test_full1410_dividend_financing_unsupported_with_company():
+    """分红/融资类（有公司）：events 无专门数据（真机验证查不到），
+    8/22 晚全量 1410 row 278/590/749/752/1077 答非所问 → 诚实拒答。"""
     for question in (
-        "东吴证券最近有利好消息吗",
         "贵州茅台最近有分红吗",
         "比亚迪的分红融资情况如何",
+        "中国平安历年来的分红",
+        "天赐材料近期融资情况如何",
     ):
         plan = plan_modules_node(_state(question))["plan"]
-        assert plan.intent not in {"unsupported", "unsupported_indicator"}, question
+        assert plan.intent in {"unsupported", "unsupported_indicator"}, question
 
 
 def test_full1410_quote_alias_expansions():
