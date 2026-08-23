@@ -1,6 +1,9 @@
 """Phase E 成员 A 评估脚本的纯函数回归测试。"""
 
+import pytest
+
 from scripts.phasee_member_a_evaluation import (
+    OFFICIAL_CLEAN_XLSX,
     _official_dataset_snapshot,
     assess_raw_traceability,
     compute_route_metrics,
@@ -25,6 +28,10 @@ def test_extract_numeric_mentions_excludes_date_and_stock_code():
     assert extract_numeric_mentions(text) == ["2 个季度", "47.9%"]
 
 
+@pytest.mark.skipif(
+    not OFFICIAL_CLEAN_XLSX.is_file(),
+    reason="官方 clean.xlsx 未随公共仓库分发",
+)
 def test_official_dataset_snapshot_matches_77_deep_questions():
     snapshot = _official_dataset_snapshot()
     assert snapshot["question_count"] == 77
