@@ -20,6 +20,10 @@ BALANCE_SHEET_FIELDS = {
     "tot_cur_liab",
     "tot_liab",
     "tot_shrhldr_eqy_incl_min_int",
+    # 8/23 指标语义全库覆盖：balance_sheet 有列但此前未注册的字段
+    "fix_assets",
+    "goodwill",
+    "acct_payable",
 }
 
 INCOME_STATEMENT_FIELDS = {
@@ -40,6 +44,8 @@ CASH_FLOW_FIELDS = {
     "net_cash_flows_inv_act",
     "net_cash_flows_fnc_act",
     "free_cash_flow",
+    # 8/23 指标语义全库覆盖：cash_flow 有列但此前未注册的字段
+    "net_incr_cash_cash_equ",
 }
 
 FIELD_TO_TABLE: dict[str, str] = {}

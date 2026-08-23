@@ -1084,3 +1084,63 @@ def test_full1410_quote_alias_expansions():
     assert detect_market_quote_field("002392今开价") == "open"
     assert detect_market_quote_field("平安银行今日表现") == "pct_chg"
     assert detect_market_quote_field("002392ttm") == "pe_ttm"
+
+
+def test_rule_detail_follow_ups_route_to_rule_detail():
+    """8/23 follow-up 定向路由：系统生成的规则明细 follow-up 文案 →
+    rule_detail 意图（不落综合分析/诊断答非所问）。"""
+    cases = {
+        "查看其他应收款明细": "R6",
+        "查看存贷双高明细": "R3",
+        "查看存货周转趋势": "R4",
+        "查看经营现金流与净利润对比": "R2",
+        "查看扣非净利润与归母净利润对比": "R7",
+        "查看净利润、营收与经营现金流增速对比": "R7",
+        "查看费用明细数据": "R5",
+        "查看财务规则详情": "",
+    }
+    for question, expected_rule_id in cases.items():
+        plan = plan_modules_node(_state(question))["plan"]
+        assert plan.intent == "rule_detail", question
+        assert plan.requested_modules == ["finance"], question
+        assert plan.rule_id == expected_rule_id, question
+
+
+def test_rule_detail_follow_ups_do_not_fall_into_indicator():
+    """follow-up 文案先于指标检测：'查看存货周转趋势'不得被'存货'指标吃掉、
+    '查看扣非净利润与归母净利润对比'不得只答净利润。"""
+    plan = plan_modules_node(_state("查看存货周转趋势"))["plan"]
+    assert plan.intent == "rule_detail"
+    assert plan.rule_id == "R4"
+    plan = plan_modules_node(_state("查看扣非净利润与归母净利润对比"))["plan"]
+    assert plan.intent == "rule_detail"
+    assert plan.rule_id == "R7"
+
+
+def test_rule_detail_follow_up_without_company_stays_guide():
+    """无公司上下文时 follow-up 文案不落 rule_detail（无法定向到公司），
+    保持引导提供公司名。"""
+    for question in (
+        "查看其他应收款明细",
+        "查看存贷双高明细",
+        "查看财务规则详情",
+    ):
+        plan = plan_modules_node(_no_company_state(question))["plan"]
+        assert plan.intent == "guide", question
+
+
+def test_subsidiary_query_with_modifier_words_routes_company_fact():
+    """8/23：'旗下做芯片的公司'等带修饰词的子公司查询 → company_fact
+    subsidiary（之前只匹配'旗下公司/子公司'，中间修饰词不命中 → 落
+    research 答'未找到研报'答非所问）。"""
+    from app.agents.nodes.plan_modules import detect_company_fact
+
+    assert detect_company_fact("皇庭国际旗下做芯片的公司是哪家？") == "subsidiary"
+    assert detect_company_fact("皇庭国际旗下公司有哪些") == "subsidiary"
+    assert detect_company_fact("康美旗下子公司") == "subsidiary"
+    assert detect_company_fact("宁德时代旗下有哪些企业") == "subsidiary"
+    # 不误伤研报查询（"旗下"后跟非公司词）
+    assert detect_company_fact("贵州茅台旗下研报观点") is None
+    plan = plan_modules_node(_state("皇庭国际旗下做芯片的公司是哪家？"))["plan"]
+    assert plan.intent == "company_fact"
+    assert plan.fact_key == "subsidiary"

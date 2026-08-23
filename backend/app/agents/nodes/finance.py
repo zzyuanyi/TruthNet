@@ -231,7 +231,7 @@ def _build_llm_interpretation(rule_details: dict, rule_statuses: dict) -> str:
     if not text or not _validate_interpretation(text, source_json):
         # 回退：规则 explanation 串（LLM 失败/无 key/输出未过验收时保持信息不丢失）
         parts = [
-            rule_details[rid].get("explanation", "")
+            str(rule_details[rid].get("explanation", "")).rstrip("。；; ")
             for rid in sorted(triggered)
             if rule_details[rid].get("explanation")
         ]
@@ -322,7 +322,9 @@ def finance_node(state: AgentState) -> dict:
     trace_id = getattr(runtime, "trace_id", "") if runtime else ""
     turn_id = getattr(runtime, "turn_id", "") if runtime else ""
     from app.core.config import settings as _settings
-    from app.domain.provenance.id_factory import NS_FINANCE, make_evidence_id
+    from app.application.services.finance_evidence import (
+        normalize_rule_evidence_id,
+    )
 
     record_cache: dict = {}
     for rid in _RULES:
@@ -355,19 +357,12 @@ def finance_node(state: AgentState) -> dict:
             # 以 resolve 返回的实际期间为准（无记录时回退请求期）
             record, actual_period = _resolve_record(record_cache, table, req_src)
             period = actual_period or as_of
-            src_record_id = (
-                f"{code}|{period}|{PARENT_STATEMENT_TYPE}" if actual_period else req_src
-            )
-            evidence_id = make_evidence_id(
-                source_namespace=NS_FINANCE,
-                source_type="financial_statement",
-                source_record_id=src_record_id,
-                field_path=field,
-                period=period,
-                dataset_version=_settings.DATASET_VERSION,
-                company_code=code,
-                rule_id=rid,
-            )
+            # 8/23 双轨 ID 统一：与 /finance 路由同一 canonical normalize
+            # （两段式 source_record_id + 无 rule_id 段——同一字段跨规则共享
+            # 同一 Evidence 只落库一次）；落库 source_record_id 同步两段式，
+            # 修复画像页 /risk 返回 ev_fin_* 在 evidence_refs 查不到的问题。
+            src_record_id = f"{code}|{period}"
+            evidence_id = normalize_rule_evidence_id(ev_id, code, as_of, period=period)
             generated_ids.append(evidence_id)
             value, unit = _field_value(record_cache, table, req_src, field)
             evidence.append(

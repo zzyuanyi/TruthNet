@@ -1,7 +1,7 @@
 // 织网鉴真 TruthNet - 跨公司对比页
 // Phase 3: 多公司对比分析
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
@@ -19,14 +19,22 @@ import {
   Building2,
   Search,
   X,
+  Loader2,
+  FileText,
+  Newspaper,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 import type {
   BenchmarksResponseData,
   CompanyRiskSummary,
+  ComparisonAnalysisCompany,
+  ComparisonAnalysisData,
+  ComparisonAnalysisSegment,
   ComparisonsResponseData,
   IndicatorCompare,
   RiskLevel,
+  TimelineEvent,
 } from '@/types/truthnet';
 import type { CompanyCandidate } from '@/lib/api-client';
 
@@ -232,10 +240,23 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
 const unitLabelMap: Record<string, string> = {
   percent: '%',
   percentage_point: '%',
+  pp: '个百分点',
   quarters: '个季度',
   ratio: '比率',
   yuan: '元',
   times: '倍',
+  days: '天',
+  'CNY': '元',
+  percent_pct: '%',
+};
+
+// 8/23 可读性：指标状态中文映射（后端返回英文状态码）
+const INDICATOR_STATUS_LABELS: Record<string, string> = {
+  triggered: '已触发',
+  not_triggered: '未触发',
+  insufficient_data: '数据不足',
+  not_applicable: '不适用',
+  unknown: '未知',
 };
 
 // 后端对比服务已有完整财务规则分析缓存；请求 7 条规则可一次性展示，
@@ -393,6 +414,18 @@ export default function ComparePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [industryUnavailable, setIndustryUnavailable] = useState(false);
+  // 8/23 会7 深化：跨公司 LLM 综合分析（8/23 SSE 流式——分片状态渐进渲染）
+  const [analysisSections, setAnalysisSections] = useState<string[]>([]);
+  const [analysisSegments, setAnalysisSegments] = useState<ComparisonAnalysisSegment[]>([]);
+  const [analysisCompanies, setAnalysisCompanies] = useState<ComparisonAnalysisCompany[]>([]);
+  const [analysisMethod, setAnalysisMethod] = useState('');
+  const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
+  const [analysisProgress, setAnalysisProgress] = useState<{ ready: number; total: number } | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // 8/23 舆情信号：每家公司负面事件（评分保底/舆情维度的证据展示）
+  const [negativeEvents, setNegativeEvents] = useState<Record<string, TimelineEvent[]>>({});
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   // v3.3.4 收口复核清单 §5.3：读取 codes + scope（默认 full）；
   // choose_comparison_pair 入口用 candidates 参数（预填全部代码）
@@ -414,8 +447,19 @@ export default function ComparePage() {
     ),
   ].slice(0, 5);
 
+  // 8/23 StrictMode 防重：dev 双 effect 会发起两套对比请求（analysis 的
+  // LLM 并发超时 → 降级覆盖 LLM 内容）；同 codes 的第二次调用直接跳过。
+  const loadInFlight = useRef(false);
+  const loadForCodes = useRef('');
+
   useEffect(() => {
     const loadCompanies = async () => {
+      const key = codesParam.join(',');
+      if (candidateCodes.length === 0 && codesParam.length > 0) {
+        if (loadInFlight.current && loadForCodes.current === key) return;
+        loadInFlight.current = true;
+        loadForCodes.current = key;
+      }
       setLoading(true);
       setError(null);
       setIndustryUnavailable(false);
@@ -447,6 +491,7 @@ export default function ComparePage() {
           setError(err instanceof Error ? err.message : '行业基准加载失败');
         } finally {
           setLoading(false);
+          loadInFlight.current = false;
         }
         return;
       }
@@ -466,10 +511,151 @@ export default function ComparePage() {
         setError(err instanceof Error ? err.message : '加载失败');
       } finally {
         setLoading(false);
+        loadInFlight.current = false;
       }
     };
 
     loadCompanies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // 8/23 舆情信号：并行获取各家公司负面事件（证据展示——如立案事件
+  // 导致 signal_floor 保底高危，这里可见依据）
+  useEffect(() => {
+    if (codesParam.length === 0 || candidateCodes.length > 0) return;
+    let cancelled = false;
+    setEventsLoading(true);
+    Promise.allSettled(
+      codesParam.map(code =>
+        truthnetAPI.getEvents(code).then(res => {
+          const timeline = (res.data?.timeline || []) as TimelineEvent[];
+          const negative = timeline.filter(t => t.sentiment === 'negative');
+          return { code, negative };
+        }),
+      ),
+    ).then(results => {
+      if (cancelled) return;
+      const map: Record<string, TimelineEvent[]> = {};
+      results.forEach(r => {
+        if (r.status === 'fulfilled') map[r.value.code] = r.value.negative;
+      });
+      setNegativeEvents(map);
+      setEventsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // 8/23 会7 深化：跨公司 LLM 综合分析（SSE 流式：阶段进度 + 分节推送；
+  // 连接失败时 REST 兜底一次性获取）
+  const analysisInFlight = useRef(false);
+  const analysisForCodes = useRef('');
+  useEffect(() => {
+    if (codesParam.length < 2 || candidateCodes.length > 0) return;
+    const key = codesParam.join(',');
+    // 8/23 StrictMode 防重：同 codes 双 effect 只发一次（LLM 并发超时
+    // 会降级覆盖 LLM 内容）
+    if (analysisInFlight.current && analysisForCodes.current === key) return;
+    analysisInFlight.current = true;
+    analysisForCodes.current = key;
+    let cancelled = false;
+    let es: EventSource | null = null;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    setAnalysisSections([]);
+    setAnalysisSegments([]);
+    setAnalysisCompanies([]);
+    setAnalysisMethod('');
+    setAnalysisWarnings([]);
+    setAnalysisProgress(null);
+
+    const finish = (method: string, warnings: string[], companies: unknown[]) => {
+      if (cancelled) return;
+      setAnalysisMethod(method);
+      setAnalysisWarnings(Array.isArray(warnings) ? warnings as string[] : []);
+      setAnalysisCompanies((companies || []) as ComparisonAnalysisCompany[]);
+      setAnalysisLoading(false);
+      analysisInFlight.current = false;
+    };
+
+    // REST 兜底（SSE 失败时调用）
+    const fallbackREST = () => {
+      if (cancelled || analysisInFlight.current === false) return;
+      truthnetAPI
+        .getComparisonAnalysis(codesParam)
+        .then(res => {
+          if (cancelled || !res.data) return;
+          setAnalysisSections([res.data.overall]);
+          setAnalysisSegments(res.data.segments || []);
+          finish(res.data.method || '', res.data.warnings || [], res.data.companies || []);
+        })
+        .catch(err => {
+          if (!cancelled) {
+            setAnalysisError(err instanceof Error ? err.message : '综合分析失败');
+            setAnalysisLoading(false);
+            analysisInFlight.current = false;
+          }
+        });
+    };
+
+    try {
+      es = truthnetAPI.streamComparisonAnalysis(codesParam, evt => {
+        if (cancelled) return;
+        const payload = evt.payload || {};
+        switch (evt.event_type) {
+          case 'analysis.started':
+            setAnalysisProgress({ ready: 0, total: Number(payload.total) || codesParam.length });
+            break;
+          case 'analysis.company_ready':
+            setAnalysisProgress(prev => ({
+              ready: (prev?.ready ?? 0) + 1,
+              total: Number(payload.total) || codesParam.length,
+            }));
+            break;
+          case 'analysis.company_failed':
+            setAnalysisWarnings(prev => [...prev, `公司 ${String(payload.code || '')} 风险分析失败`]);
+            break;
+          case 'analysis.section':
+            setAnalysisSections(prev => [...prev, String(payload.text || '')]);
+            break;
+          case 'analysis.segment':
+            setAnalysisSegments(prev => [
+              ...prev,
+              {
+                company_code: String(payload.company_code || ''),
+                title: String(payload.title || ''),
+                detail: String(payload.detail || ''),
+              },
+            ]);
+            break;
+          case 'analysis.completed':
+            finish(
+              String(payload.method || ''),
+              (payload.warnings as string[]) || [],
+              (payload.companies as unknown[]) || [],
+            );
+            break;
+          default:
+            break;
+        }
+      }, msg => {
+        // SSE 失败 → REST 兜底
+        if (!cancelled) fallbackREST();
+      });
+    } catch {
+      fallbackREST();
+    }
+
+    return () => {
+      cancelled = true;
+      if (es) es.close();
+      // 8/23 关键：cleanup 复位 in-flight——StrictMode 双 effect 时序下
+      // 第一次 effect 的 cleanup 关闭 SSE 后，第二次 effect 才能重新发起
+      // （否则防重把第二次拦掉 → 无请求在跑 → 永久 loading）
+      analysisInFlight.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -733,6 +919,67 @@ export default function ComparePage() {
               </CardContent>
             </Card>
 
+            {/* 8/23 舆情信号：负面事件证据（舆情维度评分与风险等级保底的依据——
+                如立案事件导致 signal_floor 保底高危，这里可见依据） */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Newspaper className="h-4 w-4" />
+                  舆情信号
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  负面事件是舆情维度评分的依据；重大负面事件（如立案/处罚）会保底风险等级，即使财务规则触发少。
+                </p>
+              </CardHeader>
+              <CardContent>
+                {eventsLoading ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    正在加载舆情事件…
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {comparisonData.companies.map(company => {
+                      const events = negativeEvents[company.wind_code] || [];
+                      return (
+                        <div key={company.wind_code} className="rounded-lg border border-border/60 p-3">
+                          <p className="mb-2 text-xs font-medium text-muted-foreground">
+                            {company.sec_name}
+                          </p>
+                          {events.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              近 36 个月无负面舆情事件
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {events.slice(0, 3).map((evt, i) => (
+                                <div key={i} className="flex items-start gap-1.5 text-xs">
+                                  <AlertTriangle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
+                                  <span className="min-w-0">
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {evt.date}
+                                    </span>
+                                    <span className="block truncate" title={evt.title}>
+                                      {evt.title}
+                                    </span>
+                                  </span>
+                                </div>
+                              ))}
+                              {events.length > 3 && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  另有 {events.length - 3} 条…
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
               {/* 对比结论：由后端返回的风险摘要/触发规则/模式匹配直接推导 */}
               {comparisonConclusions.length > 0 && (
                 <Card>
@@ -756,8 +1003,73 @@ export default function ComparePage() {
                 </Card>
               )}
 
+              {/* 8/23 会7 深化：跨公司 LLM 综合分析（SSE 流式渐进渲染） */}
+              {(analysisLoading || analysisError || analysisSections.length > 0 || analysisSegments.length > 0) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      综合分析
+                      {analysisMethod === 'llm' && (
+                        <Badge variant="outline" className="text-[10px] text-primary">
+                          大模型生成
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    {analysisCompanies.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {analysisCompanies
+                          .map(c => `${c.sec_name}（${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}${c.overall_score != null ? ` ${c.overall_score.toFixed(3)}` : ' 暂无评分'}）`)
+                          .join(' vs ')}
+                      </p>
+                    )}
+                  </CardHeader>
+                  <CardContent>
+                    {analysisError && !analysisLoading && analysisSections.length === 0 ? (
+                      <p className="text-sm text-destructive">{analysisError}</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {analysisLoading && (
+                          <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            {analysisProgress && analysisProgress.total > 0
+                              ? `正在获取风险数据（${analysisProgress.ready}/${analysisProgress.total} 家）…`
+                              : '正在综合分析各家公司风险画像…'}
+                          </div>
+                        )}
+                        {/* 8/23 可读性：LLM 对比分析为 Markdown 分节（SSE 分节到达即渲染） */}
+                        {analysisSections.length > 0 && (
+                          <MarkdownRenderer
+                            content={analysisSections.join('\n\n')}
+                            className="text-sm leading-6 text-foreground"
+                          />
+                        )}
+                        {analysisSegments.map((seg, i) => {
+                          const comp = analysisCompanies.find(c => c.wind_code === seg.company_code);
+                          return (
+                            <div key={`${seg.company_code}-${i}`} className="border-l-2 border-primary/40 pl-3">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                {comp?.sec_name || seg.company_code}
+                              </p>
+                              <p className="mt-0.5 text-sm leading-6">{seg.detail}</p>
+                            </div>
+                          );
+                        })}
+                        {analysisWarnings.length > 0 && (
+                          <p className="text-xs text-muted-foreground">{analysisWarnings.join('；')}</p>
+                        )}
+                        <p className="text-[11px] text-muted-foreground/70">
+                          分析基于各家综合风险等级、评分与触发规则（大模型输出，数字与规则名已锁定），不构成投资建议。
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
-            {/* 标准财报科目：供财务人员横向核对原始数值、期间和差值 */}
+
+            {/* 标准财报科目：供财务人员横向核对原始数值、期间和差值
+                （8/23 多期对比：每科目一卡，行=期次、列=公司） */}
             {(comparisonData?.financial_indicators?.length ?? 0) > 0 && (
               <Card className="mb-4">
                 <CardHeader>
@@ -766,59 +1078,85 @@ export default function ComparePage() {
                     财报数据对比
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    母公司报表口径；金额统一换算为亿元，缺失值不按 0 处理。
+                    母公司报表口径；金额统一换算为亿元，缺失值不按 0 处理；每个科目展示近 4 期走势（A 股累计口径：Q1 为单季、中报为半年、年报为全年）。
                   </p>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-x-auto rounded-md border">
-                    <table className="w-full min-w-[760px] text-sm">
-                      <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-2 font-medium">财报科目</th>
-                          {comparisonData.companies.map(company => (
-                            <th key={company.wind_code} className="px-3 py-2 font-medium">
-                              {company.sec_name}
-                            </th>
-                          ))}
-                          <th className="px-3 py-2 font-medium">共同期次</th>
-                          {comparisonData.companies.length === 2 && (
-                            <th className="px-3 py-2 font-medium">差值（第一家-第二家）</th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {comparisonData.financial_indicators.map((row: IndicatorCompare) => (
-                          <tr key={row.indicator}>
-                            <th className="whitespace-nowrap px-3 py-2 text-left font-medium">
-                              {row.label}
-                            </th>
-                            {comparisonData.companies.map(company => {
-                              const item = row.companies.find(
-                                value => value.wind_code === company.wind_code,
-                              );
-                              return (
-                                <td key={company.wind_code} className="px-3 py-2">
-                                  <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
-                                  {item?.status && item.status !== 'ok' && (
-                                    <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                      {item.status === 'insufficient_data' ? '数据不足' : item.status}
-                                    </div>
-                                  )}
-                                </td>
-                              );
-                            })}
-                            <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                              {formatReportPeriod(row.period ?? '')}
-                            </td>
-                            {comparisonData.companies.length === 2 && (
-                              <td className="whitespace-nowrap px-3 py-2 font-medium">
-                                {formatFinancialValue(row.difference ?? null, row.difference_unit ?? '')}
-                              </td>
+                  <div className="space-y-3">
+                    {comparisonData.financial_indicators.map((row: IndicatorCompare) => {
+                      // 期次行：优先 series（近 4 期），无 series 回退单期
+                      const periods = row.series && row.series.length > 0
+                        ? row.series
+                        : row.period
+                          ? [{ period: row.period, companies: row.companies }]
+                          : [];
+                      return (
+                        <div key={row.indicator} className="overflow-hidden rounded-md border border-border/60">
+                          <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2">
+                            <span className="text-sm font-medium">{row.label} 对比</span>
+                            {row.period && (
+                              <span className="text-[11px] text-muted-foreground">
+                                最新共同期 {formatReportPeriod(row.period)}
+                              </span>
                             )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[560px] text-sm">
+                              <thead className="text-left text-xs text-muted-foreground">
+                                <tr className="bg-background">
+                                  <th className="px-3 py-1.5 font-medium">期次</th>
+                                  {comparisonData.companies.map(company => (
+                                    <th key={company.wind_code} className="px-3 py-1.5 font-medium">
+                                      {company.sec_name}
+                                    </th>
+                                  ))}
+                                  {comparisonData.companies.length === 2 && (
+                                    <th className="px-3 py-1.5 font-medium">差值（第一家-第二家）</th>
+                                  )}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {periods.map(p => (
+                                  <tr key={p.period}>
+                                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">
+                                      {formatReportPeriod(p.period)}
+                                    </td>
+                                    {comparisonData.companies.map(company => {
+                                      const item = p.companies?.find(
+                                        value => value.wind_code === company.wind_code,
+                                      );
+                                      return (
+                                        <td key={company.wind_code} className="px-3 py-1.5">
+                                          <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
+                                          {item?.status && item.status !== 'ok' && (
+                                            <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                              数据不足
+                                            </div>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                    {comparisonData.companies.length === 2 && (
+                                      <td className="whitespace-nowrap px-3 py-1.5 font-medium">
+                                        {(() => {
+                                          const a = p.companies?.[0]?.value;
+                                          const b = p.companies?.[1]?.value;
+                                          if (a == null || b == null) return '—';
+                                          return formatFinancialValue(
+                                            a - b,
+                                            p.companies?.[0]?.unit ?? '',
+                                          );
+                                        })()}
+                                      </td>
+                                    )}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>
@@ -847,19 +1185,24 @@ export default function ComparePage() {
                           <BarChart3 className="h-4 w-4 text-muted-foreground" />
                           {indicator.label}
                         </div>
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                           {indicator.companies.map((ci) => {
                             const isRisk = indicator.indicator === 'risk_level';
+                            const unitText = unitLabelMap[ci.unit ?? ''] ?? ci.unit ?? '';
                             const displayValue = ci.value == null
                               ? '暂无数据'
                               : indicator.indicator === 'coverage'
                                 ? `${(ci.value * 100).toFixed(0)}%`
-                                : `${ci.value}${ci.unit || ''}`;
+                                : `${ci.value}${unitText}`;
                             return (
                               <div
                                 key={ci.wind_code}
                                 className="p-3 rounded-lg border bg-card text-center"
                               >
+                                {/* 8/23 可读性：每格标注公司名称 */}
+                                <p className="mb-1 text-xs font-medium text-muted-foreground truncate">
+                                  {ci.sec_name || ci.wind_code}
+                                </p>
                                 {isRisk ? (
                                   <Badge className={cn('text-xs', getRiskLevelStyle(ci.severity || String(ci.value ?? '')))}>
                                     {riskLevelConfig[ci.severity as RiskLevel]?.label || ci.severity || String(ci.value ?? '-')}
@@ -872,11 +1215,7 @@ export default function ComparePage() {
 
                                   {!isRisk && ci.status && ci.status !== 'not_applicable' && (
                                     <p className="mt-1 text-[10px] text-muted-foreground">
-                                      {ci.status === 'triggered'
-                                        ? '规则已触发'
-                                        : ci.status === 'insufficient_data'
-                                          ? '数据不足'
-                                          : ci.status}
+                                      {INDICATOR_STATUS_LABELS[ci.status] ?? ci.status}
                                     </p>
                                   )}
                                   {!isRisk && ci.severity && ['red', 'orange', 'yellow', 'blue', 'green', 'unknown'].includes(ci.severity) && (

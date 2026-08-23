@@ -39,6 +39,7 @@ const sourceTypeIcons: Record<string, string> = {
   news: '新闻',
   research_report: '研报',
   regulation: '监管',
+  web_search: '联网检索',
 };
 
 export function RiskTimeline({ events, clusters, companyCode, onEventClick }: RiskTimelineProps) {

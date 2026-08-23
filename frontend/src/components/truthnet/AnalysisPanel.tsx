@@ -26,9 +26,7 @@ interface AnalysisPanelProps {
   company?: { code: string; name: string };
   onFollowUp?: (suggestion: string) => void;
   onViewDetails?: (type: 'rules' | 'equity' | 'sentiment' | 'evidence') => void;
-  onRuleClick?: (ruleId: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
-  activeRuleId?: string | null;
   moduleStatus?: Record<string, ModuleStatusV1> | null;
   missingModules?: string[] | null;
   // v3.3.4 收口复核清单 §5：结构化比较下一步导航
@@ -51,9 +49,7 @@ export function AnalysisPanel({
   company,
   onFollowUp,
   onViewDetails,
-  onRuleClick,
   onMetricClick,
-  activeRuleId,
   moduleStatus,
   missingModules,
   onNavigateStep,
@@ -98,9 +94,7 @@ export function AnalysisPanel({
               data={data}
               onFollowUp={onFollowUp}
               onViewDetails={onViewDetails}
-              onRuleClick={onRuleClick}
               onMetricClick={onMetricClick}
-              activeRuleId={activeRuleId}
               onNavigateStep={onNavigateStep}
             />
             </>
@@ -233,17 +227,13 @@ function DoneState({
   data,
   onFollowUp,
   onViewDetails,
-  onRuleClick,
   onMetricClick,
-  activeRuleId,
   onNavigateStep,
 }: {
   data: PanelData;
   onFollowUp?: (suggestion: string) => void;
   onViewDetails?: (type: 'rules' | 'equity' | 'sentiment' | 'evidence') => void;
-  onRuleClick?: (rule: string) => void;
   onMetricClick?: (metric: { name: string; value: number }) => void;
-  activeRuleId?: string | null;
   onNavigateStep?: (step: ComparisonNextStep) => void;
 }) {
   return (
@@ -252,12 +242,7 @@ function DoneState({
       <Separator />
       <KeyMetrics data={data} onMetricClick={onMetricClick} />
       <Separator />
-      <TriggeredRules
-        data={data}
-        onRuleClick={onRuleClick}
-        onViewDetails={onViewDetails}
-        activeRuleId={activeRuleId}
-      />
+      <TriggeredRules data={data} onViewDetails={onViewDetails} />
 
       {/* v3.3.4 收口复核清单 §5.2-4：结构化比较下一步优先于旧追问 */}
       {data.next_steps && data.next_steps.length > 0 && (
@@ -372,17 +357,13 @@ function KeyMetrics({ data, onMetricClick }: { data: PanelData; onMetricClick?: 
   );
 }
 
-// 触发规则
+// 触发规则（8/23：移除点击定位联动——证据 ID 对用户无意义，卡片改为只读展示）
 function TriggeredRules({
   data,
-  onRuleClick,
   onViewDetails,
-  activeRuleId,
 }: {
   data: PanelData;
-  onRuleClick?: (ruleId: string) => void;
   onViewDetails?: (type: 'rules') => void;
-  activeRuleId?: string | null;
 }) {
   const rules = data.triggered_rules || [];
   const displayRules = rules.slice(0, 3);
@@ -408,14 +389,7 @@ function TriggeredRules({
       </div>
       <div className="space-y-2">
         {displayRules.map((rule, index) => (
-          <Card
-            key={index}
-            className={cn(
-              'cursor-pointer hover:bg-muted/50 transition-colors',
-              activeRuleId === rule.rule_id && 'border-primary/60 bg-primary/5',
-            )}
-            onClick={() => onRuleClick?.(rule.rule_id)}
-          >
+          <Card key={index} className="bg-muted/20">
             <CardContent className="p-3">
               <div className="text-sm">
                 {typeof rule === 'string' ? rule : rule.rule_name}
@@ -442,31 +416,6 @@ function TriggeredRules({
                   </p>
                 )}
               </div>
-              {typeof rule !== 'string' && rule.evidence_ids && rule.evidence_ids.length > 0 && (
-                <>
-                  <div className="hidden">
-                    {/* 证据数量在上方 */}
-                  </div>
-                  {activeRuleId === rule.rule_id && (
-                    <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
-                      {rule.evidence_ids.slice(0, 2).map(evidenceId => (
-                        <code
-                          key={evidenceId}
-                          className="block truncate rounded bg-muted px-1.5 py-1 text-[10px] text-muted-foreground"
-                          title={evidenceId}
-                        >
-                          {evidenceId}
-                        </code>
-                      ))}
-                        {rule.evidence_ids.length > 2 && (
-                          <p className="text-[10px] text-muted-foreground">
-                            另有 {rule.evidence_ids.length - 2} 条证据，可在对话消息或画像页查看
-                          </p>
-                        )}
-                    </div>
-                  )}
-                </>
-              )}
             </CardContent>
           </Card>
         ))}

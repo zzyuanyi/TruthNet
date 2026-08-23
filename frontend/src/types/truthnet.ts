@@ -416,6 +416,9 @@ export interface RiskEvidence {
   source_type: string;
   claim_ids: string[];
   summary: string;
+  // 8/23 联网线索标注：web 证据带来源 URL + is_web 标记
+  source_uri?: string | null;
+  is_web?: boolean;
 }
 
 export interface RiskResponseData {
@@ -542,6 +545,28 @@ export interface EquityResponseData {
   coverage_note?: string;
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
+  // 8/23 会1 深化：下游（子公司/被投资企业）独立字段
+  downstream_relations?: DownstreamRelation[];
+  downstream_total?: number;
+}
+
+// 8/23 会1 深化：下游直接持股关系 + 上下游风险信号
+export interface DownstreamRiskSignal {
+  kind: string; // announcement / event_cluster
+  title: string;
+  date: string;
+  evidence_id: string;
+}
+
+export interface DownstreamRelation {
+  entity_id: string;
+  wind_code: string;
+  sec_name: string;
+  ownership_pct: number | null;
+  relation: string;
+  // 8/23 上下游风险信号：red（有负面信号）/ green（上市无信号）/ unknown（非上市未覆盖）
+  risk_level?: string;
+  risk_signals?: DownstreamRiskSignal[];
 }
 
 // ============ 跨公司对比 (对齐 ComparisonsResponseData) ============
@@ -556,6 +581,11 @@ export interface CompanyIndicator {
   status: string;
 }
 
+export interface MetricPeriodRow {
+  period: string;
+  companies: CompanyIndicator[];
+}
+
 export interface IndicatorCompare {
   indicator: string;
   label: string;
@@ -563,6 +593,8 @@ export interface IndicatorCompare {
   period?: string;
   difference?: number | null;
   difference_unit?: string;
+  // 8/23 多期对比：近 4 期序列（按期次对齐）
+  series?: MetricPeriodRow[];
 }
 
 export interface CompanyRiskSummary {
@@ -635,6 +667,30 @@ export interface ComparisonsResponseData {
   warnings: string[];
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
+}
+
+// 8/23 会7 深化：跨公司 LLM 综合分析
+export interface ComparisonAnalysisCompany {
+  wind_code: string;
+  sec_name: string;
+  risk_level: string;
+  overall_score: number | null;
+  triggered_rules: string[];
+  as_of: string;
+}
+
+export interface ComparisonAnalysisSegment {
+  company_code: string;
+  title: string;
+  detail: string;
+}
+
+export interface ComparisonAnalysisData {
+  companies: ComparisonAnalysisCompany[];
+  overall: string;
+  segments: ComparisonAnalysisSegment[];
+  method: string;
+  warnings: string[];
 }
 
 // ============ Chat 响应 (对齐 ChatDataV1) ============

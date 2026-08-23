@@ -315,7 +315,12 @@ def _build_messages(sec_name: str, locked: str) -> list[dict]:
         "下面给出程序校验过的结构化事实（财务规则信号、股权链路与隐含关系、"
         "舆情影响、综合风险评分——数字/规则/公司名均已锁定，不得修改、不得新增）。"
         "你的任务：\n"
-        "1. 输出 overall：一句话整体影响判断（串联财务/股权/舆情信号，说明风险来源与传导）；\n"
+        "1. 输出 overall：200-300 字的整体综合分析，用 Markdown 结构化呈现，"
+        "按序覆盖四个小节（每节单独一行，以 **加粗小节名** 开头）："
+        "**风险来源**：…（引用具体规则/信号名称与数字）；"
+        "**风险传导**：…（财务/股权/舆情信号如何叠加、风险如何外溢）；"
+        "**数据质量**：…（覆盖不足或模块缺失如实说明，不得臆断）；"
+        "**建议优先级**：…（结合风险等级说明先核验什么、再评估什么，不荐股、不评级）；\n"
         "2. 输出 suggestions：按模块给出可执行建议（source_module ∈ "
         "finance/equity/events/overall，text 每句必须引用事实中的具体信号或数字）；\n"
         "3. 约束：绝不输出 facts 之外的新数字/新公司名；绝不给出投资建议/买卖评级；"
@@ -333,7 +338,11 @@ def _template_advice(
     all_segments: list[ImpactAdviceSegment],
     events_segments: list[ImpactAdviceSegment],
 ) -> tuple[str, list[ImpactAdviceSegment]]:
-    """确定性模板兜底：分模块建议（LLM 失败/关闭时使用，不空洞）。"""
+    """确定性模板兜底：分模块建议（LLM 失败/关闭时使用，不空洞）。
+
+    8/23 加厚：综合等级/评分/各模块信号数/主要风险来源/核验优先级，
+    避免一句话空洞兜底。
+    """
     risk_cn = {
         "red": "高危",
         "orange": "中高危",
@@ -342,12 +351,23 @@ def _template_advice(
         "blue": "低风险",
         "unknown": "数据不足",
     }.get(out.risk_level, str(out.risk_level))
+    fin_n = len([s for s in all_segments if s.source_module == "finance"])
+    eq_n = len([s for s in all_segments if s.source_module == "equity"])
+    ev_n = len(events_segments)
+    # 主要风险来源（模块标题去括号后缀，如「股权链路（yellow）」→「股权链路」）
+    sources: list[str] = []
+    for seg in all_segments:
+        head = (seg.title or "").split("（")[0].strip()
+        if head and head not in sources:
+            sources.append(head)
+    source_text = "、".join(sources) if sources else "暂无显著信号"
     overall = (
         f"{out.sec_name} 综合风险等级为{risk_cn}"
         f"（评分 {out.overall_score:.3f}），"
-        f"财务规则信号 {len([s for s in all_segments if s.source_module == 'finance'])} 项、"
-        f"股权信号 {len([s for s in all_segments if s.source_module == 'equity'])} 项、"
-        f"舆情影响 {len(events_segments)} 项，建议结合下述分模块信号进一步核验。"
+        f"财务规则信号 {fin_n} 项、股权信号 {eq_n} 项、舆情影响 {ev_n} 项。"
+        f"风险主要来自：{source_text}。"
+        "建议结合下述分模块信号，优先核验触发规则对应的报表科目与披露明细，"
+        "再评估股权与舆情因素是否放大风险传导。"
     )
     return overall, all_segments
 

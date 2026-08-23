@@ -17,22 +17,28 @@ v3.5（契约收口）:
   - 全程复用同一个 ProvenanceService 实例。
 """
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.api.v1.schemas.comparisons import (
     CompanyIndicator,
     CompanyRiskSummary,
+    ComparisonAnalysisData,
     ComparisonRequest,
     ComparisonsResponseData,
     IndicatorCompare,
+    MetricPeriodRow,
     RuleMetricValue,
     TriggeredRuleDetail,
 )
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["comparisons"])
 
@@ -69,11 +75,69 @@ _FINANCIAL_REPORT_INDICATORS = (
 )
 
 
+def _quarter_ends(latest_ymd: str, n: int = 4) -> list[str]:
+    """从最新期起向前取 n 个季度末期次（YYYYMMDD，从新到旧）。"""
+    y = int(latest_ymd[:4])
+    m = int(latest_ymd[4:6])
+    ends = ("0331", "0630", "0930", "1231")
+    idx = {"3": 0, "6": 1, "9": 2, "12": 3}.get(str(((m - 1) // 3) * 3 + 3), 3)
+    out: list[str] = []
+    yy, ii = y, idx
+    for _ in range(n):
+        out.append(f"{yy:04d}{ends[ii]}")
+        ii -= 1
+        if ii < 0:
+            ii = 3
+            yy -= 1
+    return out
+
+
 def _build_financial_indicators(
     resolved_map: dict, period_ymd: str
 ) -> list[IndicatorCompare]:
-    """构造财务人员可直接阅读的标准财报科目对比。"""
+    """构造财务人员可直接阅读的标准财报科目对比。
+
+    8/23 期次回退：请求期为未来期（如默认 2026Q2→20260630，库内最新
+    20260331）时精确匹配必然失败——若各公司库内最新期次一致，回退到该
+    最新期次（共同交集）；各公司最新期不同或请求期不晚于最新期时保持
+    请求期原语义（数据不足如实显示）。
+
+    8/23 多期对比：每个科目附带近 4 期序列（期集 = 各公司最新期最大值
+    起向前 4 个季度末），按期次对齐，缺数据如实置空。
+    """
     from app.application.services.indicator_query_service import query_metric
+
+    use_period = period_ymd
+    try:
+        from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+        latest_set = {
+            (resolve_company_data_as_of(rec.wind_code) or "")
+            for rec in resolved_map.values()
+        }
+        latest_set.discard("")
+        if latest_set and period_ymd > max(latest_set):
+            # 请求期晚于所有公司最新披露期 → 回退「共同覆盖的最晚期次」：
+            # min(各公司最新期) 是每一家都有数据的最晚共同期次
+            # （如比亚迪/隆基 20260331、宁德 20251231 → 共同期 20251231）
+            use_period = min(latest_set)
+    except Exception:  # noqa: BLE001 — 期次推导失败保持请求期
+        pass
+
+    # 8/23 多期序列：期集 = max(各公司最新期) 起向前 4 个季度末
+    series_periods: list[str] = []
+    try:
+        from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+        latest_all = [
+            (resolve_company_data_as_of(rec.wind_code) or "")
+            for rec in resolved_map.values()
+        ]
+        latest_all = [x for x in latest_all if x]
+        if latest_all:
+            series_periods = _quarter_ends(max(latest_all), 4)
+    except Exception:  # noqa: BLE001 — 多期序列失败仅缺失序列
+        pass
 
     rows: list[IndicatorCompare] = []
     for metric_id in _FINANCIAL_REPORT_INDICATORS:
@@ -85,7 +149,7 @@ def _build_financial_indicators(
             result = query_metric(
                 rec.wind_code,
                 metric_id,
-                as_of=period_ymd,
+                as_of=use_period,
                 require_exact_period=True,
             )
             labels.append(result.label or metric_id)
@@ -101,10 +165,38 @@ def _build_financial_indicators(
                         else None
                     ),
                     unit=result.unit or "",
-                    period=result.period or period_ymd,
+                    period=result.period or use_period,
                     status=result.status,
                 )
             )
+
+        # 8/23 多期序列：逐期次逐公司查询（精确匹配，缺期如实置空）
+        series: list[MetricPeriodRow] = []
+        if series_periods:
+            for p in series_periods:
+                pts: list[CompanyIndicator] = []
+                for rec in resolved_map.values():
+                    r = query_metric(
+                        rec.wind_code,
+                        metric_id,
+                        as_of=p,
+                        require_exact_period=True,
+                    )
+                    pts.append(
+                        CompanyIndicator(
+                            wind_code=rec.wind_code,
+                            sec_name=rec.sec_name,
+                            value=(
+                                float(r.value)
+                                if r.status == "ok" and r.value is not None
+                                else None
+                            ),
+                            unit=r.unit or "",
+                            period=p,
+                            status=r.status,
+                        )
+                    )
+                series.append(MetricPeriodRow(period=p, companies=pts))
 
         common_period = (
             periods[0]
@@ -134,6 +226,7 @@ def _build_financial_indicators(
                 period=common_period,
                 difference=difference,
                 difference_unit=common_unit,
+                series=series,
             )
         )
     return rows
@@ -337,6 +430,28 @@ async def _create_comparison_impl(
             data_warnings.append(f"{code} 分析失败: {exc}")
 
     # ── 3. 公司风险摘要 ──
+    # 8/23 评分统一：并行获取各公司综合风险评分（四维，与画像页/综合分析
+    # 同源）——覆盖规则启发式评分；失败的公司保持启发式兜底
+    risk_score_override: dict[str, tuple[str, float]] = {}
+    try:
+        from app.application.services.risk_scoring_service import assemble_and_score
+
+        async def _one_score(code: str):
+            try:
+                out = await assemble_and_score(code, "")
+                return code, (out.risk_level, float(out.overall_score or 0.0))
+            except Exception:  # noqa: BLE001 — 单家失败启发式兜底
+                return code, None
+
+        _score_results = await asyncio.gather(
+            *(_one_score(rec.wind_code) for rec in resolved_map.values())
+        )
+        risk_score_override = {
+            code: val for code, val in _score_results if val is not None
+        }
+    except Exception as exc:  # noqa: BLE001 — 评分统一失败不影响对比主体
+        logger.warning("comparisons: 综合评分获取失败，使用规则启发式兜底: %s", exc)
+
     company_summaries: list[CompanyRiskSummary] = []
     for code, rec in resolved_map.items():
         if code in company_failures:
@@ -356,6 +471,9 @@ async def _create_comparison_impl(
         triggered = [rid for rid, r in results.items() if r.status == "triggered"]
         red_count = sum(1 for r in results.values() if r.severity == "red")
         orange_count = sum(1 for r in results.values() if r.severity == "orange")
+        # 8/23 评分统一：规则严重度启发式仅作兜底——综合评分（四维：
+        # 财务+股权+事件+基准，与画像页/综合分析同源）由 _fetch_risk_scores
+        # 并行计算后覆盖（score_override 见下）
         overall_score = min(
             1.0, red_count * 0.25 + orange_count * 0.15 + len(triggered) * 0.05
         )
@@ -368,6 +486,8 @@ async def _create_comparison_impl(
                 else ("yellow" if overall_score >= 0.15 else "green")
             )
         )
+        if rec.wind_code in risk_score_override:
+            risk_level, overall_score = risk_score_override[rec.wind_code]
         # coverage：规则 quality 数据完整性均值
         completions = [
             r.quality.get("data_completeness", 0.0)
@@ -524,4 +644,94 @@ async def _create_comparison_impl(
             rule_set_version=settings.RULE_SET_VERSION,
         ),
         warnings=warnings,
+    )
+
+
+@router.get(
+    "/comparisons/analysis",
+    response_model=V12Response[ComparisonAnalysisData],
+    responses={422: {"model": dict}, 500: {"model": dict}},
+)
+async def get_comparison_analysis(
+    codes: str = Query(
+        ..., description="对比公司代码，逗号分隔（2-5 家），如 600518.SH,603693.SH"
+    ),
+) -> V12Response[ComparisonAnalysisData]:
+    """8/23 会7 深化：跨公司 LLM 综合分析（等级/评分/触发规则锁定 → 对比分析）。
+
+    单家公司风险分析失败 → partial warning，其余照常；全部失败 → 空结果。
+    """
+    from app.application.services.comparison_advice_service import (
+        assemble_comparison_advice,
+    )
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not (2 <= len(code_list) <= 5):
+        raise HTTPException(
+            status_code=422,
+            detail="对比公司数量需为 2-5 家（逗号分隔）。",
+        )
+    unique = list(dict.fromkeys(code_list))
+    result = await assemble_comparison_advice(unique)
+    return V12Response(
+        data=result,
+        meta=ApiMeta(
+            request_id=_trace(),
+            trace_id=_trace(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            dataset_version=settings.DATASET_VERSION,
+            rule_set_version=settings.RULE_SET_VERSION,
+        ),
+        warnings=[],
+    )
+
+
+@router.get(
+    "/comparisons/analysis/stream",
+    responses={
+        200: {
+            "description": "SSE 事件流（text/event-stream，data: JSON 行）",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+        422: {"model": dict},
+        500: {"model": dict},
+    },
+)
+async def stream_comparison_analysis(
+    codes: str = Query(
+        ..., description="对比公司代码，逗号分隔（2-5 家），如 600518.SH,603693.SH"
+    ),
+):
+    """8/23 对比分析 SSE 流式：阶段进度（公司数据获取）+ LLM 分节推送。
+
+    事件：analysis.started / analysis.company_ready / analysis.company_failed /
+    analysis.section / analysis.segment / analysis.completed（见 service）。
+    """
+    import json as _json
+
+    from fastapi.responses import StreamingResponse
+
+    from app.application.services.comparison_advice_service import (
+        stream_comparison_advice,
+    )
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not (2 <= len(code_list) <= 5):
+        raise HTTPException(
+            status_code=422,
+            detail="对比公司数量需为 2-5 家（逗号分隔）。",
+        )
+    unique = list(dict.fromkeys(code_list))
+
+    async def event_stream():
+        async for evt in stream_comparison_advice(unique):
+            yield f"data: {_json.dumps(evt, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )

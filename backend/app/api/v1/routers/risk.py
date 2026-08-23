@@ -59,6 +59,10 @@ def _build_risk_evidence(out) -> list[RiskEvidence]:
                 # Evidence——无映射时保持空列表（关系过度断言）
                 claim_ids=e.claim_ids or [],
                 summary=(e.summary or "").strip() or "未知来源",
+                # 8/23 联网线索：web 证据带 URL + is_web 标记（前端渲染为
+                # 外链卡片，不触发本地回查——未落库 ID 不可假装可回查）
+                source_uri=getattr(e, "source_uri", None) or None,
+                is_web=(e.source_type or "").strip() == "web_search",
             )
             for e in structured
         ]
@@ -73,6 +77,8 @@ def _build_risk_evidence(out) -> list[RiskEvidence]:
             # 每条 Evidence——无法确定精确映射时保持空列表
             claim_ids=[],
             summary=_summary_from_meta(meta.get(eid)),
+            source_uri=None,
+            is_web=False,
         )
         for eid in (out.evidence_ids or [])
     ]

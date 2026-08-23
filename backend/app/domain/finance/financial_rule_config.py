@@ -14,8 +14,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.domain.finance.models import RuleResult
 
 _FINANCIAL_RULES_FILE = Path(__file__).resolve().parent / "financial_rules.yaml"
+# 8/23 会7 深化：用户可配置阈值 → 写入独立 override 文件（不入库、不污染
+# 源码 YAML），load 时合并；DELETE 重置删除该文件恢复默认。
+_OVERRIDE_FILE = Path(__file__).resolve().parent / "financial_rules.override.yaml"
+_RULE_IDS = ("R1", "R2", "R3", "R4", "R5", "R6", "R7")
 _CACHE_LOCK = RLock()
-_CACHE: tuple[Path, int, FinancialRulesConfig] | None = None
+# 缓存键：((base_path, base_mtime), (override_path_or_None, override_mtime_or_None))
+_CACHE: (
+    tuple[
+        tuple[tuple[Path, int], tuple[Path | None, int | None]],
+        FinancialRulesConfig,
+    ]
+    | None
+) = None
 
 
 class _StrictModel(BaseModel):
@@ -192,20 +203,75 @@ RuleConfig = (
 )
 
 
+def _load_raw_yaml(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as stream:
+        return yaml.safe_load(stream) or {}
+
+
 def load_financial_rules(path: Path | None = None) -> FinancialRulesConfig:
-    """Load and validate configuration, reloading after a file mtime change."""
+    """Load and validate configuration, reloading after file mtime changes.
+
+    8/23 会7 深化：base YAML 加载后合并 override 文件（存在时）——
+    override 的 rules 段按规则全量覆盖 base（enabled + thresholds）；
+    metadata/version 以 base 为准。缓存键同时覆盖两个文件的 mtime。
+    """
     global _CACHE
 
-    config_path = (path or _FINANCIAL_RULES_FILE).resolve()
-    mtime_ns = config_path.stat().st_mtime_ns
+    base_path = (path or _FINANCIAL_RULES_FILE).resolve()
+    override_path = _OVERRIDE_FILE.resolve() if _OVERRIDE_FILE.exists() else None
+    base_mtime = base_path.stat().st_mtime_ns
+    ov_mtime = override_path.stat().st_mtime_ns if override_path else None
+    key = ((base_path, base_mtime), (override_path, ov_mtime))
     with _CACHE_LOCK:
-        if _CACHE and _CACHE[0] == config_path and _CACHE[1] == mtime_ns:
-            return _CACHE[2]
-        with config_path.open("r", encoding="utf-8") as stream:
-            raw = yaml.safe_load(stream)
+        if _CACHE and _CACHE[0] == key:
+            return _CACHE[1]
+        raw = _load_raw_yaml(base_path)
+        if override_path is not None:
+            over = _load_raw_yaml(override_path)
+            over_rules = over.get("rules") or {}
+            base_rules = raw.setdefault("rules", {})
+            for rid in _RULE_IDS:
+                if rid in over_rules:
+                    base_rules[rid] = over_rules[rid]
         config = FinancialRulesConfig.model_validate(raw)
-        _CACHE = (config_path, mtime_ns, config)
+        _CACHE = (key, config)
         return config
+
+
+def save_rule_config(rules: dict) -> None:
+    """覆盖保存阈值配置（8/23 会7 深化）。
+
+    rules 为 FinancialRuleDefinitions.model_dump(by_alias=True) 结果
+    （{R1..R7: {enabled, thresholds}}，由路由层严格校验）。
+    原子写（tmp + replace）；写入后清缓存，mtime 变化自动重载。
+    """
+    payload = {"rules": rules}
+    tmp = _OVERRIDE_FILE.with_suffix(".override.yaml.tmp")
+    tmp.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    tmp.replace(_OVERRIDE_FILE)
+    clear_financial_rule_config_cache()
+
+
+def reset_rule_config() -> None:
+    """删除 override 文件，恢复默认配置（8/23 会7 深化）。"""
+    for _attempt in range(3):
+        try:
+            if _OVERRIDE_FILE.exists():
+                _OVERRIDE_FILE.unlink()
+            break
+        except OSError:  # Windows Defender 实时扫描短暂锁文件 → 重试
+            import time
+
+            time.sleep(0.3)
+    clear_financial_rule_config_cache()
+
+
+def override_active() -> bool:
+    """是否存在用户覆盖配置（is_overridden 展示 + 重置按钮可用性）。"""
+    return _OVERRIDE_FILE.exists()
 
 
 def clear_financial_rule_config_cache() -> None:

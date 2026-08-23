@@ -66,6 +66,33 @@ _INDICATORS: dict[str, _IndicatorSpec] = {
         "应收账款余额", ("acct_rcv",), ("balance_sheet",), "CNY"
     ),
     "inventories": _IndicatorSpec("存货", ("inventories",), ("balance_sheet",), "CNY"),
+    # 8/23 指标语义全库覆盖：balance_sheet 有字段的科目全部可查
+    # （缺数据走 insufficient_data 诚实拒答，不猜数）
+    "monetary_capital": _IndicatorSpec(
+        "货币资金", ("monetary_cap",), ("balance_sheet",), "CNY"
+    ),
+    "other_receivables": _IndicatorSpec(
+        "其他应收款", ("oth_rcv",), ("balance_sheet",), "CNY"
+    ),
+    "current_assets": _IndicatorSpec(
+        "流动资产", ("tot_cur_assets",), ("balance_sheet",), "CNY"
+    ),
+    "fixed_assets": _IndicatorSpec(
+        "固定资产", ("fix_assets",), ("balance_sheet",), "CNY"
+    ),
+    "goodwill": _IndicatorSpec("商誉", ("goodwill",), ("balance_sheet",), "CNY"),
+    "short_borrow": _IndicatorSpec(
+        "短期借款", ("st_borrow",), ("balance_sheet",), "CNY"
+    ),
+    "long_borrow": _IndicatorSpec(
+        "长期借款", ("lt_borrow",), ("balance_sheet",), "CNY"
+    ),
+    "accounts_payable": _IndicatorSpec(
+        "应付账款", ("acct_payable",), ("balance_sheet",), "CNY"
+    ),
+    "current_liabilities": _IndicatorSpec(
+        "流动负债", ("tot_cur_liab",), ("balance_sheet",), "CNY"
+    ),
     "operating_revenue": _IndicatorSpec(
         "营业收入", ("oper_rev",), ("income_statement",), "CNY"
     ),
@@ -75,11 +102,49 @@ _INDICATORS: dict[str, _IndicatorSpec] = {
         ("income_statement",),
         "CNY",
     ),
+    # 8/23 指标语义全库覆盖：income_statement 有字段的科目全部可查
+    "operating_cost": _IndicatorSpec(
+        "营业成本", ("less_oper_cost",), ("income_statement",), "CNY"
+    ),
+    "selling_expense": _IndicatorSpec(
+        "销售费用", ("less_selling_dist_exp",), ("income_statement",), "CNY"
+    ),
+    "admin_expense": _IndicatorSpec(
+        "管理费用", ("less_gerl_admin_exp",), ("income_statement",), "CNY"
+    ),
+    "finance_expense": _IndicatorSpec(
+        "财务费用", ("less_fin_exp",), ("income_statement",), "CNY"
+    ),
+    "operating_profit": _IndicatorSpec(
+        "营业利润", ("oper_profit",), ("income_statement",), "CNY"
+    ),
+    "total_profit": _IndicatorSpec(
+        "利润总额", ("tot_profit",), ("income_statement",), "CNY"
+    ),
+    "deducted_net_profit": _IndicatorSpec(
+        "扣非净利润",
+        ("net_profit_after_ded_nr_lp",),
+        ("income_statement",),
+        "CNY",
+    ),
     "operating_cash_flow": _IndicatorSpec(
         "经营现金流",
         ("net_cash_flows_oper_act",),
         ("cash_flow",),
         "CNY",
+    ),
+    # 8/23 指标语义全库覆盖：cash_flow 有字段的科目全部可查
+    "investing_cash_flow": _IndicatorSpec(
+        "投资活动现金流", ("net_cash_flows_inv_act",), ("cash_flow",), "CNY"
+    ),
+    "financing_cash_flow": _IndicatorSpec(
+        "筹资活动现金流", ("net_cash_flows_fnc_act",), ("cash_flow",), "CNY"
+    ),
+    "cash_net_increase": _IndicatorSpec(
+        "现金净增加额", ("net_incr_cash_cash_equ",), ("cash_flow",), "CNY"
+    ),
+    "free_cash_flow": _IndicatorSpec(
+        "自由现金流", ("free_cash_flow",), ("cash_flow",), "CNY"
     ),
 }
 

@@ -10,6 +10,26 @@ const sourceTypeIcons: Record<string, string> = {
   news: '新闻',
   research_report: '研报',
   regulation: '监管',
+  web_search: '联网检索',
+};
+// 8/23 可读性：规则状态中文 + 参数单位中文映射（规则配置区）
+const RULE_STATUS_LABELS: Record<string, string> = {
+  triggered: '已触发',
+  not_triggered: '未触发',
+  insufficient_data: '数据不足',
+  not_applicable: '不适用',
+  unknown: '未知',
+};
+const RULE_UNIT_LABELS: Record<string, string> = {
+  percent: '%',
+  percentage_point: '个百分点',
+  pp: '个百分点',
+  quarters: '个季度',
+  ratio: '比率',
+  yuan: '元',
+  CNY: '元',
+  days: '天',
+  times: '倍',
 };
 function formatChainPct(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '比例缺失';
@@ -59,6 +79,7 @@ import { FinanceTrendOverview } from '@/components/truthnet/FinanceTrendOverview
 import { ExportSnapshotButton } from '@/components/ExportSnapshotButton';
 
 import { Skeleton } from '@/components/ui/skeleton';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company, DerivationChain, ImpactAdviceData, DataQuality } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
@@ -72,6 +93,8 @@ function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
     audit: 'audit',
     regulation: 'regulatory',
     regulatory: 'regulatory',
+    // 8/23 联网线索独立分组（外链卡片，不参与本地证据回查）
+    web_search: 'web',
   };
   const categoryLabels: Record<string, string> = {
     finance: '财务证据',
@@ -79,6 +102,7 @@ function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
     event: '舆情证据',
     audit: '审计证据',
     regulatory: '监管证据',
+    web: '联网线索',
   };
 
   const groups = new Map<string, RiskEvidence[]>();
@@ -108,7 +132,8 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
 // 锚点导航项
 const navItems = [
   { id: 'overview', label: '概览', icon: AlertTriangle },
-{ id: 'impact', label: '影响与建议', icon: Shield },
+  { id: 'conclusions', label: '核心结论', icon: FileText },
+  { id: 'impact', label: '影响与建议', icon: Shield },
   { id: 'financial', label: '财务异常', icon: TrendingUp },
   { id: 'equity', label: '股权穿透', icon: GitBranch },
   { id: 'sentiment', label: '舆情时间线', icon: Newspaper },
@@ -138,6 +163,15 @@ export default function CompanyProfilePage() {
   const [announcementsAvailable, setAnnouncementsAvailable] = useState<boolean | null>(null);
   // 会7：规则配置参数（GET /rules/definitions），画像页呈现参数与触发规则对应关系
   const [ruleDefinitions, setRuleDefinitions] = useState<RuleDefinition[]>([]);
+  // 8/23 会7 深化：阈值编辑草稿 + 保存/重置状态
+  const [draftThresholds, setDraftThresholds] = useState<Record<string, Record<string, string>>>({});
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configResetting, setConfigResetting] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [ruleDefsOverridden, setRuleDefsOverridden] = useState(false);
+  // 8/23 分步渲染：区分「未加载」与「无数据」（区块级骨架 vs 暂无）
+  const [financeLoaded, setFinanceLoaded] = useState(false);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = { red: '#ef4444', orange: '#f97316', yellow: '#eab308', blue: '#3b82f6', unknown: '#6b7280' };
@@ -211,6 +245,65 @@ export default function CompanyProfilePage() {
     }
   };
 
+  // 8/23 会7 深化：definitions 首次加载后填充编辑草稿（已有编辑不覆盖）
+  useEffect(() => {
+    if (ruleDefinitions.length === 0) return;
+    setDraftThresholds(prev => {
+      if (Object.keys(prev).length > 0) return prev;
+      const next: Record<string, Record<string, string>> = {};
+      for (const def of ruleDefinitions) {
+        next[def.rule_id] = {};
+        for (const [k, v] of Object.entries(def.thresholds)) {
+          next[def.rule_id][k] = String(v);
+        }
+      }
+      return next;
+    });
+  }, [ruleDefinitions]);
+
+  // 8/23 会7 深化：保存并刷新（PUT /rules/config → 重拉全部数据按新阈值重算）
+  const handleSaveRuleConfig = async () => {
+    if (configSaving || ruleDefinitions.length === 0) return;
+    const rulesBody: Record<string, unknown> = {};
+    for (const def of ruleDefinitions) {
+      const thresholds: Record<string, number> = {};
+      for (const [k] of Object.entries(def.thresholds)) {
+        const raw = draftThresholds[def.rule_id]?.[k];
+        if (raw === undefined || raw.trim() === '' || Number.isNaN(Number(raw))) {
+          setConfigError(`${def.rule_id}.${k} 不是有效数字`);
+          return;
+        }
+        thresholds[k] = Number(raw);
+      }
+      rulesBody[def.rule_id] = { enabled: def.enabled, thresholds };
+    }
+    setConfigError(null);
+    setConfigSaving(true);
+    try {
+      await truthnetAPI.updateRuleConfig(rulesBody);
+      await loadData();
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setConfigSaving(false);
+    }
+  };
+
+  // 8/23 会7 深化：重置恢复默认（DELETE /rules/config → 重拉）
+  const handleResetRuleConfig = async () => {
+    if (configResetting) return;
+    setConfigError(null);
+    setConfigResetting(true);
+    try {
+      await truthnetAPI.resetRuleConfig();
+      await loadData();
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '重置失败');
+    } finally {
+      setConfigResetting(false);
+    }
+  };
+
   const sectionRefs = {
     overview: useRef<HTMLDivElement>(null),
     conclusions: useRef<HTMLDivElement>(null),
@@ -220,52 +313,108 @@ export default function CompanyProfilePage() {
     equity: useRef<HTMLDivElement>(null),
     sentiment: useRef<HTMLDivElement>(null),
   };
+  // 8/23 scrollspy：右侧滚动容器引用 + 滚动联动左侧导航高亮
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleScrollSync = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const scrollTop = container.scrollTop;
+    const offset = 140;
+    let current = navItems[0].id;
+    for (const item of navItems) {
+      const ref = sectionRefs[item.id as keyof typeof sectionRefs];
+      if (ref.current && ref.current.offsetTop <= scrollTop + offset) {
+        current = item.id;
+      }
+    }
+    // 底部兜底：滚到底选中最后一项
+    if (container.scrollHeight - scrollTop - container.clientHeight < 40) {
+      current = navItems[navItems.length - 1].id;
+    }
+    setActiveSection(current);
+  }, []);
+
+  // 8/23 StrictMode 防重：dev 下 effect 双执行会发起两套请求（LLM 并发
+  // 超时 → impact-advice 降级覆盖 LLM 内容）；in-flight 拦截同 code 的
+  // 第二次调用。用户切换公司（code 变化）不受影响，且旧请求完成时
+  // 若已切走则忽略其 setState（防污染新公司数据）。
+  const loadInFlight = useRef(false);
+  const loadForCode = useRef('');
 
   useEffect(() => {
     if (code) {
       loadData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
 
   const loadData = async () => {
     if (!code) return;
-    setLoading(true);
+    const myCode = code;
+    if (loadInFlight.current && loadForCode.current === myCode) return;
+    loadInFlight.current = true;
+    loadForCode.current = myCode;
     setError(null);
+    // 8/23 分步渲染：先取公司基础信息（页头/概览依赖），其余请求并行发起，
+    // 各数据到达即渲染对应区块——页面渐进填充，总耗时 = 最慢请求。
     try {
-      const [profileRes, financeRes, equityRes, eventsRes, riskRes, rulesDefRes] = await Promise.all([
-        truthnetAPI.getCompanyProfile(code),
-        truthnetAPI.getFinance(code),
-        truthnetAPI.getEquity(code),
-        truthnetAPI.getEvents(code),
-        truthnetAPI.getRisk(code),
-        truthnetAPI.getRuleDefinitions(),
-      ]);
+      const profileRes = await truthnetAPI.getCompanyProfile(code);
+      if (loadForCode.current !== myCode) return; // 已切走，忽略旧请求结果
       setProfile(profileRes.data);
-      const rules = financeRes.data?.rules || [];
-      setFinancialAnomalies(rules);
-      setEquityData(equityRes.data);
-      setSentimentEvents(eventsRes.data?.timeline || []);
-      setEventClusters(eventsRes.data?.event_clusters || []);
-      setRiskData(riskRes.data);
-              const allChains = riskRes.data?.derivation_chains || [];
+    } catch (err) {
+      loadInFlight.current = false;
+      if (loadForCode.current === myCode) {
+        setError(err instanceof Error ? err.message : '加载失败');
+      }
+      return;
+    }
+
+    const others = [
+      truthnetAPI.getFinance(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setFinancialAnomalies(res.data?.rules || []);
+        setFinanceQuality(res.data?.data_quality || null);
+        setFinanceLoaded(true);
+      }),
+      truthnetAPI.getEquity(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setEquityData(res.data);
+      }),
+      truthnetAPI.getEvents(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setSentimentEvents(res.data?.timeline || []);
+        setEventClusters(res.data?.event_clusters || []);
+        setAnnouncementsAvailable(res.data?.announcements_available ?? null);
+        setEventsLoaded(true);
+      }),
+      truthnetAPI.getRisk(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setRiskData(res.data);
+        const allChains = res.data?.derivation_chains || [];
         setDerivationChains([
           ...allChains.filter(c => c.conclusion_type === 'risk_level'),
           ...allChains.filter(c => c.conclusion_type === 'pattern_match').slice(0, 3),
         ]);
-      setFinanceQuality(financeRes.data?.data_quality || null);
-      setAnnouncementsAvailable(eventsRes.data?.announcements_available ?? null);
-setRuleDefinitions(rulesDefRes.data?.rules || []);
-      setImpactAdviceLoading(true);
-      void truthnetAPI
-        .getImpactAdvice(code)
-        .then(res => setImpactAdvice(res.data))
-        .catch(err => console.warn('影响建议加载失败:', err))
-        .finally(() => setImpactAdviceLoading(false));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
-    } finally {
-      setLoading(false);
-    }
+      }),
+      truthnetAPI.getRuleDefinitions().then(res => {
+        if (loadForCode.current !== myCode) return;
+        setRuleDefinitions(res.data?.rules || []);
+        setRuleDefsOverridden(res.data?.is_overridden ?? false);
+      }),
+      truthnetAPI.getImpactAdvice(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setImpactAdvice(res.data);
+      }),
+    ];
+    // 单个请求失败不整页报错（区块保持空/占位），仅记录
+    others.forEach(p => p.catch(err => console.warn('画像页数据加载失败:', err)));
+    setImpactAdviceLoading(true);
+    await Promise.allSettled(others);
+    if (loadForCode.current !== myCode) return; // 已切走：复位交给新公司加载
+    setImpactAdviceLoading(false);
+    setLoading(false);
+    loadInFlight.current = false;
   };
 
   const handleNavClick = (id: string) => {
@@ -409,13 +558,19 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
     impactAdvice?.overall_advice,
   ]);
 
-  if (loading) {
+  // 8/23 分步渲染：profile 未到达时显示加载中（不得落入「加载失败」分支——
+  // 首次渲染 profile=null 且 error=null，需区分加载中与加载失败）
+  if (!profile && !error) {
     return (
       <div className="flex h-screen bg-background">
         <div className="w-40 border-r border-border p-4">
           <Skeleton className="h-full w-full" />
         </div>
         <div className="flex-1 overflow-auto p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载公司信息…
+          </div>
           <Skeleton className="mb-4 h-8 w-64" />
           <Skeleton className="mb-4 h-32 w-full" />
           <Skeleton className="h-64 w-full" />
@@ -467,7 +622,7 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
       </div>
 
       {/* 右侧内容区 */}
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollContainerRef} onScroll={handleScrollSync} className="flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl p-6">
           {/* 概览区块 */}
           <div ref={sectionRefs.overview} className="mb-8">
@@ -500,6 +655,14 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
                 </div>
               </div>
               <CardContent className="pt-5 space-y-4">
+                {riskData === null ? (
+                  <div className="space-y-3 py-2">
+                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : (
+                <>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">综合风险等级</p>
@@ -591,6 +754,8 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
                     ))}
                   </div>
                 )}
+                </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -602,7 +767,14 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               <FileText className="h-5 w-5" />
               核心结论
             </h2>
-            {derivationChains.length > 0 ? (
+            {riskData === null ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </CardContent>
+              </Card>
+            ) : derivationChains.length > 0 ? (
               <div className="space-y-4">
                 {derivationChains.map((chain, ci) => (
                   <Card key={ci} className="border-l-4" style={{ borderLeftColor: getRiskColor(chain.risk_level) }}>
@@ -703,7 +875,9 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
                     <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
                     <span>{impactAdvice.evidence_count} 条可回查证据</span>
                   </div>
-                  <p className="text-sm leading-6 text-foreground">{impactAdvice.overall_advice}</p>
+                  {/* 8/23 可读性：LLM 输出为 Markdown 分节（**小节名**），
+                      渲染为加粗小节 + 独立行 */}
+                  <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground" />
                 </div>
                 {impactAdvice.segments.map((segment, index) => (
                   <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
@@ -742,7 +916,15 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               <TrendingUp className="h-5 w-5" />
               财务异常
             </h2>
-            {financialAnomalies.length > 0 ? (
+            {!financeLoaded ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </CardContent>
+              </Card>
+            ) : financialAnomalies.length > 0 ? (
               <>
               <FinanceTrendOverview rules={financialAnomalies} />
               <div className="space-y-3">
@@ -764,52 +946,109 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               </div>
               {ruleDefinitions.length > 0 && (
                 <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-4">
-                  <div className="mb-3 flex items-center gap-2">
+                  <div className="mb-3 flex items-center gap-2 flex-wrap">
                     <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-medium">规则配置参数</span>
                     <span className="text-xs text-muted-foreground">参数决定触发阈值</span>
+                    {ruleDefsOverridden && (
+                      <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-500/40">
+                        已使用自定义阈值
+                      </Badge>
+                    )}
+                    <div className="ml-auto flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={configResetting || !ruleDefsOverridden}
+                        onClick={handleResetRuleConfig}
+                      >
+                        {configResetting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        重置
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        disabled={configSaving}
+                        onClick={handleSaveRuleConfig}
+                      >
+                        {configSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        保存并刷新
+                      </Button>
+                    </div>
                   </div>
+                  {configError && (
+                    <p className="mb-2 text-xs text-destructive">{configError}</p>
+                  )}
+                  {/* 8/23 可读性：修改效果说明 */}
+                  <p className="mb-3 rounded-md border border-dashed border-border/60 bg-background/40 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                    这里列出全部 7 条反欺诈规则的判定参数（即「什么情况算触发预警」的临界值）。
+                    修改后点击「保存并刷新」，财务异常、风险评分与影响建议将按新参数重新计算；
+                    点击「重置」恢复系统默认值。绿色徽标=已触发，灰色=未触发，橙色=数据不足。
+                  </p>
                   <div className="space-y-3">
-                    {ruleDefinitions
-                      .filter(def => triggeredRules.some(r => r.rule_id === def.rule_id))
-                      .map(def => {
-                        const rule = triggeredRules.find(r => r.rule_id === def.rule_id);
-                        return (
-                          <div key={def.rule_id} className="rounded-md border border-border/60 bg-background/60 p-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium">{def.name}</span>
-                                <span className="text-xs text-muted-foreground">{def.rule_id}</span>
-                              </div>
-                              {rule && (
-                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getRiskBadgeStyle(rule.severity)}`}>
-                                  {rule.status}
+                    {/* 8/23：配置区显示全部规则（参数决定触发阈值，不只显示已触发）；
+                        触发状态以徽标标注 */}
+                    {ruleDefinitions.map(def => {
+                      const rule = financialAnomalies.find(r => r.rule_id === def.rule_id);
+                      return (
+                        <div key={def.rule_id} className="rounded-md border border-border/60 bg-background/60 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">{def.name}</span>
+                              <span className="text-xs text-muted-foreground">{def.rule_id}</span>
+                            </div>
+                            {rule ? (
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getRiskBadgeStyle(rule.severity || 'unknown')}`}>
+                                {RULE_STATUS_LABELS[rule.status] ?? rule.status}
+                                </span>
+                              ) : (
+                                <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-gray-500/10 text-gray-600">
+                                  未执行
                                 </span>
                               )}
                             </div>
                             {def.description && <p className="mt-1 text-xs text-muted-foreground">{def.description}</p>}
-                            {def.parameters.length > 0 && (
-                              <div className="mt-2 space-y-1.5">
-                                {def.parameters.map(p => (
-                                  <div key={p.key} className="flex items-center justify-between text-xs">
-                                    <span className="text-muted-foreground">
-                                      {p.key}
-                                      {p.description ? `（${p.description}）` : ''}
-                                    </span>
-                                    <span className="font-medium">
-                                      {p.value != null ? `${p.value}${p.unit ? ` ${p.unit}` : ''}` : '—'}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                             {Object.keys(def.thresholds).length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {Object.entries(def.thresholds).map(([k, v]) => (
-                                  <span key={k} className="rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                                    阈值 {k}: {v}
-                                  </span>
-                                ))}
+                              <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                                {Object.entries(def.thresholds).map(([k]) => {
+                                  const param = def.parameters.find(p => p.key === k);
+                                  return (
+                                    <label
+                                      key={k}
+                                      className="flex items-center justify-between gap-2 rounded border border-border/60 bg-background px-2 py-1"
+                                    >
+                                      <span
+                                        className="min-w-0 flex-1"
+                                        title={`${k}${param?.description ? `（${param.description}）` : ''}`}
+                                      >
+                                        <span className="block truncate text-xs text-foreground">
+                                          {param?.description || k}
+                                        </span>
+                                      </span>
+                                      <span className="flex items-center gap-1 shrink-0">
+                                        <input
+                                          type="number"
+                                          step="any"
+                                          value={draftThresholds[def.rule_id]?.[k] ?? String(def.thresholds[k] ?? '')}
+                                          onChange={e => setDraftThresholds(prev => ({
+                                            ...prev,
+                                            [def.rule_id]: {
+                                              ...(prev[def.rule_id] || {}),
+                                              [k]: e.target.value,
+                                            },
+                                          }))}
+                                          className="w-20 rounded border border-border/60 bg-background px-1.5 py-0.5 text-right text-xs"
+                                        />
+                                        {param?.unit && (
+                                          <span className="text-[10px] text-muted-foreground">
+                                            {RULE_UNIT_LABELS[param.unit] ?? param.unit}
+                                          </span>
+                                        )}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -836,7 +1075,14 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               <GitBranch className="h-5 w-5" />
               股权穿透图
             </h2>
-            {equityData ? (
+            {equityData === null ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-48 w-full" />
+                </CardContent>
+              </Card>
+            ) : equityData ? (
               <>
                 <Card>
                   <CardContent className="p-4">
@@ -933,7 +1179,11 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
                   <EquityInsight equityData={equityData} />
                 </div>
                 <div className="mt-4">
-                  <UpstreamDownstream equityData={equityData} />
+                  <UpstreamDownstream
+                    equityData={equityData}
+                    downstreamRelations={equityData.downstream_relations}
+                    downstreamTotal={equityData.downstream_total}
+                  />
                 </div>
               </>
             ) : (
@@ -953,7 +1203,14 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               <Newspaper className="h-5 w-5" />
               舆情时间线
             </h2>
-            {sentimentEvents.length > 0 ? (
+            {!eventsLoaded ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-32 w-full" />
+                </CardContent>
+              </Card>
+            ) : sentimentEvents.length > 0 ? (
               <RiskTimeline
                 events={sentimentEvents}
                   companyCode={code}
@@ -980,7 +1237,14 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               <FileText className="h-5 w-5" />
               证据引用
             </h2>
-            {riskData && riskData.evidence.length > 0 ? (
+            {riskData === null ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </CardContent>
+              </Card>
+            ) : riskData && riskData.evidence.length > 0 ? (
               <EvidenceChain
                 categories={groupEvidenceBySource(riskData.evidence)}
                 onViewSource={evidence => {

@@ -15,10 +15,8 @@ from ._answer_common import (
 )
 from app.agents.state import AgentState, Claim, EvidenceRef, FinalResponse
 from app.core.config import settings
-from app.domain.finance.statement_type import PARENT_STATEMENT_TYPE
 from app.domain.provenance.id_factory import (
     NS_COMPANY_REGISTRY,
-    NS_FINANCE,
     NS_WEB_SEARCH,
     make_claim_id,
     make_evidence_id,
@@ -41,6 +39,27 @@ _INDICATOR_LABELS: dict[str, str] = {
     "net_assets": "净资产",
     "r4_turnover_days": "存货周转天数",
     "r5_gross_margin": "毛利率",
+    # 8/23 指标语义全库覆盖：三表字段科目标签（联网回填回答用）
+    "monetary_capital": "货币资金",
+    "other_receivables": "其他应收款",
+    "current_assets": "流动资产",
+    "fixed_assets": "固定资产",
+    "goodwill": "商誉",
+    "short_borrow": "短期借款",
+    "long_borrow": "长期借款",
+    "accounts_payable": "应付账款",
+    "current_liabilities": "流动负债",
+    "operating_cost": "营业成本",
+    "selling_expense": "销售费用",
+    "admin_expense": "管理费用",
+    "finance_expense": "财务费用",
+    "operating_profit": "营业利润",
+    "total_profit": "利润总额",
+    "deducted_net_profit": "扣非净利润",
+    "investing_cash_flow": "投资活动现金流",
+    "financing_cash_flow": "筹资活动现金流",
+    "free_cash_flow": "自由现金流",
+    "cash_net_increase": "现金净增加额",
 }
 
 
@@ -585,7 +604,35 @@ def _answer_directional_events(state: AgentState) -> dict | None:
     )
     if not selected:
         label = f"{direction_label}事件" if direction_label else "公告或事件"
-        answer = f"{name_code}近期未检出可回查的{label}。"
+        # 会5（8/23 呈现修复）：库内无公告/事件 → 检查联网检索证据
+        # （events 模块 _web_search_company_news 已检索公告线索）——
+        # 有则结构化列出，避免"未检出"与证据列表矛盾（用户困惑点）。
+        web_hits = [
+            e
+            for e in (events.evidence or [])
+            if getattr(e, "source_type", "") == "web_search"
+            and (getattr(e, "source_title", "") or "")
+        ]
+        if web_hits:
+            rows = []
+            for e in web_hits[:5]:
+                title = str(getattr(e, "source_title", "") or "")
+                uri = str(getattr(e, "source_uri", "") or "")
+                excerpt = str(getattr(e, "source_excerpt", "") or "")
+                row = f"- {title}"
+                if excerpt:
+                    row += f"：{excerpt[:80]}"
+                if uri:
+                    row += f"（{uri}）"
+                rows.append(row)
+            answer = (
+                f"{name_code}本地公告数据集中暂无近期可回查的{label}记录；"
+                f"联网检索到以下线索：\n"
+                + "\n".join(rows)
+                + "\n（以上为网络公开线索，非本地数据集核验结果，请以官方公告为准。）"
+            )
+        else:
+            answer = f"{name_code}近期未检出可回查的{label}。"
     else:
         rows = []
         for item in selected[:5]:
@@ -679,6 +726,27 @@ def _answer_indicator(state: AgentState, indicator: str) -> dict:
             "inventories": "存货",
             "r4_turnover_days": "存货周转天数",
             "r5_gross_margin": "毛利率",
+            # 8/23 指标语义全库覆盖：趋势序列标签
+            "monetary_capital": "货币资金",
+            "other_receivables": "其他应收款",
+            "current_assets": "流动资产",
+            "fixed_assets": "固定资产",
+            "goodwill": "商誉",
+            "short_borrow": "短期借款",
+            "long_borrow": "长期借款",
+            "accounts_payable": "应付账款",
+            "current_liabilities": "流动负债",
+            "operating_cost": "营业成本",
+            "selling_expense": "销售费用",
+            "admin_expense": "管理费用",
+            "finance_expense": "财务费用",
+            "operating_profit": "营业利润",
+            "total_profit": "利润总额",
+            "deducted_net_profit": "扣非净利润",
+            "investing_cash_flow": "投资活动现金流",
+            "financing_cash_flow": "筹资活动现金流",
+            "free_cash_flow": "自由现金流",
+            "cash_net_increase": "现金净增加额",
         }
         label = labels.get(base_indicator, base_indicator)
         if len(rows) >= 2:
@@ -1209,16 +1277,17 @@ def _evidence_for_observations(
         field_path = getattr(observation, "field_path", "")
         source_table = getattr(observation, "source_table", "")
         value = getattr(observation, "value", "")
-        source_record_id = f"{company.wind_code}|{obs_period}|{PARENT_STATEMENT_TYPE}"
-        evidence_id = make_evidence_id(
-            source_namespace=NS_FINANCE,
-            source_type="financial_statement",
-            source_record_id=source_record_id,
-            field_path=field_path,
-            period=obs_period,
-            dataset_version=settings.DATASET_VERSION,
-            company_code=company.wind_code,
+        # 8/23 双轨 ID 统一：指标问答证据与财务规则证据同 canonical
+        # （两段式 source_record_id + 无 rule_id 段）——同一字段同期间
+        # 只产生一个证据 ID，避免同事实多 ID 分裂
+        from app.application.services.finance_evidence import (
+            normalize_rule_evidence_id,
         )
+
+        evidence_id = normalize_rule_evidence_id(
+            field_path, company.wind_code, obs_period, period=obs_period
+        )
+        source_record_id = f"{company.wind_code}|{obs_period}"
         evidence.append(
             EvidenceRef(
                 evidence_id=evidence_id,

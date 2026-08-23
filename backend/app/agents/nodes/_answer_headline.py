@@ -193,7 +193,7 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
     finance = results.finance if results else None
     segs: list[str] = []
 
-    # 【预警点】：触发规则的真实 explanation
+    # 【预警点】：触发规则的真实 explanation（8/23 编号换行，避免大段刷屏）
     triggers: list[str] = []
     if finance and finance.rule_details:
         for rid in sorted(finance.rule_details):
@@ -203,7 +203,10 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
             if expl:
                 triggers.append(f"{rid}：{expl}")
     if triggers:
-        segs.append("【预警点】" + "；".join(triggers) + "。")
+        segs.append(
+            "【预警点】\n"
+            + "\n".join(f"{i}. {t}" for i, t in enumerate(triggers, start=1))
+        )
 
     # 【数据对比】：只格式化 rule_details.current；多条指标用表格便于核对。
     pairs: list[str] = []
@@ -248,7 +251,7 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
     # 财务解读场景（有预警点或数据对比）才保证四段完整（P2-5）
     has_content = bool(triggers or pairs)
 
-    # 【可能模式】：只消费 pattern_matches（不新增任何推断）
+    # 【可能模式】：只消费 pattern_matches（8/23 编号换行，避免大段刷屏）
     pattern_matches = state.get("pattern_matches", [])
     if pattern_matches:
         parts: list[str] = []
@@ -266,24 +269,56 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
             if reg:
                 s += f"，监管提示：{reg}"
             parts.append(s)
-        segs.append("【可能模式】" + "；".join(parts) + "。")
+        segs.append(
+            "【可能模式】\n"
+            + "\n".join(f"{i}. {p}" for i, p in enumerate(parts, start=1))
+        )
     elif has_content:
         # P2-5：无模式命中时输出占位（不得省略导致四段缺失）
         segs.append("【可能模式】当前规则组合未匹配预定义模式，需进一步验证。")
 
-    # 【限制说明】：口径/覆盖/降级状态（去重保序）
+    # 【限制说明】：口径/覆盖/降级状态（去重保序；8/23 覆盖率聚合防刷屏）
     limitations: list[str] = []
     if finance and finance.warnings:
+        # 覆盖率警告（"XX 覆盖率仅 38%（有效 3/8 期）"）按覆盖值聚合：
+        # 相同覆盖率的多字段合并为一条"N 个字段覆盖率仅 X%（有效 a/b 期）"，
+        # 避免 14+ 条字段级刷屏。其他 warning（口径/字段不可用等）保留原样。
+
+        cov_pattern = re.compile(r"^(\w+) 覆盖率仅 (\d+)%（有效 (\d+)/(\d+) 期）$")
+        cov_buckets: dict[tuple[str, str, str], list[str]] = {}
+        other_warnings: list[str] = []
         for w in finance.warnings:
-            if w and w not in limitations:
-                limitations.append(w)
+            m = cov_pattern.match(w or "")
+            if m:
+                field, pct, valid, total = m.groups()
+                bucket_key = (pct, valid, total)
+                cov_buckets.setdefault(bucket_key, []).append(field)
+            else:
+                if w and w not in other_warnings:
+                    other_warnings.append(w)
+        for (pct, valid, total), fields in sorted(
+            cov_buckets.items(), key=lambda kv: (int(kv[0][0]), -len(kv[1]))
+        ):
+            limitations.append(
+                f"{len(fields)} 个字段覆盖率仅 {pct}%（有效 {valid}/{total} 期）"
+            )
+        limitations.extend(other_warnings)
     for name, ms in (state.get("module_status") or {}).items():
         if getattr(ms, "state", "") in ("partial", "failed"):
-            w = f"模块 {name} 状态: {getattr(ms, 'state', '')}"
+            # 8/23 可读性：模块状态转中文（"模块 events 状态: partial"
+            # 用户看不懂 → "舆情事件模块部分完成，数据可能不完整"）
+            module_label = _MODULE_LABELS.get(str(name), str(name))
+            state_label = _MODULE_STATE_LABELS.get(
+                str(getattr(ms, "state", "")), str(getattr(ms, "state", ""))
+            )
+            w = f"{module_label}模块{state_label}，相关数据可能不完整"
             if w not in limitations:
                 limitations.append(w)
     if limitations:
-        segs.append("【限制说明】" + "；".join(limitations) + "。")
+        # 8/23：剥离每条末尾标点（warning 自带"。"，直接 join 会出
+        # "数据。；模块"叠用），统一用"；"连接、末尾单个"。"
+        joined = "；".join(str(lim).rstrip("。；；,，") for lim in limitations)
+        segs.append("【限制说明】" + joined + "。")
     elif has_content:
         # P2-5：限制为空时输出默认口径说明（不得省略）
         segs.append("【限制说明】分析基于母公司报表及当前数据覆盖范围，结果仅供参考。")
@@ -577,10 +612,71 @@ def _build_follow_ups(state: AgentState) -> list[str]:
             elif mod == "finance":
                 follow_ups.append("查看财务规则详情")
 
-    if not follow_ups:
-        follow_ups = ["查看企业画像详情"]
-
+    # 8/23 follow-up 收敛：固定规则文案集，全部可定向路由——
+    # 无任何可追问内容时不输出兜底发散项（如"查看企业画像详情"），
+    # 避免用户点击后得不到对应数据（答非所问）。前端 follow_ups 为空
+    # 时自动隐藏按钮区。
     return _dedup(follow_ups)
+
+
+def _answer_rule_detail(state: AgentState, rule_id: str = "") -> dict:
+    """8/23 follow-up 定向路由：直接渲染指定规则（或全部已触发规则）的
+    指标明细，不重新执行综合分析模板（"查看其他应收款明细"等 follow-up
+    点击后落 diagnose 答非所问的修复）。
+
+    - rule_id 非空：只展示该规则；rule_id 空：展示全部已触发规则。
+    - 规则未触发 / 数据不足：诚实说明，不伪造数值。
+    - 依赖 finance 模块执行结果（plan.requested_modules=["finance"]）。
+    """
+    company = state.get("company")
+    if company is None:
+        return {}
+    results = state.get("results")
+    finance = results.finance if results else None
+    name_code = f"{company.sec_name}（{company.wind_code}）"
+
+    rule_details = (finance.rule_details or {}) if finance else {}
+    rule_statuses = (finance.rule_statuses or {}) if finance else {}
+
+    # 目标规则列表：指定 rule_id；空 → 全部已触发规则
+    if rule_id:
+        target_ids = [rule_id] if rule_id in rule_details else []
+    else:
+        target_ids = sorted(
+            rid for rid, st in (rule_statuses or {}).items() if st == "triggered"
+        )
+
+    lines: list[str] = []
+    for rid in target_ids:
+        d = rule_details.get(rid) or {}
+        status = rule_statuses.get(rid, "")
+        rule_name = d.get("rule_name") or rid
+        sev = _SEVERITY_LABELS.get(d.get("severity", ""), "")
+        metrics = _format_metrics(d.get("current") or {})
+        if status == "triggered":
+            header = f"{rid} {rule_name}（{sev}）"
+            lines.append(f"{header}：{metrics}。" if metrics else f"{header}：已触发。")
+        elif status in ("insufficient_data", "not_applicable"):
+            lines.append(
+                f"{rid} {rule_name}：当前数据覆盖不足以计算该规则指标（{status}），"
+                "无法给出明细。"
+            )
+        else:
+            lines.append(f"{rid} {rule_name}：该规则未触发（{status}）。")
+
+    if not lines:
+        answer = (
+            f"{name_code}：当前数据覆盖范围内未生成可展示的规则明细"
+            "（规则未触发或数据不足）。"
+        )
+    else:
+        answer = f"{name_code}规则明细：\n" + "\n".join(lines)
+    _emit_segment(state, answer)
+    return {
+        "claims": [],
+        "evidence": [],
+        "final_response": FinalResponse(answer=answer, risk_level="unknown"),
+    }
 
 
 def _degraded_module_summary(state: AgentState) -> str:

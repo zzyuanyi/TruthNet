@@ -72,13 +72,12 @@ def test_all_v1_operations_have_nonempty_200_schema():
     assert len(operations) >= 15, f"操作数异常: {len(operations)}"
     empty = []
     for method, path, op in operations:
-        content = (
-            op.get("responses", {})
-            .get("200", {})
-            .get("content", {})
-            .get("application/json", {})
-        )
-        ref = content.get("schema", {}).get("$ref", "")
+        content = op.get("responses", {}).get("200", {}).get("content", {})
+        # SSE 流式端点（如 /comparisons/analysis/stream）以 text/event-stream
+        # 响应，无 JSON 200 schema 属契约豁免；其余 JSON 操作必须有 $ref。
+        if "text/event-stream" in content:
+            continue
+        ref = content.get("application/json", {}).get("schema", {}).get("$ref", "")
         if not ref:
             empty.append(f"{method} {path}")
     assert not empty, f"以下操作 200 schema 为空: {empty}"

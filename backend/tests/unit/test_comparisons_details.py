@@ -117,6 +117,84 @@ def test_shared_id_consistency_with_finance():
     ) == normalize_rule_evidence_id(legacy, "600518.SH", "20260331")
 
 
+def test_normalize_period_param_contract():
+    """8/23 双轨 ID 统一契约：period 显式（实际报告期）与默认（请求期）
+    在请求期=实际期时同 ID；实际期不同则 ID 不同（证据指向真实披露期）。"""
+    from app.application.services.finance_evidence import normalize_rule_evidence_id
+
+    legacy = "ev_bs_acct_rcv_growth_20260331"
+    same = normalize_rule_evidence_id(legacy, "600518.SH", "20260331")
+    assert (
+        normalize_rule_evidence_id(legacy, "600518.SH", "20260331", period="20260331")
+        == same
+    )
+    assert (
+        normalize_rule_evidence_id(legacy, "600518.SH", "20260331", period="20251231")
+        != same
+    )
+
+
+def test_agent_finance_node_evidence_id_matches_normalize(monkeypatch):
+    """8/23 双轨 ID 统一契约：agent 节点（/risk 链路）生成的 ev_fin_* 与
+    /finance 路由 normalize 同参同 ID——画像页证据引用可回查，不再 404。
+
+    回归锁定：agent 侧不再使用三段式 source_record_id + rule_id 段生成 ID。
+    """
+    from datetime import date
+
+    from app.agents.nodes import finance as finance_node_mod
+    from app.agents.state import CompanyRef, ExecutionPlan, RuntimeState
+    from app.application.services.finance_evidence import normalize_rule_evidence_id
+
+    class _R:
+        rule_id = "R1"
+        rule_name = "应收–营收背离"
+        status = "triggered"
+        severity = "red"
+        explanation = "应收增速与营收增速背离"
+        current = {}
+        warnings: list = []
+        claim_ids: list = []
+        quality = {}
+        evidence_ids = ["ev_bs_gap_20260331"]
+
+    monkeypatch.setattr(
+        "app.domain.finance.rule_engine.evaluate_all_rules",
+        lambda code, as_of: {
+            "R1": _R(),
+            "R2": None,
+            "R3": None,
+            "R4": None,
+            "R5": None,
+            "R6": None,
+            "R7": None,
+        },
+    )
+    monkeypatch.setattr(
+        finance_node_mod, "_resolve_record", lambda cache, table, src: ({}, None)
+    )
+    state = {
+        "company": CompanyRef(
+            entity_id="600518.SH",
+            wind_code="600518.SH",
+            sec_name="康美药业",
+            exchange="SH",
+        ),
+        "plan": ExecutionPlan(
+            intent="diagnose", requested_modules=["finance"], as_of=date(2026, 3, 31)
+        ),
+        "runtime": RuntimeState(trace_id="trace_1", turn_id="turn_1"),
+    }
+    out = finance_node_mod.finance_node(state)
+    evidence = (out.get("results") or {}).finance.evidence
+    assert evidence, "finance 节点应产出证据"
+    expect = normalize_rule_evidence_id(
+        "ev_bs_gap_20260331", "600518.SH", "20260331", period="20260331"
+    )
+    assert evidence[0].evidence_id == expect
+    assert evidence[0].source_record_id == "600518.SH|20260331"
+
+
 @pytest.mark.skipif(
     __import__("app.core.config", fromlist=["settings"]).settings.SQL_BACKEND
     != "mysql",

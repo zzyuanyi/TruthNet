@@ -710,7 +710,14 @@ _MACRO_MARKET_NO_SUBJECT_CUES = (
 _COMPANY_FACT_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"属于什么行业|所属行业|什么行业|是什么行业"), "industry"),
     (re.compile(r"细分板块|所属板块|哪个板块|什么板块"), "industry"),
-    (re.compile(r"旗下(?:的)?(?:公司|企业)|子公司|控股公司"), "subsidiary"),
+    # 8/23 修复：旗下子公司查询允许中间修饰词——"旗下做芯片的公司是哪家"
+    # 之前只匹配"旗下公司/子公司"，中间有"做芯片的"不命中 → 落 research
+    # 答"未找到研报"答非所问（row 皇庭国际）。放宽为"旗下 + 修饰词(≤8字) +
+    # 公司/企业"；"旗下"仍要求后跟"公司/企业"类词，不误伤"旗下研报"等。
+    (
+        re.compile(r"旗下(?:的)?[\u4e00-\u9fff]{0,8}(?:公司|企业)|子公司|控股公司"),
+        "subsidiary",
+    ),
     (
         re.compile(
             r"(?:收到|签订|中标|获得|拿到).{0,10}(?:项目|合同)|项目金额|项目是真的吗|项目真实吗|有.*项目吗"
@@ -813,15 +820,9 @@ _RESEARCH_CUES = (
     "产业链",
     "上下游",
     "换电模式",
-    "目标价",
     "核心竞争",
     "竞争力",
     "竞争对手",
-    "产品计划",
-    "业务拓展",
-    "国际业务",
-    "行业布局",
-    "领域布局",
     "未来趋势",
 )
 
@@ -892,6 +893,53 @@ _MARKET_PRICE_BOUNDARY_CUES = (
     "会涨吗",
     "会跌吗",
 )
+
+# 8/23 follow-up 适配：系统生成的规则明细 follow-up 文案 → 目标规则 ID。
+# 这些文案由 _answer_headline._build_follow_ups / _RULE_FOLLOW_UP 生成，
+# 用户点击按钮后原样发回——必须直接渲染对应规则的指标明细，不得重新落
+# 综合分析答非所问（"查看其他应收款明细"→海能达综合分析）。值为规则 ID；
+# "" 表示"全部已触发规则"（"查看财务规则详情"）。
+_RULE_DETAIL_FOLLOW_UPS: tuple[tuple[str, str], ...] = (
+    ("查看其他应收款明细", "R6"),
+    ("查看存贷双高明细", "R3"),
+    ("查看存货周转趋势", "R4"),
+    ("查看经营现金流与净利润对比", "R2"),
+    ("查看扣非净利润与归母净利润对比", "R7"),
+    ("查看净利润、营收与经营现金流增速对比", "R7"),
+    ("查看费用明细数据", "R5"),
+    ("查看财务规则详情", ""),
+)
+
+
+def _detect_rule_detail_follow_up(user_query: str) -> str | None:
+    """识别系统生成的规则明细 follow-up 文案 → 目标 rule_id（None=非 follow-up）。
+
+    只匹配系统生成的完整文案（子串包含），不匹配用户自造的泛化问法
+    （"应收账款明细"等仍走指标/规则引擎），避免误伤正常查询。
+    """
+    ql = user_query or ""
+    for phrase, rule_id in _RULE_DETAIL_FOLLOW_UPS:
+        if phrase in ql:
+            return rule_id
+    return None
+
+
+# 8/23 follow-up 收敛：系统生成的其余无公司名 follow-up 文案（事件时间线/
+# 实控人）。与规则明细类同属"系统生成、点击后必须延续会话当前主体"，
+# 实体解析阶段短路用（"查看公司事件时间线"中的"公司"会被实体提取器
+# 当成疑似公司名 → 误命中中金公司/中微公司）。
+_SYSTEM_FOLLOW_UP_PHRASES: tuple[str, ...] = (
+    "查看公司事件时间线",
+    "查看实控人控制的其他上市公司",
+)
+
+
+def _detect_system_follow_up(user_query: str) -> bool:
+    """是否系统生成的 follow-up 文案（规则明细类 ∪ 事件/股权类）。"""
+    if _detect_rule_detail_follow_up(user_query) is not None:
+        return True
+    ql = user_query or ""
+    return any(phrase in ql for phrase in _SYSTEM_FOLLOW_UP_PHRASES)
 
 
 def _detect_market_price_boundary(user_query: str) -> bool:
@@ -1820,6 +1868,24 @@ def plan_modules_node(state: AgentState) -> dict:
     # R9：公司事实轻量查询——只匹配明确模板（属于什么行业/上市日期等），
     # 直接进 generate_answer，不执行 finance/equity/events/risk。
     if company is not None:
+        # 8/23 follow-up 适配：系统生成的规则明细 follow-up 文案
+        # （_RULE_FOLLOW_UP / R7 follow-up / 费用明细 / 财务规则详情）——
+        # 点击按钮后应直接渲染对应规则的指标明细，不得重新落综合分析
+        # 答非所问（"查看其他应收款明细"→海能达综合分析）。必须在
+        # indicator 检测之前（"查看存货周转趋势"会被"存货"指标吃掉）。
+        rule_detail_id = _detect_rule_detail_follow_up(user_query)
+        if rule_detail_id is not None:
+            return {
+                "plan": ExecutionPlan(
+                    intent="rule_detail",
+                    requested_modules=["finance"],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                    rule_id=rule_detail_id,
+                )
+            }
         # 产品口径固定为母公司报表。明确要求合并口径时先说明不支持切换，
         # 不能继续给出容易被误读的母公司数值。
         operation = semantics.answer_operation

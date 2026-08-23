@@ -58,7 +58,11 @@ from app.domain.comparison.scope_registry import COMPARISON_FULL_SCOPE_WORDS
 logger = logging.getLogger(__name__)
 
 # 语法后缀变体（v8 _GRAMMAR_SUFFIX_CHARS 平移）
-_GRAMMAR_SUFFIX_CHARS = frozenset("的是呢吗了")
+# 8/23 修复：加"比"——比较句"招商银行和茅台比哪个更赚钱"中右片段
+# "茅台比"带比较句尾"比"导致复合拆分失败（comparison_missing_peer）；
+# 变体查询剥尾后"茅台"命中。风险：比亚迪尾部是"亚"不触发；"占比/对比"
+# 剥尾后无候选则无害（变体仅是额外候选尝试，原查询优先）。
+_GRAMMAR_SUFFIX_CHARS = frozenset("的是呢吗了比")
 
 # v3.2.1 批次 2：业务上下文词（封闭集合）——仅当已存在有效公司 mention 时，
 # 零候选 span 精确等于其中之一才被忽略（不进 mentions/unresolved/relation）
@@ -215,23 +219,62 @@ def _merge_exact_spots(
     if not spans:
         return mentions
 
+    def _fragments_covered_by_spots(text: str) -> bool:
+        """复合段按连接词切分的所有子片段是否都被精确 spot 覆盖。
+
+        8/23 修复：spot 精确命中复合段全部成分（"康美药业和贵州茅台
+        全面对比"→ spot 康美药业/贵州茅台）时丢弃粗 span 由 spot 接管
+        （粗 span 拆分右片段"贵州茅台全面"带后缀会解析失败）；仅当存在
+        spot 未覆盖的子片段（"比亚迪和隆基"→ spot 只中比亚迪，隆基为
+        简称漏网）时保留粗 span 走 _segment_compound 拆分。
+        """
+        frags = [text]
+        for conn in _COMPOUND_CONNECTORS:
+            next_frags: list[str] = []
+            for f in frags:
+                idx = f.find(conn)
+                if idx < 0:
+                    next_frags.append(f)
+                    continue
+                left, right = f[:idx], f[idx + len(conn) :]
+                next_frags.append(left)
+                if right:
+                    next_frags.append(right)
+            frags = next_frags
+        for frag in frags:
+            if len(frag) < 2:
+                continue
+            if not any((s.text or "") in frag or frag in (s.text or "") for s in spans):
+                return False
+        return True
+
     kept: list[EntityMention] = []
     for m in mentions:
         if m.start is None or m.end is None:
             kept.append(m)
             continue
+        is_compound_span = any(conn in (m.text or "") for conn in _COMPOUND_CONNECTORS)
         # 与某个精确 span 重叠但非同一 span → 精确名称优先（丢弃粗 span）
         if any(not (m.end <= s.start or s.end <= m.start) for s in spans) and not any(
             m.start == s.start and m.end == s.end and (m.text or "") == s.text
             for s in spans
         ):
-            continue
+            if not (is_compound_span and not _fragments_covered_by_spots(m.text or "")):
+                continue
         kept.append(m)
 
     existing_keys = {(m.start, m.end, (m.text or "").strip()) for m in kept}
     for span in spans:
         key = (span.start, span.end, span.text)
         if key in existing_keys:
+            continue
+        # 8/23 修复：精确 spot 完全落在某保留的复合段内部 → 不追加，
+        # 避免与复合 span 重叠（分段逻辑会覆盖该精确名）。
+        if any(
+            not (span.end <= k.start or k.end <= span.start)
+            for k in kept
+            if any(conn in (k.text or "") for conn in _COMPOUND_CONNECTORS)
+        ):
             continue
         kept.append(
             EntityMention(
@@ -687,6 +730,34 @@ class CompanyEntityResolver:
             ):
                 continue
             right_final, _ = self._finalize_span(right_m, depth + 1)
+            # 8/23 轻量 B：右片段原文未绑定 code（needs_confirmation 变体
+            # 命中）→ 剥 1 个任意尾字符纯字符串重试（零查询成本；"茅台比"
+            # →"茅台"、"和邦的"→"和邦"）。只剥 1 字控制查询预算；剥后仍
+            # 未绑定则回退原文 finalize 结果（保持旧行为）。
+            if (
+                depth + 1 < _MAX_COMPOUND_ENTITIES
+                and right_final
+                and not any(m.selected_wind_code for m in right_final)
+                and len(right) >= 3
+            ):
+                trimmed = right[:-1]
+                if len(trimmed) >= 2:
+                    trimmed_m = EntityMention(
+                        mention_id=make_mention_id(
+                            parent.start + pos + len(connector),
+                            parent.start + pos + len(connector) + len(trimmed),
+                            trimmed,
+                        ),
+                        text=trimmed,
+                        start=parent.start + pos + len(connector),
+                        end=parent.start + pos + len(connector) + len(trimmed),
+                    )
+                    trimmed_final, _ = self._finalize_span(trimmed_m, depth + 1)
+                    if trimmed_final and not any(
+                        m.status in ("not_found", "needs_refinement")
+                        for m in trimmed_final
+                    ):
+                        right_final = trimmed_final
             if not right_final or any(
                 m.status in ("not_found", "needs_refinement") for m in right_final
             ):

@@ -22,6 +22,7 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   equity: '股权',
   event: '舆情',
   risk: '风险',
+  web_search: '联网检索',
 };
 
 interface AnswerSection {
@@ -108,9 +109,6 @@ interface ChatInterfaceProps {
   messages: Message[];
   onSendMessage: (content: string) => void;
   isLoading: boolean;
-  highlightedEvidenceIds?: string[] | null;
-  activeRuleName?: string | null;
-  onClearEvidenceHighlight?: () => void;
   // 8.11：公司歧义候选确认（后端 company.candidates → 点选 → company.confirm 重跑）
   // 契约修复：v3.1 mention 分组协议（多候选在 mentions[]，带 mention_id+revision）
   pendingCandidates?: PendingCompanyCandidates | null;
@@ -136,9 +134,6 @@ export function ChatInterface({
   messages,
   onSendMessage,
   isLoading,
-  highlightedEvidenceIds,
-  activeRuleName,
-  onClearEvidenceHighlight,
   pendingCandidates,
   onConfirmCompany,
   clarificationIssue,
@@ -190,21 +185,6 @@ export function ChatInterface({
     <div className="flex flex-col h-full">
       {/* 消息列表（min-h-0：防止 flex item 被内容撑开，确保内部滚动 + 自动滚底生效） */}
       <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
-        {highlightedEvidenceIds && highlightedEvidenceIds.length > 0 && (
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-primary/20 bg-background/95 px-4 py-2 text-xs backdrop-blur-sm">
-            <span className="truncate text-primary">
-              已定位 {activeRuleName || '当前规则'}的 {highlightedEvidenceIds.length} 条证据
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 shrink-0 px-2 text-xs"
-              onClick={onClearEvidenceHighlight}
-            >
-              取消定位
-            </Button>
-          </div>
-        )}
         <div ref={msgParent} className="p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-8">
@@ -232,22 +212,14 @@ export function ChatInterface({
             </div>
           )}
 
-          {messages.map(message => {
-            const isEvidenceMatch = Boolean(
-              highlightedEvidenceIds?.length &&
-              message.role === 'assistant' &&
-              (message.evidence_ids || []).some(id => highlightedEvidenceIds.includes(id))
-            );
-            return (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                evidenceHighlighted={isEvidenceMatch}
-                onFollowUp={onSendMessage}
-                onNavigateStep={onNavigateStep}
-              />
-            );
-          })}
+          {messages.map(message => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              onFollowUp={onSendMessage}
+              onNavigateStep={onNavigateStep}
+            />
+          ))}
 
           {/* v3.3.1 §8.2 契约修复：分段歧义澄清提示 */}
           {clarificationIssue && (
@@ -347,12 +319,10 @@ export function ChatInterface({
 // 消息气泡组件
 function MessageBubble({
   message,
-  evidenceHighlighted = false,
   onFollowUp,
   onNavigateStep,
 }: {
   message: Message;
-  evidenceHighlighted?: boolean;
   onFollowUp?: (suggestion: string) => void;
   onNavigateStep?: (step: ComparisonNextStep) => void;
 }) {
@@ -370,13 +340,7 @@ function MessageBubble({
       <div className={cn(
         'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
         isUser ? 'bg-primary text-primary-foreground' : 'bg-muted',
-        evidenceHighlighted && 'ring-2 ring-primary/50 bg-primary/5'
       )}>
-        {evidenceHighlighted && (
-          <Badge variant="outline" className="mb-2 border-primary/30 bg-background text-xs text-primary">
-            匹配当前规则
-          </Badge>
-        )}
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
 
