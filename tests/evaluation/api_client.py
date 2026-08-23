@@ -16,29 +16,47 @@ def _safe_get(url: str, timeout: int = REQUEST_TIMEOUT) -> dict[str, Any]:
         resp = requests.get(url, timeout=timeout)
         elapsed = int((time.time() - t0) * 1000)
         return {
-            "data": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {},
+            "data": resp.json()
+            if resp.headers.get("content-type", "").startswith("application/json")
+            else {},
             "http_status": resp.status_code,
             "duration_ms": elapsed,
             "error": None,
         }
     except requests.exceptions.Timeout:
         elapsed = int((time.time() - t0) * 1000)
-        return {"data": {}, "http_status": 504, "duration_ms": elapsed, "error": "TIMEOUT"}
+        return {
+            "data": {},
+            "http_status": 504,
+            "duration_ms": elapsed,
+            "error": "TIMEOUT",
+        }
     except requests.exceptions.ConnectionError:
         elapsed = int((time.time() - t0) * 1000)
-        return {"data": {}, "http_status": 503, "duration_ms": elapsed, "error": "CONNECTION_REFUSED"}
+        return {
+            "data": {},
+            "http_status": 503,
+            "duration_ms": elapsed,
+            "error": "CONNECTION_REFUSED",
+        }
     except Exception as e:
         elapsed = int((time.time() - t0) * 1000)
         return {"data": {}, "http_status": 500, "duration_ms": elapsed, "error": str(e)}
 
 
-def _safe_post(url: str, json_data: dict, timeout: int = REQUEST_TIMEOUT) -> dict[str, Any]:
+def _safe_post(
+    url: str, json_data: dict, timeout: int = REQUEST_TIMEOUT
+) -> dict[str, Any]:
     """安全 POST 请求."""
     t0 = time.time()
     try:
         resp = requests.post(url, json=json_data, timeout=timeout)
         elapsed = int((time.time() - t0) * 1000)
-        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        body = (
+            resp.json()
+            if resp.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
         return {
             "data": body.get("data", body),
             "meta": body.get("meta", {}),
@@ -48,10 +66,20 @@ def _safe_post(url: str, json_data: dict, timeout: int = REQUEST_TIMEOUT) -> dic
         }
     except requests.exceptions.Timeout:
         elapsed = int((time.time() - t0) * 1000)
-        return {"data": {}, "http_status": 504, "duration_ms": elapsed, "error": "TIMEOUT"}
+        return {
+            "data": {},
+            "http_status": 504,
+            "duration_ms": elapsed,
+            "error": "TIMEOUT",
+        }
     except requests.exceptions.ConnectionError:
         elapsed = int((time.time() - t0) * 1000)
-        return {"data": {}, "http_status": 503, "duration_ms": elapsed, "error": "CONNECTION_REFUSED"}
+        return {
+            "data": {},
+            "http_status": 503,
+            "duration_ms": elapsed,
+            "error": "CONNECTION_REFUSED",
+        }
     except Exception as e:
         elapsed = int((time.time() - t0) * 1000)
         return {"data": {}, "http_status": 500, "duration_ms": elapsed, "error": str(e)}
@@ -59,11 +87,15 @@ def _safe_post(url: str, json_data: dict, timeout: int = REQUEST_TIMEOUT) -> dic
 
 def call_chat(question: str, session_id: str = "eval") -> dict[str, Any]:
     """调对话接口，获取系统回答."""
-    result = _safe_post(f"{BASE_URL}/api/v1/chat", {"question": question, "session_id": session_id})
+    result = _safe_post(
+        f"{BASE_URL}/api/v1/chat", {"question": question, "session_id": session_id}
+    )
     data = result.get("data", {})
     return {
         "question": question,
-        "answer": data.get("answer", data.get("final_response", {}).get("answer", "")) if isinstance(data, dict) else "",
+        "answer": data.get("answer", data.get("final_response", {}).get("answer", ""))
+        if isinstance(data, dict)
+        else "",
         "risk_level": data.get("risk_level") if isinstance(data, dict) else None,
         "claims": data.get("claims", []) if isinstance(data, dict) else [],
         "evidence": data.get("evidence", []) if isinstance(data, dict) else [],
@@ -105,6 +137,7 @@ def api_available() -> bool:
 
 # ── WebSocket 评测（Phase D 联调窗口 D5-D8）─────────────────
 
+
 def ws_available() -> bool:
     """检查 WS 端点是否可达."""
     try:
@@ -145,17 +178,21 @@ def call_chat_ws(question: str, session_id: str = "eval_ws") -> dict[str, Any]:
 
         try:
             async with websockets.connect(
-                f"ws://127.0.0.1:8000/api/v1/chat/ws",
+                "ws://127.0.0.1:8000/api/v1/chat/ws",
                 open_timeout=10,
                 close_timeout=5,
             ) as ws:
                 # 发送 query
                 import json as _json
 
-                await ws.send(_json.dumps({
-                    "event_type": "chat.query",
-                    "payload": {"text": question, "session_id": session_id},
-                }))
+                await ws.send(
+                    _json.dumps(
+                        {
+                            "event_type": "chat.query",
+                            "payload": {"text": question, "session_id": session_id},
+                        }
+                    )
+                )
 
                 # 收集事件
                 async for raw in ws:
@@ -172,9 +209,7 @@ def call_chat_ws(question: str, session_id: str = "eval_ws") -> dict[str, Any]:
                         answer_parts.append(evt.get("payload", {}).get("delta", ""))
 
                     if evt_type == "module.started":
-                        module_seq.append(
-                            evt.get("payload", {}).get("module", "?")
-                        )
+                        module_seq.append(evt.get("payload", {}).get("module", "?"))
 
                     if evt_type in ("turn.completed", "turn.failed"):
                         break
@@ -183,11 +218,7 @@ def call_chat_ws(question: str, session_id: str = "eval_ws") -> dict[str, Any]:
             error = str(e)
 
         elapsed = int((time.time() - t0) * 1000)
-        ttf = (
-            int((first_text_at - t0) * 1000)
-            if first_text_at
-            else None
-        )
+        ttf = int((first_text_at - t0) * 1000) if first_text_at else None
 
         return {
             "answer": "".join(answer_parts),
@@ -229,9 +260,7 @@ def call_format_check(question: str, session_id: str = "eval_fmt") -> dict[str, 
     checks = {
         "has_answer": bool(result.get("answer")),
         "http_200": result.get("http_status") == 200,
-        "has_claims_or_warnings": bool(
-            result.get("claims") or result.get("warnings")
-        ),
+        "has_claims_or_warnings": bool(result.get("claims") or result.get("warnings")),
     }
     return {
         "valid_json": checks["http_200"],

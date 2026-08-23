@@ -44,8 +44,11 @@ except Exception:
 # 方向: min=不低于, max=不高于。
 TARGETS: dict[str, dict] = {
     # 指标1和7在有真实ground truth前不可计算（见 _load_real_data 中的 _note 说明）
-    "1_accuracy": {"direction": "min", "threshold": 0.70,
-                   "note": "需标准答案。Phase D 无 ground truth → not_applicable"},
+    "1_accuracy": {
+        "direction": "min",
+        "threshold": 0.70,
+        "note": "需标准答案。Phase D 无 ground truth → not_applicable",
+    },
     "2_evidence_coverage": {"direction": "min", "threshold": 0.90},
     "3_entity_retention_rate": {
         "direction": "min",
@@ -222,11 +225,13 @@ def _load_real_data(manifest_path: str) -> dict:
             else:
                 format_checks_failed += 1
             # 收集 LLM 输出用于 schema_compliance_rate
-            llm_outputs_for_compliance.append({
-                "question_id": qid,
-                "valid_json": fmt.get("valid_json"),
-                "checks": fmt.get("checks", {}),
-            })
+            llm_outputs_for_compliance.append(
+                {
+                    "question_id": qid,
+                    "valid_json": fmt.get("valid_json"),
+                    "checks": fmt.get("checks", {}),
+                }
+            )
             all_modules.append(
                 {"module_name": "chat", "duration_ms": fmt.get("duration_ms", 0)}
             )
@@ -250,9 +255,7 @@ def _load_real_data(manifest_path: str) -> dict:
         )
         predictions_rule.append("triggered" if triggered else "not_triggered")
         ground_truth_rule.append(
-            "triggered"
-            if item.get("expected_triggered", False)
-            else "not_triggered"
+            "triggered" if item.get("expected_triggered", False) else "not_triggered"
         )
 
         # 风险等级
@@ -264,7 +267,10 @@ def _load_real_data(manifest_path: str) -> dict:
         all_claims.extend(claims_list)
         all_turns.append({"company_code": expected or ""})
         all_module_statuses.append(
-            {"module": "chat", "state": "success" if not result.get("error") else "failed"}
+            {
+                "module": "chat",
+                "state": "success" if not result.get("error") else "failed",
+            }
         )
 
     # 指标1和7在无ground truth时不可计算
@@ -436,24 +442,28 @@ def main() -> int:
         lines.append("      使用 --manifest 接入 77 题标注集以获取真实评测数据。")
     else:
         meta = data.get("_meta", {})
-        lines.append(f"格式合规检查: {meta.get('format_checks_passed',0)}/{meta.get('format_checks_total',0)} 通过")
+        lines.append(
+            f"格式合规检查: {meta.get('format_checks_passed',0)}/{meta.get('format_checks_total',0)} 通过"
+        )
         lines.append(f"可评测题: {meta.get('evaluable', 0)} 题（财务反欺诈相关）")
         lines.append(f"跳过: {meta.get('skipped', 0)} 题（非反欺诈分析）")
         lines.append(f"API 错误: {meta.get('api_errors', 0)} 次")
         lines.append(f"WS 评测: {meta.get('ws_note', 'N/A')}")
         lines.append("")
         lines.append("指标1(准确率)/指标7(风险校准) 的 N/A 说明:")
-        lines.append("  赛题数据无标准答案，金融数据动态变化，不可通过一次性人工填写制造虚假答案。")
+        lines.append(
+            "  赛题数据无标准答案，金融数据动态变化，不可通过一次性人工填写制造虚假答案。"
+        )
         lines.append("  两项指标在真实评测模式下标记为 not_applicable。")
 
     # 数据版本记录
     lines.append("")
     lines.append("-- 数据版本 --")
-    lines.append(f"  dataset_version: competition-2026")
-    lines.append(f"  rule_set_version: finance-rules-1.0.0")
-    lines.append(f"  graph_version: equity-competition-2026")
-    lines.append(f"  labels_version: 1.0.0 (2026-08-07)")
-    lines.append(f"  test_data: 赛题数据/1/clean.xlsx (1410题, 77深度题)")
+    lines.append("  dataset_version: competition-2026")
+    lines.append("  rule_set_version: finance-rules-1.0.0")
+    lines.append("  graph_version: equity-competition-2026")
+    lines.append("  labels_version: 1.0.0 (2026-08-07)")
+    lines.append("  test_data: 赛题数据/1/clean.xlsx (1410题, 77深度题)")
     lines.append(
         f"dataset: framework_ready={result['dataset']['framework_ready']}, "
         f"dataset_materialized={result['dataset']['dataset_materialized']}"

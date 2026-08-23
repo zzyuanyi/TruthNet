@@ -149,8 +149,7 @@ def _run_with_context_capture(
             if is_target:
                 ms = result.get("module_status") or {}
                 rec["module_duration_ms"] = {
-                    name: (getattr(m, "duration_ms", None))
-                    for name, m in ms.items()
+                    name: (getattr(m, "duration_ms", None)) for name, m in ms.items()
                 }
             per_turn.append(rec)
     return per_turn, sorted(set(session_ids))
@@ -164,11 +163,7 @@ def _compute_metrics(records: list[dict]) -> dict:
     # 复用 metrics.entity_retention_rate 的 dict 形态（按 turn_id 关联）：
     # 命中轮 company_code=expected_company（保持），未命中=哨兵（不保持）；
     # 分母 = 有标签轮次（含执行报错的轮次——报错无 codes 视为未保持）。
-    labeled = [
-        r
-        for r in records
-        if r.get("expected_company")
-    ]
+    labeled = [r for r in records if r.get("expected_company")]
     turns_for_metric: list[dict] = []
     expected_entity: dict[str, str] = {}
     for r in labeled:
@@ -288,7 +283,9 @@ def main() -> int:
     # expected_company 标签：labels_77.json 的 (session_id, question) → expected_company，
     # 与 sidecar 按同一 (session_id, question) 匹配到 source_row（不依赖任何顺序假设）。
     labels_77 = json.loads(
-        Path(_REPO / "data" / "annotations" / "labels_77.json").read_text(encoding="utf-8")
+        Path(_REPO / "data" / "annotations" / "labels_77.json").read_text(
+            encoding="utf-8"
+        )
     )
     expected_by_row: dict[int, str] = {}
     matched_lab = 0
@@ -296,7 +293,10 @@ def main() -> int:
         exp = lab.get("expected_company") or ""
         if not exp:
             continue
-        lab_key = (str(lab.get("session_id") or ""), str(lab.get("question") or "").strip())
+        lab_key = (
+            str(lab.get("session_id") or ""),
+            str(lab.get("question") or "").strip(),
+        )
         cands = [
             it
             for it in items
@@ -304,7 +304,9 @@ def main() -> int:
             == lab_key
         ]
         if len(cands) != 1:
-            print(f"[warn] labels_77 {lab.get('question_id')} 匹配 sidecar {len(cands)} 条，跳过")
+            print(
+                f"[warn] labels_77 {lab.get('question_id')} 匹配 sidecar {len(cands)} 条，跳过"
+            )
             continue
         expected_by_row[int(cands[0]["source_row"])] = str(exp)
         matched_lab += 1
