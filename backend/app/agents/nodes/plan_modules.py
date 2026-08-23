@@ -128,8 +128,6 @@ class _IntentResult(BaseModel):
 
 _FINANCE_KW = [
     "财务",
-    "造假",
-    "风险",
     "利润",
     "收入",
     "营收",
@@ -141,8 +139,8 @@ _FINANCE_KW = [
     "报表",
     "勾稽",
     "盈利",
-    "舞弊",
     "异常",
+    "存贷双高",
 ]
 
 _EQUITY_KW = [
@@ -166,7 +164,7 @@ _EVENTS_KW = [
     "立案",
 ]
 
-# 综合诊断 — 命中任一词 → 展开三模块（"异常"不在此列，避免"应收异常吗"误扩）
+# 宽泛诊断词本身不代表三模块；只有没有明确领域，或明确要求跨领域时才展开。
 _DIAGNOSIS_KW = [
     "造假",
     "风险",
@@ -174,6 +172,8 @@ _DIAGNOSIS_KW = [
     "是否有问题",
     "有没有问题",
 ]
+
+_CROSS_DOMAIN_KW = ["综合", "全面", "多维度", "各维度", "三个维度", "三维度"]
 
 
 def _llm_intent_fallback(user_query: str) -> _IntentResult | None:
@@ -2230,8 +2230,12 @@ def plan_modules_node(state: AgentState) -> dict:
     need_equity = any(kw in ql for kw in _EQUITY_KW)
     need_events = any(kw in ql for kw in _EVENTS_KW)
 
-    # 综合诊断 → 展开全部模块
-    if any(kw in ql for kw in _DIAGNOSIS_KW):
+    # 宽泛诊断（如“有造假风险吗”）在没有明确领域时展开全部模块；
+    # “舆情风险”“股权风险”“存贷双高风险”等已有领域限定的问题保持单模块。
+    broad_diagnosis = any(kw in ql for kw in _DIAGNOSIS_KW)
+    explicit_cross_domain = any(kw in ql for kw in _CROSS_DOMAIN_KW)
+    has_specific_domain = need_finance or need_equity or need_events
+    if explicit_cross_domain or (broad_diagnosis and not has_specific_domain):
         need_finance = need_equity = need_events = True
 
     # 关键词未命中 → LLM 语义识别兜底（口语化/同义表达）。

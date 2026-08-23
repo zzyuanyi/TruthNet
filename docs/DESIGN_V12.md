@@ -1840,6 +1840,9 @@ GET /api/v1/companies/600518.SH/finance?periods=8&statement_scope=parent_company
 ```
 
 返回 `risk_level`、`rules`、`industry_benchmark`、`data_quality`、`claim_ids` 和 `evidence_ids`。
+每条 `rules[]` 可追加 `calculation_trace`，包含版本化公式及实际参与计算的
+`field_path/value/unit/period/source_record_id` 输入；Evidence 与该输入一一对应，
+不得用规则解释文本代替原始字段证据。
 
 ## 11.11 舆情事件
 

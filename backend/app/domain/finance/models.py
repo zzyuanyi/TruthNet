@@ -37,6 +37,26 @@ class CurrentMetric(BaseModel):
     unit: str = ""
 
 
+class CalculationInput(BaseModel):
+    """规则计算实际消费的一项原始财务输入。"""
+
+    source_table: str
+    field_path: str
+    period: str
+    value: float | str
+    unit: str = "元"
+    role: str = "input"
+
+
+class CalculationTrace(BaseModel):
+    """可复算血缘：公式版本与全部原始输入。"""
+
+    formula_id: str
+    formula: str
+    calculation_version: str = "1.0.0"
+    inputs: list[CalculationInput] = Field(default_factory=list)
+
+
 class RuleResult(BaseModel):
     """单条规则计算结果 — 对齐 V12 §8.2 输出格式."""
 
@@ -53,6 +73,7 @@ class RuleResult(BaseModel):
     industry: dict = Field(default_factory=dict)
     quality: dict = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
+    calculation_trace: CalculationTrace | None = None
     claim_ids: list[str] = Field(default_factory=list)
     explanation: str = ""
     warnings: list[str] = Field(default_factory=list)

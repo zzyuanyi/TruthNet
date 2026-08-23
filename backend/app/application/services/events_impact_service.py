@@ -398,6 +398,16 @@ async def build_equity_impact_facts(
     B2 批次 D（方案 §五）：返回结构改为 (facts, evidence_ids, warnings) 三元组，
     失败时带 IMPACT_EQUITY_FACTS_FAILED，不再静默返回空。
     """
+    if settings.GRAPH_BACKEND != "neo4j":
+        return (
+            [],
+            set(),
+            [
+                "IMPACT_EQUITY_FACTS_SKIPPED: "
+                f"GRAPH_BACKEND={settings.GRAPH_BACKEND}，未使用 Neo4j 股权影响事实"
+            ],
+        )
+
     warnings: list[str] = []
     gv = graph_version or settings.GRAPH_VERSION
     graph = None

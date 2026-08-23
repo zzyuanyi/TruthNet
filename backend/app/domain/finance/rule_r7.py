@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import align_by_period, fetch_series, prev_year_period
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -319,6 +323,25 @@ def evaluate_r7(company_code: str, as_of: str = "20260331", periods: int = 8):
     if non_oper_ratio is not None:
         result.evidence_ids.append(f"ev_is_oper_profit_{as_of}")
         result.evidence_ids.append(f"ev_is_tot_profit_{as_of}")
+    attach_calculation_trace(
+        result,
+        formula=(
+            "core_profit_ratio=core_profit/abs(net_profit); "
+            "growth_divergence=net_profit_yoy-comparator_yoy; "
+            "non_operating_ratio=(tot_profit-oper_profit)/abs(tot_profit)"
+        ),
+        inputs=inputs_from_aligned(
+            aligned,
+            {
+                "net_profit": "net_profit_excl_min_int_inc",
+                "core_profit": "net_profit_after_ded_nr_lp",
+                "oper_rev": "oper_rev",
+                "oper_profit": "oper_profit",
+                "tot_profit": "tot_profit",
+                "oper_cf": "net_cash_flows_oper_act",
+            },
+        ),
+    )
 
     if simplified:
         result.warnings.append("扣非净利润字段不可用，使用简化版判断（上限 orange）")

@@ -5,6 +5,25 @@
 
 ---
 
+## 2026-08-23 — Phase E 成员 A 财务可复算血缘与路由收口
+
+### Added
+- **REST finance**: `FinanceRuleItem` 追加可选 `calculation_trace`，包含
+  `formula_id/formula/calculation_version/inputs`；每个 input 记录实际计算使用的
+  `field_path/value/unit/period/source_record_id`。
+- **Agent Claim/Evidence**: R1-R7 派生数值绑定完整原始输入 Evidence；
+  `source_excerpt` 展示原始字段和值，不再复制规则 explanation。
+
+### Changed
+- **路由**: “风险/造假/舞弊”等宽泛词不再单独强制财务模块；存在明确领域词时按领域收窄，
+  仅宽泛诊断或明确“综合/全面”请求展开财务、股权、事件三模块。
+
+### Breaking Changes
+- 是否有破坏性修改：无（新增字段可选，既有字段与端点保持兼容）
+- 是否已由项目负责人审阅：⏳ 待 PR 审阅
+
+---
+
 ## 2026-08-18 — Phase E 会5 B1 Web Search 联网搜索
 
 ### Added

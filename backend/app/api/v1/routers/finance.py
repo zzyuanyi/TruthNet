@@ -218,6 +218,11 @@ async def get_company_finance(
                     industry=r.industry,
                     industry_metrics=industry_by_rule.get(r.rule_id, []),
                     quality=r.quality,
+                    calculation_trace=(
+                        r.calculation_trace.model_dump(mode="json")
+                        if getattr(r, "calculation_trace", None) is not None
+                        else None
+                    ),
                     explanation=r.explanation,
                     evidence_ids=unified_evidence,
                     claim_ids=r.claim_ids,

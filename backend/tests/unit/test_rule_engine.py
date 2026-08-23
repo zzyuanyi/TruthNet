@@ -190,6 +190,13 @@ def test_r1_trigger_red(rule_db):
     assert r.severity == "red"
     assert r.quality["statement_scope"] == "parent_company"
     assert r.evidence_ids  # 有证据引用
+    assert r.calculation_trace is not None
+    assert r.calculation_trace.formula_id == "R1"
+    assert {item.field_path for item in r.calculation_trace.inputs} == {
+        "acct_rcv",
+        "oper_rev",
+    }
+    assert len({item.period for item in r.calculation_trace.inputs}) >= 2
 
 
 def test_r1_threshold_change_in_yaml_takes_effect(rule_db, tmp_path, monkeypatch):
@@ -403,6 +410,92 @@ def test_r2_not_triggered(rule_db):
     assert r.status == "not_triggered"
 
 
+def test_r2_positive_low_cash_coverage_does_not_claim_zero_negative_quarters(rule_db):
+    conn = rule_db
+    _insert_company(conn, "R2_TEXT")
+    _insert_is(
+        conn,
+        "R2_TEXT",
+        PARENT,
+        {"net_profit_excl_min_int_inc": [1e8] * 5},
+    )
+    _insert_cf(
+        conn,
+        "R2_TEXT",
+        PARENT,
+        {"net_cash_flows_oper_act": [2e7] * 5},
+    )
+    r = evaluate_r2("R2_TEXT", "20260331")
+    assert r.status == "triggered"
+    assert r.severity == "orange"
+    assert "近 0 个季度为负" not in r.explanation
+    assert "平均覆盖偏弱" in r.explanation
+
+
+def test_r2_extreme_ratio_is_kept_in_metrics_but_suppressed_from_claim_text(rule_db):
+    conn = rule_db
+    _insert_company(conn, "R2_EXTREME")
+    _insert_is(
+        conn,
+        "R2_EXTREME",
+        PARENT,
+        {"net_profit_excl_min_int_inc": [1e8] * 5},
+    )
+    _insert_cf(
+        conn,
+        "R2_EXTREME",
+        PARENT,
+        {"net_cash_flows_oper_act": [-2e10] * 5},
+    )
+    r = evaluate_r2("R2_EXTREME", "20260331")
+    assert r.current["cf_to_profit_ratio"]["value"] == -200.0
+    assert r.quality["cashflow_profit_ratio_extreme"] is True
+    assert "-200.00" not in r.explanation
+    assert "极端值" in r.explanation
+
+
+def test_r5_expense_rate_drop_is_rendered_as_positive_magnitude(rule_db):
+    conn = rule_db
+    _insert_company(conn, "R5_TEXT")
+    _insert_is(
+        conn,
+        "R5_TEXT",
+        PARENT,
+        {
+            "oper_rev": [100.0] * 5,
+            "less_oper_cost": [80.0, 80.0, 80.0, 80.0, 40.0],
+            "less_selling_dist_exp": [10.0, 10.0, 10.0, 10.0, 0.0],
+            "less_gerl_admin_exp": [10.0, 10.0, 10.0, 10.0, 0.0],
+            "less_fin_exp": [10.0, 10.0, 10.0, 10.0, 0.0],
+        },
+    )
+    r = evaluate_r5("R5_TEXT", "20260331")
+    assert r.status == "triggered"
+    assert "费用率较历史均值下降 30.0pp" in r.explanation
+    assert "下降 -" not in r.explanation
+
+
+def test_r5_extreme_history_baseline_is_not_rendered_as_direct_drop(rule_db):
+    conn = rule_db
+    _insert_company(conn, "R5_EXTREME")
+    _insert_is(
+        conn,
+        "R5_EXTREME",
+        PARENT,
+        {
+            "oper_rev": [1.0, 1.0, 1.0, 1.0, 100.0],
+            "less_oper_cost": [0.8, 0.8, 0.8, 0.8, 40.0],
+            "less_selling_dist_exp": [1000.0, 1000.0, 1000.0, 1000.0, 0.0],
+            "less_gerl_admin_exp": [1000.0, 1000.0, 1000.0, 1000.0, 0.0],
+            "less_fin_exp": [1000.0, 1000.0, 1000.0, 1000.0, 0.0],
+        },
+    )
+    r = evaluate_r5("R5_EXTREME", "20260331")
+    assert r.quality["expense_rate_deviation_extreme"] is True
+    assert "不作直接风险解释" in r.explanation
+    assert "下降 300000" not in r.explanation
+
+
 def test_r2_loss_making_not_applicable(rule_db):
     conn = rule_db
     _insert_company(conn, "600007.SH")
@@ -601,6 +694,7 @@ def test_rule_result_serialization_roundtrip(rule_db):
     assert restored.status == r.status
     assert restored.quality == r.quality
     assert restored.evidence_ids == r.evidence_ids
+    assert restored.calculation_trace == r.calculation_trace
 
 
 def test_nan_none_values(rule_db):
@@ -1158,6 +1252,49 @@ def test_r6_yoy_uses_prev_year_same_period(rule_db):
     r = evaluate_r6("TEST", "20260331", periods=8)
     assert r.status != "insufficient_data"
     assert r.current["oth_rcv_yoy"]["value"] == 100.0
+
+
+def test_r6_negative_yoy_is_not_described_as_fast_growth(rule_db):
+    from app.domain.finance.rule_r6 import evaluate_r6
+
+    _insert_company(rule_db, "R6_TEXT", comp_type=1)
+    _insert_bs(
+        rule_db,
+        "R6_TEXT",
+        PARENT,
+        {
+            "oth_rcv": [9e9, 8e9],
+            "tot_assets": [1e10, 1e10],
+            "acct_rcv": [9e9, 9e9],
+        },
+        periods=["20241231", "20251231"],
+    )
+    r = evaluate_r6("R6_TEXT", "20260331", periods=8)
+    assert "同比下降" in r.explanation
+    assert "增速较快（-" not in r.explanation
+
+
+def test_r6_small_positive_yoy_reports_actual_ratio_trigger(rule_db):
+    """占比触发黄色告警时，微小正增长不能被夸大为“增速较快”。"""
+    from app.domain.finance.rule_r6 import evaluate_r6
+
+    _insert_company(rule_db, "R6_RATIO_TEXT", comp_type=1)
+    _insert_bs(
+        rule_db,
+        "R6_RATIO_TEXT",
+        PARENT,
+        {
+            "oth_rcv": [1e9, 1.006e9],
+            "tot_assets": [1e10, 1e10],
+            "acct_rcv": [1e10, 1e10],
+        },
+        periods=["20241231", "20251231"],
+    )
+    r = evaluate_r6("R6_RATIO_TEXT", "20260331", periods=8)
+    assert r.severity == "yellow"
+    assert "占总资产 10.1%" in r.explanation
+    assert "同比增长 0.6%" in r.explanation
+    assert "增速较快" not in r.explanation
 
 
 def test_prev_year_period_exact_only():

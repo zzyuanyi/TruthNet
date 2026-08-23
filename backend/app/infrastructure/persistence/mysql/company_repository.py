@@ -381,6 +381,7 @@ class MySQLCompanyRepository:
                     text(
                         f"SELECT {_LOOKUP_COLS} FROM companies "
                         "WHERE is_latest = 1 AND sec_name IS NOT NULL "
+                        "AND sec_name <> '' "
                         "AND INSTR(:text, sec_name) > 0 "
                         "ORDER BY LENGTH(sec_name), sec_name, wind_code "
                         "LIMIT :limit"

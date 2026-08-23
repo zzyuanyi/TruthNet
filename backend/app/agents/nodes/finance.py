@@ -157,7 +157,7 @@ def _validate_interpretation(text: str, source_json: str) -> bool:
     任一不满足 → 拒绝（调用方回退 explanation），防止 LLM 输出
     缺段/编造数值（如新增 999%）被原样采用。
 
-    数值提取前先移除规则 ID（R\d+）——否则 R1 会贡献合法数字 1，
+    数值提取前先移除规则 ID（正则 ``R\\d+``）——否则 R1 会贡献合法数字 1，
     使 LLM 编造的 "1%" 通过溯源校验。
     """
     if not all(m in text for m in _INTERP_MARKERS):
@@ -343,6 +343,11 @@ def finance_node(state: AgentState) -> dict:
             "current": dict(getattr(r, "current", None) or {}),
             "evidence_ids": [],
             "quality": dict(r.quality or {}),
+            "calculation_trace": (
+                r.calculation_trace.model_dump(mode="json")
+                if getattr(r, "calculation_trace", None) is not None
+                else None
+            ),
         }
         if r.status == "insufficient_data" and W_COMPANY_TYPE_UNKNOWN in r.warnings:
             unknown_type = True
@@ -350,6 +355,47 @@ def finance_node(state: AgentState) -> dict:
             if w:
                 warnings.append(w)
         generated_ids: list[str] = []
+        trace = getattr(r, "calculation_trace", None)
+        if trace is not None and trace.inputs:
+            for item in trace.inputs:
+                period = str(item.period)
+                evidence_id = normalize_rule_evidence_id(
+                    item.field_path,
+                    code,
+                    as_of,
+                    period=period,
+                )
+                generated_ids.append(evidence_id)
+                evidence.append(
+                    EvidenceRef(
+                        evidence_id=evidence_id,
+                        source_type="financial_statement",
+                        source_record_id=f"{code}|{period}",
+                        source_table=item.source_table,
+                        field_path=item.field_path,
+                        period=period,
+                        value=str(item.value),
+                        unit=item.unit,
+                        source_title=(
+                            f"{r.rule_name or rid} · {display_period(period)} · 母公司报表"
+                        ),
+                        source_excerpt=(
+                            f"{item.source_table}.{item.field_path}="
+                            f"{item.value} {item.unit}"
+                        ),
+                        statement_scope="parent_company",
+                        module="finance",
+                        rule_id=rid,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        company_code=code,
+                        dataset_version=_settings.DATASET_VERSION,
+                    )
+                )
+            rule_details[rid]["evidence_ids"] = _dedup(generated_ids)
+            continue
+
+        # 兼容尚未提供 calculation_trace 的旧规则/测试桩。
         for ev_id in r.evidence_ids:
             table, field = _parse_rule_evidence(ev_id, as_of)
             req_src = f"{code}|{as_of}|{PARENT_STATEMENT_TYPE}"
@@ -380,7 +426,11 @@ def finance_node(state: AgentState) -> dict:
                     source_title=(
                         f"{r.rule_name or rid} · {display_period(period)} · 母公司报表"
                     ),
-                    source_excerpt=str(r.explanation or "")[:200],
+                    source_excerpt=(
+                        f"{table}.{field}={value} {unit or ''}"
+                        if value is not None
+                        else None
+                    ),
                     statement_scope="parent_company",
                     module="finance",
                     rule_id=rid,
@@ -390,7 +440,7 @@ def finance_node(state: AgentState) -> dict:
                     dataset_version=_settings.DATASET_VERSION,
                 )
             )
-        rule_details[rid]["evidence_ids"] = generated_ids
+        rule_details[rid]["evidence_ids"] = _dedup(generated_ids)
 
     # 相似指标案例（任务①）：仅对触发规则调用 Provider，metric_value 来自
     # RuleResult.current（不内部自算）；comp_type 非 1 → not_supported；

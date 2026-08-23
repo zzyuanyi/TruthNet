@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -220,13 +224,32 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.history = oth_series
 
     result.evidence_ids = [f"ev_bs_oth_rcv_{as_of}", f"ev_bs_tot_assets_{as_of}"]
+    attach_calculation_trace(
+        result,
+        formula=(
+            "oth_rcv_to_assets=oth_rcv/tot_assets; "
+            "oth_rcv_yoy=(current/prior_year)-1; "
+            "oth_rcv_to_acct_rcv=oth_rcv/acct_rcv"
+        ),
+        inputs=inputs_from_aligned(
+            aligned,
+            {
+                "oth_rcv": "oth_rcv",
+                "assets": "tot_assets",
+                "acct_rcv": "acct_rcv",
+            },
+        ),
+    )
 
     # P1-3：同比缺失（去年同期无数据）时 explanation 不得格式化 None
-    yoy_text = (
-        f"，同比增速 {oth_yoy_pct:.1f}%"
-        if oth_yoy_pct is not None
-        else "，同比数据缺失"
-    )
+    if oth_yoy_pct is None:
+        yoy_text = "，同比数据缺失"
+    elif oth_yoy_pct > 0:
+        yoy_text = f"，同比增速 {oth_yoy_pct:.1f}%"
+    elif oth_yoy_pct < 0:
+        yoy_text = f"，同比下降 {abs(oth_yoy_pct):.1f}%"
+    else:
+        yoy_text = "，同比持平"
     if severity == "red":
         result.explanation = (
             f"其他应收款占总资产 {oth_to_assets:.1f}%{yoy_text}，"
@@ -235,9 +258,29 @@ def evaluate_r6(company_code: str, as_of: str = "20260331", periods: int = 8):
     elif severity == "orange":
         result.explanation = f"其他应收款占总资产 {oth_to_assets:.1f}%{yoy_text}，建议关注具体构成（数据期：{fmt_period(cur_period)}，母公司报表）。"
     elif severity == "yellow":
+        assets_ratio_triggered = (
+            oth_to_assets > thresholds.yellow_assets_ratio_pct and oth_large
+        ) or oth_to_assets > thresholds.yellow_secondary_assets_ratio_pct
+        if assets_ratio_triggered and oth_yoy_pct is not None and oth_yoy_pct < 0:
+            signal_text = (
+                f"其他应收款占总资产 {oth_to_assets:.1f}%（同比下降 "
+                f"{abs(oth_yoy_pct):.1f}%）"
+            )
+        elif assets_ratio_triggered and oth_yoy_pct is not None:
+            signal_text = (
+                f"其他应收款占总资产 {oth_to_assets:.1f}%（同比增长 "
+                f"{oth_yoy_pct:.1f}%）"
+            )
+        elif (
+            oth_yoy_pct is not None
+            and oth_yoy_pct > thresholds.yellow_yoy_pct
+            and oth_large
+        ):
+            signal_text = f"其他应收款同比增速较快（{oth_yoy_pct:.1f}%）"
+        else:
+            signal_text = "其他应收款占总资产比例偏高"
         result.explanation = (
-            f"其他应收款增速较快（{oth_yoy_pct:.1f}%）"
-            if oth_yoy_pct is not None
-            else "其他应收款占总资产比例偏高"
-        ) + f"，建议持续关注（数据期：{fmt_period(cur_period)}，母公司报表）。"
+            signal_text
+            + f"，建议持续关注（数据期：{fmt_period(cur_period)}，母公司报表）。"
+        )
     return result
