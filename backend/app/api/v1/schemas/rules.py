@@ -44,7 +44,11 @@ class RuleDefinitionDTO(BaseModel):
     name: str = Field(..., description="规则中文名称")
     description: str = Field(default="", description="规则描述")
     enabled: bool = Field(..., description="是否启用")
-    thresholds: dict[str, float] = Field(default_factory=dict, description="实际阈值值")
+    # 8/23 会7：保留 int/float 原始类型（strict PUT 校验依赖类型真实；
+    # 若强转 float，R2 等 int 阈值回发时会被 strict int 字段拒绝）
+    thresholds: dict[str, int | float] = Field(
+        default_factory=dict, description="实际阈值值"
+    )
     metrics: list[RuleMetricMetaDTO] = Field(default_factory=list)
     parameters: list[RuleParameterMetaDTO] = Field(default_factory=list)
     conditions: RuleConditionsDTO = Field(default_factory=RuleConditionsDTO)
@@ -66,4 +70,7 @@ class RulesDefinitionsData(BaseModel):
     )
     source: str = Field(
         default="financial_rules.yaml", description="规则元数据来源文件"
+    )
+    is_overridden: bool = Field(
+        default=False, description="是否使用用户覆盖配置（8/23 会7 深化）"
     )

@@ -71,6 +71,11 @@ class RiskEvidence(BaseModel):
     source_type: str = Field(default="", description="来源类型")
     claim_ids: list[str] = Field(default_factory=list)
     summary: str = Field(default="", description="证据摘要")
+    # 8/23 联网线索标注（见 domain/risk/models.py RiskEvidence）
+    source_uri: str | None = Field(default=None, description="来源 URL（联网线索）")
+    is_web: bool = Field(
+        default=False, description="是否为联网搜索线索（非本地库证据）"
+    )
 
 
 class DerivationDataRef(BaseModel):

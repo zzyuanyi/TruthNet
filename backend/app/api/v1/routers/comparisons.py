@@ -20,12 +20,13 @@ v3.5（契约收口）:
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.api.v1.schemas.comparisons import (
     CompanyIndicator,
     CompanyRiskSummary,
+    ComparisonAnalysisData,
     ComparisonRequest,
     ComparisonsResponseData,
     IndicatorCompare,
@@ -524,4 +525,43 @@ async def _create_comparison_impl(
             rule_set_version=settings.RULE_SET_VERSION,
         ),
         warnings=warnings,
+    )
+
+
+@router.get(
+    "/comparisons/analysis",
+    response_model=V12Response[ComparisonAnalysisData],
+    responses={422: {"model": dict}, 500: {"model": dict}},
+)
+async def get_comparison_analysis(
+    codes: str = Query(
+        ..., description="对比公司代码，逗号分隔（2-5 家），如 600518.SH,603693.SH"
+    ),
+) -> V12Response[ComparisonAnalysisData]:
+    """8/23 会7 深化：跨公司 LLM 综合分析（等级/评分/触发规则锁定 → 对比分析）。
+
+    单家公司风险分析失败 → partial warning，其余照常；全部失败 → 空结果。
+    """
+    from app.application.services.comparison_advice_service import (
+        assemble_comparison_advice,
+    )
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not (2 <= len(code_list) <= 5):
+        raise HTTPException(
+            status_code=422,
+            detail="对比公司数量需为 2-5 家（逗号分隔）。",
+        )
+    unique = list(dict.fromkeys(code_list))
+    result = await assemble_comparison_advice(unique)
+    return V12Response(
+        data=result,
+        meta=ApiMeta(
+            request_id=_trace(),
+            trace_id=_trace(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            dataset_version=settings.DATASET_VERSION,
+            rule_set_version=settings.RULE_SET_VERSION,
+        ),
+        warnings=[],
     )

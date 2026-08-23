@@ -98,3 +98,35 @@ class ComparisonsResponseData(BaseModel):
     )
     dataset_version: str = Field(default="")
     warnings: list[str] = Field(default_factory=list)
+
+
+# ── 8/23 会7 深化：跨公司 LLM 综合分析 ──────────────────────
+
+
+class ComparisonAnalysisCompany(BaseModel):
+    """单家公司的对比分析输入摘要（锁定事实透出）。"""
+
+    wind_code: str = Field(..., description="公司代码")
+    sec_name: str = Field(default="", description="公司名称")
+    risk_level: str = Field(default="unknown", description="综合风险等级")
+    overall_score: float | None = Field(default=None, description="综合评分")
+    triggered_rules: list[str] = Field(default_factory=list, description="触发规则列表")
+    as_of: str = Field(default="", description="数据截止期次")
+
+
+class ComparisonAnalysisSegment(BaseModel):
+    """单家公司的分析建议段。"""
+
+    company_code: str = Field(..., description="公司代码")
+    title: str = Field(default="", description="段落标题")
+    detail: str = Field(default="", description="分析/建议内容")
+
+
+class ComparisonAnalysisData(BaseModel):
+    """GET /api/v1/comparisons/analysis 响应数据."""
+
+    companies: list[ComparisonAnalysisCompany] = Field(default_factory=list)
+    overall: str = Field(default="", description="整体对比分析（LLM 或模板）")
+    segments: list[ComparisonAnalysisSegment] = Field(default_factory=list)
+    method: str = Field(default="template", description="llm | template")
+    warnings: list[str] = Field(default_factory=list)

@@ -70,6 +70,10 @@ class RiskEvidence(BaseModel):
     source_type: str
     summary: str
     claim_ids: list[str] = Field(default_factory=list)
+    # 8/23 联网线索标注：web 证据（source_type="web_search"）带来源 URL，
+    # 前端渲染为「联网线索卡片」（外链），不触发本地回查（未落库）。
+    source_uri: str | None = Field(default=None)
+    is_web: bool = Field(default=False)
 
 
 class RiskPatternMatch(BaseModel):

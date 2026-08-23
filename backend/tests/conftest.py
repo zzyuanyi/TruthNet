@@ -244,6 +244,18 @@ def pytest_configure(config):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rule_override(tmp_path, monkeypatch):
+    """8/23 会7：每测试隔离 override 文件路径（真实路径的 override 由
+    8001 真机验证写入，会污染 unit 测试对默认配置的断言）。"""
+    import app.domain.finance.financial_rule_config as frc
+
+    monkeypatch.setattr(frc, "_OVERRIDE_FILE", tmp_path / "override.yaml")
+    frc.clear_financial_rule_config_cache()
+    yield
+    frc.clear_financial_rule_config_cache()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _seed_lite_kangmei_fixture():
     """CI 自包含：lite profile 下确保 SQLite 有表 + 康美 fixture 数据.

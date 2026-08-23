@@ -174,6 +174,34 @@ function RiskEvidenceCard({ item, onViewSource, onLinkToRule }: {
   onViewSource?: (e: RiskEvidence) => void;
   onLinkToRule?: (id: string) => void;
 }) {
+  // 8/23 联网线索卡片：web 证据未落库（不可回查），渲染为外链卡片，
+  // 不触发 GET /evidence——绝不假装可回查；诚实标注非本地核验。
+  if (item.is_web) {
+    return (
+      <div className="relative p-3 rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5">
+        <div className="flex items-start gap-2">
+          <Badge className="shrink-0 bg-amber-500/15 text-amber-700 border-amber-500/30 text-[11px]">
+            联网检索
+          </Badge>
+          <span className="font-medium text-sm leading-5">{item.summary || '联网线索'}</span>
+        </div>
+        {item.source_uri && (
+          <a
+            href={item.source_uri}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-xs text-primary underline break-all"
+          >
+            打开来源链接 <Link2 className="h-3 w-3" />
+          </a>
+        )}
+        <p className="mt-2 text-[11px] text-muted-foreground leading-4">
+          网络公开信息，未经过本地数据集核验，请以官方披露为准。
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="group relative p-3 rounded-lg border border-border hover:border-primary/50 hover:shadow-sm transition-all">
       {/* 证据摘要（RiskEvidence 正式 schema，审计 P1-1 适配） */}
@@ -192,11 +220,6 @@ function RiskEvidenceCard({ item, onViewSource, onLinkToRule }: {
           <span>{item.claim_ids.length} 条声明关联</span>
         )}
       </div>
-
-      {/* evidence_id 标注 */}
-      <Badge variant="outline" className="text-xs mt-2">
-        {item.evidence_id}
-      </Badge>
 
       {/* 操作按钮 */}
       <div className="flex gap-2 mt-2 opacity-100 transition-opacity">

@@ -172,3 +172,87 @@ def test_api_execution_version_present():
     assert resp.status_code == 200, resp.text[:300]
     data = resp.json()["data"]
     assert data["execution_version"] == _config().execution_version == "1.0.0"
+
+
+# ── 8/23 会7 深化：用户可配置阈值（PUT/DELETE /rules/config）─────────────
+
+
+def _full_rules_body(data: dict) -> dict:
+    """从 GET definitions 构造完整 PUT body（R1..R7 大写键）。"""
+    return {
+        r["rule_id"]: {"enabled": r["enabled"], "thresholds": dict(r["thresholds"])}
+        for r in data["rules"]
+    }
+
+
+def test_put_config_override_and_reset(tmp_path, monkeypatch):
+    """会7：PUT 覆盖保存 → is_overridden + 新值生效（含规则引擎读取）；
+    DELETE 恢复默认。hash 变化（风险缓存失效键）。"""
+    import app.domain.finance.financial_rule_config as frc
+    from app.main import app
+
+    monkeypatch.setattr(frc, "_OVERRIDE_FILE", tmp_path / "override.yaml")
+    frc.clear_financial_rule_config_cache()
+    client = TestClient(app)
+
+    base = client.get("/api/v1/rules/definitions").json()["data"]
+    assert base["is_overridden"] is False
+    base_hash = base["evaluation_config_hash"]
+
+    body = _full_rules_body(base)
+    body["R1"]["thresholds"]["red_consecutive_gap_pp"] = 60
+    resp = client.put("/api/v1/rules/config", json=body)
+    assert resp.status_code == 200, resp.text[:300]
+    data = resp.json()["data"]
+    assert data["is_overridden"] is True
+    r1 = next(r for r in data["rules"] if r["rule_id"] == "R1")
+    assert r1["thresholds"]["red_consecutive_gap_pp"] == 60
+    assert data["evaluation_config_hash"] != base_hash
+
+    # 规则引擎读取新阈值（覆盖生效）
+    cfg = frc.load_financial_rules()
+    assert cfg.rules.r1.thresholds.red_consecutive_gap_pp == 60
+    assert frc.override_active() is True
+
+    # 重置恢复默认
+    resp2 = client.delete("/api/v1/rules/config")
+    assert resp2.status_code == 200, resp2.text[:300]
+    data2 = resp2.json()["data"]
+    assert data2["is_overridden"] is False
+    r1b = next(r for r in data2["rules"] if r["rule_id"] == "R1")
+    assert r1b["thresholds"]["red_consecutive_gap_pp"] == 50
+    assert frc.override_active() is False
+
+
+def test_put_config_invalid_rejected(tmp_path, monkeypatch):
+    """会7：未知阈值 key / 越界值 → 422，且不写入 override。"""
+    import json
+
+    import app.domain.finance.financial_rule_config as frc
+    from app.main import app
+
+    monkeypatch.setattr(frc, "_OVERRIDE_FILE", tmp_path / "override.yaml")
+    frc.clear_financial_rule_config_cache()
+    client = TestClient(app)
+
+    base = client.get("/api/v1/rules/definitions").json()["data"]
+
+    # 未知 key（extra=forbid → 422）
+    bad1 = json.loads(json.dumps(_full_rules_body(base)))
+    bad1["R1"]["thresholds"]["unknown_key"] = 1
+    r1 = client.put("/api/v1/rules/config", json=bad1)
+    assert r1.status_code == 422, r1.text[:300]
+
+    # 越界值（R2 red_consecutive_negative_cashflow_periods ge=1，0 非法 → 422）
+    bad2 = json.loads(json.dumps(_full_rules_body(base)))
+    bad2["R2"]["thresholds"]["red_consecutive_negative_cashflow_periods"] = 0
+    r2 = client.put("/api/v1/rules/config", json=bad2)
+    assert r2.status_code == 422, r2.text[:300]
+
+    # 缺规则（非完整结构 → 422）
+    bad3 = {"R1": {"enabled": True, "thresholds": {}}}
+    r3 = client.put("/api/v1/rules/config", json=bad3)
+    assert r3.status_code == 422, r3.text[:300]
+
+    # 全部拒绝后 override 未写入
+    assert frc.override_active() is False

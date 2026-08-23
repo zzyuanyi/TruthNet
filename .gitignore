@@ -86,6 +86,9 @@ htmlcov/
 # Pre-commit
 .pre-commit-hooks.yaml
 
+# 8/23 会7：用户阈值覆盖文件（运行时生成，不入库）
+backend/app/domain/finance/financial_rules.override.yaml
+
 # Claude Code local settings
 .claude/settings.local.json
 .claude/settings.json

@@ -10,6 +10,7 @@ const sourceTypeIcons: Record<string, string> = {
   news: '新闻',
   research_report: '研报',
   regulation: '监管',
+  web_search: '联网检索',
 };
 function formatChainPct(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '比例缺失';
@@ -72,6 +73,8 @@ function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
     audit: 'audit',
     regulation: 'regulatory',
     regulatory: 'regulatory',
+    // 8/23 联网线索独立分组（外链卡片，不参与本地证据回查）
+    web_search: 'web',
   };
   const categoryLabels: Record<string, string> = {
     finance: '财务证据',
@@ -79,6 +82,7 @@ function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
     event: '舆情证据',
     audit: '审计证据',
     regulatory: '监管证据',
+    web: '联网线索',
   };
 
   const groups = new Map<string, RiskEvidence[]>();
@@ -108,7 +112,8 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
 // 锚点导航项
 const navItems = [
   { id: 'overview', label: '概览', icon: AlertTriangle },
-{ id: 'impact', label: '影响与建议', icon: Shield },
+  { id: 'conclusions', label: '核心结论', icon: FileText },
+  { id: 'impact', label: '影响与建议', icon: Shield },
   { id: 'financial', label: '财务异常', icon: TrendingUp },
   { id: 'equity', label: '股权穿透', icon: GitBranch },
   { id: 'sentiment', label: '舆情时间线', icon: Newspaper },
@@ -138,6 +143,14 @@ export default function CompanyProfilePage() {
   const [announcementsAvailable, setAnnouncementsAvailable] = useState<boolean | null>(null);
   // 会7：规则配置参数（GET /rules/definitions），画像页呈现参数与触发规则对应关系
   const [ruleDefinitions, setRuleDefinitions] = useState<RuleDefinition[]>([]);
+  // 8/23 会7 深化：阈值编辑草稿 + 保存/重置状态
+  const [draftThresholds, setDraftThresholds] = useState<Record<string, Record<string, string>>>({});
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configResetting, setConfigResetting] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [ruleDefsOverridden, setRuleDefsOverridden] = useState(false);
+  // 8/23 分步加载：当前加载阶段（loading 页展示）
+  const [loadStage, setLoadStage] = useState('公司基础信息');
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = { red: '#ef4444', orange: '#f97316', yellow: '#eab308', blue: '#3b82f6', unknown: '#6b7280' };
@@ -211,6 +224,65 @@ export default function CompanyProfilePage() {
     }
   };
 
+  // 8/23 会7 深化：definitions 首次加载后填充编辑草稿（已有编辑不覆盖）
+  useEffect(() => {
+    if (ruleDefinitions.length === 0) return;
+    setDraftThresholds(prev => {
+      if (Object.keys(prev).length > 0) return prev;
+      const next: Record<string, Record<string, string>> = {};
+      for (const def of ruleDefinitions) {
+        next[def.rule_id] = {};
+        for (const [k, v] of Object.entries(def.thresholds)) {
+          next[def.rule_id][k] = String(v);
+        }
+      }
+      return next;
+    });
+  }, [ruleDefinitions]);
+
+  // 8/23 会7 深化：保存并刷新（PUT /rules/config → 重拉全部数据按新阈值重算）
+  const handleSaveRuleConfig = async () => {
+    if (configSaving || ruleDefinitions.length === 0) return;
+    const rulesBody: Record<string, unknown> = {};
+    for (const def of ruleDefinitions) {
+      const thresholds: Record<string, number> = {};
+      for (const [k] of Object.entries(def.thresholds)) {
+        const raw = draftThresholds[def.rule_id]?.[k];
+        if (raw === undefined || raw.trim() === '' || Number.isNaN(Number(raw))) {
+          setConfigError(`${def.rule_id}.${k} 不是有效数字`);
+          return;
+        }
+        thresholds[k] = Number(raw);
+      }
+      rulesBody[def.rule_id] = { enabled: def.enabled, thresholds };
+    }
+    setConfigError(null);
+    setConfigSaving(true);
+    try {
+      await truthnetAPI.updateRuleConfig(rulesBody);
+      await loadData();
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setConfigSaving(false);
+    }
+  };
+
+  // 8/23 会7 深化：重置恢复默认（DELETE /rules/config → 重拉）
+  const handleResetRuleConfig = async () => {
+    if (configResetting) return;
+    setConfigError(null);
+    setConfigResetting(true);
+    try {
+      await truthnetAPI.resetRuleConfig();
+      await loadData();
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : '重置失败');
+    } finally {
+      setConfigResetting(false);
+    }
+  };
+
   const sectionRefs = {
     overview: useRef<HTMLDivElement>(null),
     conclusions: useRef<HTMLDivElement>(null),
@@ -220,6 +292,27 @@ export default function CompanyProfilePage() {
     equity: useRef<HTMLDivElement>(null),
     sentiment: useRef<HTMLDivElement>(null),
   };
+  // 8/23 scrollspy：右侧滚动容器引用 + 滚动联动左侧导航高亮
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleScrollSync = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const scrollTop = container.scrollTop;
+    const offset = 140;
+    let current = navItems[0].id;
+    for (const item of navItems) {
+      const ref = sectionRefs[item.id as keyof typeof sectionRefs];
+      if (ref.current && ref.current.offsetTop <= scrollTop + offset) {
+        current = item.id;
+      }
+    }
+    // 底部兜底：滚到底选中最后一项
+    if (container.scrollHeight - scrollTop - container.clientHeight < 40) {
+      current = navItems[navItems.length - 1].id;
+    }
+    setActiveSection(current);
+  }, []);
 
   useEffect(() => {
     if (code) {
@@ -232,29 +325,42 @@ export default function CompanyProfilePage() {
     setLoading(true);
     setError(null);
     try {
-      const [profileRes, financeRes, equityRes, eventsRes, riskRes, rulesDefRes] = await Promise.all([
-        truthnetAPI.getCompanyProfile(code),
-        truthnetAPI.getFinance(code),
-        truthnetAPI.getEquity(code),
-        truthnetAPI.getEvents(code),
-        truthnetAPI.getRisk(code),
-        truthnetAPI.getRuleDefinitions(),
-      ]);
+      // 8/23 分步加载：按模块分批拉取，loading 页显示当前阶段
+      setLoadStage('公司基础信息');
+      const profileRes = await truthnetAPI.getCompanyProfile(code);
       setProfile(profileRes.data);
+
+      setLoadStage('财务规则');
+      const financeRes = await truthnetAPI.getFinance(code);
       const rules = financeRes.data?.rules || [];
       setFinancialAnomalies(rules);
+      setFinanceQuality(financeRes.data?.data_quality || null);
+
+      setLoadStage('股权与舆情');
+      const [equityRes, eventsRes] = await Promise.all([
+        truthnetAPI.getEquity(code),
+        truthnetAPI.getEvents(code),
+      ]);
       setEquityData(equityRes.data);
       setSentimentEvents(eventsRes.data?.timeline || []);
       setEventClusters(eventsRes.data?.event_clusters || []);
-      setRiskData(riskRes.data);
-              const allChains = riskRes.data?.derivation_chains || [];
-        setDerivationChains([
-          ...allChains.filter(c => c.conclusion_type === 'risk_level'),
-          ...allChains.filter(c => c.conclusion_type === 'pattern_match').slice(0, 3),
-        ]);
-      setFinanceQuality(financeRes.data?.data_quality || null);
       setAnnouncementsAvailable(eventsRes.data?.announcements_available ?? null);
-setRuleDefinitions(rulesDefRes.data?.rules || []);
+
+      setLoadStage('风险评分');
+      const [riskRes, rulesDefRes] = await Promise.all([
+        truthnetAPI.getRisk(code),
+        truthnetAPI.getRuleDefinitions(),
+      ]);
+      setRiskData(riskRes.data);
+      const allChains = riskRes.data?.derivation_chains || [];
+      setDerivationChains([
+        ...allChains.filter(c => c.conclusion_type === 'risk_level'),
+        ...allChains.filter(c => c.conclusion_type === 'pattern_match').slice(0, 3),
+      ]);
+      setRuleDefinitions(rulesDefRes.data?.rules || []);
+      setRuleDefsOverridden(rulesDefRes.data?.is_overridden ?? false);
+
+      setLoadStage('影响与建议');
       setImpactAdviceLoading(true);
       void truthnetAPI
         .getImpactAdvice(code)
@@ -416,6 +522,11 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
           <Skeleton className="h-full w-full" />
         </div>
         <div className="flex-1 overflow-auto p-6">
+          {/* 8/23 分步加载：显示当前加载阶段 */}
+          <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载：{loadStage}…
+          </div>
           <Skeleton className="mb-4 h-8 w-64" />
           <Skeleton className="mb-4 h-32 w-full" />
           <Skeleton className="h-64 w-full" />
@@ -467,7 +578,7 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
       </div>
 
       {/* 右侧内容区 */}
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollContainerRef} onScroll={handleScrollSync} className="flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl p-6">
           {/* 概览区块 */}
           <div ref={sectionRefs.overview} className="mb-8">
@@ -764,11 +875,40 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
               </div>
               {ruleDefinitions.length > 0 && (
                 <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-4">
-                  <div className="mb-3 flex items-center gap-2">
+                  <div className="mb-3 flex items-center gap-2 flex-wrap">
                     <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-medium">规则配置参数</span>
                     <span className="text-xs text-muted-foreground">参数决定触发阈值</span>
+                    {ruleDefsOverridden && (
+                      <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-500/40">
+                        已使用自定义阈值
+                      </Badge>
+                    )}
+                    <div className="ml-auto flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={configResetting || !ruleDefsOverridden}
+                        onClick={handleResetRuleConfig}
+                      >
+                        {configResetting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        重置
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        disabled={configSaving}
+                        onClick={handleSaveRuleConfig}
+                      >
+                        {configSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        保存并刷新
+                      </Button>
+                    </div>
                   </div>
+                  {configError && (
+                    <p className="mb-2 text-xs text-destructive">{configError}</p>
+                  )}
                   <div className="space-y-3">
                     {ruleDefinitions
                       .filter(def => triggeredRules.some(r => r.rule_id === def.rule_id))
@@ -804,12 +944,42 @@ setRuleDefinitions(rulesDefRes.data?.rules || []);
                               </div>
                             )}
                             {Object.keys(def.thresholds).length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {Object.entries(def.thresholds).map(([k, v]) => (
-                                  <span key={k} className="rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                                    阈值 {k}: {v}
-                                  </span>
-                                ))}
+                              <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                                {Object.entries(def.thresholds).map(([k]) => {
+                                  const param = def.parameters.find(p => p.key === k);
+                                  return (
+                                    <label
+                                      key={k}
+                                      className="flex items-center justify-between gap-2 rounded border border-border/60 bg-background px-2 py-1"
+                                    >
+                                      <span
+                                        className="min-w-0 text-[11px] text-muted-foreground truncate"
+                                        title={param?.description}
+                                      >
+                                        {k}
+                                        {param?.description ? `（${param.description}）` : ''}
+                                      </span>
+                                      <span className="flex items-center gap-1 shrink-0">
+                                        <input
+                                          type="number"
+                                          step="any"
+                                          value={draftThresholds[def.rule_id]?.[k] ?? String(def.thresholds[k] ?? '')}
+                                          onChange={e => setDraftThresholds(prev => ({
+                                            ...prev,
+                                            [def.rule_id]: {
+                                              ...(prev[def.rule_id] || {}),
+                                              [k]: e.target.value,
+                                            },
+                                          }))}
+                                          className="w-20 rounded border border-border/60 bg-background px-1.5 py-0.5 text-right text-xs"
+                                        />
+                                        {param?.unit && (
+                                          <span className="text-[10px] text-muted-foreground">{param.unit}</span>
+                                        )}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>

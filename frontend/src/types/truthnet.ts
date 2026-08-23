@@ -416,6 +416,9 @@ export interface RiskEvidence {
   source_type: string;
   claim_ids: string[];
   summary: string;
+  // 8/23 联网线索标注：web 证据带来源 URL + is_web 标记
+  source_uri?: string | null;
+  is_web?: boolean;
 }
 
 export interface RiskResponseData {
@@ -635,6 +638,30 @@ export interface ComparisonsResponseData {
   warnings: string[];
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
+}
+
+// 8/23 会7 深化：跨公司 LLM 综合分析
+export interface ComparisonAnalysisCompany {
+  wind_code: string;
+  sec_name: string;
+  risk_level: string;
+  overall_score: number | null;
+  triggered_rules: string[];
+  as_of: string;
+}
+
+export interface ComparisonAnalysisSegment {
+  company_code: string;
+  title: string;
+  detail: string;
+}
+
+export interface ComparisonAnalysisData {
+  companies: ComparisonAnalysisCompany[];
+  overall: string;
+  segments: ComparisonAnalysisSegment[];
+  method: string;
+  warnings: string[];
 }
 
 // ============ Chat 响应 (对齐 ChatDataV1) ============

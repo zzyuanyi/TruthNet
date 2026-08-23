@@ -22,22 +22,30 @@ from app.core.config import settings
 from app.domain.provenance.id_factory import NS_FINANCE, make_evidence_id
 
 
-def normalize_rule_evidence_id(legacy: str, wind_code: str, as_of: str) -> str:
+def normalize_rule_evidence_id(
+    legacy: str, wind_code: str, as_of: str, period: str | None = None
+) -> str:
     """legacy evidence id（ev_bs_<field>_<period>）→ 统一 ID（finance 语义）。
 
     field_path = legacy 解析出的真实财务字段（方向 A）。
+
+    8/23 双轨 ID 统一：/finance 路由与 agent 节点（/risk 链路）必须生成
+    同一 ID——canonical 六段参数（无 rule_id 段：同一字段被多条规则
+    引用时共享同一 Evidence，只落库一次）。period 显式传入时以实际
+    报告期为准（agent 侧请求期可能晚于最新已披露报表），否则用请求期。
     """
     field = legacy
     if legacy.startswith("ev_"):
         parts = legacy.split("_")
         if len(parts) >= 3:
             field = "_".join(parts[2:]).removesuffix(f"_{as_of}")
+    p = period or as_of
     return make_evidence_id(
         source_namespace=NS_FINANCE,
         source_type="financial_statement",
-        source_record_id=f"{wind_code}|{as_of}",
+        source_record_id=f"{wind_code}|{p}",
         field_path=field or legacy,
-        period=as_of,
+        period=p,
         dataset_version=settings.DATASET_VERSION,
         company_code=wind_code,
     )

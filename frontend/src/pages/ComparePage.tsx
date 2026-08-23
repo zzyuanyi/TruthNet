@@ -19,11 +19,14 @@ import {
   Building2,
   Search,
   X,
+  Loader2,
+  FileText,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
 import type {
   BenchmarksResponseData,
   CompanyRiskSummary,
+  ComparisonAnalysisData,
   ComparisonsResponseData,
   IndicatorCompare,
   RiskLevel,
@@ -393,6 +396,10 @@ export default function ComparePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [industryUnavailable, setIndustryUnavailable] = useState(false);
+  // 8/23 会7 深化：跨公司 LLM 综合分析
+  const [analysisData, setAnalysisData] = useState<ComparisonAnalysisData | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   // v3.3.4 收口复核清单 §5.3：读取 codes + scope（默认 full）；
   // choose_comparison_pair 入口用 candidates 参数（预填全部代码）
@@ -470,6 +477,30 @@ export default function ComparePage() {
     };
 
     loadCompanies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // 8/23 会7 深化：跨公司 LLM 综合分析（独立异步，不阻塞主数据）
+  useEffect(() => {
+    if (codesParam.length < 2 || candidateCodes.length > 0) return;
+    let cancelled = false;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    setAnalysisData(null);
+    truthnetAPI
+      .getComparisonAnalysis(codesParam)
+      .then(res => {
+        if (!cancelled) setAnalysisData(res.data ?? null);
+      })
+      .catch(err => {
+        if (!cancelled) setAnalysisError(err instanceof Error ? err.message : '综合分析失败');
+      })
+      .finally(() => {
+        if (!cancelled) setAnalysisLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -752,6 +783,61 @@ export default function ComparePage() {
                     <p className="text-[11px] text-muted-foreground/70">
                       结论仅由当前规则引擎评分、触发规则与模式匹配结果汇总，不构成投资建议。
                     </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 8/23 会7 深化：跨公司 LLM 综合分析 */}
+              {(analysisLoading || analysisError || analysisData) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      综合分析
+                      {analysisData?.method === 'llm' && (
+                        <Badge variant="outline" className="text-[10px] text-primary">
+                          大模型生成
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    {analysisData && analysisData.companies.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {analysisData.companies
+                          .map(c => `${c.sec_name}（${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}${c.overall_score != null ? ` ${c.overall_score.toFixed(3)}` : ' 暂无评分'}）`)
+                          .join(' vs ')}
+                      </p>
+                    )}
+                  </CardHeader>
+                  <CardContent>
+                    {analysisLoading ? (
+                      <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        正在综合分析各家公司风险画像…
+                      </div>
+                    ) : analysisError ? (
+                      <p className="text-sm text-destructive">{analysisError}</p>
+                    ) : analysisData ? (
+                      <div className="space-y-3">
+                        <p className="text-sm leading-6 text-foreground">{analysisData.overall}</p>
+                        {analysisData.segments.map((seg, i) => {
+                          const comp = analysisData.companies.find(c => c.wind_code === seg.company_code);
+                          return (
+                            <div key={`${seg.company_code}-${i}`} className="border-l-2 border-primary/40 pl-3">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                {comp?.sec_name || seg.company_code}
+                              </p>
+                              <p className="mt-0.5 text-sm leading-6">{seg.detail}</p>
+                            </div>
+                          );
+                        })}
+                        {analysisData.warnings.length > 0 && (
+                          <p className="text-xs text-muted-foreground">{analysisData.warnings.join('；')}</p>
+                        )}
+                        <p className="text-[11px] text-muted-foreground/70">
+                          分析基于各家综合风险等级、评分与触发规则（大模型输出，数字与规则名已锁定），不构成投资建议。
+                        </p>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               )}

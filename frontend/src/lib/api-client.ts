@@ -16,6 +16,7 @@ import type {
   RiskResponseData,
   BenchmarksResponseData,
   ComparisonsResponseData,
+  ComparisonAnalysisData,
   ChatDataV1,
   Session,
   Message,
@@ -126,6 +127,7 @@ export interface RulesDefinitionsData {
   evaluation_config_hash: string;
   definition_hash: string;
   source?: string;
+  is_overridden?: boolean;
 }
 
 // 就绪检查: GET /readyz
@@ -292,6 +294,12 @@ export const truthnetAPI = {
       }),
     }),
 
+  // 8/23 会7 深化：跨公司 LLM 综合分析: GET /api/v1/comparisons/analysis
+  getComparisonAnalysis: (companyCodes: string[]) =>
+    request<ComparisonAnalysisData>('GET', '/comparisons/analysis', {
+      params: { codes: companyCodes.join(',') },
+    }),
+
   // 证据详情: GET /api/v1/evidence/{evidence_id}
   getEvidence: (evidenceId: string) =>
     request<EvidenceLookupData>('GET', `/evidence/${encodeURIComponent(evidenceId)}`),
@@ -336,6 +344,13 @@ export const truthnetAPI = {
   // 规则定义: GET /api/v1/rules/definitions
   getRuleDefinitions: () =>
     request<RulesDefinitionsData>('GET', '/rules/definitions'),
+  // 8/23 会7 深化：覆盖保存阈值（完整 rules 结构）/ 重置恢复默认
+  updateRuleConfig: (body: Record<string, unknown>) =>
+    request<RulesDefinitionsData>('PUT', '/rules/config', {
+      body: JSON.stringify(body),
+    }),
+  resetRuleConfig: () =>
+    request<RulesDefinitionsData>('DELETE', '/rules/config'),
 
   // 就绪检查: GET /api/v1/readyz
   readyz: () => request<ReadyData>('GET', '/readyz'),

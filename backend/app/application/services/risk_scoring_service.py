@@ -109,9 +109,15 @@ def _evidence_context(ev, label: str) -> str:
 
 
 def _evidence_summary(ev, label: str) -> str:
-    """真实摘要：source_title → source_excerpt → "字段 期次: 值" → 模块兜底。"""
+    """真实摘要：source_title → source_excerpt → "字段 期次: 值" → 模块兜底。
+
+    8/23：web_search 线索只显示标题（field_path 为内部键如 news_0，
+    对用户无意义，不拼上下文）。
+    """
     title = str(getattr(ev, "source_title", "") or "").strip()
     if title:
+        if (getattr(ev, "source_type", "") or "") == "web_search":
+            return title
         context = _evidence_context(ev, label)
         if context and context != f"{label} 模块证据":
             return f"{title}｜{context}"
@@ -439,6 +445,9 @@ class RiskScoringService:
                         source_type=getattr(ev, "source_type", "") or "",
                         summary=_evidence_summary(ev, label),
                         claim_ids=getattr(ev, "claim_ids", []) or [],
+                        # 8/23 联网线索标注：web 证据带 URL + is_web 标记
+                        source_uri=getattr(ev, "source_uri", None) or None,
+                        is_web=(getattr(ev, "source_type", "") or "") == "web_search",
                     )
                 )
             # 模块级 claim_ids

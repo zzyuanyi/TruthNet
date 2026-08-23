@@ -22,6 +22,7 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   equity: '股权',
   event: '舆情',
   risk: '风险',
+  web_search: '联网检索',
 };
 
 interface AnswerSection {
