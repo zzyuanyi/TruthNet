@@ -236,8 +236,7 @@ async def test_stream_events_sequence(monkeypatch):
         },
     )
     events = [
-        evt
-        async for evt in svc.stream_comparison_advice(["600518.SH", "603693.SH"])
+        evt async for evt in svc.stream_comparison_advice(["600518.SH", "603693.SH"])
     ]
     types = [e["event_type"] for e in events]
     assert types[0] == "analysis.started"
@@ -247,9 +246,7 @@ async def test_stream_events_sequence(monkeypatch):
     assert types[-1] == "analysis.completed"
     # 模板分节（mock → template）：节内容完整
     sections = [
-        e["payload"]["text"]
-        for e in events
-        if e["event_type"] == "analysis.section"
+        e["payload"]["text"] for e in events if e["event_type"] == "analysis.section"
     ]
     assert sections
     assert any("跨公司对比结论" in s for s in sections)
@@ -272,8 +269,7 @@ async def test_stream_single_company_failure_progresses(monkeypatch):
         "app.application.services.risk_scoring_service.assemble_and_score", fake
     )
     events = [
-        evt
-        async for evt in svc.stream_comparison_advice(["600518.SH", "603693.SH"])
+        evt async for evt in svc.stream_comparison_advice(["600518.SH", "603693.SH"])
     ]
     types = [e["event_type"] for e in events]
     assert types.count("analysis.company_failed") == 1

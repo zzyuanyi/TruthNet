@@ -244,9 +244,7 @@ def _merge_exact_spots(
         for frag in frags:
             if len(frag) < 2:
                 continue
-            if not any(
-                (s.text or "") in frag or frag in (s.text or "") for s in spans
-            ):
+            if not any((s.text or "") in frag or frag in (s.text or "") for s in spans):
                 return False
         return True
 
@@ -255,9 +253,7 @@ def _merge_exact_spots(
         if m.start is None or m.end is None:
             kept.append(m)
             continue
-        is_compound_span = any(
-            conn in (m.text or "") for conn in _COMPOUND_CONNECTORS
-        )
+        is_compound_span = any(conn in (m.text or "") for conn in _COMPOUND_CONNECTORS)
         # 与某个精确 span 重叠但非同一 span → 精确名称优先（丢弃粗 span）
         if any(not (m.end <= s.start or s.end <= m.start) for s in spans) and not any(
             m.start == s.start and m.end == s.end and (m.text or "") == s.text

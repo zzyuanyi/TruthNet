@@ -453,9 +453,7 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
         rows = [["规则", "状态", "等级", "说明"]]
         for r in rules[:15]:
             status = _RULE_STATUS_CN.get(r.get("status", ""), r.get("status", ""))
-            severity = _RISK_LEVEL_CN.get(
-                r.get("severity", ""), r.get("severity", "")
-            )
+            severity = _RISK_LEVEL_CN.get(r.get("severity", ""), r.get("severity", ""))
             rows.append(
                 [
                     Paragraph(r.get("rule_id", ""), cell),
@@ -513,7 +511,11 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
             level_cn = _RISK_LEVEL_CN.get(c.get("risk_level"), c.get("risk_level"))
             # 股东名称：path_names 去掉目标公司本身，取路径主体
             path_names = c.get("path_names") or []
-            holder = " → ".join(str(n) for n in path_names[:-1]) if len(path_names) > 1 else (path_names[0] if path_names else c.get("chain_id"))
+            holder = (
+                " → ".join(str(n) for n in path_names[:-1])
+                if len(path_names) > 1
+                else (path_names[0] if path_names else c.get("chain_id"))
+            )
             story.append(
                 Paragraph(
                     f"• {chain_term}：{holder}（{pct_term} {pct:.2f}%，"

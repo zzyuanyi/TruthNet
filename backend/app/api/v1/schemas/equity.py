@@ -158,9 +158,7 @@ class DownstreamRelationDTO(BaseModel):
     relation: str = Field(default="OWNS", description="关系类型")
     # 8/23 上下游风险信号：上市公司子公司有负面记录 → red；无 → green；
     # 非上市公司（无 wind_code）→ unknown（公开数据未覆盖）
-    risk_level: str = Field(
-        default="unknown", description="风险等级 red/green/unknown"
-    )
+    risk_level: str = Field(default="unknown", description="风险等级 red/green/unknown")
     risk_signals: list[DownstreamRiskSignalDTO] = Field(
         default_factory=list, description="负面风险信号列表（最多 3 条）"
     )
@@ -202,6 +200,4 @@ class EquityResponseData(BaseModel):
     downstream_relations: list[DownstreamRelationDTO] = Field(
         default_factory=list, description="下游直接持股关系（截断展示前 50 条）"
     )
-    downstream_total: int = Field(
-        default=0, description="下游总数（截断前真实数量）"
-    )
+    downstream_total: int = Field(default=0, description="下游总数（截断前真实数量）")

@@ -345,8 +345,7 @@ async def get_company_equity(
                 {
                     n.wind_code
                     for n in ds_graph.nodes
-                    if n.wind_code
-                    and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", n.wind_code)
+                    if n.wind_code and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", n.wind_code)
                 }
             )
             ds_name_map: dict[str, str] = {}
