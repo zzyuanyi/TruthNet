@@ -470,24 +470,49 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
 
     # 股权链路（8.09 四轮/五轮审查：措辞随 path_type——ownership 是持股关系，
     # 不得一律称"控制链/最终控制"；内部英文 risk_label 渲染为中文，不直接展示）
-    # 8/23 规整：risk_level 也中文化
+    # 8/23 规整：risk_level 中文化 + 显示股东名称（path_names）+ 过滤
+    # 无意义微比例（<1% 且非风险链），按最终持股比例降序。
     story.append(Paragraph("三、股权持股链", h2))
     chains = data.get("equity_chains") or []
     if chains:
-        for c in chains[:10]:
+        # 排序：风险链优先（非 green），其次按比例降序
+        def _chain_key(c: dict):
+            risk_rank = {"red": 0, "orange": 1, "yellow": 2, "green": 3}
+            return (
+                risk_rank.get(str(c.get("risk_level", "")), 4),
+                -float(c.get("final_control_pct") or 0),
+            )
+
+        ordered = sorted(chains, key=_chain_key)
+        shown = 0
+        for c in ordered:
+            pct = float(c.get("final_control_pct") or 0)
+            # 过滤：微比例（<1%）且无风险提示的链不展示（噪音）
+            if pct < 1.0 and str(c.get("risk_level", "green")) in (
+                "green",
+                "unknown",
+            ):
+                continue
+            if shown >= 10:
+                break
             is_control = c.get("path_type") == "control"
             chain_term = "控制链" if is_control else "持股链"
             pct_term = "最终控制比例" if is_control else "最终持股比例"
             label_cn = _RISK_LABEL_CN.get(c.get("risk_label"), c.get("risk_label"))
             level_cn = _RISK_LEVEL_CN.get(c.get("risk_level"), c.get("risk_level"))
+            # 股东名称：path_names 去掉目标公司本身，取路径主体
+            path_names = c.get("path_names") or []
+            holder = " → ".join(str(n) for n in path_names[:-1]) if len(path_names) > 1 else (path_names[0] if path_names else c.get("chain_id"))
             story.append(
                 Paragraph(
-                    f"• {chain_term} {c.get('chain_id')}：深度 {c.get('depth')}，"
-                    f"{pct_term} {c.get('final_control_pct')}%，"
-                    f"风险提示：{label_cn}（等级 {level_cn}）",
+                    f"• {chain_term}：{holder}（{pct_term} {pct:.2f}%，"
+                    f"风险提示：{label_cn}·{level_cn}）",
                     body,
                 )
             )
+            shown += 1
+        if shown == 0:
+            story.append(Paragraph("无显著持股链（≥1% 或无风险提示链）。", body))
     else:
         story.append(Paragraph("无可用持股链数据。", body))
 
@@ -507,7 +532,7 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     else:
         story.append(Paragraph("未检测到匹配的风险模式。", body))
 
-    # Claims / Evidence（8/23 规整：去重 + 完整展示不截断）
+    # Claims / Evidence（8/23 规整：去重 + 完整展示不截断；等级未知不显示冗余）
     story.append(Paragraph("五、结论声明与证据", h2))
     claims = data.get("claims") or []
     if claims:
@@ -520,12 +545,12 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
             seen.add(ctext)
             if shown >= 15:
                 break
-            severity = _RISK_LEVEL_CN.get(
-                str(c.get("severity", "") or ""), str(c.get("severity", "") or "")
-            )
-            story.append(
-                Paragraph(f"• {ctext}（等级 {severity}）", body)
-            )
+            severity = str(c.get("severity", "") or "")
+            sev_cn = _RISK_LEVEL_CN.get(severity, severity)
+            if severity and severity != "unknown":
+                story.append(Paragraph(f"• {ctext}（等级 {sev_cn}）", body))
+            else:
+                story.append(Paragraph(f"• {ctext}", body))
             shown += 1
     else:
         story.append(Paragraph("无结构化结论声明。", body))
@@ -540,6 +565,21 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
                 "• 本报告基于母公司报表口径（408006000），仅供参考，不构成投资建议。",
                 body,
             )
+        )
+
+    # 七、影响与建议（LLM 生成，8/23 新增：复用画像页 impact_advice）
+    story.append(Paragraph("七、影响与建议（综合画像指标）", h2))
+    advice = data.get("impact_advice") or ""
+    if advice:
+        # 分段渲染（Markdown 分节 → 纯文本段落）
+        for para in [p.strip() for p in advice.split("\n") if p.strip()]:
+            if para.startswith("#"):
+                story.append(Paragraph(para.lstrip("# ").strip(), h2))
+            else:
+                story.append(Paragraph(para, body))
+    else:
+        story.append(
+            Paragraph("影响与建议生成失败或数据不足，请结合画像页查看。", body)
         )
 
     doc.build(story)
@@ -673,6 +713,18 @@ def _collect_report_data(company_code: str, as_of: str = "") -> dict:
             data["claims"] = [dict(r) for r in rows]
         except Exception:  # noqa: BLE001
             data["claims"] = []
+
+        # 影响与建议（LLM 生成，8/23 新增：复用画像页 impact_advice 四路聚合）
+        try:
+            from app.application.services.impact_advice_service import (
+                assemble_impact_advice,
+            )
+
+            adv = asyncio.run(assemble_impact_advice(company_code, norm_as_of or ""))
+            data["impact_advice"] = adv.overall_advice or ""
+        except Exception:  # noqa: BLE001 — LLM 建议失败不阻塞报告
+            logger.warning("report: impact advice failed", exc_info=True)
+            data["impact_advice"] = ""
 
         # 公司名（使用本模块 _get_engine，避免局部导入遮蔽）
         try:
