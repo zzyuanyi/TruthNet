@@ -495,27 +495,47 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     else:
         story.append(Paragraph("无规则触发或数据不足。", body))
 
-    # 8/23 叙事落地：核查建议清单（规则→核查动作，L2 行动建议，纯映射无 LLM）
+    # 8/23 叙事落地：核查导航清单（每条触发规则：L1 量化参考 + L2 核查动作，
+    # 纯映射无 LLM）
     triggered_rules = [r for r in rules if r.get("status") == "triggered"]
     if triggered_rules:
         from app.application.services.checklist_service import (
-            render_checklist_markdown,
+            build_rule_actions,
+            pick_checklist_rules,
+            rule_display_name,
+        )
+        from app.application.services.severity_context_service import (
+            render_quantified_line,
         )
 
-        checklist = render_checklist_markdown(
+        picked = pick_checklist_rules(
             [
                 (str(r.get("rule_id", "")), str(r.get("severity") or ""))
                 for r in triggered_rules
             ]
         )
-        if checklist:
+        if picked:
             story.append(Spacer(1, 8))
             story.append(Paragraph("核查建议清单", h2))
-            for line in checklist.splitlines():
-                if line.startswith("【核查建议】"):
-                    continue
-                text_line = line.split(". ", 1)[-1] if ". " in line else line
-                story.append(Paragraph(f"• {text_line}", body))
+            for rid, sev in picked:
+                rule_dict = next(
+                    (r for r in triggered_rules if r.get("rule_id") == rid), {}
+                )
+                ql = render_quantified_line(
+                    rid,
+                    {
+                        "current": rule_dict.get("current") or {},
+                        "history": rule_dict.get("history") or [],
+                    },
+                    {},
+                    sev,
+                )
+                title = f"{rid} {rule_display_name(rid)}"
+                if ql:
+                    title += f"（{ql}）"
+                story.append(Paragraph(f"• {title}", body))
+                for action in build_rule_actions(rid):
+                    story.append(Paragraph(f"　· {action}", body))
 
     # 8/23 图表化：关键指标趋势折线（复用 rule.history，2 列布局；失败/无数据跳过）
     try:

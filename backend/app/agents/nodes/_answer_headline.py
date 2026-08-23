@@ -31,6 +31,9 @@ from ._answer_common import (
 from app.agents.llm_sync import run_llm_chat
 from app.agents.state import AgentState, FinalResponse
 from app.application.services.checklist_service import render_checklist_markdown
+from app.application.services.severity_context_service import (
+    render_quantified_line,
+)
 import re
 
 logger = logging.getLogger(__name__)
@@ -197,12 +200,24 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
     # 【预警点】：触发规则的真实 explanation（8/23 编号换行，避免大段刷屏）
     triggers: list[str] = []
     if finance and finance.rule_details:
+        percentiles = (finance.industry_benchmark or {}).get("percentiles") or {}
         for rid in sorted(finance.rule_details):
             if finance.rule_statuses.get(rid) != "triggered":
                 continue
             expl = str((finance.rule_details[rid] or {}).get("explanation") or "")
             if expl:
-                triggers.append(f"{rid}：{expl}")
+                line = f"{rid}：{expl}"
+                # 8/23 L1 量化解读：行业分位/历史趋势/距触发线
+                # （确定性渲染，无 LLM；无量化数据时行不输出）
+                ql = render_quantified_line(
+                    rid,
+                    finance.rule_details[rid],
+                    percentiles,
+                    str((finance.rule_details[rid] or {}).get("severity") or ""),
+                )
+                if ql:
+                    line += "\n" + ql
+                triggers.append(line)
     if triggers:
         segs.append(
             "【预警点】\n"

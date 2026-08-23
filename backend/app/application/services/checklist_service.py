@@ -69,6 +69,11 @@ RULE_ACTIONS: dict[str, tuple[str, str, str]] = {
 _SEVERITY_RANK = {"red": 0, "orange": 1, "yellow": 2}
 
 
+def rule_display_name(rule_id: str) -> str:
+    """规则展示名（未知规则回退 rule_id，不编造）。"""
+    return _RULE_NAMES.get(rule_id, rule_id)
+
+
 def build_rule_actions(rule_id: str) -> list[str]:
     """单规则核查动作（未知规则 → 空列表，fail-closed 不编造）。"""
     return list(RULE_ACTIONS.get(rule_id, ()))
