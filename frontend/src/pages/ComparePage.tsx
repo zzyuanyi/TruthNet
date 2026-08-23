@@ -21,6 +21,7 @@ import {
   X,
   Loader2,
   FileText,
+  Newspaper,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -33,6 +34,7 @@ import type {
   ComparisonsResponseData,
   IndicatorCompare,
   RiskLevel,
+  TimelineEvent,
 } from '@/types/truthnet';
 import type { CompanyCandidate } from '@/lib/api-client';
 
@@ -421,6 +423,9 @@ export default function ComparePage() {
   const [analysisProgress, setAnalysisProgress] = useState<{ ready: number; total: number } | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // 8/23 舆情信号：每家公司负面事件（评分保底/舆情维度的证据展示）
+  const [negativeEvents, setNegativeEvents] = useState<Record<string, TimelineEvent[]>>({});
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   // v3.3.4 收口复核清单 §5.3：读取 codes + scope（默认 full）；
   // choose_comparison_pair 入口用 candidates 参数（预填全部代码）
@@ -511,6 +516,35 @@ export default function ComparePage() {
     };
 
     loadCompanies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // 8/23 舆情信号：并行获取各家公司负面事件（证据展示——如立案事件
+  // 导致 signal_floor 保底高危，这里可见依据）
+  useEffect(() => {
+    if (codesParam.length === 0 || candidateCodes.length > 0) return;
+    let cancelled = false;
+    setEventsLoading(true);
+    Promise.allSettled(
+      codesParam.map(code =>
+        truthnetAPI.getEvents(code).then(res => {
+          const timeline = (res.data?.timeline || []) as TimelineEvent[];
+          const negative = timeline.filter(t => t.sentiment === 'negative');
+          return { code, negative };
+        }),
+      ),
+    ).then(results => {
+      if (cancelled) return;
+      const map: Record<string, TimelineEvent[]> = {};
+      results.forEach(r => {
+        if (r.status === 'fulfilled') map[r.value.code] = r.value.negative;
+      });
+      setNegativeEvents(map);
+      setEventsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -882,6 +916,67 @@ export default function ComparePage() {
                     </div>
                   ))}
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* 8/23 舆情信号：负面事件证据（舆情维度评分与风险等级保底的依据——
+                如立案事件导致 signal_floor 保底高危，这里可见依据） */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Newspaper className="h-4 w-4" />
+                  舆情信号
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  负面事件是舆情维度评分的依据；重大负面事件（如立案/处罚）会保底风险等级，即使财务规则触发少。
+                </p>
+              </CardHeader>
+              <CardContent>
+                {eventsLoading ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    正在加载舆情事件…
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {comparisonData.companies.map(company => {
+                      const events = negativeEvents[company.wind_code] || [];
+                      return (
+                        <div key={company.wind_code} className="rounded-lg border border-border/60 p-3">
+                          <p className="mb-2 text-xs font-medium text-muted-foreground">
+                            {company.sec_name}
+                          </p>
+                          {events.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">
+                              近 36 个月无负面舆情事件
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {events.slice(0, 3).map((evt, i) => (
+                                <div key={i} className="flex items-start gap-1.5 text-xs">
+                                  <AlertTriangle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
+                                  <span className="min-w-0">
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {evt.date}
+                                    </span>
+                                    <span className="block truncate" title={evt.title}>
+                                      {evt.title}
+                                    </span>
+                                  </span>
+                                </div>
+                              ))}
+                              {events.length > 3 && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  另有 {events.length - 3} 条…
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
