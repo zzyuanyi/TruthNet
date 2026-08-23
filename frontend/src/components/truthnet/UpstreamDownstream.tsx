@@ -3,7 +3,12 @@
 // 上游（股东/实际控制人/投资方）与下游（子公司/被投资方），并标注数据来源。
 
 import type { ReactNode } from 'react';
-import type { EquityResponseData, EquityEdgeDTO, EquityNodeDTO } from '@/types/truthnet';
+import type {
+  DownstreamRelation,
+  EquityResponseData,
+  EquityEdgeDTO,
+  EquityNodeDTO,
+} from '@/types/truthnet';
 import { ArrowUpRight, ArrowDownRight, Building2, ExternalLink, Info } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +37,46 @@ interface RelationEntry {
 
 interface UpstreamDownstreamProps {
   equityData: EquityResponseData;
+  // 8/23 会1 深化：后端独立下游字段（直接持股子公司/被投资方）
+  downstreamRelations?: DownstreamRelation[];
+  downstreamTotal?: number;
+}
+
+// 8/23：后端 downstream_relations → RelationEntry（复用 RelationRow 渲染）
+function buildDownstreamEntries(relations: DownstreamRelation[]): RelationEntry[] {
+  return relations.map(r => ({
+    node: {
+      id: r.entity_id,
+      entity_id: r.entity_id,
+      name: r.sec_name || r.wind_code || r.entity_id,
+      entity_type: r.wind_code ? '上市公司' : '企业',
+      wind_code: r.wind_code || null,
+      match_confidence: null,
+      risk_level: null,
+      mock: false,
+      source_system: 'neo4j',
+    },
+    edge: {
+      id: `ds-${r.entity_id}`,
+      source: '',
+      target: r.entity_id,
+      relation_type: r.relation || 'OWNS',
+      ownership_pct: r.ownership_pct,
+      control_pct: null,
+      valid_from: null,
+      valid_to: null,
+      source_id: null,
+      match_confidence: null,
+      relationship_id: null,
+      source_record_id: null,
+      report_period: null,
+      ann_dt: null,
+      is_latest: true,
+      mock: false,
+      source_system: 'neo4j',
+    },
+    direction: 'downstream' as const,
+  }));
 }
 
 // 计算目标公司在股权图里的节点 ID（按 entity_id 对齐）
@@ -130,21 +175,29 @@ function RelationGroup({
   title,
   icon,
   entries,
+  count,
   emptyHint,
   tone,
 }: {
   title: string;
   icon: ReactNode;
   entries: RelationEntry[];
+  count?: number;
   emptyHint: string;
   tone: 'upstream' | 'downstream';
 }) {
+  const displayCount = count ?? entries.length;
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
         {icon}
         <h4 className="text-sm font-semibold text-foreground">{title}</h4>
-        <span className="text-xs text-muted-foreground">{entries.length} 家</span>
+        <span className="text-xs text-muted-foreground">
+          {displayCount} 家
+          {count !== undefined && count > entries.length
+            ? `（展示前 ${entries.length} 条）`
+            : ''}
+        </span>
       </div>
       {entries.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-background/50 px-3 py-5 text-center text-sm text-muted-foreground">
@@ -161,8 +214,18 @@ function RelationGroup({
   );
 }
 
-export function UpstreamDownstream({ equityData }: UpstreamDownstreamProps) {
-  const { upstream, downstream } = resolveRelations(equityData);
+export function UpstreamDownstream({
+  equityData,
+  downstreamRelations,
+  downstreamTotal,
+}: UpstreamDownstreamProps) {
+  const { upstream, downstream: derivedDownstream } = resolveRelations(equityData);
+  // 8/23 会1 深化：优先消费后端独立下游字段（直接持股，含非上市被投资方）；
+  // 无字段时回退边推导（旧逻辑）
+  const downstream = downstreamRelations
+    ? buildDownstreamEntries(downstreamRelations)
+    : derivedDownstream;
+  const downstreamCount = downstreamTotal ?? downstream.length;
   const total = upstream.length + downstream.length;
   const sourceSystem = equityData.source_system?.trim();
 
@@ -196,7 +259,8 @@ export function UpstreamDownstream({ equityData }: UpstreamDownstreamProps) {
           title="下游（子公司 / 被投资企业）"
           icon={<ArrowDownRight className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
           entries={downstream}
-          emptyHint="暂未识别到下游被投资企业"
+          count={downstreamCount}
+          emptyHint="该公司的直接持股关系暂未覆盖（当前数据以股东关系为主，子公司数据待补充）"
           tone="downstream"
         />
         <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">

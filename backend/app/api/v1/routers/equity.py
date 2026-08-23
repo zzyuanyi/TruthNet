@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.api.v1.schemas.equity import (
+    DownstreamRelationDTO,
     EquityChainDTO,
     EquityEdgeDTO,
     EquityInsightDTO,
@@ -320,6 +321,78 @@ async def get_company_equity(
         logger.warning("equity_insights 构建失败: %s", exc, exc_info=True)
         data_warnings.append(f"股权隐含关系解读构建失败: {exc}")
 
+    # ── 8/23 会1 深化：下游（子公司/被投资企业）──
+    # direction=downstream depth=1（直接持股）；独立字段返回，不混入穿透图
+    # （中信证券等 1000+ 子节点会撑爆图渲染）。非上市公司被投资方名称取
+    # 图节点 label，上市公司统一替换为 MySQL 简称。
+    downstream_relations: list[DownstreamRelationDTO] = []
+    downstream_total = 0
+    if use_neo4j and graph is not None and graph.nodes:
+        try:
+            ds_graph = await adapter.get_graph(
+                company.wind_code,
+                depth=1,
+                as_of=norm_as_of,
+                graph_version=settings.GRAPH_VERSION,
+                direction="downstream",
+            )
+            target_id = company.entity_id
+            ds_edges = [e for e in ds_graph.edges if e.source == target_id]
+            downstream_total = len(ds_edges)
+            ds_nodes = {n.id: n for n in ds_graph.nodes}
+            ds_codes = sorted(
+                {
+                    n.wind_code
+                    for n in ds_graph.nodes
+                    if n.wind_code
+                    and re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", n.wind_code)
+                }
+            )
+            ds_name_map: dict[str, str] = {}
+            if ds_codes:
+                try:
+                    from sqlalchemy import text
+
+                    from app.domain.finance._fetch import _get_engine
+
+                    _ph = ",".join([f":c{i}" for i in range(len(ds_codes))])
+                    _params = {f"c{i}": c for i, c in enumerate(ds_codes)}
+                    with _get_engine().connect() as _conn:
+                        _rows = _conn.execute(
+                            text(
+                                "SELECT wind_code, sec_name FROM companies "
+                                f"WHERE wind_code IN ({_ph})"
+                            ),
+                            _params,
+                        ).fetchall()
+                    ds_name_map = {str(r[0]): str(r[1]) for r in _rows if r[1]}
+                except Exception:  # noqa: BLE001 — 名称替换失败不阻断
+                    logger.warning(
+                        "equity: 下游公司名映射失败，回退图节点 label", exc_info=True
+                    )
+            for e in ds_edges[:50]:
+                node = ds_nodes.get(e.target)
+                wc = (node.wind_code if node else "") or ""
+                label = (node.label if node else "") or ""
+                name = (
+                    ds_name_map.get(wc)
+                    or (label if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", label) else "")
+                    or wc
+                    or e.target
+                )
+                downstream_relations.append(
+                    DownstreamRelationDTO(
+                        entity_id=e.target,
+                        wind_code=wc,
+                        sec_name=name,
+                        ownership_pct=e.ownership_pct,
+                        relation=e.relation,
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 — 下游查询失败不影响主图
+            logger.warning("equity: 下游查询失败: %s", exc, exc_info=True)
+            data_warnings.append("下游（子公司/被投资企业）查询失败")
+
     # 8.09 审查：路径截断时如实标记 partial + PATH_LIMIT_REACHED
     truncated = bool(getattr(graph, "truncated", False))
     if truncated:
@@ -356,6 +429,8 @@ async def get_company_equity(
             max_observed_hops=getattr(graph, "max_observed_hops", 0),
             truncated=truncated,
             coverage_note=getattr(graph, "coverage_note", "") or "",
+            downstream_relations=downstream_relations,
+            downstream_total=downstream_total,
         ),
         meta=ApiMeta(
             request_id=trace_id,

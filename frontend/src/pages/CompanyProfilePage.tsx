@@ -60,6 +60,7 @@ import { FinanceTrendOverview } from '@/components/truthnet/FinanceTrendOverview
 import { ExportSnapshotButton } from '@/components/ExportSnapshotButton';
 
 import { Skeleton } from '@/components/ui/skeleton';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskResponseData, RiskLevel, FinanceRuleItem, TimelineEvent, EventCluster, RiskEvidence, EvidenceCategory, Company, DerivationChain, ImpactAdviceData, DataQuality } from '@/types/truthnet';
 
 // 证据按来源分组工具函数
@@ -834,7 +835,9 @@ export default function CompanyProfilePage() {
                     <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
                     <span>{impactAdvice.evidence_count} 条可回查证据</span>
                   </div>
-                  <p className="text-sm leading-6 text-foreground">{impactAdvice.overall_advice}</p>
+                  {/* 8/23 可读性：LLM 输出为 Markdown 分节（**小节名**），
+                      渲染为加粗小节 + 独立行 */}
+                  <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground" />
                 </div>
                 {impactAdvice.segments.map((segment, index) => (
                   <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
@@ -937,40 +940,35 @@ export default function CompanyProfilePage() {
                   {configError && (
                     <p className="mb-2 text-xs text-destructive">{configError}</p>
                   )}
+                  {/* 8/23 可读性：修改效果说明 */}
+                  <p className="mb-3 rounded-md border border-dashed border-border/60 bg-background/40 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                    这里列出全部 7 条反欺诈规则的判定参数（即「什么情况算触发预警」的临界值）。
+                    修改后点击「保存并刷新」，财务异常、风险评分与影响建议将按新参数重新计算；
+                    点击「重置」恢复系统默认值。绿色徽标=已触发，灰色=未触发，橙色=数据不足。
+                  </p>
                   <div className="space-y-3">
-                    {ruleDefinitions
-                      .filter(def => triggeredRules.some(r => r.rule_id === def.rule_id))
-                      .map(def => {
-                        const rule = triggeredRules.find(r => r.rule_id === def.rule_id);
-                        return (
-                          <div key={def.rule_id} className="rounded-md border border-border/60 bg-background/60 p-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium">{def.name}</span>
-                                <span className="text-xs text-muted-foreground">{def.rule_id}</span>
-                              </div>
-                              {rule && (
-                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getRiskBadgeStyle(rule.severity)}`}>
-                                  {rule.status}
+                    {/* 8/23：配置区显示全部规则（参数决定触发阈值，不只显示已触发）；
+                        触发状态以徽标标注 */}
+                    {ruleDefinitions.map(def => {
+                      const rule = financialAnomalies.find(r => r.rule_id === def.rule_id);
+                      return (
+                        <div key={def.rule_id} className="rounded-md border border-border/60 bg-background/60 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">{def.name}</span>
+                              <span className="text-xs text-muted-foreground">{def.rule_id}</span>
+                            </div>
+                            {rule ? (
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getRiskBadgeStyle(rule.severity || 'unknown')}`}>
+                                {rule.status}
+                                </span>
+                              ) : (
+                                <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-gray-500/10 text-gray-600">
+                                  未执行
                                 </span>
                               )}
                             </div>
                             {def.description && <p className="mt-1 text-xs text-muted-foreground">{def.description}</p>}
-                            {def.parameters.length > 0 && (
-                              <div className="mt-2 space-y-1.5">
-                                {def.parameters.map(p => (
-                                  <div key={p.key} className="flex items-center justify-between text-xs">
-                                    <span className="text-muted-foreground">
-                                      {p.key}
-                                      {p.description ? `（${p.description}）` : ''}
-                                    </span>
-                                    <span className="font-medium">
-                                      {p.value != null ? `${p.value}${p.unit ? ` ${p.unit}` : ''}` : '—'}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                             {Object.keys(def.thresholds).length > 0 && (
                               <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                                 {Object.entries(def.thresholds).map(([k]) => {
@@ -980,12 +978,11 @@ export default function CompanyProfilePage() {
                                       key={k}
                                       className="flex items-center justify-between gap-2 rounded border border-border/60 bg-background px-2 py-1"
                                     >
-                                      <span
-                                        className="min-w-0 text-[11px] text-muted-foreground truncate"
-                                        title={param?.description}
-                                      >
-                                        {k}
-                                        {param?.description ? `（${param.description}）` : ''}
+                                      <span className="min-w-0 flex-1" title={param?.description || k}>
+                                        <span className="block truncate text-xs text-foreground">
+                                          {param?.description || k}
+                                        </span>
+                                        <span className="block text-[10px] text-muted-foreground">{k}</span>
                                       </span>
                                       <span className="flex items-center gap-1 shrink-0">
                                         <input
@@ -1138,7 +1135,11 @@ export default function CompanyProfilePage() {
                   <EquityInsight equityData={equityData} />
                 </div>
                 <div className="mt-4">
-                  <UpstreamDownstream equityData={equityData} />
+                  <UpstreamDownstream
+                    equityData={equityData}
+                    downstreamRelations={equityData.downstream_relations}
+                    downstreamTotal={equityData.downstream_total}
+                  />
                 </div>
               </>
             ) : (

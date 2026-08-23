@@ -135,6 +135,16 @@ class EquityInsightDTO(BaseModel):
     risk_level: str = Field(default="green", description="风险等级")
 
 
+class DownstreamRelationDTO(BaseModel):
+    """8/23 会1 深化：下游（子公司/被投资企业）直接持股关系."""
+
+    entity_id: str = Field(default="", description="被投资方实体 ID")
+    wind_code: str = Field(default="", description="被投资方证券代码（如为上市公司）")
+    sec_name: str = Field(default="", description="被投资方名称")
+    ownership_pct: float | None = Field(default=None, description="直接持股比例 (%)")
+    relation: str = Field(default="OWNS", description="关系类型")
+
+
 class EquityResponseData(BaseModel):
     """股权穿透响应数据."""
 
@@ -166,4 +176,11 @@ class EquityResponseData(BaseModel):
     coverage_note: str = Field(
         default="",
         description="覆盖说明：严格 4 跳+ 为 0 时如实说明，不推断不存在更深关系",
+    )
+    # 8/23 会1 深化：下游（子公司/被投资企业）——独立字段（不混入穿透图）
+    downstream_relations: list[DownstreamRelationDTO] = Field(
+        default_factory=list, description="下游直接持股关系（截断展示前 50 条）"
+    )
+    downstream_total: int = Field(
+        default=0, description="下游总数（截断前真实数量）"
     )

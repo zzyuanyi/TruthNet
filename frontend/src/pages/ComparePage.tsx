@@ -23,6 +23,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { truthnetAPI } from '@/lib/api-client';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 import type {
   BenchmarksResponseData,
   CompanyRiskSummary,
@@ -818,7 +819,8 @@ export default function ComparePage() {
                       <p className="text-sm text-destructive">{analysisError}</p>
                     ) : analysisData ? (
                       <div className="space-y-3">
-                        <p className="text-sm leading-6 text-foreground">{analysisData.overall}</p>
+                        {/* 8/23 可读性：LLM 对比分析为 Markdown 分节 */}
+                        <MarkdownRenderer content={analysisData.overall} className="text-sm leading-6 text-foreground" />
                         {analysisData.segments.map((seg, i) => {
                           const comp = analysisData.companies.find(c => c.wind_code === seg.company_code);
                           return (

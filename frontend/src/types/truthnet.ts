@@ -545,6 +545,18 @@ export interface EquityResponseData {
   coverage_note?: string;
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
+  // 8/23 会1 深化：下游（子公司/被投资企业）独立字段
+  downstream_relations?: DownstreamRelation[];
+  downstream_total?: number;
+}
+
+// 8/23 会1 深化：下游直接持股关系
+export interface DownstreamRelation {
+  entity_id: string;
+  wind_code: string;
+  sec_name: string;
+  ownership_pct: number | null;
+  relation: string;
 }
 
 // ============ 跨公司对比 (对齐 ComparisonsResponseData) ============
