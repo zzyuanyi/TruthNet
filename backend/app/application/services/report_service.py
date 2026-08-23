@@ -388,7 +388,7 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
         pick_trend_rules,
         risk_badge_drawing,
         trend_drawing,
-        trend_metric_name,
+        trend_title,
         truncate_holder,
     )
 
@@ -506,14 +506,14 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
                 pts = extract_trend_points(r)
                 if not pts:
                     continue
-                title = f"{trend_metric_name(r)}（{r.get('rule_id')}）"
+                title = trend_title(r)
                 cells.append(
                     trend_drawing(title, pts, str(r.get("severity") or "unknown"))
                 )
             for i in range(0, len(cells), 2):
                 row = cells[i : i + 2]
                 row = row + [Paragraph("", body)] * (2 - len(row))
-                t2 = Table([row], colWidths=[248, 248])
+                t2 = Table([row], colWidths=[238, 238])
                 t2.setStyle(
                     TableStyle(
                         [
