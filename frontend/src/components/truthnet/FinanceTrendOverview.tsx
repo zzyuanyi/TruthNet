@@ -2,7 +2,7 @@
 // 会4 补全：多指标 sparkline 总览，一眼看清核心指标跨期趋势
 
 import { useMemo } from 'react';
-import { Area, AreaChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react';
 import type { FinanceRuleItem } from '@/types/truthnet';
@@ -44,6 +44,13 @@ function formatValue(value: number, unit?: string): string {
   const digits = unit === 'ratio' ? 2 : unit === 'percent' || unit === 'percentage_point' || unit === 'days' ? 1 : 0;
   const u = unit ? (displayUnit[unit] ?? unit) : '';
   return `${value.toFixed(digits)}${u}`;
+}
+
+// 期次显示：20251231 → 2025-12；2025-12-31 → 2025-12（缩略图 tooltip 用短格式）
+function formatPeriod(period: string): string {
+  if (/^\d{8}$/.test(period)) return `${period.slice(0, 4)}-${period.slice(4, 6)}`;
+  if (/^\d{4}-\d{2}/.test(period)) return period.slice(0, 7);
+  return period;
 }
 
 const severityStroke: Record<string, string> = {
@@ -150,6 +157,8 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
                           <stop offset="95%" stopColor={color} stopOpacity={0} />
                         </linearGradient>
                       </defs>
+                      {/* 隐藏 XAxis：让 tooltip 按 period 取值而非数组索引（悬浮显示 0,1,2.. 的修复） */}
+                      <XAxis dataKey="period" hide />
                       <Tooltip
                         contentStyle={{
                           backgroundColor: 'hsl(var(--card))',
@@ -157,6 +166,7 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
                           borderRadius: 6,
                           fontSize: 12,
                         }}
+                        labelFormatter={(label) => formatPeriod(String(label ?? ''))}
                         formatter={(v: number | string) => [formatValue(Number(v), s.currentUnit), s.name]}
                       />
                       <Area
