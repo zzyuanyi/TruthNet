@@ -1,0 +1,37 @@
+========================================================================
+TruthNet 评测缺失指标补算 — 指标3/6
+========================================================================
+{
+  "3_entity_retention_rate": {
+    "total_labeled_turns": 30,
+    "correct": 23,
+    "rate": 0.7667,
+    "method": "逐轮判定：系统该轮 codes 是否包含 labels_77.json expected_company；分母=有主体标签的深度题轮次（多轮上下文执行），报错轮次计未保持"
+  },
+  "6_module_timeout_rate": {
+    "by_module": {
+      "finance": 0.0,
+      "equity": 0.0,
+      "events": 0.0,
+      "risk": 0.0
+    },
+    "module_duration_stats": {
+      "finance": {
+        "count": 6,
+        "avg_ms": 237.7,
+        "max_ms": 527
+      },
+      "events": {
+        "count": 7,
+        "avg_ms": 1.1,
+        "max_ms": 2
+      },
+      "equity": {
+        "count": 6,
+        "avg_ms": 200.0,
+        "max_ms": 200
+      }
+    },
+    "method": "目标行 module_status.duration_ms 与 deadline 基准比较（finance=3s / equity=4s / events=3s，V12 §13.2）"
+  }
+}

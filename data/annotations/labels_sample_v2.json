@@ -1,0 +1,70 @@
+{
+  "version": "1.0.0",
+  "date": "2026-08-22",
+  "sample_size": 10,
+  "selection_rule": "跨类别分层抽样：覆盖语义裁判四分类（正确/合理拒答/错误/部分正确；未抽取'无法核验'类）+ 正常分析/合理拒答/实体识别失败/答非所问/部分覆盖等行为模式",
+  "labeling_method": "人工复核 official_report_v1.txt 的 observed 系统输出，与题目意图对照判定",
+  "human_judge_agreement": "10/10",
+  "items": [
+    {
+      "source_row": 1115,
+      "human_label": "正确",
+      "human_reason": "开放式问题「岩山科技怎么看」，系统识别 002195.SZ，给出 R2 现金流-利润背离信号、黄色风险等级与数据对比，符合财务诊断意图，且挂 11 条证据。",
+      "judge_label": "正确"
+    },
+    {
+      "source_row": 1118,
+      "human_label": "正确",
+      "human_reason": "「天风证券监管问询点评」，系统给出 5 条监管处罚公告证据（日期/文号/证据ID，湖北局2项+福建局2项+纪律处分1项），完全切题且可追溯。",
+      "judge_label": "正确"
+    },
+    {
+      "source_row": 328,
+      "human_label": "正确",
+      "human_reason": "「买入赛诺医疗」虽含投资意图，系统合规地转为财务风险诊断（R5 毛利率异常、橙色等级、11 条证据），未给投资建议但完成了核心能力内的分析。",
+      "judge_label": "正确"
+    },
+    {
+      "source_row": 6,
+      "human_label": "合理拒答",
+      "human_reason": "「今天自选股涨最多？」无自选股列表且超出系统服务范围，系统明确声明范围并引导输入公司，未编造，拒答合理。",
+      "judge_label": "合理拒答"
+    },
+    {
+      "source_row": 841,
+      "human_label": "合理拒答",
+      "human_reason": "「寒武纪昨天涨停的原因」属行情因果归因，系统明确说明不接入该能力，未编造涨跌原因，符合能力边界。",
+      "judge_label": "合理拒答"
+    },
+    {
+      "source_row": 1123,
+      "human_label": "错误",
+      "human_reason": "「日出东方MACD分析」明确要技术分析（MACD），系统答非所问做财务规则分析输出「未发现异常信号」，未回应 MACD。",
+      "judge_label": "错误"
+    },
+    {
+      "source_row": 1128,
+      "human_label": "错误",
+      "human_reason": "「森马服饰5.00的本，目前适合补仓吗？」实体解析器已定位 002563.SZ（relation=ambiguous codes含002563.SZ），但最终答案却提示疑似公司「的本」，实体识别链路前后不一致，未服务到问题。",
+      "judge_label": "错误"
+    },
+    {
+      "source_row": 1130,
+      "human_label": "错误",
+      "human_reason": "「云赛智联的K线形态如何分析？」解析器定位 600602.SH，但答案误识别为「线形态」，实体识别错误导致完全未答。",
+      "judge_label": "错误"
+    },
+    {
+      "source_row": 1121,
+      "human_label": "部分正确",
+      "human_reason": "「华工科技的主力控盘度如何？」系统给出股权穿透分析与主要股东列表，但未直接回答「控盘度」这一核心，属于部分覆盖。",
+      "judge_label": "部分正确"
+    },
+    {
+      "source_row": 253,
+      "human_label": "部分正确",
+      "human_reason": "「宁德时代今天怎么样？」问的是行情表现，系统给出财务风险分析（R7 盈利质量、黄色），提供了可用信息但未回应行情诉求。",
+      "judge_label": "部分正确"
+    }
+  ]
+}

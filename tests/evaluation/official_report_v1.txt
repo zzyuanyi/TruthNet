@@ -1,0 +1,483 @@
+========================================================================
+TruthNet 官方问题语料分项评测 — v3.3.3 收口批次 E canary
+========================================================================
+{
+  "observation_count": 77,
+  "errors": 0,
+  "scored_count": 0,
+  "observed_only_count": 77,
+  "requires_reannotation": false,
+  "note": "data_status ∈ {verified, supported} 才计分；to_verify 样本只输出 observed（方案 §4.1），无可评分样本时不报告准确率",
+  "scoring": "无可评分样本（全部 to_verify），不输出任何准确率指标"
+}
+
+独立语义裁判（不写回 sidecar）：
+{
+  "total": 77,
+  "counts": {
+    "正确": 5,
+    "合理拒答": 58,
+    "部分正确": 3,
+    "错误": 10,
+    "无法核验": 1
+  },
+  "strict_accuracy": 0.06493506493506493,
+  "accepted_rate": 0.8181818181818182,
+  "usable_rate": 0.8571428571428571,
+  "note": "这是独立语义裁判估计，不是官方自动评分，也不写回 sidecar；to_verify 样本仍不进入 official_runner 的 scored_count。"
+}
+逐条语义裁判结果：
+{"source_row": 6, "classification": "合理拒答", "error_types": [], "reason": "问题要求今日自选股涨幅排名，但未提供自选股列表，系统明确说明服务范围，拒答合理。"}
+{"source_row": 9, "classification": "正确", "error_types": [], "reason": "问题询问最新研报，系统提供了三份研报摘要并注明日期，满足要求。"}
+{"source_row": 10, "classification": "合理拒答", "error_types": [], "reason": "问题未指定具体股票或范围，系统说明服务边界，拒答合理。"}
+{"source_row": 325, "classification": "合理拒答", "error_types": [], "reason": "问题'ai盯盘'非有效公司查询，系统提示无法识别，属合理拒答。"}
+{"source_row": 326, "classification": "合理拒答", "error_types": [], "reason": "问题'ai看基金'非有效公司查询，系统提示无法识别，属合理拒答。"}
+{"source_row": 327, "classification": "合理拒答", "error_types": [], "reason": "问题'ai午报'非有效公司查询，系统提示无法识别，属合理拒答。"}
+{"source_row": 328, "classification": "正确", "error_types": [], "reason": "问题'买入赛诺医疗'，系统识别公司并完成财务风险分析，提供相关证据，满足要求。"}
+{"source_row": 329, "classification": "合理拒答", "error_types": [], "reason": "问题'ai盯股'非有效公司查询，系统提示无法识别，属合理拒答。"}
+{"source_row": 330, "classification": "合理拒答", "error_types": [], "reason": "系统明确说明不支持自选股功能，并引导用户输入公司或代码，属于能力范围外拒答，无编造。"}
+{"source_row": 331, "classification": "合理拒答", "error_types": [], "reason": "系统识别出疑似实体“我的自选”但无法确认，请用户提供完整名称，未编造答案，属合理拒答。"}
+{"source_row": 335, "classification": "合理拒答", "error_types": [], "reason": "系统误识别“自选中”为疑似公司，但无法确认，引导用户提供完整信息，未编造，属合理拒答。"}
+{"source_row": 336, "classification": "合理拒答", "error_types": [], "reason": "系统明确超出服务范围，未提供异动数据，但解释了边界，无编造。"}
+{"source_row": 557, "classification": "合理拒答", "error_types": [], "reason": "全市场异动超出服务范围，系统明确拒答并说明能力边界，无编造。"}
+{"source_row": 558, "classification": "合理拒答", "error_types": [], "reason": "大宗交易市场情况超出服务范围，系统明确拒答并说明边界，无编造。"}
+{"source_row": 559, "classification": "无法核验", "error_types": [], "reason": "问题依赖当日实时行情，系统未获取到数据，无法判断是外部数据问题还是系统缺陷，且答案未编造。"}
+{"source_row": 560, "classification": "合理拒答", "error_types": [], "reason": "自选股关联行业超出服务范围，系统明确拒答并引导输入具体公司或行业，无编造。"}
+{"source_row": 561, "classification": "合理拒答", "error_types": [], "reason": "问题涉及自选股最新资讯，超出系统服务能力，系统明确说明服务范围并引导用户输入具体公司或代码，未编造数据。"}
+{"source_row": 562, "classification": "合理拒答", "error_types": [], "reason": "问题涉及自选股综合表现，超出系统服务能力，系统明确说明服务范围并引导用户输入具体公司或代码，未编造数据。"}
+{"source_row": 563, "classification": "合理拒答", "error_types": [], "reason": "问题涉及自选股研报，超出系统服务能力，系统明确说明服务范围并引导用户输入具体公司或代码，未编造数据。"}
+{"source_row": 564, "classification": "合理拒答", "error_types": [], "reason": "问题涉及龙虎榜，超出系统服务能力，系统明确说明服务范围并引导用户输入具体公司或代码，未编造数据。"}
+{"source_row": 565, "classification": "合理拒答", "error_types": [], "reason": "问题询问自选股数量，属于用户个人持仓信息，系统无法访问，明确拒答并说明服务范围，未编造。"}
+{"source_row": 566, "classification": "合理拒答", "error_types": [], "reason": "问题询问自选股列表，属于用户个人持仓信息，系统无法访问，明确拒答并说明服务范围，未编造。"}
+{"source_row": 600, "classification": "错误", "error_types": ["实体识别错误"], "reason": "问题是对系统功能的批评，并非询问具体公司或股票，系统错误地将其识别为实体查询，并给出了不相关的回应。"}
+{"source_row": 601, "classification": "合理拒答", "error_types": [], "reason": "问题涉及自选股行业关注，属于个人投资组合分析，超出系统服务能力，系统明确拒答并说明服务范围，未编造。"}
+{"source_row": 604, "classification": "合理拒答", "error_types": [], "reason": "问题不是可执行的金融查询，系统识别为疑似公司名但无法确认，要求提供完整名称或代码，属于合理拒答。"}
+{"source_row": 605, "classification": "合理拒答", "error_types": [], "reason": "问题关于军工行业上涨对策，属于研报查询，系统明确说明未找到匹配研报并建议补充信息，未编造内容，属合理拒答。"}
+{"source_row": 606, "classification": "合理拒答", "error_types": [], "reason": "问题涉及龙虎榜操作策略，超出服务范围，系统明确说明边界并引导用户，属合理拒答。"}
+{"source_row": 23, "classification": "合理拒答", "error_types": [], "reason": "问题关于自选股表现，超出服务范围，系统明确说明边界并引导用户，属合理拒答。"}
+{"source_row": 25, "classification": "合理拒答", "error_types": [], "reason": "问题关于持仓股表现，系统识别为疑似公司名但无法确认，要求提供完整名称或代码，属合理拒答。"}
+{"source_row": 26, "classification": "合理拒答", "error_types": [], "reason": "问题询问亨迪药业表现和趋势，系统识别疑似公司但无法确认，要求提供完整名称或代码，属合理拒答。"}
+{"source_row": 826, "classification": "合理拒答", "error_types": [], "reason": "问题询问可买入的人形机器人股票，系统明确拒绝提供投资建议，并说明可提供客观信息，符合规定，属合理拒答。"}
+{"source_row": 827, "classification": "错误", "error_types": ["未回答投资建议"], "reason": "问题要求买入国金证券，系统识别为财务诊断并提供分析，但未直接回绝投资建议，也未给出买入与否的明确结论，只输出财务分析，与问题意图不符，属于错误。"}
+{"source_row": 828, "classification": "部分正确", "error_types": ["缺少重要结果"], "reason": "答案提供了详尽的财务风险分析，但未直接评价寒武纪的整体情况（如投资价值、风险等级），而是侧重风险信号，且未给出明确的投资建议或综合评价。"}
+{"source_row": 829, "classification": "合理拒答", "error_types": [], "reason": "用户问题涉及非特定公司或主题，系统未识别具体实体，明确说明无法处理，符合能力范围。"}
+{"source_row": 830, "classification": "合理拒答", "error_types": [], "reason": "系统明确表示不推荐股票，但可分析指定公司，用户未提供具体标的，拒答合理。"}
+{"source_row": 841, "classification": "合理拒答", "error_types": [], "reason": "系统明确说明不接入行情因果归因，无法确认涨跌原因，未编造事实。"}
+{"source_row": 842, "classification": "合理拒答", "error_types": [], "reason": "同841，系统能力限制导致拒答，符合合理拒答标准。"}
+{"source_row": 845, "classification": "合理拒答", "error_types": [], "reason": "系统未找到匹配研报，明确说明数据覆盖不足，未编造信息。"}
+{"source_row": 846, "classification": "合理拒答", "error_types": [], "reason": "同845，数据覆盖不足，合理拒答。"}
+{"source_row": 847, "classification": "合理拒答", "error_types": [], "reason": "系统明确不支持指数等行情，拒答合理，且未提供误导信息。"}
+{"source_row": 848, "classification": "合理拒答", "error_types": [], "reason": "问题询问市场情况，系统服务范围限制，明确说明无法服务，属于合理拒答。"}
+{"source_row": 953, "classification": "合理拒答", "error_types": [], "reason": "系统明确说明未获取到行情数据，无法可靠回答，未编造数据，属于合理拒答。"}
+{"source_row": 965, "classification": "合理拒答", "error_types": [], "reason": "系统明确说明未获取到行情数据，无法可靠回答，未编造数据，属于合理拒答。"}
+{"source_row": 1096, "classification": "合理拒答", "error_types": [], "reason": "问题关于自选股强势股数据，属于系统不支持的服务范围，系统明确说明，属于合理拒答。"}
+{"source_row": 1115, "classification": "正确", "error_types": [], "reason": "问题要求综合分析，系统提供了详细的财务分析、风险信号和证据，满足问题要求。"}
+{"source_row": 1116, "classification": "合理拒答", "error_types": [], "reason": "问题询问走势分析，系统说明不接入行情因果归因，无法确认原因，属于合理拒答。"}
+{"source_row": 1117, "classification": "合理拒答", "error_types": [], "reason": "问题询问分时K线信号，系统未能识别公司名称，明确说明无法识别，属于合理拒答。"}
+{"source_row": 1118, "classification": "正确", "error_types": [], "reason": "问题询问监管问询点评，系统提供了相关公告事件证据，满足要求。"}
+{"source_row": 1119, "classification": "合理拒答", "error_types": [], "reason": "问题询问雷柏科技的近期走势，系统明确说明当前只支持可识别的单只A股行情快照，未覆盖该指标，属于能力边界，未编造信息。"}
+{"source_row": 1120, "classification": "合理拒答", "error_types": [], "reason": "问题要求嘉麟杰最新季度单季度净利润看点解读，系统识别出公司代码并说明数据不足，无法按母公司口径计算，明确边界，未编造。"}
+{"source_row": 1121, "classification": "部分正确", "error_types": ["信息不足", "答非所问"], "reason": "问题询问主力控盘度，系统提供了股权穿透分析、主要股东信息和风险等级，但未直接回答控盘度，且数据覆盖有限，结论不明确。"}
+{"source_row": 1122, "classification": "合理拒答", "error_types": [], "reason": "问题询问量价关系是否显示主力意图，系统明确说明当前数据覆盖范围不支持该查询，无法可靠返回指标，未编造。"}
+{"source_row": 1123, "classification": "错误", "error_types": ["答非所问", "使用了无关指标"], "reason": "问题要求MACD分析，系统却进行财务分析并输出大量财务指标信号，未回答MACD相关内容，完全偏离问题。"}
+{"source_row": 1124, "classification": "错误", "error_types": ["实体识别错误", "未解答问题"], "reason": "问题询问双环传动浮盈17个点是否继续持有，系统错误识别实体为『个点』『持有』，未提供任何有用信息，未涉及双环传动。"}
+{"source_row": 1125, "classification": "正确", "error_types": [], "reason": "问题询问超长线投资价值，系统基于财务与公告提供了风险信号、综合风险等级和具体数据，虽未给出明确投资建议，但符合分析类问题的要求。"}
+{"source_row": 1126, "classification": "合理拒答", "error_types": [], "reason": "问题询问连云港的主力资金流向，系统明确说明当前数据覆盖范围不支持该查询，无法可靠返回指标，未编造。"}
+{"source_row": 1127, "classification": "合理拒答", "error_types": [], "reason": "系统明确说明不提供投资建议，符合合规要求，属于合理拒答。"}
+{"source_row": 1128, "classification": "错误", "error_types": ["实体识别错误"], "reason": "系统未能正确识别公司名称“森马服饰”，答案给出错误提示，未满足用户问题。"}
+{"source_row": 1129, "classification": "错误", "error_types": ["实体识别错误"], "reason": "系统未能识别公司“德瑞锂电”，答案给出错误提示，未满足用户问题。"}
+{"source_row": 1130, "classification": "错误", "error_types": ["实体识别错误"], "reason": "系统未能正确识别公司“云赛智联”，答案错误地提示“线形态”为疑似公司，未满足用户问题。"}
+{"source_row": 1168, "classification": "错误", "error_types": ["实体识别错误"], "reason": "问题未指定公司，系统却提示疑似公司“横盘”，未满足用户对横盘股票查询的需求。"}
+{"source_row": 1169, "classification": "错误", "error_types": ["实体识别错误"], "reason": "问题要求列举股票，系统未能正确理解意图，提示疑似公司“列举”“横盘”等，未满足用户需求。"}
+{"source_row": 1170, "classification": "错误", "error_types": ["答非所问", "数据缺失"], "reason": "问题询问哪些股票近22天涨跌幅很小，系统却回答亿联网络的行情数据，未给出股票列表。"}
+{"source_row": 1186, "classification": "合理拒答", "error_types": [], "reason": "系统明确说明当前数据覆盖范围内未找到匹配研报，没有编造，属于合理拒答。"}
+{"source_row": 1195, "classification": "合理拒答", "error_types": [], "reason": "问题要求固态电池新产品信息，属于行业研报范畴，系统明确指出数据覆盖范围内未找到匹配研报，未编造信息，拒答合理。"}
+{"source_row": 1248, "classification": "合理拒答", "error_types": [], "reason": "问题询问自选股表现，属于市场行情查询，系统明确说明服务范围限制并引导输入公司名称或代码，未编造数据，拒答合理。"}
+{"source_row": 241, "classification": "合理拒答", "error_types": [], "reason": "问题询问龙虎榜，系统明确说明服务范围限制并引导输入公司名称或代码，未编造数据，拒答合理。"}
+{"source_row": 242, "classification": "合理拒答", "error_types": [], "reason": "问题涉及个人（周杰伦）炒股，系统未识别为公司，明确要求提供完整名称或代码，未编造数据，拒答合理。"}
+{"source_row": 243, "classification": "合理拒答", "error_types": [], "reason": "问题询问龙虎榜股票列表，系统明确说明服务范围限制，未编造数据，拒答合理。"}
+{"source_row": 244, "classification": "合理拒答", "error_types": [], "reason": "问题询问未来上榜机会，属于预测性查询，系统未识别公司，明确要求提供完整名称或代码，未编造数据，拒答合理。"}
+{"source_row": 245, "classification": "合理拒答", "error_types": [], "reason": "问题询问概念股跌幅，系统明确说明服务范围限制，未编造数据，拒答合理。"}
+{"source_row": 246, "classification": "合理拒答", "error_types": [], "reason": "问题询问市场表现，系统未识别公司，明确要求提供完整名称或代码，未编造数据，拒答合理。"}
+{"source_row": 247, "classification": "合理拒答", "error_types": [], "reason": "问题要求筛选放量上涨的股票，属于板块/多股票行情查询，超出系统仅支持单只A股行情快照的范围，系统明确说明了边界且未编造数据。"}
+{"source_row": 248, "classification": "合理拒答", "error_types": [], "reason": "问题询问个股换手率，属于行情类指标，但系统声称仅支持财务勾稽等，未覆盖该指标，明确拒答且说明范围，未编造数据。"}
+{"source_row": 249, "classification": "合理拒答", "error_types": [], "reason": "问题涉及自选股组合的行情筛选，超出系统服务范围（财务核查等），系统明确拒答并说明服务边界，未编造数据。"}
+{"source_row": 252, "classification": "合理拒答", "error_types": [], "reason": "问题要求自选股异动，属于多股票行情监控，系统未覆盖该功能，明确拒答并说明服务范围，未编造数据。"}
+{"source_row": 253, "classification": "部分正确", "error_types": ["未满足问题要求"], "reason": "系统对宁德时代进行了财务风险分析并给出部分结论，但问题询问的是行情表现（今天怎么样），系统未提供行情信息，只回应了财务核查内容，未能回答用户实际诉求。"}
+
+逐条 observed（人工核验依据，不写回 sidecar）：
+------------------------------------------------------------------------
+[row 6 | s1/t6 | comparison | status=to_verify] q=今天自选股涨最多？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 9 | s1/t9 | comparison | status=to_verify] q=市场最新研报有哪些？
+    relation=no_company codes=[] intent=research scope= mode= metrics=[] indicator= claims=3 evidence=3
+    answer=当前问题未指定具体公司，以下是相关研报观点摘要：| 日期 | 机构 / 研报 | 核心观点 |
+|---|---|---|
+| 2026-05-23 | 兴业证券 · 今世缘（603369）：拐点渐明，蓄力向上 | 投资要点：报表降速释压，经营质量边际改善。Q1公司收入同比下滑15%，降幅环比25Q4收窄，其中淡雅受益于大众宴席场景恢复、表现较好，而四开、V系有所承压。随着近期白酒消费进入淡季，公司渠道动销预计平稳过渡，当前库存处于合理水平，在去年二季度报表低基数下，经营势头有望环比改善。分 |
+| 2026-05-19 | 国泰海通证券 · 新产业（300832）：2025A&2026Q1业绩点评：国内试剂增速回升，海外试剂增长稳健 | 维持增持评级。考虑国内和海外业务恢复节奏，下调2026~2027年EPS 预测至2.30/2.76元（原为2.57/3.10元），预测2028年EPS为3.30元，参考可比公司估值，考虑公司是免疫诊断行业龙头，海外市场布局领先，全球市场份额有较大提升空间，给予2026年PE 25 |
+| 2026-05-19 | 华源证券 · 凯格精机（301338）：——主业持续向好，新业务多点开花：凯格精机（301338.SZ） | 事件：公司发布2025年年报和2026年一季报，2025年实现营业收入11.56亿元，同比+34.93%，归母净利润1.87亿元，同比+164.8%，扣非归母净利润1.82亿元，同比+186.17%。其中四季度收入3.81亿元，同比+36.42%，归母净利润0.65亿元，同比+1 |。如需针对某家公司分析，请提供公司名称或股票代码。
+[row 10 | s1/t10 | general | status=to_verify] q=跌最狠的是哪一只
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 325 | s11/t38 | general | status=to_verify] q=ai盯盘
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「盯盘」但未能识别，请提供完整名称或股票代码。
+[row 326 | s11/t39 | general | status=to_verify] q=ai看基金
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「看基金」但未能识别，请提供完整名称或股票代码。
+[row 327 | s11/t40 | general | status=to_verify] q=ai午报
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「午报」但未能识别，请提供完整名称或股票代码。
+[row 328 | s11/t41 | general | status=to_verify] q=买入赛诺医疗
+    relation=single codes=['688108.SH'] intent=diagnose scope= mode= metrics=[] indicator= claims=2 evidence=11
+    answer=赛诺医疗（688108.SH）综合分析完成，基于母公司报表及当前数据覆盖，共检测到 1 项风险信号。
+
+财务维度检测到 1 项规则信号（R5）；综合风险等级：橙色。
+
+【综合观察】当前可确认信号主要集中在财务维度，尚未形成多模块一致指向。
+
+触发规则明细：R5 毛利率/费用率异常（中风险）：gross_margin 62.9%、gm_deviation 10.6pp、er_deviation -4.3pp。
+
+【预警点】R5：毛利率（+10.6pp）明显偏离历史水平，建议关注。。
+
+【数据对比】
+
+| 指标 | 数值 | 单位 |
+|---|---:|---|
+| gross_margin | 62.9% | % |
+| gm_deviation | 10.6pp | pp |
+| er_deviation | -4.3pp | pp |
+
+【可能模式】当前规则组合未匹配预定义模式，需进一步验证。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）。
+
+【重要说明】规则信号不等同于造假事实认定，需结合审计和监管文件核验，不构成投资建议。
+[row 329 | s11/t42 | general | status=to_verify] q=ai盯股
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「盯股」但未能识别，请提供完整名称或股票代码。
+[row 330 | s11/t43 | market_query | status=to_verify] q=自选股的行业走势怎样？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 331 | s11/t44 | market_query | status=to_verify] q=分析我的自选
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「我的自选」但未能识别，请提供完整名称或股票代码。
+[row 335 | s11/t48 | market_query | status=to_verify] q=自选中个股分析
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「自选中」但未能识别，请提供完整名称或股票代码。
+[row 336 | s11/t49 | comparison | status=to_verify] q=今天自选股有哪些异动？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 557 | s16/t1 | market_query | status=to_verify] q=全市场异动
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 558 | s16/t2 | market_query | status=to_verify] q=今天大宗交易市场是什么情况
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 559 | s16/t3 | general | status=to_verify] q=平安银行今日是涨还是跌
+    relation=single codes=['000001.SZ'] intent=market_quote scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前未获取到平安银行（000001.SZ）可回查的行情数据，无法可靠回答涨跌幅。
+[row 560 | s16/t4 | equity_analysis | status=to_verify] q=自选股关联行业
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 561 | s16/t5 | market_query | status=to_verify] q=自选股最新资讯
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 562 | s16/t6 | market_query | status=to_verify] q=今天自选股综合表现
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 563 | s16/t7 | market_query | status=to_verify] q=自选股研报
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 564 | s16/t8 | market_query | status=to_verify] q=今日市场咯龙虎榜
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 565 | s16/t9 | market_query | status=to_verify] q=我有几只自选股
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 566 | s16/t10 | comparison | status=to_verify] q=我的自选股有哪些
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 600 | s16/t44 | market_query | status=to_verify] q=你这自选日报小助手只会找数据，不会说对策有什么意义
+    relation=ambiguous codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「你这自选日报小助手只会找数据」「不会说对策有」「意义」但未能识别，请提供完整名称或股票代码。
+[row 601 | s16/t45 | comparison | status=to_verify] q=自选股中哪些行业值得关注？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 604 | s16/t48 | general | status=to_verify] q=你不能提供策略吗
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「你不能提供策略」但未能识别，请提供完整名称或股票代码。
+[row 605 | s16/t49 | general | status=to_verify] q=针对军工行业上涨有何对策
+    relation=no_company codes=[] intent=research scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围内未找到与该主题匹配且可回查的研报。请补充更具体的行业、公司名称或研报关键词后重试。
+[row 606 | s16/t50 | market_query | status=to_verify] q=龙虎榜上榜自选股操作策略
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 23 | s2/t11 | market_query | status=to_verify] q=自选股今日表现如何？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 25 | s2/t13 | general | status=to_verify] q=我的持仓股今日表现怎样？
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「我的持仓股今日」但未能识别，请提供完整名称或股票代码。
+[row 26 | s2/t14 | general | status=to_verify] q=亨迪药业表现如何 明天趋势
+    relation=ambiguous codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「亨迪药业」「明天」但未能识别，请提供完整名称或股票代码。
+[row 826 | s22/t23 | general | status=to_verify] q=人形机器人那些股可以买
+    relation=no_company codes=[] intent=investment_advice scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=系统不提供是否买入或卖出的投资建议。可以查询客观行情，或核查财务、股权与公告风险后自行判断。
+[row 827 | s22/t24 | general | status=to_verify] q=买入国金证券
+    relation=single codes=['600109.SH'] intent=diagnose scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=国金证券（600109.SH）在母公司报表及当前数据覆盖范围内，财务规则因不适用/数据不足未产出有效信号，未发现可确认的异常信号。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；COMPANY_TYPE_FINANCIAL_EXCLUDED；财务规则因数据不足/不适用未产出有效信号（statement_scope/coverage 见各规则 quality）；模块 finance 状态: partial；模块 events 状态: partial。
+[row 828 | s22/t25 | general | status=to_verify] q=寒武纪怎么样
+    relation=single codes=['688256.SH'] intent=diagnose scope= mode= metrics=[] indicator= claims=6 evidence=16
+    answer=寒武纪（688256.SH）综合分析完成，基于母公司报表及当前数据覆盖，共检测到 5 项风险信号。
+
+财务维度检测到 5 项规则信号（R2、R4、R5、R6、R7）；综合风险等级：红色。
+
+【简要分析】寒武纪整体判断：偏谨慎，建议重点核验财务、股权和舆情是否同向；数据截止日 2025-12-31；财务信号 5 项（R2、R4、R5）。
+
+【综合观察】当前可确认信号主要集中在财务维度，尚未形成多模块一致指向。
+
+触发规则明细：R2 现金流–利润背离（关注）：现金流/利润比 -2.194、连续负现金流季度 1个季度；R4 存货–营收背离（关注）：存货同比增速 2522.6%、营业收入同比 652.9%、增速差距 1869.7pp；R5 毛利率/费用率异常（中风险）：gross_margin 45.7%、gm_deviation -4.4pp、er_deviation -20101.9pp；R6 其他应收款与关联占用风险（高风险）：其他应收款占总资产 10.4%、存在大额其他应收款：是、其他应收款同比 -42.2%、其他应收款/应收账款 2.4；R7 盈利质量与非经常性依赖（关注）：净利润同比 410.8%、营收增速差 -242.1pp。
+
+【预警点】R2：本期经营现金流为负，与正利润背离，建议关注（数据期：2025-12-31，母公司报表）。；R4：存货增速快于营收增速（增速差 1869.7%），建议持续关注（数据期：2025-12-31，母公司报表）。；R5：毛利率（-4.4pp）明显偏离历史水平，建议关注。；R6：其他应收款占总资产 10.4%，同比增速 -42.2%，金额 15.3 亿元，可能存在关联方资金占用（数据期：2025-12-31，母公司报表）。；R7：净利润增速与现金流/营收增速存在背离，建议关注（数据期：2025-12-31，母公司报表）。。
+
+【数据对比】
+
+| 指标 | 数值 | 单位 |
+|---|---:|---|
+| 现金流/利润比 | -2.194 | 比值 |
+| 连续负现金流季度 | 1个季度 | 个季度 |
+| 存货同比增速 | 2522.6% | % |
+| 营业收入同比 | 652.9% | % |
+| 增速差距 | 1869.7pp | pp |
+| gross_margin | 45.7% | % |
+| gm_deviation | -4.4pp | pp |
+| er_deviation | -20101.9pp | pp |
+| 其他应收款占总资产 | 10.4% | % |
+| 存在大额其他应收款 | 是 | bool |
+| 其他应收款同比 | -42.2% | % |
+| 其他应收款/应收账款 | 2.4 | 比值 |
+| 净利润同比 | 410.8% | % |
+| 营收增速差 | -242.1pp | pp |
+
+【可能模式】利润调节型（medium），阶段：利润结构异常信号已检测，替代解释：毛利率异常可能源于真实技术突破、产品结构升级或合理的资产处置，扣非占比变化未必构成利润调节，监管提示：建议核查毛利率与行业趋势的偏离、非经常性损益明细；结合审计意见与监管文件进一步核验，不构成法律定罪结论；综合粉饰型（high），阶段：多维度信号叠加已检测，替代解释：多条规则同时触发可能源于行业特性或数据口径差异，系统性能度信号需结合事件/股权综合验证，监管提示：建议对各触发科目逐项核查并评估行业基准；结合公告、审计意见与监管文件进一步核验，不构成法律定罪结论。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；st_borrow 覆盖率仅 38%（有效 3/8 期）；lt_borrow 覆盖率仅 0%（有效 0/8 期）；net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）；扣非净利润字段不可用，使用简化版判断（上限 orange）。
+
+【重要说明】规则信号不等同于造假事实认定，需结合审计和监管文件核验，不构成投资建议。
+[row 829 | s22/t26 | comparison | status=to_verify] q=人形机器人有哪些投资机会
+    relation=ambiguous codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「人形机器人」「投资机会」但未能识别，请提供完整名称或股票代码。
+[row 830 | s22/t27 | comparison | status=to_verify] q=短期内有哪些看好的板块
+    relation=no_company codes=[] intent=guide scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=我不直接推荐股票，但可以核查你指定上市公司的财务、股权与公告风险。请提供公司名称或股票代码，例如“分析康美药业”或“600518”。
+[row 841 | s22/t38 | market_query | status=to_verify] q=寒武纪昨天涨停的原因
+    relation=single codes=['688256.SH'] intent=causal_query scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前系统不接入行情价格因果归因，无法仅凭财报、股权和公告模块确认这次涨跌原因。
+[row 842 | s22/t39 | market_query | status=to_verify] q=长城证券涨停的原因
+    relation=single codes=['002939.SZ'] intent=causal_query scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前系统不接入行情价格因果归因，无法仅凭财报、股权和公告模块确认这次涨跌原因。
+[row 845 | s22/t42 | comparison | status=to_verify] q=最近有哪些热门行业版
+    relation=no_company codes=[] intent=research scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围内未找到与该主题匹配且可回查的研报。请补充更具体的行业、公司名称或研报关键词后重试。
+[row 846 | s22/t43 | comparison | status=to_verify] q=短期内有哪些看好的板块
+    relation=no_company codes=[] intent=research scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围内未找到与该主题匹配且可回查的研报。请补充更具体的行业、公司名称或研报关键词后重试。
+[row 847 | s22/t44 | market_query | status=to_verify] q=帮助分析下大盘走势
+    relation=ambiguous codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前只支持可识别的单只 A 股行情快照，未覆盖板块、指数、期货、基金的行情，也不提供交易建议或市场资金流数据。
+[row 848 | s22/t45 | market_query | status=to_verify] q=今天大宗交易市场是什么情况
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 953 | s25/t5 | market_query | status=to_verify] q=002932近一周涨跌幅
+    relation=single codes=['002932.SZ'] intent=market_quote scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前未获取到*ST明德（002932.SZ）可回查的行情数据，无法可靠回答涨跌幅。
+[row 965 | s25/t17 | market_query | status=to_verify] q=002392近一周涨跌幅
+    relation=single codes=['002392.SZ'] intent=market_quote scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前未获取到北京利尔（002392.SZ）可回查的行情数据，无法可靠回答涨跌幅。
+[row 1096 | s29/t10 | comparison | status=to_verify] q=自选股有哪些强势股数据？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 1115 | s30/t1 | general | status=to_verify] q=岩山科技怎么看
+    relation=single codes=['002195.SZ'] intent=diagnose scope= mode= metrics=[] indicator= claims=2 evidence=11
+    answer=岩山科技（002195.SZ）综合分析完成，基于母公司报表及当前数据覆盖，共检测到 1 项风险信号。
+
+财务维度检测到 1 项规则信号（R2）；综合风险等级：黄色。
+
+【综合观察】当前可确认信号主要集中在财务维度，尚未形成多模块一致指向。
+
+触发规则明细：R2 现金流–利润背离（关注）：现金流/利润比 -6.665、连续负现金流季度 1个季度。
+
+【预警点】R2：本期经营现金流为负，与正利润背离，建议关注（数据期：2025-12-31，母公司报表）。。
+
+【数据对比】
+
+| 指标 | 数值 | 单位 |
+|---|---:|---|
+| 现金流/利润比 | -6.665 | 比值 |
+| 连续负现金流季度 | 1个季度 | 个季度 |
+
+【可能模式】当前规则组合未匹配预定义模式，需进一步验证。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；acct_rcv 覆盖率仅 0%（有效 0/8 期）；st_borrow 覆盖率仅 0%（有效 0/8 期）；lt_borrow 覆盖率仅 12%（有效 1/8 期）；inventories 覆盖率仅 0%（有效 0/8 期）；less_selling_dist_exp 覆盖率仅 0%（有效 0/8 期）；net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）；扣非净利润字段不可用，使用简化版判断（上限 orange）；模块 events 状态: partial。
+
+【重要说明】规则信号不等同于造假事实认定，需结合审计和监管文件核验，不构成投资建议。
+[row 1116 | s30/t2 | market_query | status=to_verify] q=云鼎科技目前走势分析
+    relation=single codes=['000409.SZ'] intent=causal_query scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前系统不接入行情价格因果归因，无法仅凭财报、股权和公告模块确认这次涨跌原因。
+[row 1117 | s30/t3 | general | status=to_verify] q=宗申动力的分时K线显示了什么信号？
+    relation=ambiguous codes=['001696.SZ'] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「线显示」「信号」但未能识别，请提供完整名称或股票代码。
+[row 1118 | s30/t4 | general | status=to_verify] q=天风证券监管问询点评
+    relation=single codes=['601162.SH'] intent=simple_query scope= mode= metrics=[] indicator= claims=1 evidence=18
+    answer=天风证券（601162.SH）近期可回查的公告或事件：
+- 2026-03-14 天风证券:关于收到中国证券监督管理委员会湖北监管局行政监管措施决定书的公告（违纪违规） [证据: ev_ann_5119f17be6bf76c8]
+- 2026-03-14 天风证券:关于收到中国证券监督管理委员会湖北监管局《行政处罚决定书》的公告（违纪违规） [证据: ev_ann_1c81baa846da78f9]
+- 2026-03-14 天风证券:关于收到中国证券监督管理委员会福建监管局《行政处罚事先告知书》的公告（违纪违规） [证据: ev_ann_aa4a7fe3c7f6ee6a]
+- 2026-03-14 天风证券:关于收到中国证券监督管理委员会福建监管局《行政处罚决定书》的公告（违纪违规） [证据: ev_ann_9f0a2b4fd2667fda]
+- 2026-03-13 天风证券:关于对天风证券股份有限公司及有关责任人予以纪律处分的决定（违纪违规） [证据: ev_ann_446cebc62d10543a]
+[row 1119 | s30/t5 | market_query | status=to_verify] q=雷柏科技的近期走势如何？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前只支持可识别的单只 A 股行情快照，未覆盖板块、指数、期货、基金的行情，也不提供交易建议或市场资金流数据。
+[row 1120 | s30/t6 | finance_analysis | status=to_verify] q=嘉麟杰最新季度单季度净利润看点解读
+    relation=single codes=['002486.SZ'] intent=indicator scope= mode= metrics=[] indicator=net_profit claims=0 evidence=0
+    answer=嘉麟杰（002486.SZ）的单季度净利润：数据不足，无法按母公司口径计算。
+[row 1121 | s30/t7 | general | status=to_verify] q=华工科技的主力控盘度如何？
+    relation=single codes=['000988.SZ'] intent=simple_query scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=华工科技（000988.SZ）股权穿透分析完成，未发现股权风险信号。
+
+【简要分析】华工科技整体判断：数据覆盖仍有限，暂不能下定论；数据截止日 2026-03-31；当前仅有综合风险等级 数据不足。
+
+主要股东（2026-03-31）：武汉国恒科技投资基金合伙企业(有限合伙) 19.00%、香港中央結算有限公司 3.93%、武汉华中科大资产管理有限公司 2.00%、全国社保基金401组合 0.88%、金樟贤 0.46%。
+[row 1122 | s30/t8 | general | status=to_verify] q=恒大高新量价关系是否显示主力意图？
+    relation=ambiguous codes=['002591.SZ'] intent=unsupported_indicator scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围暂不支持查询「恒大高新量价关系是否显示主力意图？」，无法可靠返回该指标。
+[row 1123 | s30/t9 | general | status=to_verify] q=日出东方MACD分析
+    relation=single codes=['603366.SH'] intent=simple_query scope= mode= metrics=[] indicator= claims=0 evidence=15
+    answer=日出东方（603366.SH）在母公司报表及当前数据覆盖范围内，未发现明显异常信号。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；lt_borrow 覆盖率仅 0%（有效 0/8 期）；net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）；扣非净利润字段不可用，使用简化版判断（上限 orange）。
+[row 1124 | s30/t10 | general | status=to_verify] q=双环传动浮盈17个点,该继续持有吗？
+    relation=ambiguous codes=['002472.SZ'] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「个点」「持有」但未能识别，请提供完整名称或股票代码。
+[row 1125 | s30/t11 | general | status=to_verify] q=徕木股份的超长线投资价值如何？
+    relation=single codes=['603633.SH'] intent=diagnose scope= mode= metrics=[] indicator= claims=2 evidence=13
+    answer=徕木股份（603633.SH）综合分析完成，基于母公司报表及当前数据覆盖，共检测到 1 项风险信号。
+
+财务维度检测到 1 项规则信号（R6）；综合风险等级：红色。
+
+【简要分析】徕木股份整体判断：偏谨慎，建议重点核验财务、股权和舆情是否同向；数据截止日 2025-12-31；财务信号 1 项（R6）。
+
+【综合观察】当前可确认信号主要集中在财务维度，尚未形成多模块一致指向。
+
+触发规则明细：R6 其他应收款与关联占用风险（高风险）：其他应收款占总资产 21.4%、存在大额其他应收款：是、其他应收款同比 37.6%、其他应收款/应收账款 1.27。
+
+【预警点】R6：其他应收款占总资产 21.4%，同比增速 37.6%，金额 7.2 亿元，可能存在关联方资金占用（数据期：2025-12-31，母公司报表）。。
+
+【数据对比】
+
+| 指标 | 数值 | 单位 |
+|---|---:|---|
+| 其他应收款占总资产 | 21.4% | % |
+| 存在大额其他应收款 | 是 | bool |
+| 其他应收款同比 | 37.6% | % |
+| 其他应收款/应收账款 | 1.27 | 比值 |
+
+【可能模式】当前规则组合未匹配预定义模式，需进一步验证。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）。
+
+【重要说明】规则信号不等同于造假事实认定，需结合审计和监管文件核验，不构成投资建议。
+[row 1126 | s30/t12 | general | status=to_verify] q=连云港的主力资金流向如何？
+    relation=no_company codes=[] intent=unsupported_indicator scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围暂不支持查询「连云港的主力资金流向如何？」，无法可靠返回该指标。
+[row 1127 | s30/t13 | general | status=to_verify] q=中国石化现在适合买入吗？
+    relation=ambiguous codes=['600028.SH'] intent=investment_advice scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=系统不提供是否买入或卖出的投资建议。可以查询客观行情，或核查财务、股权与公告风险后自行判断。
+[row 1128 | s30/t14 | general | status=to_verify] q=森马服饰5.00的本,目前适合补仓吗？
+    relation=ambiguous codes=['002563.SZ'] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「的本」「目前适合补仓」但未能识别，请提供完整名称或股票代码。
+[row 1129 | s30/t15 | general | status=to_verify] q=德瑞锂电当前适合加仓还是减仓？
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「德瑞锂电当前适合加仓还是减仓」但未能识别，请提供完整名称或股票代码。
+[row 1130 | s30/t16 | general | status=to_verify] q=云赛智联的K线形态如何分析？
+    relation=ambiguous codes=['600602.SH'] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「线形态」但未能识别，请提供完整名称或股票代码。
+[row 1168 | s31/t38 | general | status=to_verify] q=连续横盘30个交易日
+    relation=ambiguous codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「横盘」「个交易日」但未能识别，请提供完整名称或股票代码。
+[row 1169 | s31/t39 | general | status=to_verify] q=列举最近连续横盘30个交易日的股
+    relation=ambiguous codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「列举」「横盘」「个交易日的股」但未能识别，请提供完整名称或股票代码。
+[row 1170 | s31/t40 | comparison | status=to_verify] q=哪些股近22天涨跌幅很小？
+    relation=continuation codes=['300628.SZ'] intent=market_quote scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前未获取到亿联网络（300628.SZ）可回查的行情数据，无法可靠回答涨跌幅。
+[row 1186 | s32/t2 | comparison | status=to_verify] q=有哪些企业在固态电池技术上有新产品？
+    relation=no_company codes=[] intent=research scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围内未找到与该主题匹配且可回查的研报。请补充更具体的行业、公司名称或研报关键词后重试。
+[row 1195 | s32/t11 | comparison | status=to_verify] q=有哪些企业在固态电池技术上有新产品？
+    relation=no_company codes=[] intent=research scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前数据覆盖范围内未找到与该主题匹配且可回查的研报。请补充更具体的行业、公司名称或研报关键词后重试。
+[row 1248 | s33/t29 | market_query | status=to_verify] q=今天自选股表现
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 241 | s9/t12 | general | status=to_verify] q=002094上龙虎榜了吗
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 242 | s9/t13 | general | status=to_verify] q=周杰伦炒股吗？
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「周杰伦炒股」但未能识别，请提供完整名称或股票代码。
+[row 243 | s9/t14 | comparison | status=to_verify] q=今天的龙虎榜上还有哪些股票？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 244 | s9/t15 | general | status=to_verify] q=002094后续会有上榜机会吗？
+    relation=ambiguous codes=['002094.SZ'] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「后续会有上榜机会」但未能识别，请提供完整名称或股票代码。
+[row 245 | s9/t16 | general | status=to_verify] q=哪个概念股跌幅最大
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 246 | s9/t17 | market_query | status=to_verify] q=青岛金王的市场表现如何？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=检测到疑似公司「青岛金王」但未能识别，请提供完整名称或股票代码。
+[row 247 | s9/t18 | comparison | status=to_verify] q=放量上涨的有哪些
+    relation=no_company codes=[] intent=entity_error scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前只支持可识别的单只 A 股行情快照，未覆盖板块、指数、期货、基金的行情，也不提供交易建议或市场资金流数据。
+[row 248 | s9/t19 | general | status=to_verify] q=青岛金王的换手率是多少？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=当前只支持可识别的单只 A 股行情快照，未覆盖板块、指数、期货、基金的行情，也不提供交易建议或市场资金流数据。
+[row 249 | s9/t20 | comparison | status=to_verify] q=我的自选股中有哪些放量上涨的股票？
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 252 | s9/t23 | market_query | status=to_verify] q=自选股异动
+    relation=no_company codes=[] intent=unsupported scope= mode= metrics=[] indicator= claims=0 evidence=0
+    answer=这个问题超出了织网鉴真的服务范围。我专注于上市公司财务勾稽、股权穿透、公告舆情和行业研报核查。请输入公司名称、股票代码或具体行业。
+[row 253 | s9/t24 | general | status=to_verify] q=宁德时代今天怎么样？
+    relation=single codes=['300750.SZ'] intent=diagnose scope= mode= metrics=[] indicator= claims=2 evidence=13
+    answer=宁德时代（300750.SZ）综合分析完成，基于母公司报表及当前数据覆盖，共检测到 1 项风险信号。
+
+财务维度检测到 1 项规则信号（R7）；综合风险等级：黄色。
+
+【简要分析】宁德时代整体判断：偏谨慎，建议重点核验财务、股权和舆情是否同向；数据截止日 2025-12-31；财务信号 1 项（R7）。
+
+【综合观察】当前可确认信号主要集中在财务维度，尚未形成多模块一致指向。
+
+触发规则明细：R7 盈利质量与非经常性依赖（关注）：净利润同比 28.8%、营收增速差 -9.9pp。
+
+【预警点】R7：净利润增速与现金流/营收增速存在背离，建议关注（数据期：2025-12-31，母公司报表）。。
+
+【数据对比】
+
+| 指标 | 数值 | 单位 |
+|---|---:|---|
+| 净利润同比 | 28.8% | % |
+| 营收增速差 | -9.9pp | pp |
+
+【可能模式】当前规则组合未匹配预定义模式，需进一步验证。
+
+【限制说明】本次财务分析采用母公司报表口径，不包含合并范围内子公司数据。；st_borrow 覆盖率仅 0%（有效 0/8 期）；net_profit_after_ded_nr_lp 覆盖率仅 0%（有效 0/8 期）；扣非净利润字段不可用，使用简化版判断（上限 orange）；模块 events 状态: partial。
+
+【重要说明】规则信号不等同于造假事实认定，需结合审计和监管文件核验，不构成投资建议。

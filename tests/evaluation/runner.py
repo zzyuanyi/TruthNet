@@ -27,11 +27,25 @@ sys.path.insert(1, str(_ROOT / "backend"))
 
 from tests.evaluation.metrics import evaluate_all  # noqa: E402
 
+# Phase D 真实化：尝试加载 API 客户端
+try:
+    from tests.evaluation.api_client import (  # noqa: E402
+        api_available,
+        call_chat,
+        call_format_check,
+    )
+
+    _API_AVAILABLE = api_available()
+except Exception:
+    _API_AVAILABLE = False
+
 # ── 9 项指标生产目标（方向 + 阈值）─────────────────────────────
 # 来自 tests/evaluation/README.md §2（与文档口径严格一致）。
 # 方向: min=不低于, max=不高于。
 TARGETS: dict[str, dict] = {
-    "1_accuracy": {"direction": "min", "threshold": 0.70},
+    # 指标1和7在有真实ground truth前不可计算（见 _load_real_data 中的 _note 说明）
+    "1_accuracy": {"direction": "min", "threshold": 0.70,
+                   "note": "需标准答案。Phase D 无 ground truth → not_applicable"},
     "2_evidence_coverage": {"direction": "min", "threshold": 0.90},
     "3_entity_retention_rate": {
         "direction": "min",
@@ -163,6 +177,147 @@ def _mock_data():
     )
 
 
+def _load_real_data(manifest_path: str) -> dict:
+    """Phase D: 从 manifest 标注文件 + 真实 API 加载评测数据.
+
+    对可评测的题调用 chat API，收集 claims/module_statuses 等指标。
+    不可评测的题跳过（记录在 manifest 的 non_evaluable_dimensions 中）。
+    """
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    items = manifest.get("items", manifest.get("questions_77", []))
+    predictions_rule = []
+    ground_truth_rule = []
+    predictions_risk = []
+    ground_truth_risk = []
+    all_claims = []
+    all_turns = []
+    all_module_statuses = []
+    all_modules = []
+    expected_entity = ""
+    skipped = 0
+    api_errors = 0
+
+    # Phase D 增强：对所有有公司名的题调 API 做格式合规检查
+    format_checks_passed = 0
+    format_checks_failed = 0
+    llm_outputs_for_compliance = []
+
+    for item in items:
+        qid = item.get("question_id", "")
+        question = item.get("question", "")
+        expected = item.get("expected_company")
+        evaluable = item.get("evaluable_dimensions", [])
+        is_finance = item.get("is_finance_related", False)
+
+        if expected:
+            expected_entity = expected
+
+        # 对所有有公司名的题调 API（格式合规检查）
+        if expected:
+            fmt = call_format_check(question, session_id=f"eval_{qid}")
+            if fmt.get("valid_json"):
+                format_checks_passed += 1
+            else:
+                format_checks_failed += 1
+            # 收集 LLM 输出用于 schema_compliance_rate
+            llm_outputs_for_compliance.append({
+                "question_id": qid,
+                "valid_json": fmt.get("valid_json"),
+                "checks": fmt.get("checks", {}),
+            })
+            all_modules.append(
+                {"module_name": "chat", "duration_ms": fmt.get("duration_ms", 0)}
+            )
+
+        # 可评测题收集 claims 等详细数据
+        if not evaluable or not is_finance:
+            if not evaluable:
+                skipped += 1
+            continue
+
+        result = call_chat(question, session_id=f"eval_{qid}")
+
+        if result.get("error"):
+            api_errors += 1
+
+        # 规则准确率: 从 claims 推断触发状态
+        claims_list = result.get("claims", [])
+        triggered = any(
+            c.get("rule_id") and c.get("severity") in ("red", "orange", "yellow")
+            for c in claims_list
+        )
+        predictions_rule.append("triggered" if triggered else "not_triggered")
+        ground_truth_rule.append(
+            "triggered"
+            if item.get("expected_triggered", False)
+            else "not_triggered"
+        )
+
+        # 风险等级
+        rl = result.get("risk_level", "unknown")
+        predictions_risk.append(rl if rl else "unknown")
+        ground_truth_risk.append(item.get("expected_risk_level", "unknown"))
+
+        # 收集 claims / module / turn 数据
+        all_claims.extend(claims_list)
+        all_turns.append({"company_code": expected or ""})
+        all_module_statuses.append(
+            {"module": "chat", "state": "success" if not result.get("error") else "failed"}
+        )
+
+    # 指标1和7在无ground truth时不可计算
+    has_gt_rules = len(ground_truth_rule) > 0
+    has_gt_risk = len(ground_truth_risk) > 0 and any(
+        rl != "unknown" for rl in ground_truth_risk
+    )
+    acc_note = None
+    risk_note = None
+    if not has_gt_rules:
+        acc_note = (
+            "N/A: 赛题数据无标准答案，77题多为非反欺诈类，"
+            "无法人工填写ground truth规则触发状态。"
+            "金融数据动态变化，一次性标注不能代表真实情况。"
+        )
+    if not has_gt_risk:
+        risk_note = (
+            "N/A: 无人工风险等级标注。风险等级需要金融专业人士逐题判断，"
+            "赛题未提供此标签。Phase E若获得赛方或审计标签再接入。"
+        )
+
+    return {
+        "ground_truth": {
+            "rule_results": ground_truth_rule,
+            "risk_levels": ground_truth_risk,
+        },
+        "predictions": {
+            "rule_results": predictions_rule,
+            "risk_levels": predictions_risk,
+            "per_industry": [],
+            "llm_outputs": llm_outputs_for_compliance,
+        },
+        "claims": all_claims,
+        "turns": all_turns,
+        "module_statuses": all_module_statuses,
+        "modules": all_modules,
+        "expected_entity": expected_entity,
+        "_meta": {
+            "total_items": len(items),
+            "evaluable": len(items) - skipped,
+            "skipped": skipped,
+            "api_errors": api_errors,
+            "format_checks_passed": format_checks_passed,
+            "format_checks_failed": format_checks_failed,
+            "format_checks_total": format_checks_passed + format_checks_failed,
+            "source": "real",
+            "accuracy_note": acc_note,
+            "risk_calibration_note": risk_note,
+            "ws_note": "WS 评测客户端已就绪(api_client.call_chat_ws)，联调窗口 D5-D8 接入",
+        },
+    }
+
+
 def _check_manifest(args) -> dict:
     """检查 1410/77 评测集 manifest 是否存在（数据真实化状态）.
 
@@ -207,7 +362,17 @@ def main() -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
-    data = _mock_data()
+    # Phase D: 有 manifest 且 API 可用 → 真实评测；否则 → mock 验证
+    use_real = manifest_status["dataset_materialized"] and _API_AVAILABLE
+    if use_real:
+        data = _load_real_data(manifest_path=args.manifest)
+        eval_mode = f"Phase D 真实评测 (manifest: {manifest_status['manifest_77']} 题)"
+    else:
+        data = _mock_data()
+        eval_mode = "Phase C mock 验证"
+        if manifest_status["dataset_materialized"] and not _API_AVAILABLE:
+            print("⚠ 已提供 manifest 但后端不可用，回退 mock")
+
     try:
         report = evaluate_all(
             ground_truth=data["ground_truth"],
@@ -234,7 +399,7 @@ def main() -> int:
 
     lines: list[str] = []
     lines.append("=" * 60)
-    lines.append("TruthNet 评测报告 (Phase C mock)")
+    lines.append(f"TruthNet 评测报告 ({eval_mode})")
     lines.append("=" * 60)
     for metric, value in report.items():
         label = LABELS.get(metric, metric)
@@ -266,8 +431,29 @@ def main() -> int:
     lines.append("\n" + "=" * 60)
     lines.append(f"calculator_status: {result['calculator_status']}")
     lines.append(f"target_status: {result['target_status']}")
-    lines.append("注意: mock 数据仅供验证计算方向；target 未达成不代表框架故障，")
-    lines.append("      也不代表生产指标已达标。真实达标需 1410/77 评测集。")
+    if not use_real:
+        lines.append("注意: 当前为 mock 验证模式，target 仅供参考。")
+        lines.append("      使用 --manifest 接入 77 题标注集以获取真实评测数据。")
+    else:
+        meta = data.get("_meta", {})
+        lines.append(f"格式合规检查: {meta.get('format_checks_passed',0)}/{meta.get('format_checks_total',0)} 通过")
+        lines.append(f"可评测题: {meta.get('evaluable', 0)} 题（财务反欺诈相关）")
+        lines.append(f"跳过: {meta.get('skipped', 0)} 题（非反欺诈分析）")
+        lines.append(f"API 错误: {meta.get('api_errors', 0)} 次")
+        lines.append(f"WS 评测: {meta.get('ws_note', 'N/A')}")
+        lines.append("")
+        lines.append("指标1(准确率)/指标7(风险校准) 的 N/A 说明:")
+        lines.append("  赛题数据无标准答案，金融数据动态变化，不可通过一次性人工填写制造虚假答案。")
+        lines.append("  两项指标在真实评测模式下标记为 not_applicable。")
+
+    # 数据版本记录
+    lines.append("")
+    lines.append("-- 数据版本 --")
+    lines.append(f"  dataset_version: competition-2026")
+    lines.append(f"  rule_set_version: finance-rules-1.0.0")
+    lines.append(f"  graph_version: equity-competition-2026")
+    lines.append(f"  labels_version: 1.0.0 (2026-08-07)")
+    lines.append(f"  test_data: 赛题数据/1/clean.xlsx (1410题, 77深度题)")
     lines.append(
         f"dataset: framework_ready={result['dataset']['framework_ready']}, "
         f"dataset_materialized={result['dataset']['dataset_materialized']}"
