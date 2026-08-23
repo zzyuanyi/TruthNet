@@ -309,8 +309,16 @@ class RiskScoringService:
             return 0.0, "skipped", "无公告、评级或事件簇数据"
         timeline_score = 0.0
         if timeline:
-            negative = sum(1 for t in timeline if t.get("sentiment") == "negative")
-            timeline_score = min(1.0, negative / len(timeline) * 3)
+            # 8/23 评分校准：timeline 按负面事件最高严重度分级（与事件簇
+            # 同口径：red 0.8/orange 0.5/yellow 0.25）——原「负面占比×3 封顶
+            # 1.0」导致单条负面事件即满分（如隆基 1 条 2023 立案事件 → 舆情
+            # 维度 1.0 → 综合 0.41 高危，明显失真）
+            levels = [event_signal_severity(t) for t in timeline]
+            timeline_score = {
+                "red": 0.8,
+                "orange": 0.5,
+                "yellow": 0.25,
+            }.get(highest_risk_level(levels, default="green"), 0.0)
         down_count = sum(1 for item in ratings if item.get("direction") == "down")
         rating_score = min(0.6, down_count * 0.15)
         cluster_levels = [event_signal_severity(item) for item in clusters]
