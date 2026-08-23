@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,8 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_MD_BOLD_RE = re.compile(r"\*\*([^*]+?)\*\*")
 
 _semaphore: asyncio.Semaphore | None = None
 _running_tasks: set[asyncio.Task] = set()
@@ -395,6 +398,14 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     h2 = ParagraphStyle(
         "h2", parent=styles["Heading2"], fontName="STSong-Light", fontSize=13
     )
+    cell = ParagraphStyle(
+        "cell",
+        parent=styles["Normal"],
+        fontName="STSong-Light",
+        fontSize=8.5,
+        leading=12,
+        wordWrap="CJK",
+    )
 
     root = _report_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -447,13 +458,13 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
             )
             rows.append(
                 [
-                    r.get("rule_id", ""),
-                    status,
-                    severity,
-                    (r.get("explanation") or "" or "未触发")[:80],
+                    Paragraph(r.get("rule_id", ""), cell),
+                    Paragraph(status, cell),
+                    Paragraph(severity, cell),
+                    Paragraph((r.get("explanation") or "" or "未触发")[:150], cell),
                 ]
             )
-        t = Table(rows, colWidths=[30, 60, 40, 270])
+        t = Table(rows, colWidths=[30, 55, 40, 320])
         t.setStyle(
             TableStyle(
                 [
@@ -571,12 +582,14 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     story.append(Paragraph("七、影响与建议（综合画像指标）", h2))
     advice = data.get("impact_advice") or ""
     if advice:
-        # 分段渲染（Markdown 分节 → 纯文本段落）
+        # 分段渲染（Markdown 分节 → 纯文本段落，剥离 ** 粗体标记）
         for para in [p.strip() for p in advice.split("\n") if p.strip()]:
             if para.startswith("#"):
                 story.append(Paragraph(para.lstrip("# ").strip(), h2))
             else:
-                story.append(Paragraph(para, body))
+                clean = _MD_BOLD_RE.sub(r"\1", para)
+                clean = clean.replace("**", "").replace("`", "")
+                story.append(Paragraph(clean, body))
     else:
         story.append(
             Paragraph("影响与建议生成失败或数据不足，请结合画像页查看。", body)

@@ -688,7 +688,14 @@ async def get_comparison_analysis(
 
 @router.get(
     "/comparisons/analysis/stream",
-    responses={422: {"model": dict}, 500: {"model": dict}},
+    responses={
+        200: {
+            "description": "SSE 事件流（text/event-stream，data: JSON 行）",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+        422: {"model": dict},
+        500: {"model": dict},
+    },
 )
 async def stream_comparison_analysis(
     codes: str = Query(
