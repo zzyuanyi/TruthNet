@@ -617,6 +617,10 @@ export default function ComparePage() {
     return () => {
       cancelled = true;
       if (es) es.close();
+      // 8/23 关键：cleanup 复位 in-flight——StrictMode 双 effect 时序下
+      // 第一次 effect 的 cleanup 关闭 SSE 后，第二次 effect 才能重新发起
+      // （否则防重把第二次拦掉 → 无请求在跑 → 永久 loading）
+      analysisInFlight.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
