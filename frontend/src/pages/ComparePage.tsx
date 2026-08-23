@@ -236,10 +236,23 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
 const unitLabelMap: Record<string, string> = {
   percent: '%',
   percentage_point: '%',
+  pp: '个百分点',
   quarters: '个季度',
   ratio: '比率',
   yuan: '元',
   times: '倍',
+  days: '天',
+  'CNY': '元',
+  percent_pct: '%',
+};
+
+// 8/23 可读性：指标状态中文映射（后端返回英文状态码）
+const INDICATOR_STATUS_LABELS: Record<string, string> = {
+  triggered: '已触发',
+  not_triggered: '未触发',
+  insufficient_data: '数据不足',
+  not_applicable: '不适用',
+  unknown: '未知',
 };
 
 // 后端对比服务已有完整财务规则分析缓存；请求 7 条规则可一次性展示，
@@ -986,19 +999,24 @@ export default function ComparePage() {
                           <BarChart3 className="h-4 w-4 text-muted-foreground" />
                           {indicator.label}
                         </div>
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                           {indicator.companies.map((ci) => {
                             const isRisk = indicator.indicator === 'risk_level';
+                            const unitText = unitLabelMap[ci.unit ?? ''] ?? ci.unit ?? '';
                             const displayValue = ci.value == null
                               ? '暂无数据'
                               : indicator.indicator === 'coverage'
                                 ? `${(ci.value * 100).toFixed(0)}%`
-                                : `${ci.value}${ci.unit || ''}`;
+                                : `${ci.value}${unitText}`;
                             return (
                               <div
                                 key={ci.wind_code}
                                 className="p-3 rounded-lg border bg-card text-center"
                               >
+                                {/* 8/23 可读性：每格标注公司名称 */}
+                                <p className="mb-1 text-xs font-medium text-muted-foreground truncate">
+                                  {ci.sec_name || ci.wind_code}
+                                </p>
                                 {isRisk ? (
                                   <Badge className={cn('text-xs', getRiskLevelStyle(ci.severity || String(ci.value ?? '')))}>
                                     {riskLevelConfig[ci.severity as RiskLevel]?.label || ci.severity || String(ci.value ?? '-')}
@@ -1011,11 +1029,7 @@ export default function ComparePage() {
 
                                   {!isRisk && ci.status && ci.status !== 'not_applicable' && (
                                     <p className="mt-1 text-[10px] text-muted-foreground">
-                                      {ci.status === 'triggered'
-                                        ? '规则已触发'
-                                        : ci.status === 'insufficient_data'
-                                          ? '数据不足'
-                                          : ci.status}
+                                      {INDICATOR_STATUS_LABELS[ci.status] ?? ci.status}
                                     </p>
                                   )}
                                   {!isRisk && ci.severity && ['red', 'orange', 'yellow', 'blue', 'green', 'unknown'].includes(ci.severity) && (
