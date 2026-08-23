@@ -12,6 +12,25 @@ const sourceTypeIcons: Record<string, string> = {
   regulation: '监管',
   web_search: '联网检索',
 };
+// 8/23 可读性：规则状态中文 + 参数单位中文映射（规则配置区）
+const RULE_STATUS_LABELS: Record<string, string> = {
+  triggered: '已触发',
+  not_triggered: '未触发',
+  insufficient_data: '数据不足',
+  not_applicable: '不适用',
+  unknown: '未知',
+};
+const RULE_UNIT_LABELS: Record<string, string> = {
+  percent: '%',
+  percentage_point: '个百分点',
+  pp: '个百分点',
+  quarters: '个季度',
+  ratio: '比率',
+  yuan: '元',
+  CNY: '元',
+  days: '天',
+  times: '倍',
+};
 function formatChainPct(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '比例缺失';
   if (value === 0) return '0%';
@@ -981,7 +1000,7 @@ export default function CompanyProfilePage() {
                             </div>
                             {rule ? (
                               <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getRiskBadgeStyle(rule.severity || 'unknown')}`}>
-                                {rule.status}
+                                {RULE_STATUS_LABELS[rule.status] ?? rule.status}
                                 </span>
                               ) : (
                                 <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-gray-500/10 text-gray-600">
@@ -999,11 +1018,13 @@ export default function CompanyProfilePage() {
                                       key={k}
                                       className="flex items-center justify-between gap-2 rounded border border-border/60 bg-background px-2 py-1"
                                     >
-                                      <span className="min-w-0 flex-1" title={param?.description || k}>
+                                      <span
+                                        className="min-w-0 flex-1"
+                                        title={`${k}${param?.description ? `（${param.description}）` : ''}`}
+                                      >
                                         <span className="block truncate text-xs text-foreground">
                                           {param?.description || k}
                                         </span>
-                                        <span className="block text-[10px] text-muted-foreground">{k}</span>
                                       </span>
                                       <span className="flex items-center gap-1 shrink-0">
                                         <input
@@ -1020,7 +1041,9 @@ export default function CompanyProfilePage() {
                                           className="w-20 rounded border border-border/60 bg-background px-1.5 py-0.5 text-right text-xs"
                                         />
                                         {param?.unit && (
-                                          <span className="text-[10px] text-muted-foreground">{param.unit}</span>
+                                          <span className="text-[10px] text-muted-foreground">
+                                            {RULE_UNIT_LABELS[param.unit] ?? param.unit}
+                                          </span>
                                         )}
                                       </span>
                                     </label>
