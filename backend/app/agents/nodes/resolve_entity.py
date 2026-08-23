@@ -23,6 +23,9 @@ from app.application.services.company_mentionness_classifier import (
 )
 from app.application.services.company_semantic_selector import CompanySemanticSelector
 from app.application.services.company_resolver import get_company_repository
+from app.application.services.query_subject_interpreter import (
+    QuerySubjectInterpreter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -297,9 +300,13 @@ def resolve_entity_node(state: AgentState) -> dict:
         # off 零调用；suggest/auto 时 non_company_context 判定 + sub_span
         # 子实体提取（8/17 收敛 A：合并原独立 span_extractor 组件）应用
         mentionness=CompanyMentionnessClassifier(),
-        # 8/17 收敛 B：QuerySubjectInterpreter 下线（从未被验证应用：
-        # fallback 实测不稳定，off 恒零调用）——不注入，resolver 内
-        # interpreter 分支成为死路径（保留代码待后续清理）
+        # 8/17 收敛 B：QuerySubjectInterpreter 下线（fallback 实测不稳定，
+        # off 恒零调用）——不注入，resolver 内 interpreter 分支成为死路径。
+        # 8/23 恢复注入（队长拍板重试路径 A）：模式仍从 settings 读取
+        # （off 零调用 = 行为不变；shadow 只记录不应用；fallback 低置信
+        # 路径应用）。若真机验收发现 fallback 裁决质量不佳，可随时
+        # ENTITY_QUERY_INTERPRETER_MODE=off 回退，注入点无需改动。
+        interpreter=QuerySubjectInterpreter(),
     )
     result = resolver.resolve(
         user_query,
