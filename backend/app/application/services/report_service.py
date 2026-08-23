@@ -306,6 +306,31 @@ _RISK_LABEL_CN: dict[str, str] = {
     "normal": "正常",
 }
 
+# 8/23 报告规整：风险等级/规则状态中文化（PDF 不展示内部英文枚举）
+_RISK_LEVEL_CN: dict[str, str] = {
+    "red": "红色",
+    "orange": "橙色",
+    "yellow": "黄色",
+    "green": "绿色",
+    "unknown": "未知",
+    "normal": "正常",
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+    "not_applicable": "不适用",
+    "insufficient_data": "数据不足",
+    "not_triggered": "未触发",
+    "triggered": "已触发",
+}
+
+_RULE_STATUS_CN: dict[str, str] = {
+    "triggered": "已触发",
+    "not_triggered": "未触发",
+    "insufficient_data": "数据不足",
+    "not_applicable": "不适用",
+    "error": "错误",
+}
+
 
 def _report_root() -> Path:
     path = Path(settings.REPORT_ROOT_DIR)
@@ -404,32 +429,35 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     story.append(Paragraph("一、综合风险", h2))
     story.append(
         Paragraph(
-            f"风险等级：{data.get('risk_level', 'unknown')}；"
+            f"风险等级：{_RISK_LEVEL_CN.get(data.get('risk_level', 'unknown'), data.get('risk_level', 'unknown'))}；"
             f"综合分：{data.get('overall_score', '—')}",
             body,
         )
     )
 
-    # 财务规则结果
+    # 财务规则结果（8/23 规整：状态/等级中文化）
     story.append(Paragraph("二、财务规则结果", h2))
     rules = data.get("rules") or []
     if rules:
         rows = [["规则", "状态", "等级", "说明"]]
         for r in rules[:15]:
+            status = _RULE_STATUS_CN.get(r.get("status", ""), r.get("status", ""))
+            severity = _RISK_LEVEL_CN.get(
+                r.get("severity", ""), r.get("severity", "")
+            )
             rows.append(
                 [
                     r.get("rule_id", ""),
-                    r.get("status", ""),
-                    r.get("severity", ""),
-                    (r.get("explanation") or "")[:60],
+                    status,
+                    severity,
+                    (r.get("explanation") or "" or "未触发")[:80],
                 ]
             )
-        t = Table(rows, colWidths=[30, 50, 40, 280])
+        t = Table(rows, colWidths=[30, 60, 40, 270])
         t.setStyle(
             TableStyle(
                 [
-                    ("FONTNAME", (0, 0), (-1, 0), "STSong-Light"),
-                    ("FONTNAME", (0, 1), (-1, -1), "STSong-Light"),
+                    ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EEEEEE")),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -442,6 +470,7 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
 
     # 股权链路（8.09 四轮/五轮审查：措辞随 path_type——ownership 是持股关系，
     # 不得一律称"控制链/最终控制"；内部英文 risk_label 渲染为中文，不直接展示）
+    # 8/23 规整：risk_level 也中文化
     story.append(Paragraph("三、股权持股链", h2))
     chains = data.get("equity_chains") or []
     if chains:
@@ -450,11 +479,12 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
             chain_term = "控制链" if is_control else "持股链"
             pct_term = "最终控制比例" if is_control else "最终持股比例"
             label_cn = _RISK_LABEL_CN.get(c.get("risk_label"), c.get("risk_label"))
+            level_cn = _RISK_LEVEL_CN.get(c.get("risk_level"), c.get("risk_level"))
             story.append(
                 Paragraph(
                     f"• {chain_term} {c.get('chain_id')}：深度 {c.get('depth')}，"
                     f"{pct_term} {c.get('final_control_pct')}%，"
-                    f"风险提示：{label_cn}（等级 {c.get('risk_level')}）",
+                    f"风险提示：{label_cn}（等级 {level_cn}）",
                     body,
                 )
             )
@@ -477,16 +507,26 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     else:
         story.append(Paragraph("未检测到匹配的风险模式。", body))
 
-    # Claims / Evidence
+    # Claims / Evidence（8/23 规整：去重 + 完整展示不截断）
     story.append(Paragraph("五、结论声明与证据", h2))
     claims = data.get("claims") or []
     if claims:
-        for c in claims[:15]:
-            story.append(
-                Paragraph(
-                    f"• {c.get('text', '')[:120]}（等级 {c.get('severity', '')}）", body
-                )
+        seen: set[str] = set()
+        shown = 0
+        for c in claims:
+            ctext = str(c.get("text", "") or "").strip()
+            if not ctext or ctext in seen:
+                continue
+            seen.add(ctext)
+            if shown >= 15:
+                break
+            severity = _RISK_LEVEL_CN.get(
+                str(c.get("severity", "") or ""), str(c.get("severity", "") or "")
             )
+            story.append(
+                Paragraph(f"• {ctext}（等级 {severity}）", body)
+            )
+            shown += 1
     else:
         story.append(Paragraph("无结构化结论声明。", body))
 
