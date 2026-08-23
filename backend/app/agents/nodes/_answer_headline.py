@@ -30,6 +30,7 @@ from ._answer_common import (
 )
 from app.agents.llm_sync import run_llm_chat
 from app.agents.state import AgentState, FinalResponse
+from app.application.services.checklist_service import render_checklist_markdown
 import re
 
 logger = logging.getLogger(__name__)
@@ -276,6 +277,23 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
     elif has_content:
         # P2-5：无模式命中时输出占位（不得省略导致四段缺失）
         segs.append("【可能模式】当前规则组合未匹配预定义模式，需进一步验证。")
+
+    # 【核查建议】：L2 行动建议（核查导航，纯映射无 LLM）——8/23 叙事落地：
+    # 系统给「该去哪核实」的核查动作，专业判断留给人（边界见 checklist_service）。
+    # 放在【可能模式】之后：风险点 → 原因 → 行动建议的闭环顺序。
+    if triggers:
+        checklist = render_checklist_markdown(
+            [
+                (
+                    rid,
+                    str((finance.rule_details[rid] or {}).get("severity") or ""),
+                )
+                for rid in sorted(finance.rule_details)
+                if finance.rule_statuses.get(rid) == "triggered"
+            ]
+        )
+        if checklist:
+            segs.append(checklist)
 
     # 【限制说明】：口径/覆盖/降级状态（去重保序；8/23 覆盖率聚合防刷屏）
     limitations: list[str] = []

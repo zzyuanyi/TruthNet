@@ -495,6 +495,28 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     else:
         story.append(Paragraph("无规则触发或数据不足。", body))
 
+    # 8/23 叙事落地：核查建议清单（规则→核查动作，L2 行动建议，纯映射无 LLM）
+    triggered_rules = [r for r in rules if r.get("status") == "triggered"]
+    if triggered_rules:
+        from app.application.services.checklist_service import (
+            render_checklist_markdown,
+        )
+
+        checklist = render_checklist_markdown(
+            [
+                (str(r.get("rule_id", "")), str(r.get("severity") or ""))
+                for r in triggered_rules
+            ]
+        )
+        if checklist:
+            story.append(Spacer(1, 8))
+            story.append(Paragraph("核查建议清单", h2))
+            for line in checklist.splitlines():
+                if line.startswith("【核查建议】"):
+                    continue
+                text_line = line.split(". ", 1)[-1] if ". " in line else line
+                story.append(Paragraph(f"• {text_line}", body))
+
     # 8/23 图表化：关键指标趋势折线（复用 rule.history，2 列布局；失败/无数据跳过）
     try:
         trend_rules = pick_trend_rules(rules, limit=4)
