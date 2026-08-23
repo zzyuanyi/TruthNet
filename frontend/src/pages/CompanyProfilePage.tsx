@@ -149,8 +149,9 @@ export default function CompanyProfilePage() {
   const [configResetting, setConfigResetting] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [ruleDefsOverridden, setRuleDefsOverridden] = useState(false);
-  // 8/23 分步加载：当前加载阶段（loading 页展示）
-  const [loadStage, setLoadStage] = useState('公司基础信息');
+  // 8/23 分步渲染：区分「未加载」与「无数据」（区块级骨架 vs 暂无）
+  const [financeLoaded, setFinanceLoaded] = useState(false);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = { red: '#ef4444', orange: '#f97316', yellow: '#eab308', blue: '#3b82f6', unknown: '#6b7280' };
@@ -314,64 +315,86 @@ export default function CompanyProfilePage() {
     setActiveSection(current);
   }, []);
 
+  // 8/23 StrictMode 防重：dev 下 effect 双执行会发起两套请求（LLM 并发
+  // 超时 → impact-advice 降级覆盖 LLM 内容）；in-flight 拦截同 code 的
+  // 第二次调用。用户切换公司（code 变化）不受影响，且旧请求完成时
+  // 若已切走则忽略其 setState（防污染新公司数据）。
+  const loadInFlight = useRef(false);
+  const loadForCode = useRef('');
+
   useEffect(() => {
     if (code) {
       loadData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
 
   const loadData = async () => {
     if (!code) return;
-    setLoading(true);
+    const myCode = code;
+    if (loadInFlight.current && loadForCode.current === myCode) return;
+    loadInFlight.current = true;
+    loadForCode.current = myCode;
     setError(null);
+    // 8/23 分步渲染：先取公司基础信息（页头/概览依赖），其余请求并行发起，
+    // 各数据到达即渲染对应区块——页面渐进填充，总耗时 = 最慢请求。
     try {
-      // 8/23 分步加载：按模块分批拉取，loading 页显示当前阶段
-      setLoadStage('公司基础信息');
       const profileRes = await truthnetAPI.getCompanyProfile(code);
+      if (loadForCode.current !== myCode) return; // 已切走，忽略旧请求结果
       setProfile(profileRes.data);
-
-      setLoadStage('财务规则');
-      const financeRes = await truthnetAPI.getFinance(code);
-      const rules = financeRes.data?.rules || [];
-      setFinancialAnomalies(rules);
-      setFinanceQuality(financeRes.data?.data_quality || null);
-
-      setLoadStage('股权与舆情');
-      const [equityRes, eventsRes] = await Promise.all([
-        truthnetAPI.getEquity(code),
-        truthnetAPI.getEvents(code),
-      ]);
-      setEquityData(equityRes.data);
-      setSentimentEvents(eventsRes.data?.timeline || []);
-      setEventClusters(eventsRes.data?.event_clusters || []);
-      setAnnouncementsAvailable(eventsRes.data?.announcements_available ?? null);
-
-      setLoadStage('风险评分');
-      const [riskRes, rulesDefRes] = await Promise.all([
-        truthnetAPI.getRisk(code),
-        truthnetAPI.getRuleDefinitions(),
-      ]);
-      setRiskData(riskRes.data);
-      const allChains = riskRes.data?.derivation_chains || [];
-      setDerivationChains([
-        ...allChains.filter(c => c.conclusion_type === 'risk_level'),
-        ...allChains.filter(c => c.conclusion_type === 'pattern_match').slice(0, 3),
-      ]);
-      setRuleDefinitions(rulesDefRes.data?.rules || []);
-      setRuleDefsOverridden(rulesDefRes.data?.is_overridden ?? false);
-
-      setLoadStage('影响与建议');
-      setImpactAdviceLoading(true);
-      void truthnetAPI
-        .getImpactAdvice(code)
-        .then(res => setImpactAdvice(res.data))
-        .catch(err => console.warn('影响建议加载失败:', err))
-        .finally(() => setImpactAdviceLoading(false));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
-    } finally {
-      setLoading(false);
+      loadInFlight.current = false;
+      if (loadForCode.current === myCode) {
+        setError(err instanceof Error ? err.message : '加载失败');
+      }
+      return;
     }
+
+    const others = [
+      truthnetAPI.getFinance(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setFinancialAnomalies(res.data?.rules || []);
+        setFinanceQuality(res.data?.data_quality || null);
+        setFinanceLoaded(true);
+      }),
+      truthnetAPI.getEquity(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setEquityData(res.data);
+      }),
+      truthnetAPI.getEvents(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setSentimentEvents(res.data?.timeline || []);
+        setEventClusters(res.data?.event_clusters || []);
+        setAnnouncementsAvailable(res.data?.announcements_available ?? null);
+        setEventsLoaded(true);
+      }),
+      truthnetAPI.getRisk(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setRiskData(res.data);
+        const allChains = res.data?.derivation_chains || [];
+        setDerivationChains([
+          ...allChains.filter(c => c.conclusion_type === 'risk_level'),
+          ...allChains.filter(c => c.conclusion_type === 'pattern_match').slice(0, 3),
+        ]);
+      }),
+      truthnetAPI.getRuleDefinitions().then(res => {
+        if (loadForCode.current !== myCode) return;
+        setRuleDefinitions(res.data?.rules || []);
+        setRuleDefsOverridden(res.data?.is_overridden ?? false);
+      }),
+      truthnetAPI.getImpactAdvice(code).then(res => {
+        if (loadForCode.current !== myCode) return;
+        setImpactAdvice(res.data);
+      }),
+    ];
+    // 单个请求失败不整页报错（区块保持空/占位），仅记录
+    others.forEach(p => p.catch(err => console.warn('画像页数据加载失败:', err)));
+    setImpactAdviceLoading(true);
+    await Promise.allSettled(others);
+    if (loadForCode.current !== myCode) return; // 已切走：复位交给新公司加载
+    setImpactAdviceLoading(false);
+    setLoading(false);
+    loadInFlight.current = false;
   };
 
   const handleNavClick = (id: string) => {
@@ -515,26 +538,6 @@ export default function CompanyProfilePage() {
     impactAdvice?.overall_advice,
   ]);
 
-  if (loading) {
-    return (
-      <div className="flex h-screen bg-background">
-        <div className="w-40 border-r border-border p-4">
-          <Skeleton className="h-full w-full" />
-        </div>
-        <div className="flex-1 overflow-auto p-6">
-          {/* 8/23 分步加载：显示当前加载阶段 */}
-          <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            正在加载：{loadStage}…
-          </div>
-          <Skeleton className="mb-4 h-8 w-64" />
-          <Skeleton className="mb-4 h-32 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      </div>
-    );
-  }
-
   if (error || !profile) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -611,6 +614,14 @@ export default function CompanyProfilePage() {
                 </div>
               </div>
               <CardContent className="pt-5 space-y-4">
+                {riskData === null ? (
+                  <div className="space-y-3 py-2">
+                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : (
+                <>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="bg-muted/50 rounded-md p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-1">综合风险等级</p>
@@ -702,6 +713,8 @@ export default function CompanyProfilePage() {
                     ))}
                   </div>
                 )}
+                </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -713,7 +726,14 @@ export default function CompanyProfilePage() {
               <FileText className="h-5 w-5" />
               核心结论
             </h2>
-            {derivationChains.length > 0 ? (
+            {riskData === null ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </CardContent>
+              </Card>
+            ) : derivationChains.length > 0 ? (
               <div className="space-y-4">
                 {derivationChains.map((chain, ci) => (
                   <Card key={ci} className="border-l-4" style={{ borderLeftColor: getRiskColor(chain.risk_level) }}>
@@ -853,7 +873,15 @@ export default function CompanyProfilePage() {
               <TrendingUp className="h-5 w-5" />
               财务异常
             </h2>
-            {financialAnomalies.length > 0 ? (
+            {!financeLoaded ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </CardContent>
+              </Card>
+            ) : financialAnomalies.length > 0 ? (
               <>
               <FinanceTrendOverview rules={financialAnomalies} />
               <div className="space-y-3">
@@ -1006,7 +1034,14 @@ export default function CompanyProfilePage() {
               <GitBranch className="h-5 w-5" />
               股权穿透图
             </h2>
-            {equityData ? (
+            {equityData === null ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-48 w-full" />
+                </CardContent>
+              </Card>
+            ) : equityData ? (
               <>
                 <Card>
                   <CardContent className="p-4">
@@ -1123,7 +1158,14 @@ export default function CompanyProfilePage() {
               <Newspaper className="h-5 w-5" />
               舆情时间线
             </h2>
-            {sentimentEvents.length > 0 ? (
+            {!eventsLoaded ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-32 w-full" />
+                </CardContent>
+              </Card>
+            ) : sentimentEvents.length > 0 ? (
               <RiskTimeline
                 events={sentimentEvents}
                   companyCode={code}
@@ -1150,7 +1192,14 @@ export default function CompanyProfilePage() {
               <FileText className="h-5 w-5" />
               证据引用
             </h2>
-            {riskData && riskData.evidence.length > 0 ? (
+            {riskData === null ? (
+              <Card>
+                <CardContent className="py-6 space-y-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </CardContent>
+              </Card>
+            ) : riskData && riskData.evidence.length > 0 ? (
               <EvidenceChain
                 categories={groupEvidenceBySource(riskData.evidence)}
                 onViewSource={evidence => {

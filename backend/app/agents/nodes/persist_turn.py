@@ -102,10 +102,25 @@ def _evidence_core_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
 
 
 def _evidence_value_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
-    """value 冲突判定：双方都有值且不同才算真冲突；一方为空视为可补充。"""
+    """value 冲突判定：双方都有值且不同才算真冲突；一方为空视为可补充。
+
+    8/23 数值归一化：Decimal 尾零差异（'1976120882.73' vs '1976120882.7300'）
+    属同一数值，不算冲突（双轨 ID 统一后 agent 落库与既有行比较常见）。
+    """
     a = (existing.value or "").strip()
     b = (new.value or "").strip()
-    return bool(a and b and a != b)
+    if not a or not b:
+        return False
+    if a == b:
+        return False
+    try:
+        from decimal import Decimal
+
+        if Decimal(a) == Decimal(b):
+            return False
+    except Exception:  # noqa: BLE001 — 非数值字符串原样比较
+        pass
+    return True
 
 
 def _claim_fingerprint(cl: Claim) -> str:
