@@ -714,18 +714,6 @@ class CompanyEntityResolver:
             left, right = frag[:pos], frag[pos + len(connector) :]
             if len(left) < 2 or len(right) < 2:
                 continue
-            # 8/23 修复：子片段剥语法尾字符（"茅台比"→"茅台"）——比较句
-            # "招商银行和茅台比哪个更赚钱"中右片段带比较句尾"比"，不剥则
-            # 变体命中是 needs_confirmation（不锁定），comparison 缺位。
-            # 剥尾后是原文连续子区间（合法）；"占比"剥尾→"占"查不到候选
-            # 则方案不合法、无影响；"比亚迪"尾字符非语法字符不触发。
-            right_trimmed = right
-            while (
-                len(right_trimmed) >= 2
-                and right_trimmed[-1] in _GRAMMAR_SUFFIX_CHARS
-            ):
-                right_trimmed = right_trimmed[:-1]
-            right = right_trimmed
             left_m = EntityMention(
                 mention_id=make_mention_id(parent.start, parent.start + pos, left),
                 text=left,
@@ -738,7 +726,7 @@ class CompanyEntityResolver:
                 ),
                 text=right,
                 start=parent.start + pos + len(connector),
-                end=parent.start + pos + len(connector) + len(right),
+                end=parent.end,
             )
             left_final, _ = self._finalize_span(left_m, depth + 1)
             if not left_final or any(
@@ -746,6 +734,34 @@ class CompanyEntityResolver:
             ):
                 continue
             right_final, _ = self._finalize_span(right_m, depth + 1)
+            # 8/23 轻量 B：右片段原文未绑定 code（needs_confirmation 变体
+            # 命中）→ 剥 1 个任意尾字符纯字符串重试（零查询成本；"茅台比"
+            # →"茅台"、"和邦的"→"和邦"）。只剥 1 字控制查询预算；剥后仍
+            # 未绑定则回退原文 finalize 结果（保持旧行为）。
+            if (
+                depth + 1 < _MAX_COMPOUND_ENTITIES
+                and right_final
+                and not any(m.selected_wind_code for m in right_final)
+                and len(right) >= 3
+            ):
+                trimmed = right[:-1]
+                if len(trimmed) >= 2:
+                    trimmed_m = EntityMention(
+                        mention_id=make_mention_id(
+                            parent.start + pos + len(connector),
+                            parent.start + pos + len(connector) + len(trimmed),
+                            trimmed,
+                        ),
+                        text=trimmed,
+                        start=parent.start + pos + len(connector),
+                        end=parent.start + pos + len(connector) + len(trimmed),
+                    )
+                    trimmed_final, _ = self._finalize_span(trimmed_m, depth + 1)
+                    if trimmed_final and not any(
+                        m.status in ("not_found", "needs_refinement")
+                        for m in trimmed_final
+                    ):
+                        right_final = trimmed_final
             if not right_final or any(
                 m.status in ("not_found", "needs_refinement") for m in right_final
             ):
