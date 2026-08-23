@@ -300,6 +300,32 @@ export const truthnetAPI = {
       params: { codes: companyCodes.join(',') },
     }),
 
+  // 8/23 SSE 流式对比分析：阶段进度 + 分节推送（返回 EventSource，调用方负责 close）
+  streamComparisonAnalysis: (
+    companyCodes: string[],
+    onEvent: (evt: {
+      event_type: string;
+      payload: Record<string, unknown>;
+    }) => void,
+    onError: (msg: string) => void,
+  ): EventSource => {
+    const es = new EventSource(
+      `${API_BASE}/comparisons/analysis/stream?codes=${encodeURIComponent(companyCodes.join(','))}`,
+    );
+    es.onmessage = e => {
+      try {
+        onEvent(JSON.parse(e.data));
+      } catch {
+        // 忽略无法解析的事件
+      }
+    };
+    es.onerror = () => {
+      es.close();
+      onError('分析连接中断');
+    };
+    return es;
+  },
+
   // 证据详情: GET /api/v1/evidence/{evidence_id}
   getEvidence: (evidenceId: string) =>
     request<EvidenceLookupData>('GET', `/evidence/${encodeURIComponent(evidenceId)}`),

@@ -212,3 +212,71 @@ async def test_all_failures_empty_result(monkeypatch):
     result = await assemble_comparison_advice(["600518.SH", "603693.SH"])
     assert result.companies == []
     assert "无法完成" in result.overall
+
+
+@pytest.mark.asyncio
+async def test_stream_events_sequence(monkeypatch):
+    """8/23 SSE 流式：started → company_ready×2 → section×N → segment×2 → completed。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "mock")
+    _patch_risk(
+        monkeypatch,
+        {
+            "600518.SH": {
+                "name": "康美药业",
+                "level": "red",
+                "score": 0.85,
+                "rules": ["R1 应收–营收背离"],
+            },
+            "603693.SH": {
+                "name": "江苏新能",
+                "level": "yellow",
+                "score": 0.42,
+                "rules": ["R2 现金流–利润背离"],
+            },
+        },
+    )
+    events = [
+        evt
+        async for evt in svc.stream_comparison_advice(["600518.SH", "603693.SH"])
+    ]
+    types = [e["event_type"] for e in events]
+    assert types[0] == "analysis.started"
+    assert types.count("analysis.company_ready") == 2
+    assert "analysis.section" in types
+    assert types.count("analysis.segment") == 2
+    assert types[-1] == "analysis.completed"
+    # 模板分节（mock → template）：节内容完整
+    sections = [
+        e["payload"]["text"]
+        for e in events
+        if e["event_type"] == "analysis.section"
+    ]
+    assert sections
+    assert any("跨公司对比结论" in s for s in sections)
+    completed = events[-1]["payload"]
+    assert completed["method"] == "template"
+    assert len(completed["companies"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_single_company_failure_progresses(monkeypatch):
+    """SSE 流式：单家失败 → company_failed 事件，其余照常推进到 completed。"""
+    monkeypatch.setattr(settings, "LLM_BACKEND", "mock")
+
+    async def fake(code, as_of=""):
+        if code == "600518.SH":
+            raise ValueError("COMPANY_NOT_COVERED: 600518.SH")
+        return _risk_output(code, "江苏新能", "yellow", 0.42, ["R2 现金流–利润背离"])
+
+    monkeypatch.setattr(
+        "app.application.services.risk_scoring_service.assemble_and_score", fake
+    )
+    events = [
+        evt
+        async for evt in svc.stream_comparison_advice(["600518.SH", "603693.SH"])
+    ]
+    types = [e["event_type"] for e in events]
+    assert types.count("analysis.company_failed") == 1
+    assert types.count("analysis.company_ready") == 1
+    assert types[-1] == "analysis.completed"
+    assert any("600518.SH" in w for w in events[-1]["payload"]["warnings"])

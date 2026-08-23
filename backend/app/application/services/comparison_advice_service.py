@@ -256,3 +256,133 @@ async def assemble_comparison_advice(codes: list[str]) -> ComparisonAnalysisData
         method=method,
         warnings=warnings,
     )
+
+
+def _split_markdown_sections(text: str) -> list[str]:
+    """按 Markdown 小节（**加粗小节名** 起始行）拆分为节，用于分节推送。"""
+    import re
+
+    parts = re.split(r"(?=\n\*\*)", text or "")
+    return [p.strip() for p in parts if p.strip()]
+
+
+async def stream_comparison_advice(codes: list[str]):
+    """SSE 流式版本（8/23）：阶段进度 + LLM 分节推送。
+
+    事件序列：
+      analysis.started      {total, codes}
+      analysis.company_ready {index, total, company}（每家公司 assemble 完成）
+      analysis.company_failed {index, code, message}
+      analysis.section      {text}（overall 按 Markdown 小节拆分逐节推）
+      analysis.segment      {company_code, title, detail}（每家公司建议）
+      analysis.completed    {method, warnings, companies}
+    """
+    yield {
+        "event_type": "analysis.started",
+        "payload": {"total": len(codes), "codes": codes},
+    }
+    companies: list[ComparisonAnalysisCompany] = []
+    warnings: list[str] = []
+    for index, code in enumerate(codes):
+        try:
+            company = await _company_fact(code)
+            companies.append(company)
+            yield {
+                "event_type": "analysis.company_ready",
+                "payload": {
+                    "index": index,
+                    "total": len(codes),
+                    "company": company.model_dump(),
+                },
+            }
+        except Exception as exc:  # noqa: BLE001 — 单家失败不阻断
+            logger.warning("comparison_advice: 公司 %s 分析失败: %s", code, exc)
+            warnings.append(f"公司 {code} 风险分析失败，本次对比不含该公司")
+            yield {
+                "event_type": "analysis.company_failed",
+                "payload": {"index": index, "code": code, "message": str(exc)},
+            }
+
+    if not companies:
+        yield {
+            "event_type": "analysis.section",
+            "payload": {"text": "所选公司均无法完成风险分析，请稍后重试。"},
+        }
+        yield {
+            "event_type": "analysis.completed",
+            "payload": {"method": "template", "warnings": warnings, "companies": []},
+        }
+        return
+
+    overall_text, template_segments = _template_advice(companies)
+    method = "template"
+
+    from app.agents.llm_guard import llm_with_fallback
+    from app.core.config import settings
+
+    if settings.LLM_BACKEND not in ("", "mock"):
+        valid_codes = {c.wind_code for c in companies}
+
+        def _validate(output) -> tuple[bool, str]:
+            if not output.overall.strip() or not output.suggestions:
+                return False, "overall 或 suggestions 为空"
+            for s in output.suggestions:
+                if s.company_code not in valid_codes or not s.text.strip():
+                    return False, f"非法公司代码（{s.company_code!r}）"
+            from app.application.services._llm_numeric_lock import unlocked_numbers
+
+            invented = unlocked_numbers(
+                [output.overall, *(s.text for s in output.suggestions)],
+                _locked_text(companies),
+            )
+            if invented:
+                return False, f"输出包含事实之外的数字: {sorted(invented)}"
+            return True, ""
+
+        def _fallback():
+            warnings.append("对比分析 LLM 降级，使用模板兜底")
+            return overall_text
+
+        output, used = await asyncio.to_thread(
+            llm_with_fallback,
+            _build_messages(companies),
+            _ComparisonOutput,
+            fallback=_fallback,
+            validate=_validate,
+            timeout=_LLM_TIMEOUT_SECONDS,
+        )
+        if used:
+            overall_text = output.overall.strip()
+            method = "llm"
+            template_segments = [
+                ComparisonAnalysisSegment(
+                    company_code=s.company_code,
+                    title="公司建议",
+                    detail=s.text.strip(),
+                )
+                for s in output.suggestions
+            ]
+
+    # overall 按 Markdown 小节分节推送（校验已通过，节为真实内容结构）
+    sections = _split_markdown_sections(overall_text) or [overall_text]
+    for sec in sections:
+        yield {"event_type": "analysis.section", "payload": {"text": sec}}
+
+    for seg in template_segments:
+        yield {
+            "event_type": "analysis.segment",
+            "payload": {
+                "company_code": seg.company_code,
+                "title": seg.title,
+                "detail": seg.detail,
+            },
+        }
+
+    yield {
+        "event_type": "analysis.completed",
+        "payload": {
+            "method": method,
+            "warnings": warnings,
+            "companies": [c.model_dump() for c in companies],
+        },
+    }

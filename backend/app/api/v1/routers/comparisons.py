@@ -653,3 +653,47 @@ async def get_comparison_analysis(
         ),
         warnings=[],
     )
+
+
+@router.get(
+    "/comparisons/analysis/stream",
+    responses={422: {"model": dict}, 500: {"model": dict}},
+)
+async def stream_comparison_analysis(
+    codes: str = Query(
+        ..., description="对比公司代码，逗号分隔（2-5 家），如 600518.SH,603693.SH"
+    ),
+):
+    """8/23 对比分析 SSE 流式：阶段进度（公司数据获取）+ LLM 分节推送。
+
+    事件：analysis.started / analysis.company_ready / analysis.company_failed /
+    analysis.section / analysis.segment / analysis.completed（见 service）。
+    """
+    import json as _json
+
+    from fastapi.responses import StreamingResponse
+
+    from app.application.services.comparison_advice_service import (
+        stream_comparison_advice,
+    )
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not (2 <= len(code_list) <= 5):
+        raise HTTPException(
+            status_code=422,
+            detail="对比公司数量需为 2-5 家（逗号分隔）。",
+        )
+    unique = list(dict.fromkeys(code_list))
+
+    async def event_stream():
+        async for evt in stream_comparison_advice(unique):
+            yield f"data: {_json.dumps(evt, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

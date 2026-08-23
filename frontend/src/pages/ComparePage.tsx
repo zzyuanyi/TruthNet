@@ -27,7 +27,9 @@ import { MarkdownRenderer } from '@/components/markdown-renderer';
 import type {
   BenchmarksResponseData,
   CompanyRiskSummary,
+  ComparisonAnalysisCompany,
   ComparisonAnalysisData,
+  ComparisonAnalysisSegment,
   ComparisonsResponseData,
   IndicatorCompare,
   RiskLevel,
@@ -410,8 +412,13 @@ export default function ComparePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [industryUnavailable, setIndustryUnavailable] = useState(false);
-  // 8/23 会7 深化：跨公司 LLM 综合分析
-  const [analysisData, setAnalysisData] = useState<ComparisonAnalysisData | null>(null);
+  // 8/23 会7 深化：跨公司 LLM 综合分析（8/23 SSE 流式——分片状态渐进渲染）
+  const [analysisSections, setAnalysisSections] = useState<string[]>([]);
+  const [analysisSegments, setAnalysisSegments] = useState<ComparisonAnalysisSegment[]>([]);
+  const [analysisCompanies, setAnalysisCompanies] = useState<ComparisonAnalysisCompany[]>([]);
+  const [analysisMethod, setAnalysisMethod] = useState('');
+  const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
+  const [analysisProgress, setAnalysisProgress] = useState<{ ready: number; total: number } | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
@@ -507,7 +514,8 @@ export default function ComparePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // 8/23 会7 深化：跨公司 LLM 综合分析（独立异步，不阻塞主数据）
+  // 8/23 会7 深化：跨公司 LLM 综合分析（SSE 流式：阶段进度 + 分节推送；
+  // 连接失败时 REST 兜底一次性获取）
   const analysisInFlight = useRef(false);
   const analysisForCodes = useRef('');
   useEffect(() => {
@@ -519,25 +527,96 @@ export default function ComparePage() {
     analysisInFlight.current = true;
     analysisForCodes.current = key;
     let cancelled = false;
+    let es: EventSource | null = null;
     setAnalysisLoading(true);
     setAnalysisError(null);
-    setAnalysisData(null);
-    truthnetAPI
-      .getComparisonAnalysis(codesParam)
-      .then(res => {
-        if (!cancelled) setAnalysisData(res.data ?? null);
-      })
-      .catch(err => {
-        if (!cancelled) setAnalysisError(err instanceof Error ? err.message : '综合分析失败');
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setAnalysisLoading(false);
-          analysisInFlight.current = false;
+    setAnalysisSections([]);
+    setAnalysisSegments([]);
+    setAnalysisCompanies([]);
+    setAnalysisMethod('');
+    setAnalysisWarnings([]);
+    setAnalysisProgress(null);
+
+    const finish = (method: string, warnings: string[], companies: unknown[]) => {
+      if (cancelled) return;
+      setAnalysisMethod(method);
+      setAnalysisWarnings(Array.isArray(warnings) ? warnings as string[] : []);
+      setAnalysisCompanies((companies || []) as ComparisonAnalysisCompany[]);
+      setAnalysisLoading(false);
+      analysisInFlight.current = false;
+    };
+
+    // REST 兜底（SSE 失败时调用）
+    const fallbackREST = () => {
+      if (cancelled || analysisInFlight.current === false) return;
+      truthnetAPI
+        .getComparisonAnalysis(codesParam)
+        .then(res => {
+          if (cancelled || !res.data) return;
+          setAnalysisSections([res.data.overall]);
+          setAnalysisSegments(res.data.segments || []);
+          finish(res.data.method || '', res.data.warnings || [], res.data.companies || []);
+        })
+        .catch(err => {
+          if (!cancelled) {
+            setAnalysisError(err instanceof Error ? err.message : '综合分析失败');
+            setAnalysisLoading(false);
+            analysisInFlight.current = false;
+          }
+        });
+    };
+
+    try {
+      es = truthnetAPI.streamComparisonAnalysis(codesParam, evt => {
+        if (cancelled) return;
+        const payload = evt.payload || {};
+        switch (evt.event_type) {
+          case 'analysis.started':
+            setAnalysisProgress({ ready: 0, total: Number(payload.total) || codesParam.length });
+            break;
+          case 'analysis.company_ready':
+            setAnalysisProgress(prev => ({
+              ready: (prev?.ready ?? 0) + 1,
+              total: Number(payload.total) || codesParam.length,
+            }));
+            break;
+          case 'analysis.company_failed':
+            setAnalysisWarnings(prev => [...prev, `公司 ${String(payload.code || '')} 风险分析失败`]);
+            break;
+          case 'analysis.section':
+            setAnalysisSections(prev => [...prev, String(payload.text || '')]);
+            break;
+          case 'analysis.segment':
+            setAnalysisSegments(prev => [
+              ...prev,
+              {
+                company_code: String(payload.company_code || ''),
+                title: String(payload.title || ''),
+                detail: String(payload.detail || ''),
+              },
+            ]);
+            break;
+          case 'analysis.completed':
+            finish(
+              String(payload.method || ''),
+              (payload.warnings as string[]) || [],
+              (payload.companies as unknown[]) || [],
+            );
+            break;
+          default:
+            break;
         }
+      }, msg => {
+        // SSE 失败 → REST 兜底
+        if (!cancelled) fallbackREST();
       });
+    } catch {
+      fallbackREST();
+    }
+
     return () => {
       cancelled = true;
+      if (es) es.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -825,41 +904,49 @@ export default function ComparePage() {
                 </Card>
               )}
 
-              {/* 8/23 会7 深化：跨公司 LLM 综合分析 */}
-              {(analysisLoading || analysisError || analysisData) && (
+              {/* 8/23 会7 深化：跨公司 LLM 综合分析（SSE 流式渐进渲染） */}
+              {(analysisLoading || analysisError || analysisSections.length > 0 || analysisSegments.length > 0) && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-sm font-medium flex items-center gap-2">
                       <FileText className="h-4 w-4" />
                       综合分析
-                      {analysisData?.method === 'llm' && (
+                      {analysisMethod === 'llm' && (
                         <Badge variant="outline" className="text-[10px] text-primary">
                           大模型生成
                         </Badge>
                       )}
                     </CardTitle>
-                    {analysisData && analysisData.companies.length > 0 && (
+                    {analysisCompanies.length > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        {analysisData.companies
+                        {analysisCompanies
                           .map(c => `${c.sec_name}（${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}${c.overall_score != null ? ` ${c.overall_score.toFixed(3)}` : ' 暂无评分'}）`)
                           .join(' vs ')}
                       </p>
                     )}
                   </CardHeader>
                   <CardContent>
-                    {analysisLoading ? (
-                      <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        正在综合分析各家公司风险画像…
-                      </div>
-                    ) : analysisError ? (
+                    {analysisError && !analysisLoading && analysisSections.length === 0 ? (
                       <p className="text-sm text-destructive">{analysisError}</p>
-                    ) : analysisData ? (
+                    ) : (
                       <div className="space-y-3">
-                        {/* 8/23 可读性：LLM 对比分析为 Markdown 分节 */}
-                        <MarkdownRenderer content={analysisData.overall} className="text-sm leading-6 text-foreground" />
-                        {analysisData.segments.map((seg, i) => {
-                          const comp = analysisData.companies.find(c => c.wind_code === seg.company_code);
+                        {analysisLoading && (
+                          <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            {analysisProgress && analysisProgress.total > 0
+                              ? `正在获取风险数据（${analysisProgress.ready}/${analysisProgress.total} 家）…`
+                              : '正在综合分析各家公司风险画像…'}
+                          </div>
+                        )}
+                        {/* 8/23 可读性：LLM 对比分析为 Markdown 分节（SSE 分节到达即渲染） */}
+                        {analysisSections.length > 0 && (
+                          <MarkdownRenderer
+                            content={analysisSections.join('\n\n')}
+                            className="text-sm leading-6 text-foreground"
+                          />
+                        )}
+                        {analysisSegments.map((seg, i) => {
+                          const comp = analysisCompanies.find(c => c.wind_code === seg.company_code);
                           return (
                             <div key={`${seg.company_code}-${i}`} className="border-l-2 border-primary/40 pl-3">
                               <p className="text-xs font-medium text-muted-foreground">
@@ -869,14 +956,14 @@ export default function ComparePage() {
                             </div>
                           );
                         })}
-                        {analysisData.warnings.length > 0 && (
-                          <p className="text-xs text-muted-foreground">{analysisData.warnings.join('；')}</p>
+                        {analysisWarnings.length > 0 && (
+                          <p className="text-xs text-muted-foreground">{analysisWarnings.join('；')}</p>
                         )}
                         <p className="text-[11px] text-muted-foreground/70">
                           分析基于各家综合风险等级、评分与触发规则（大模型输出，数字与规则名已锁定），不构成投资建议。
                         </p>
                       </div>
-                    ) : null}
+                    )}
                   </CardContent>
                 </Card>
               )}
