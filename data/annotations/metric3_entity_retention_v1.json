@@ -1,0 +1,358 @@
+{
+  "version": "1.1.0",
+  "metric": "3_entity_retention_rate",
+  "date": "2026-08-22",
+  "total_labeled_turns": 30,
+  "correct": 23,
+  "rate": 0.7667,
+  "method": "逐轮判定：系统该轮 entity_resolution codes 是否包含 labels_77.json expected_company；两轮独立运行（official_runner v3.3.3 315 轮上下文 + 本次补算）均得 23/30",
+  "source": "official_report_v1.txt observed.codes 与本次 compute_missing_metrics.py 补算交叉验证",
+  "items": [
+    {
+      "source_row": 26,
+      "session_id": 2,
+      "question_id": "D006",
+      "question": "亨迪药业表现如何 明天趋势",
+      "expected_company": "301211.SZ",
+      "expected_company_name": "亨迪药业",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 241,
+      "session_id": 9,
+      "question_id": "D007",
+      "question": "002094上龙虎榜了吗",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 244,
+      "session_id": 9,
+      "question_id": "D010",
+      "question": "002094后续会有上榜机会吗？",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "system_codes": [
+        "002094.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 246,
+      "session_id": 9,
+      "question_id": "D012",
+      "question": "青岛金王的市场表现如何？",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 248,
+      "session_id": 9,
+      "question_id": "D014",
+      "question": "青岛金王的换手率是多少？",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 253,
+      "session_id": 9,
+      "question_id": "D017",
+      "question": "宁德时代今天怎么样？",
+      "expected_company": "300750.SZ",
+      "expected_company_name": "宁德时代",
+      "system_codes": [
+        "300750.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 328,
+      "session_id": 11,
+      "question_id": "D021",
+      "question": "买入赛诺医疗",
+      "expected_company": "688108.SH",
+      "expected_company_name": "赛诺医疗",
+      "system_codes": [
+        "688108.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 559,
+      "session_id": 16,
+      "question_id": "D029",
+      "question": "平安银行今日是涨还是跌",
+      "expected_company": "000001.SZ",
+      "expected_company_name": "平安银行",
+      "system_codes": [
+        "000001.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 827,
+      "session_id": 22,
+      "question_id": "D043",
+      "question": "买入国金证券",
+      "expected_company": "600109.SH",
+      "expected_company_name": "国金证券",
+      "system_codes": [
+        "600109.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 828,
+      "session_id": 22,
+      "question_id": "D044",
+      "question": "寒武纪怎么样",
+      "expected_company": "688256.SH",
+      "expected_company_name": "寒武纪",
+      "system_codes": [
+        "688256.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 841,
+      "session_id": 22,
+      "question_id": "D047",
+      "question": "寒武纪昨天涨停的原因",
+      "expected_company": "688256.SH",
+      "expected_company_name": "寒武纪",
+      "system_codes": [
+        "688256.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 842,
+      "session_id": 22,
+      "question_id": "D048",
+      "question": "长城证券涨停的原因",
+      "expected_company": "002939.SZ",
+      "expected_company_name": "长城证券",
+      "system_codes": [
+        "002939.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 953,
+      "session_id": 25,
+      "question_id": "D053",
+      "question": "002932近一周涨跌幅",
+      "expected_company": "002932.SZ",
+      "expected_company_name": "*ST明德",
+      "system_codes": [
+        "002932.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 965,
+      "session_id": 25,
+      "question_id": "D054",
+      "question": "002392近一周涨跌幅",
+      "expected_company": "002392.SZ",
+      "expected_company_name": "002392",
+      "system_codes": [
+        "002392.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1115,
+      "session_id": 30,
+      "question_id": "D056",
+      "question": "岩山科技怎么看",
+      "expected_company": "002195.SZ",
+      "expected_company_name": "岩山科技",
+      "system_codes": [
+        "002195.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1116,
+      "session_id": 30,
+      "question_id": "D057",
+      "question": "云鼎科技目前走势分析",
+      "expected_company": "000409.SZ",
+      "expected_company_name": "云鼎科技",
+      "system_codes": [
+        "000409.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1117,
+      "session_id": 30,
+      "question_id": "D058",
+      "question": "宗申动力的分时K线显示了什么信号？",
+      "expected_company": "001696.SZ",
+      "expected_company_name": "宗申动力",
+      "system_codes": [
+        "001696.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1118,
+      "session_id": 30,
+      "question_id": "D059",
+      "question": "天风证券监管问询点评",
+      "expected_company": "601162.SH",
+      "expected_company_name": "天风证券",
+      "system_codes": [
+        "601162.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1119,
+      "session_id": 30,
+      "question_id": "D060",
+      "question": "雷柏科技的近期走势如何？",
+      "expected_company": "002577.SZ",
+      "expected_company_name": "雷柏科技",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 1120,
+      "session_id": 30,
+      "question_id": "D061",
+      "question": "嘉麟杰最新季度单季度净利润看点解读",
+      "expected_company": "002486.SZ",
+      "expected_company_name": "嘉麟杰",
+      "system_codes": [
+        "002486.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1121,
+      "session_id": 30,
+      "question_id": "D062",
+      "question": "华工科技的主力控盘度如何？",
+      "expected_company": "000988.SZ",
+      "expected_company_name": "华工科技",
+      "system_codes": [
+        "000988.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1122,
+      "session_id": 30,
+      "question_id": "D063",
+      "question": "恒大高新量价关系是否显示主力意图？",
+      "expected_company": "002591.SZ",
+      "expected_company_name": "恒大高新",
+      "system_codes": [
+        "002591.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1123,
+      "session_id": 30,
+      "question_id": "D064",
+      "question": "日出东方MACD分析",
+      "expected_company": "603366.SH",
+      "expected_company_name": "日出东方",
+      "system_codes": [
+        "603366.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1124,
+      "session_id": 30,
+      "question_id": "D065",
+      "question": "双环传动浮盈17个点,该继续持有吗？",
+      "expected_company": "002472.SZ",
+      "expected_company_name": "双环传动",
+      "system_codes": [
+        "002472.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1125,
+      "session_id": 30,
+      "question_id": "D066",
+      "question": "徕木股份的超长线投资价值如何？",
+      "expected_company": "603633.SH",
+      "expected_company_name": "徕木股份",
+      "system_codes": [
+        "603633.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1126,
+      "session_id": 30,
+      "question_id": "D067",
+      "question": "连云港的主力资金流向如何？",
+      "expected_company": "601008.SH",
+      "expected_company_name": "连云港",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 1127,
+      "session_id": 30,
+      "question_id": "D068",
+      "question": "中国石化现在适合买入吗？",
+      "expected_company": "600028.SH",
+      "expected_company_name": "中国石化",
+      "system_codes": [
+        "600028.SH"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1128,
+      "session_id": 30,
+      "question_id": "D069",
+      "question": "森马服饰5.00的本,目前适合补仓吗？",
+      "expected_company": "002563.SZ",
+      "expected_company_name": "森马服饰",
+      "system_codes": [
+        "002563.SZ"
+      ],
+      "retained": true
+    },
+    {
+      "source_row": 1129,
+      "session_id": 30,
+      "question_id": "D070",
+      "question": "德瑞锂电当前适合加仓还是减仓？",
+      "expected_company": "833523.BJ",
+      "expected_company_name": "德瑞锂电",
+      "system_codes": [],
+      "retained": false
+    },
+    {
+      "source_row": 1130,
+      "session_id": 30,
+      "question_id": "D071",
+      "question": "云赛智联的K线形态如何分析？",
+      "expected_company": "600602.SH",
+      "expected_company_name": "云赛智联",
+      "system_codes": [
+        "600602.SH"
+      ],
+      "retained": true
+    }
+  ]
+}

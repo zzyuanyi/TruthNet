@@ -1,0 +1,1495 @@
+{
+  "version": "1.1.0",
+  "date": "2026-08-22",
+  "total_questions": 77,
+  "finance_related": 2,
+  "non_finance": 75,
+  "has_company": 30,
+  "note": "公司名通过全称关键词+6位股票代码正则匹配识别。指标1和7因缺乏ground truth标记为not_applicable。 2026-08-22 补人工风险标签8条(expected_risk_level: red/orange/yellow/unknown)，依据为真实测试库母公司口径财务数据 + RULES_SPEC.md R1-R7公式，unknown=数据覆盖不足。",
+  "items": [
+    {
+      "question_id": "D001",
+      "session_id": 1,
+      "question": "今天自选股涨最多？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D002",
+      "session_id": 1,
+      "question": "市场最新研报有哪些？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D003",
+      "session_id": 1,
+      "question": "跌最狠的是哪一只",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D004",
+      "session_id": 2,
+      "question": "自选股今日表现如何？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D005",
+      "session_id": 2,
+      "question": "我的持仓股今日表现怎样？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D006",
+      "session_id": 2,
+      "question": "亨迪药业表现如何 明天趋势",
+      "expected_company": "301211.SZ",
+      "expected_company_name": "亨迪药业",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 亨迪药业(301211.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D007",
+      "session_id": 9,
+      "question": "002094上龙虎榜了吗",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "company_match_method": "股票代码 002094 匹配",
+      "expected_company_note": "股票代码 002094 匹配 → 青岛金王(002094.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D008",
+      "session_id": 9,
+      "question": "周杰伦炒股吗？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D009",
+      "session_id": 9,
+      "question": "今天的龙虎榜上还有哪些股票？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D010",
+      "session_id": 9,
+      "question": "002094后续会有上榜机会吗？",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "company_match_method": "股票代码 002094 匹配",
+      "expected_company_note": "股票代码 002094 匹配 → 青岛金王(002094.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D011",
+      "session_id": 9,
+      "question": "哪个概念股跌幅最大",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D012",
+      "session_id": 9,
+      "question": "青岛金王的市场表现如何？",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 青岛金王(002094.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D013",
+      "session_id": 9,
+      "question": "放量上涨的有哪些",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D014",
+      "session_id": 9,
+      "question": "青岛金王的换手率是多少？",
+      "expected_company": "002094.SZ",
+      "expected_company_name": "青岛金王",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 青岛金王(002094.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D015",
+      "session_id": 9,
+      "question": "我的自选股中有哪些放量上涨的股票？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D016",
+      "session_id": 9,
+      "question": "自选股异动",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D017",
+      "session_id": 9,
+      "question": "宁德时代今天怎么样？",
+      "expected_company": "300750.SZ",
+      "expected_company_name": "宁德时代",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 宁德时代(300750.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析",
+      "expected_risk_level": "yellow",
+      "expected_risk_basis": "R7盈利质量(简化版)：净利润同比+28.8%低于营收同比+38.7%，增速差-9.9pp；经营现金流+625亿健康，单规则关注(2025年报母公司口径)，判 yellow",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D018",
+      "session_id": 11,
+      "question": "ai盯盘",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D019",
+      "session_id": 11,
+      "question": "ai看基金",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D020",
+      "session_id": 11,
+      "question": "ai午报",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D021",
+      "session_id": 11,
+      "question": "买入赛诺医疗",
+      "expected_company": "688108.SH",
+      "expected_company_name": "赛诺医疗",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 赛诺医疗(688108.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析",
+      "expected_risk_level": "orange",
+      "expected_risk_basis": "R5毛利率偏离(+10.6pp, gross_margin 62.9%)单规则触发中风险；现金流+1.96亿为正、负债水平低，其余规则未触发(2025年报母公司口径)，判 orange",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D022",
+      "session_id": 11,
+      "question": "ai盯股",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D023",
+      "session_id": 11,
+      "question": "自选股的行业走势怎样？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D024",
+      "session_id": 11,
+      "question": "分析我的自选",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D025",
+      "session_id": 11,
+      "question": "自选中个股分析",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D026",
+      "session_id": 11,
+      "question": "今天自选股有哪些异动？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D027",
+      "session_id": 16,
+      "question": "全市场异动",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D028",
+      "session_id": 16,
+      "question": "今天大宗交易市场是什么情况",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D029",
+      "session_id": 16,
+      "question": "平安银行今日是涨还是跌",
+      "expected_company": "000001.SZ",
+      "expected_company_name": "平安银行",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 平安银行(000001.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D030",
+      "session_id": 16,
+      "question": "自选股关联行业",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D031",
+      "session_id": 16,
+      "question": "自选股最新资讯",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D032",
+      "session_id": 16,
+      "question": "今天自选股综合表现",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D033",
+      "session_id": 16,
+      "question": "自选股研报",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D034",
+      "session_id": 16,
+      "question": "今日市场咯龙虎榜",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D035",
+      "session_id": 16,
+      "question": "我有几只自选股",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D036",
+      "session_id": 16,
+      "question": "我的自选股有哪些",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D037",
+      "session_id": 16,
+      "question": "你这自选日报小助手只会找数据，不会说对策有什么意义",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D038",
+      "session_id": 16,
+      "question": "自选股中哪些行业值得关注？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D039",
+      "session_id": 16,
+      "question": "你不能提供策略吗",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D040",
+      "session_id": 16,
+      "question": "针对军工行业上涨有何对策",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D041",
+      "session_id": 16,
+      "question": "龙虎榜上榜自选股操作策略",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D042",
+      "session_id": 22,
+      "question": "人形机器人那些股可以买",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D043",
+      "session_id": 22,
+      "question": "买入国金证券",
+      "expected_company": "600109.SH",
+      "expected_company_name": "国金证券",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 国金证券(600109.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D044",
+      "session_id": 22,
+      "question": "寒武纪怎么样",
+      "expected_company": "688256.SH",
+      "expected_company_name": "寒武纪",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 寒武纪(688256.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析",
+      "expected_risk_level": "red",
+      "expected_risk_basis": "R2现金流-利润背离(净利+17.6亿 vs 经营现金流-12.3亿)、R4存货暴增(+2522.6% vs 营收+652.9%)、R6其他应收款占总资产10.4%(>10%极端阈值)且超过应收账款2.4倍、R5毛利率偏离、R7盈利质量，5条规则同时触发(2025年报母公司口径)，综合判 red",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D045",
+      "session_id": 22,
+      "question": "人形机器人有哪些投资机会",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D046",
+      "session_id": 22,
+      "question": "短期内有哪些看好的板块",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D047",
+      "session_id": 22,
+      "question": "寒武纪昨天涨停的原因",
+      "expected_company": "688256.SH",
+      "expected_company_name": "寒武纪",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 寒武纪(688256.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D048",
+      "session_id": 22,
+      "question": "长城证券涨停的原因",
+      "expected_company": "002939.SZ",
+      "expected_company_name": "长城证券",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 长城证券(002939.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D049",
+      "session_id": 22,
+      "question": "最近有哪些热门行业版",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D050",
+      "session_id": 22,
+      "question": "短期内有哪些看好的板块",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D051",
+      "session_id": 22,
+      "question": "帮助分析下大盘走势",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D052",
+      "session_id": 22,
+      "question": "今天大宗交易市场是什么情况",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D053",
+      "session_id": 25,
+      "question": "002932近一周涨跌幅",
+      "expected_company": "002932.SZ",
+      "expected_company_name": "*ST明德",
+      "company_match_method": "股票代码 002932 匹配",
+      "expected_company_note": "股票代码 002932 匹配 → *ST明德(002932.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D054",
+      "session_id": 25,
+      "question": "002392近一周涨跌幅",
+      "expected_company": "002392.SZ",
+      "expected_company_name": "002392",
+      "company_match_method": "股票代码 002392 匹配",
+      "expected_company_note": "股票代码 002392 匹配 → 002392(002392.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D055",
+      "session_id": 29,
+      "question": "自选股有哪些强势股数据？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D056",
+      "session_id": 30,
+      "question": "岩山科技怎么看",
+      "expected_company": "002195.SZ",
+      "expected_company_name": "岩山科技",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 岩山科技(002195.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析",
+      "expected_risk_level": "yellow",
+      "expected_risk_basis": "R2现金流-利润背离：经营现金流为负(-361万)而净利为正(+1.02亿)，现金流/利润比-0.035，连续1季度；其余规则未触发，判 yellow",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D057",
+      "session_id": 30,
+      "question": "云鼎科技目前走势分析",
+      "expected_company": "000409.SZ",
+      "expected_company_name": "云鼎科技",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 云鼎科技(000409.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D058",
+      "session_id": 30,
+      "question": "宗申动力的分时K线显示了什么信号？",
+      "expected_company": "001696.SZ",
+      "expected_company_name": "宗申动力",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 宗申动力(001696.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D059",
+      "session_id": 30,
+      "question": "天风证券监管问询点评",
+      "expected_company": "601162.SH",
+      "expected_company_name": "天风证券",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 天风证券(601162.SH)",
+      "is_finance_related": true,
+      "evaluable_dimensions": [
+        "evidence_coverage",
+        "format_compliance",
+        "partial_response_rate"
+      ],
+      "non_evaluable_dimensions": [],
+      "non_evaluable_reason": null,
+      "expected_risk_level": "red",
+      "expected_risk_basis": "证券金融企业R1-R7不适用；2026-03一次性收到湖北/福建监管局行政监管措施、行政处罚决定书、纪律处分共5项，2025年报母公司口径净利-1.18亿亏损，监管处罚高频叠加经营承压，判 red",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D060",
+      "session_id": 30,
+      "question": "雷柏科技的近期走势如何？",
+      "expected_company": "002577.SZ",
+      "expected_company_name": "雷柏科技",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 雷柏科技(002577.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D061",
+      "session_id": 30,
+      "question": "嘉麟杰最新季度单季度净利润看点解读",
+      "expected_company": "002486.SZ",
+      "expected_company_name": "嘉麟杰",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 嘉麟杰(002486.SZ)",
+      "is_finance_related": true,
+      "evaluable_dimensions": [
+        "evidence_coverage",
+        "format_compliance",
+        "partial_response_rate"
+      ],
+      "non_evaluable_dimensions": [],
+      "non_evaluable_reason": null,
+      "expected_risk_level": "unknown",
+      "expected_risk_basis": "母公司口径2025年报营业收入缺失(None)，单季度净利无法还原；近两期净利波动大(2025年+662万/2024年-365万)，财务数据覆盖不足，无法可靠判定，标 unknown",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D062",
+      "session_id": 30,
+      "question": "华工科技的主力控盘度如何？",
+      "expected_company": "000988.SZ",
+      "expected_company_name": "华工科技",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 华工科技(000988.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析",
+      "expected_risk_level": "unknown",
+      "expected_risk_basis": "母公司口径财务数据覆盖有限，系统仅完成股权穿透未触发财务规则，综合风险等级'数据不足'，无法可靠判定，标 unknown",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D063",
+      "session_id": 30,
+      "question": "恒大高新量价关系是否显示主力意图？",
+      "expected_company": "002591.SZ",
+      "expected_company_name": "恒大高新",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 恒大高新(002591.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D064",
+      "session_id": 30,
+      "question": "日出东方MACD分析",
+      "expected_company": "603366.SH",
+      "expected_company_name": "日出东方",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 日出东方(603366.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D065",
+      "session_id": 30,
+      "question": "双环传动浮盈17个点,该继续持有吗？",
+      "expected_company": "002472.SZ",
+      "expected_company_name": "双环传动",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 双环传动(002472.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D066",
+      "session_id": 30,
+      "question": "徕木股份的超长线投资价值如何？",
+      "expected_company": "603633.SH",
+      "expected_company_name": "徕木股份",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 徕木股份(603633.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析",
+      "expected_risk_level": "red",
+      "expected_risk_basis": "R6其他应收款占总资产21.4%(>10%极端阈值)、绝对额7.23亿>5000万、超过应收账款1.27倍，符合资金占用典型模式(2025年报母公司口径)，判 red",
+      "risk_label_source": "human"
+    },
+    {
+      "question_id": "D067",
+      "session_id": 30,
+      "question": "连云港的主力资金流向如何？",
+      "expected_company": "601008.SH",
+      "expected_company_name": "连云港",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 连云港(601008.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D068",
+      "session_id": 30,
+      "question": "中国石化现在适合买入吗？",
+      "expected_company": "600028.SH",
+      "expected_company_name": "中国石化",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 中国石化(600028.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D069",
+      "session_id": 30,
+      "question": "森马服饰5.00的本,目前适合补仓吗？",
+      "expected_company": "002563.SZ",
+      "expected_company_name": "森马服饰",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 森马服饰(002563.SZ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D070",
+      "session_id": 30,
+      "question": "德瑞锂电当前适合加仓还是减仓？",
+      "expected_company": "833523.BJ",
+      "expected_company_name": "德瑞锂电",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 德瑞锂电(833523.BJ)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D071",
+      "session_id": 30,
+      "question": "云赛智联的K线形态如何分析？",
+      "expected_company": "600602.SH",
+      "expected_company_name": "云赛智联",
+      "company_match_method": "公司名关键词匹配",
+      "expected_company_note": "公司名关键词匹配 → 云赛智联(600602.SH)",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D072",
+      "session_id": 31,
+      "question": "连续横盘30个交易日",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D073",
+      "session_id": 31,
+      "question": "列举最近连续横盘30个交易日的股",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D074",
+      "session_id": 31,
+      "question": "哪些股近22天涨跌幅很小？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D075",
+      "session_id": 32,
+      "question": "有哪些企业在固态电池技术上有新产品？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D076",
+      "session_id": 32,
+      "question": "有哪些企业在固态电池技术上有新产品？",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    },
+    {
+      "question_id": "D077",
+      "session_id": 33,
+      "question": "今天自选股表现",
+      "expected_company": null,
+      "expected_company_name": null,
+      "company_match_method": null,
+      "expected_company_note": "题目未明确指定具体公司名称或股票代码",
+      "is_finance_related": false,
+      "evaluable_dimensions": [
+        "format_compliance"
+      ],
+      "non_evaluable_dimensions": [
+        "accuracy",
+        "risk_calibration",
+        "evidence_coverage"
+      ],
+      "non_evaluable_reason": "题目属于行情查询/技术分析/持仓管理/市场资讯类问题，不涉及财务反欺诈分析"
+    }
+  ],
+  "risk_labeled_count": 8
+}
