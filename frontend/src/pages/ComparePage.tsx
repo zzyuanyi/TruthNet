@@ -1,7 +1,7 @@
 // 织网鉴真 TruthNet - 跨公司对比页
 // Phase 3: 多公司对比分析
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
@@ -422,8 +422,19 @@ export default function ComparePage() {
     ),
   ].slice(0, 5);
 
+  // 8/23 StrictMode 防重：dev 双 effect 会发起两套对比请求（analysis 的
+  // LLM 并发超时 → 降级覆盖 LLM 内容）；同 codes 的第二次调用直接跳过。
+  const loadInFlight = useRef(false);
+  const loadForCodes = useRef('');
+
   useEffect(() => {
     const loadCompanies = async () => {
+      const key = codesParam.join(',');
+      if (candidateCodes.length === 0 && codesParam.length > 0) {
+        if (loadInFlight.current && loadForCodes.current === key) return;
+        loadInFlight.current = true;
+        loadForCodes.current = key;
+      }
       setLoading(true);
       setError(null);
       setIndustryUnavailable(false);
@@ -455,6 +466,7 @@ export default function ComparePage() {
           setError(err instanceof Error ? err.message : '行业基准加载失败');
         } finally {
           setLoading(false);
+          loadInFlight.current = false;
         }
         return;
       }
@@ -474,6 +486,7 @@ export default function ComparePage() {
         setError(err instanceof Error ? err.message : '加载失败');
       } finally {
         setLoading(false);
+        loadInFlight.current = false;
       }
     };
 
@@ -482,8 +495,16 @@ export default function ComparePage() {
   }, [searchParams]);
 
   // 8/23 会7 深化：跨公司 LLM 综合分析（独立异步，不阻塞主数据）
+  const analysisInFlight = useRef(false);
+  const analysisForCodes = useRef('');
   useEffect(() => {
     if (codesParam.length < 2 || candidateCodes.length > 0) return;
+    const key = codesParam.join(',');
+    // 8/23 StrictMode 防重：同 codes 双 effect 只发一次（LLM 并发超时
+    // 会降级覆盖 LLM 内容）
+    if (analysisInFlight.current && analysisForCodes.current === key) return;
+    analysisInFlight.current = true;
+    analysisForCodes.current = key;
     let cancelled = false;
     setAnalysisLoading(true);
     setAnalysisError(null);
@@ -497,7 +518,10 @@ export default function ComparePage() {
         if (!cancelled) setAnalysisError(err instanceof Error ? err.message : '综合分析失败');
       })
       .finally(() => {
-        if (!cancelled) setAnalysisLoading(false);
+        if (!cancelled) {
+          setAnalysisLoading(false);
+          analysisInFlight.current = false;
+        }
       });
     return () => {
       cancelled = true;

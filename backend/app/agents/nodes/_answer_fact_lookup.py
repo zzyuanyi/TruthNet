@@ -15,10 +15,8 @@ from ._answer_common import (
 )
 from app.agents.state import AgentState, Claim, EvidenceRef, FinalResponse
 from app.core.config import settings
-from app.domain.finance.statement_type import PARENT_STATEMENT_TYPE
 from app.domain.provenance.id_factory import (
     NS_COMPANY_REGISTRY,
-    NS_FINANCE,
     NS_WEB_SEARCH,
     make_claim_id,
     make_evidence_id,
@@ -1279,16 +1277,17 @@ def _evidence_for_observations(
         field_path = getattr(observation, "field_path", "")
         source_table = getattr(observation, "source_table", "")
         value = getattr(observation, "value", "")
-        source_record_id = f"{company.wind_code}|{obs_period}|{PARENT_STATEMENT_TYPE}"
-        evidence_id = make_evidence_id(
-            source_namespace=NS_FINANCE,
-            source_type="financial_statement",
-            source_record_id=source_record_id,
-            field_path=field_path,
-            period=obs_period,
-            dataset_version=settings.DATASET_VERSION,
-            company_code=company.wind_code,
+        # 8/23 双轨 ID 统一：指标问答证据与财务规则证据同 canonical
+        # （两段式 source_record_id + 无 rule_id 段）——同一字段同期间
+        # 只产生一个证据 ID，避免同事实多 ID 分裂
+        from app.application.services.finance_evidence import (
+            normalize_rule_evidence_id,
         )
+
+        evidence_id = normalize_rule_evidence_id(
+            field_path, company.wind_code, obs_period, period=obs_period
+        )
+        source_record_id = f"{company.wind_code}|{obs_period}"
         evidence.append(
             EvidenceRef(
                 evidence_id=evidence_id,
