@@ -539,6 +539,27 @@ export default function CompanyProfilePage() {
     impactAdvice?.overall_advice,
   ]);
 
+  // 8/23 分步渲染：profile 未到达时显示加载中（不得落入「加载失败」分支——
+  // 首次渲染 profile=null 且 error=null，需区分加载中与加载失败）
+  if (!profile && !error) {
+    return (
+      <div className="flex h-screen bg-background">
+        <div className="w-40 border-r border-border p-4">
+          <Skeleton className="h-full w-full" />
+        </div>
+        <div className="flex-1 overflow-auto p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载公司信息…
+          </div>
+          <Skeleton className="mb-4 h-8 w-64" />
+          <Skeleton className="mb-4 h-32 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    );
+  }
+
   if (error || !profile) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">

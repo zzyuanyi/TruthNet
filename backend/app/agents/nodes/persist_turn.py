@@ -80,14 +80,24 @@ def _to_json(value) -> str | None:
 _MISSING_SOURCE_TYPES = {"", "unknown"}
 
 
+def _norm_source_record_id(value: str) -> str:
+    """8/23 双轨 ID 统一兼容：source_record_id 归一化比较。
+
+    旧行可能是三段式（code|period|408006000，显式母公司口径），新落库为
+    两段式（code|period，默认母公司口径）——语义等价，比较时只取前两段。
+    """
+    parts = (value or "").split("|")
+    return "|".join(parts[:2]) if len(parts) >= 2 else (value or "")
+
+
 def _evidence_core_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
     """核心字段冲突判定（空值兼容，P0：ev_ann_* 反复落库失败根因修复）。
 
     - source_type：NULL/""/"unknown" 视为缺失；两个已知且不同的类型才冲突
     - source_record_id/field_path/period/company_code：一方为空兼容，
       双方非空且不同才冲突（历史记录 period=NULL 而新值为公告日期时
-      属于补全，不判冲突）
-    - value：双方非空且不同才冲突
+      属于补全，不判冲突）；source_record_id 按两段式归一化比较
+    - value：双方非空且不同才冲突（数值按 Decimal 归一化）
     """
     et = (existing.source_type or "").strip()
     nt = (new.source_type or "").strip()
@@ -96,6 +106,9 @@ def _evidence_core_conflict(existing: EvidenceRef, new: EvidenceRef) -> bool:
     for attr in ("source_record_id", "field_path", "period", "company_code"):
         a = (getattr(existing, attr) or "").strip()
         b = (getattr(new, attr) or "").strip()
+        if attr == "source_record_id":
+            a = _norm_source_record_id(a)
+            b = _norm_source_record_id(b)
         if a and b and a != b:
             return True
     return _evidence_value_conflict(existing, new)
