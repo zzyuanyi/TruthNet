@@ -220,18 +220,35 @@ def _merge_exact_spots(
         if m.start is None or m.end is None:
             kept.append(m)
             continue
+        # 8/23 修复：复合段（含连接词）不因单个精确 spot 重叠而丢弃——
+        # "比亚迪和隆基谁营收更高"中精确 spot 只命中"比亚迪"（隆基是
+        # 简称非精确名），原逻辑丢弃粗 span 导致隆基丢失（comparison_
+        # missing_peer）；复合段保留给 _segment_compound 分段处理。
+        # 单一名称+后缀场景（"康美药业的"→"康美药业"）仍精确优先。
+        is_compound_span = any(
+            conn in (m.text or "") for conn in _COMPOUND_CONNECTORS
+        )
         # 与某个精确 span 重叠但非同一 span → 精确名称优先（丢弃粗 span）
         if any(not (m.end <= s.start or s.end <= m.start) for s in spans) and not any(
             m.start == s.start and m.end == s.end and (m.text or "") == s.text
             for s in spans
         ):
-            continue
+            if not is_compound_span:
+                continue
         kept.append(m)
 
     existing_keys = {(m.start, m.end, (m.text or "").strip()) for m in kept}
     for span in spans:
         key = (span.start, span.end, span.text)
         if key in existing_keys:
+            continue
+        # 8/23 修复：精确 spot 完全落在某保留的复合段内部 → 不追加，
+        # 避免与复合 span 重叠（分段逻辑会覆盖该精确名）。
+        if any(
+            not (span.end <= k.start or k.end <= span.start)
+            for k in kept
+            if any(conn in (k.text or "") for conn in _COMPOUND_CONNECTORS)
+        ):
             continue
         kept.append(
             EntityMention(
