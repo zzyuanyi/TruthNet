@@ -73,8 +73,31 @@ _FINANCIAL_REPORT_INDICATORS = (
 def _build_financial_indicators(
     resolved_map: dict, period_ymd: str
 ) -> list[IndicatorCompare]:
-    """构造财务人员可直接阅读的标准财报科目对比。"""
+    """构造财务人员可直接阅读的标准财报科目对比。
+
+    8/23 期次回退：请求期为未来期（如默认 2026Q2→20260630，库内最新
+    20260331）时精确匹配必然失败——若各公司库内最新期次一致，回退到该
+    最新期次（共同交集）；各公司最新期不同或请求期不晚于最新期时保持
+    请求期原语义（数据不足如实显示）。
+    """
     from app.application.services.indicator_query_service import query_metric
+
+    use_period = period_ymd
+    try:
+        from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+        latest_set = {
+            (resolve_company_data_as_of(rec.wind_code) or "")
+            for rec in resolved_map.values()
+        }
+        latest_set.discard("")
+        if latest_set and period_ymd > max(latest_set):
+            # 请求期晚于所有公司最新披露期 → 回退「共同覆盖的最晚期次」：
+            # min(各公司最新期) 是每一家都有数据的最晚共同期次
+            # （如比亚迪/隆基 20260331、宁德 20251231 → 共同期 20251231）
+            use_period = min(latest_set)
+    except Exception:  # noqa: BLE001 — 期次推导失败保持请求期
+        pass
 
     rows: list[IndicatorCompare] = []
     for metric_id in _FINANCIAL_REPORT_INDICATORS:
@@ -86,7 +109,7 @@ def _build_financial_indicators(
             result = query_metric(
                 rec.wind_code,
                 metric_id,
-                as_of=period_ymd,
+                as_of=use_period,
                 require_exact_period=True,
             )
             labels.append(result.label or metric_id)
@@ -102,7 +125,7 @@ def _build_financial_indicators(
                         else None
                     ),
                     unit=result.unit or "",
-                    period=result.period or period_ymd,
+                    period=result.period or use_period,
                     status=result.status,
                 )
             )
