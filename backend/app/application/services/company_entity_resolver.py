@@ -58,7 +58,11 @@ from app.domain.comparison.scope_registry import COMPARISON_FULL_SCOPE_WORDS
 logger = logging.getLogger(__name__)
 
 # 语法后缀变体（v8 _GRAMMAR_SUFFIX_CHARS 平移）
-_GRAMMAR_SUFFIX_CHARS = frozenset("的是呢吗了")
+# 8/23 修复：加"比"——比较句"招商银行和茅台比哪个更赚钱"中右片段
+# "茅台比"带比较句尾"比"导致复合拆分失败（comparison_missing_peer）；
+# 变体查询剥尾后"茅台"命中。风险：比亚迪尾部是"亚"不触发；"占比/对比"
+# 剥尾后无候选则无害（变体仅是额外候选尝试，原查询优先）。
+_GRAMMAR_SUFFIX_CHARS = frozenset("的是呢吗了比")
 
 # v3.2.1 批次 2：业务上下文词（封闭集合）——仅当已存在有效公司 mention 时，
 # 零候选 span 精确等于其中之一才被忽略（不进 mentions/unresolved/relation）
@@ -710,6 +714,18 @@ class CompanyEntityResolver:
             left, right = frag[:pos], frag[pos + len(connector) :]
             if len(left) < 2 or len(right) < 2:
                 continue
+            # 8/23 修复：子片段剥语法尾字符（"茅台比"→"茅台"）——比较句
+            # "招商银行和茅台比哪个更赚钱"中右片段带比较句尾"比"，不剥则
+            # 变体命中是 needs_confirmation（不锁定），comparison 缺位。
+            # 剥尾后是原文连续子区间（合法）；"占比"剥尾→"占"查不到候选
+            # 则方案不合法、无影响；"比亚迪"尾字符非语法字符不触发。
+            right_trimmed = right
+            while (
+                len(right_trimmed) >= 2
+                and right_trimmed[-1] in _GRAMMAR_SUFFIX_CHARS
+            ):
+                right_trimmed = right_trimmed[:-1]
+            right = right_trimmed
             left_m = EntityMention(
                 mention_id=make_mention_id(parent.start, parent.start + pos, left),
                 text=left,
@@ -722,7 +738,7 @@ class CompanyEntityResolver:
                 ),
                 text=right,
                 start=parent.start + pos + len(connector),
-                end=parent.end,
+                end=parent.start + pos + len(connector) + len(right),
             )
             left_final, _ = self._finalize_span(left_m, depth + 1)
             if not left_final or any(
