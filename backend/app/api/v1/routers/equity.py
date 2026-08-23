@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from app.api.v1.schemas.common import ApiMeta, V12Response, WarningItem
 from app.api.v1.schemas.equity import (
     DownstreamRelationDTO,
+    DownstreamRiskSignalDTO,
     EquityChainDTO,
     EquityEdgeDTO,
     EquityInsightDTO,
@@ -370,6 +371,77 @@ async def get_company_equity(
                     logger.warning(
                         "equity: 下游公司名映射失败，回退图节点 label", exc_info=True
                     )
+            # 8/23 上下游风险信号：对上市子公司批量查负面公告（announcements
+            # 为负面公告库）与负面事件簇（event_clusters sentiment=negative）。
+            # 有信号 → red + 信号列表；无信号 → green；非上市（无 code）→ unknown。
+            ds_risk_signals: dict[str, list[dict]] = {}
+            if ds_codes:
+                try:
+                    _ph = ",".join([f":c{i}" for i in range(len(ds_codes))])
+                    _params = {f"c{i}": c for i, c in enumerate(ds_codes)}
+                    with _get_engine().connect() as _conn:
+                        # 负面公告：最近 3 条/公司（announcements 表 sentiment 全为 negative）
+                        _ann_rows = _conn.execute(
+                            text(
+                                "SELECT wind_code, ann_dt, n_info_title FROM announcements "
+                                f"WHERE wind_code IN ({_ph}) AND sentiment = 'negative' "
+                                "ORDER BY wind_code, ann_dt DESC"
+                            ),
+                            _params,
+                        ).fetchall()
+                        # 负面事件簇：按公司取最近主题
+                        _clu_rows = _conn.execute(
+                            text(
+                                "SELECT wind_code, start_date, topic FROM event_clusters "
+                                f"WHERE wind_code IN ({_ph}) AND sentiment = 'negative' "
+                                "ORDER BY wind_code, start_date DESC"
+                            ),
+                            _params,
+                        ).fetchall()
+                    for code in ds_codes:
+                        signals: list[dict] = []
+                        for r in _clu_rows:
+                            if r[0] == code and len(signals) < 3:
+                                signals.append(
+                                    {
+                                        "kind": "event_cluster",
+                                        "title": r[2] or "负面事件",
+                                        "date": str(r[1] or ""),
+                                        "evidence_id": "",
+                                    }
+                                )
+                        for r in _ann_rows:
+                            if r[0] != code or len(signals) >= 3:
+                                continue
+                            # 8/23 误报过滤：负面公告库含「澄清类」公告——
+                            # "最近五年不存在被处罚情况的公告"是合规澄清而非
+                            # 风险信号，标题含否定词时不展示为红色信号。
+                            _t = r[2] or ""
+                            if any(
+                                kw in _t
+                                for kw in (
+                                    "不存在",
+                                    "未发现",
+                                    "未受到",
+                                    "无重大违法",
+                                    "无违规",
+                                    "没有受到",
+                                )
+                            ):
+                                continue
+                            signals.append(
+                                {
+                                    "kind": "announcement",
+                                    "title": _t or "负面公告",
+                                    "date": str(r[1] or ""),
+                                    "evidence_id": "",
+                                }
+                            )
+                        if signals:
+                            ds_risk_signals[code] = signals
+                except Exception:  # noqa: BLE001 — 风险信号查询失败不阻断
+                    logger.warning("equity: 下游风险信号查询失败", exc_info=True)
+
             for e in ds_edges[:50]:
                 node = ds_nodes.get(e.target)
                 wc = (node.wind_code if node else "") or ""
@@ -380,6 +452,7 @@ async def get_company_equity(
                     or wc
                     or e.target
                 )
+                signals = ds_risk_signals.get(wc, [])
                 downstream_relations.append(
                     DownstreamRelationDTO(
                         entity_id=e.target,
@@ -387,6 +460,10 @@ async def get_company_equity(
                         sec_name=name,
                         ownership_pct=e.ownership_pct,
                         relation=e.relation,
+                        risk_level=(
+                            "red" if signals else ("green" if wc else "unknown")
+                        ),
+                        risk_signals=[DownstreamRiskSignalDTO(**s) for s in signals],
                     )
                 )
         except Exception as exc:  # noqa: BLE001 — 下游查询失败不影响主图

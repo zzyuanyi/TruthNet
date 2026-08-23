@@ -550,13 +550,23 @@ export interface EquityResponseData {
   downstream_total?: number;
 }
 
-// 8/23 会1 深化：下游直接持股关系
+// 8/23 会1 深化：下游直接持股关系 + 上下游风险信号
+export interface DownstreamRiskSignal {
+  kind: string; // announcement / event_cluster
+  title: string;
+  date: string;
+  evidence_id: string;
+}
+
 export interface DownstreamRelation {
   entity_id: string;
   wind_code: string;
   sec_name: string;
   ownership_pct: number | null;
   relation: string;
+  // 8/23 上下游风险信号：red（有负面信号）/ green（上市无信号）/ unknown（非上市未覆盖）
+  risk_level?: string;
+  risk_signals?: DownstreamRiskSignal[];
 }
 
 // ============ 跨公司对比 (对齐 ComparisonsResponseData) ============

@@ -135,6 +135,19 @@ class EquityInsightDTO(BaseModel):
     risk_level: str = Field(default="green", description="风险等级")
 
 
+class DownstreamRiskSignalDTO(BaseModel):
+    """8/23 会1 深化：下游主体风险信号（负面公告/负面事件簇）。
+
+    有信号才填充；信号来源为负面公告库（announcements sentiment=
+    negative）与负面事件簇（event_clusters sentiment=negative）。
+    """
+
+    kind: str = Field(default="", description="信号类型: announcement/event_cluster")
+    title: str = Field(default="", description="信号标题（公告标题/事件主题）")
+    date: str = Field(default="", description="信号日期（公告日/事件起始日）")
+    evidence_id: str = Field(default="", description="可回查证据 ID（空=无）")
+
+
 class DownstreamRelationDTO(BaseModel):
     """8/23 会1 深化：下游（子公司/被投资企业）直接持股关系."""
 
@@ -143,6 +156,14 @@ class DownstreamRelationDTO(BaseModel):
     sec_name: str = Field(default="", description="被投资方名称")
     ownership_pct: float | None = Field(default=None, description="直接持股比例 (%)")
     relation: str = Field(default="OWNS", description="关系类型")
+    # 8/23 上下游风险信号：上市公司子公司有负面记录 → red；无 → green；
+    # 非上市公司（无 wind_code）→ unknown（公开数据未覆盖）
+    risk_level: str = Field(
+        default="unknown", description="风险等级 red/green/unknown"
+    )
+    risk_signals: list[DownstreamRiskSignalDTO] = Field(
+        default_factory=list, description="负面风险信号列表（最多 3 条）"
+    )
 
 
 class EquityResponseData(BaseModel):
