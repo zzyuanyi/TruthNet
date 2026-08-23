@@ -869,7 +869,8 @@ export default function ComparePage() {
               )}
 
 
-            {/* 标准财报科目：供财务人员横向核对原始数值、期间和差值 */}
+            {/* 标准财报科目：供财务人员横向核对原始数值、期间和差值
+                （8/23 多期对比：每科目一卡，行=期次、列=公司） */}
             {(comparisonData?.financial_indicators?.length ?? 0) > 0 && (
               <Card className="mb-4">
                 <CardHeader>
@@ -878,59 +879,85 @@ export default function ComparePage() {
                     财报数据对比
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    母公司报表口径；金额统一换算为亿元，缺失值不按 0 处理。
+                    母公司报表口径；金额统一换算为亿元，缺失值不按 0 处理；每个科目展示近 4 期走势（A 股累计口径：Q1 为单季、中报为半年、年报为全年）。
                   </p>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-x-auto rounded-md border">
-                    <table className="w-full min-w-[760px] text-sm">
-                      <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-2 font-medium">财报科目</th>
-                          {comparisonData.companies.map(company => (
-                            <th key={company.wind_code} className="px-3 py-2 font-medium">
-                              {company.sec_name}
-                            </th>
-                          ))}
-                          <th className="px-3 py-2 font-medium">共同期次</th>
-                          {comparisonData.companies.length === 2 && (
-                            <th className="px-3 py-2 font-medium">差值（第一家-第二家）</th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {comparisonData.financial_indicators.map((row: IndicatorCompare) => (
-                          <tr key={row.indicator}>
-                            <th className="whitespace-nowrap px-3 py-2 text-left font-medium">
-                              {row.label}
-                            </th>
-                            {comparisonData.companies.map(company => {
-                              const item = row.companies.find(
-                                value => value.wind_code === company.wind_code,
-                              );
-                              return (
-                                <td key={company.wind_code} className="px-3 py-2">
-                                  <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
-                                  {item?.status && item.status !== 'ok' && (
-                                    <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                      {item.status === 'insufficient_data' ? '数据不足' : item.status}
-                                    </div>
-                                  )}
-                                </td>
-                              );
-                            })}
-                            <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                              {formatReportPeriod(row.period ?? '')}
-                            </td>
-                            {comparisonData.companies.length === 2 && (
-                              <td className="whitespace-nowrap px-3 py-2 font-medium">
-                                {formatFinancialValue(row.difference ?? null, row.difference_unit ?? '')}
-                              </td>
+                  <div className="space-y-3">
+                    {comparisonData.financial_indicators.map((row: IndicatorCompare) => {
+                      // 期次行：优先 series（近 4 期），无 series 回退单期
+                      const periods = row.series && row.series.length > 0
+                        ? row.series
+                        : row.period
+                          ? [{ period: row.period, companies: row.companies }]
+                          : [];
+                      return (
+                        <div key={row.indicator} className="overflow-hidden rounded-md border border-border/60">
+                          <div className="flex items-center justify-between gap-2 bg-muted/40 px-3 py-2">
+                            <span className="text-sm font-medium">{row.label} 对比</span>
+                            {row.period && (
+                              <span className="text-[11px] text-muted-foreground">
+                                最新共同期 {formatReportPeriod(row.period)}
+                              </span>
                             )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[560px] text-sm">
+                              <thead className="text-left text-xs text-muted-foreground">
+                                <tr className="bg-background">
+                                  <th className="px-3 py-1.5 font-medium">期次</th>
+                                  {comparisonData.companies.map(company => (
+                                    <th key={company.wind_code} className="px-3 py-1.5 font-medium">
+                                      {company.sec_name}
+                                    </th>
+                                  ))}
+                                  {comparisonData.companies.length === 2 && (
+                                    <th className="px-3 py-1.5 font-medium">差值（第一家-第二家）</th>
+                                  )}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {periods.map(p => (
+                                  <tr key={p.period}>
+                                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">
+                                      {formatReportPeriod(p.period)}
+                                    </td>
+                                    {comparisonData.companies.map(company => {
+                                      const item = p.companies?.find(
+                                        value => value.wind_code === company.wind_code,
+                                      );
+                                      return (
+                                        <td key={company.wind_code} className="px-3 py-1.5">
+                                          <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
+                                          {item?.status && item.status !== 'ok' && (
+                                            <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                              数据不足
+                                            </div>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                    {comparisonData.companies.length === 2 && (
+                                      <td className="whitespace-nowrap px-3 py-1.5 font-medium">
+                                        {(() => {
+                                          const a = p.companies?.[0]?.value;
+                                          const b = p.companies?.[1]?.value;
+                                          if (a == null || b == null) return '—';
+                                          return formatFinancialValue(
+                                            a - b,
+                                            p.companies?.[0]?.unit ?? '',
+                                          );
+                                        })()}
+                                      </td>
+                                    )}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>

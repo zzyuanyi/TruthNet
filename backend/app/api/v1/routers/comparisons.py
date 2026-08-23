@@ -30,6 +30,7 @@ from app.api.v1.schemas.comparisons import (
     ComparisonRequest,
     ComparisonsResponseData,
     IndicatorCompare,
+    MetricPeriodRow,
     RuleMetricValue,
     TriggeredRuleDetail,
 )
@@ -70,6 +71,23 @@ _FINANCIAL_REPORT_INDICATORS = (
 )
 
 
+def _quarter_ends(latest_ymd: str, n: int = 4) -> list[str]:
+    """从最新期起向前取 n 个季度末期次（YYYYMMDD，从新到旧）。"""
+    y = int(latest_ymd[:4])
+    m = int(latest_ymd[4:6])
+    ends = ("0331", "0630", "0930", "1231")
+    idx = {"3": 0, "6": 1, "9": 2, "12": 3}.get(str(((m - 1) // 3) * 3 + 3), 3)
+    out: list[str] = []
+    yy, ii = y, idx
+    for _ in range(n):
+        out.append(f"{yy:04d}{ends[ii]}")
+        ii -= 1
+        if ii < 0:
+            ii = 3
+            yy -= 1
+    return out
+
+
 def _build_financial_indicators(
     resolved_map: dict, period_ymd: str
 ) -> list[IndicatorCompare]:
@@ -79,6 +97,9 @@ def _build_financial_indicators(
     20260331）时精确匹配必然失败——若各公司库内最新期次一致，回退到该
     最新期次（共同交集）；各公司最新期不同或请求期不晚于最新期时保持
     请求期原语义（数据不足如实显示）。
+
+    8/23 多期对比：每个科目附带近 4 期序列（期集 = 各公司最新期最大值
+    起向前 4 个季度末），按期次对齐，缺数据如实置空。
     """
     from app.application.services.indicator_query_service import query_metric
 
@@ -97,6 +118,21 @@ def _build_financial_indicators(
             # （如比亚迪/隆基 20260331、宁德 20251231 → 共同期 20251231）
             use_period = min(latest_set)
     except Exception:  # noqa: BLE001 — 期次推导失败保持请求期
+        pass
+
+    # 8/23 多期序列：期集 = max(各公司最新期) 起向前 4 个季度末
+    series_periods: list[str] = []
+    try:
+        from app.domain.finance.data_as_of import resolve_company_data_as_of
+
+        latest_all = [
+            (resolve_company_data_as_of(rec.wind_code) or "")
+            for rec in resolved_map.values()
+        ]
+        latest_all = [x for x in latest_all if x]
+        if latest_all:
+            series_periods = _quarter_ends(max(latest_all), 4)
+    except Exception:  # noqa: BLE001 — 多期序列失败仅缺失序列
         pass
 
     rows: list[IndicatorCompare] = []
@@ -130,6 +166,34 @@ def _build_financial_indicators(
                 )
             )
 
+        # 8/23 多期序列：逐期次逐公司查询（精确匹配，缺期如实置空）
+        series: list[MetricPeriodRow] = []
+        if series_periods:
+            for p in series_periods:
+                pts: list[CompanyIndicator] = []
+                for rec in resolved_map.values():
+                    r = query_metric(
+                        rec.wind_code,
+                        metric_id,
+                        as_of=p,
+                        require_exact_period=True,
+                    )
+                    pts.append(
+                        CompanyIndicator(
+                            wind_code=rec.wind_code,
+                            sec_name=rec.sec_name,
+                            value=(
+                                float(r.value)
+                                if r.status == "ok" and r.value is not None
+                                else None
+                            ),
+                            unit=r.unit or "",
+                            period=p,
+                            status=r.status,
+                        )
+                    )
+                series.append(MetricPeriodRow(period=p, companies=pts))
+
         common_period = (
             periods[0]
             if periods
@@ -158,6 +222,7 @@ def _build_financial_indicators(
                 period=common_period,
                 difference=difference,
                 difference_unit=common_unit,
+                series=series,
             )
         )
     return rows

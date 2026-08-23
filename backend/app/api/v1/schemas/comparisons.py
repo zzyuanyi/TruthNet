@@ -31,6 +31,15 @@ class CompanyIndicator(BaseModel):
     status: str = Field(default="not_triggered")
 
 
+class MetricPeriodRow(BaseModel):
+    """单期次的多公司值（8/23 多期对比）。"""
+
+    period: str = Field(default="", description="期次 YYYYMMDD")
+    companies: list[CompanyIndicator] = Field(
+        default_factory=list, description="该期各公司值（顺序与 companies 对齐）"
+    )
+
+
 class IndicatorCompare(BaseModel):
     """单指标跨公司对比."""
 
@@ -40,6 +49,10 @@ class IndicatorCompare(BaseModel):
     period: str = Field(default="", description="共同报告期 YYYYMMDD")
     difference: float | None = Field(default=None, description="两家公司差值 A-B")
     difference_unit: str = Field(default="", description="差值单位")
+    # 8/23 多期对比：近 N 期序列（每期各公司值），科目卡按期次行展示
+    series: list[MetricPeriodRow] = Field(
+        default_factory=list, description="近 4 期序列（按期次对齐）"
+    )
 
 
 class RuleMetricValue(BaseModel):

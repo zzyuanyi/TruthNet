@@ -571,6 +571,11 @@ export interface CompanyIndicator {
   status: string;
 }
 
+export interface MetricPeriodRow {
+  period: string;
+  companies: CompanyIndicator[];
+}
+
 export interface IndicatorCompare {
   indicator: string;
   label: string;
@@ -578,6 +583,8 @@ export interface IndicatorCompare {
   period?: string;
   difference?: number | null;
   difference_unit?: string;
+  // 8/23 多期对比：近 4 期序列（按期次对齐）
+  series?: MetricPeriodRow[];
 }
 
 export interface CompanyRiskSummary {
