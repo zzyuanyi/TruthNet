@@ -17,6 +17,8 @@ v3.5（契约收口）:
   - 全程复用同一个 ProvenanceService 实例。
 """
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -35,6 +37,8 @@ from app.api.v1.schemas.comparisons import (
     TriggeredRuleDetail,
 )
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["comparisons"])
 
@@ -426,6 +430,28 @@ async def _create_comparison_impl(
             data_warnings.append(f"{code} 分析失败: {exc}")
 
     # ── 3. 公司风险摘要 ──
+    # 8/23 评分统一：并行获取各公司综合风险评分（四维，与画像页/综合分析
+    # 同源）——覆盖规则启发式评分；失败的公司保持启发式兜底
+    risk_score_override: dict[str, tuple[str, float]] = {}
+    try:
+        from app.application.services.risk_scoring_service import assemble_and_score
+
+        async def _one_score(code: str):
+            try:
+                out = await assemble_and_score(code, "")
+                return code, (out.risk_level, float(out.overall_score or 0.0))
+            except Exception:  # noqa: BLE001 — 单家失败启发式兜底
+                return code, None
+
+        _score_results = await asyncio.gather(
+            *(_one_score(rec.wind_code) for rec in resolved_map.values())
+        )
+        risk_score_override = {
+            code: val for code, val in _score_results if val is not None
+        }
+    except Exception as exc:  # noqa: BLE001 — 评分统一失败不影响对比主体
+        logger.warning("comparisons: 综合评分获取失败，使用规则启发式兜底: %s", exc)
+
     company_summaries: list[CompanyRiskSummary] = []
     for code, rec in resolved_map.items():
         if code in company_failures:
@@ -445,6 +471,9 @@ async def _create_comparison_impl(
         triggered = [rid for rid, r in results.items() if r.status == "triggered"]
         red_count = sum(1 for r in results.values() if r.severity == "red")
         orange_count = sum(1 for r in results.values() if r.severity == "orange")
+        # 8/23 评分统一：规则严重度启发式仅作兜底——综合评分（四维：
+        # 财务+股权+事件+基准，与画像页/综合分析同源）由 _fetch_risk_scores
+        # 并行计算后覆盖（score_override 见下）
         overall_score = min(
             1.0, red_count * 0.25 + orange_count * 0.15 + len(triggered) * 0.05
         )
@@ -457,6 +486,8 @@ async def _create_comparison_impl(
                 else ("yellow" if overall_score >= 0.15 else "green")
             )
         )
+        if rec.wind_code in risk_score_override:
+            risk_level, overall_score = risk_score_override[rec.wind_code]
         # coverage：规则 quality 数据完整性均值
         completions = [
             r.quality.get("data_completeness", 0.0)
