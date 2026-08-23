@@ -215,16 +215,42 @@ def _merge_exact_spots(
     if not spans:
         return mentions
 
+    def _fragments_covered_by_spots(text: str) -> bool:
+        """复合段按连接词切分的所有子片段是否都被精确 spot 覆盖。
+
+        8/23 修复：spot 精确命中复合段全部成分（"康美药业和贵州茅台
+        全面对比"→ spot 康美药业/贵州茅台）时丢弃粗 span 由 spot 接管
+        （粗 span 拆分右片段"贵州茅台全面"带后缀会解析失败）；仅当存在
+        spot 未覆盖的子片段（"比亚迪和隆基"→ spot 只中比亚迪，隆基为
+        简称漏网）时保留粗 span 走 _segment_compound 拆分。
+        """
+        frags = [text]
+        for conn in _COMPOUND_CONNECTORS:
+            next_frags: list[str] = []
+            for f in frags:
+                idx = f.find(conn)
+                if idx < 0:
+                    next_frags.append(f)
+                    continue
+                left, right = f[:idx], f[idx + len(conn) :]
+                next_frags.append(left)
+                if right:
+                    next_frags.append(right)
+            frags = next_frags
+        for frag in frags:
+            if len(frag) < 2:
+                continue
+            if not any(
+                (s.text or "") in frag or frag in (s.text or "") for s in spans
+            ):
+                return False
+        return True
+
     kept: list[EntityMention] = []
     for m in mentions:
         if m.start is None or m.end is None:
             kept.append(m)
             continue
-        # 8/23 修复：复合段（含连接词）不因单个精确 spot 重叠而丢弃——
-        # "比亚迪和隆基谁营收更高"中精确 spot 只命中"比亚迪"（隆基是
-        # 简称非精确名），原逻辑丢弃粗 span 导致隆基丢失（comparison_
-        # missing_peer）；复合段保留给 _segment_compound 分段处理。
-        # 单一名称+后缀场景（"康美药业的"→"康美药业"）仍精确优先。
         is_compound_span = any(
             conn in (m.text or "") for conn in _COMPOUND_CONNECTORS
         )
@@ -233,7 +259,7 @@ def _merge_exact_spots(
             m.start == s.start and m.end == s.end and (m.text or "") == s.text
             for s in spans
         ):
-            if not is_compound_span:
+            if not (is_compound_span and not _fragments_covered_by_spots(m.text or "")):
                 continue
         kept.append(m)
 
