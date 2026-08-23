@@ -554,6 +554,13 @@ def extract_company_mention_result(
         m = _SINGLE_CHAR_PREFIX_RE.match(q[seg_start:slot_end])
         if m:
             _mask_out(mask, seg_start, seg_start + m.end())
+            # 8/23 修复：剥离的前缀含指代词（它/他/她/其）→ 置明确指代
+            # 信号——"那它呢"中"那它"被前缀剥离后剩"呢"，无此信号则
+            # Resolver 无法延续主体（guide）；与 memory 层
+            # _contains_anaphora 语义对齐（它=明确指代）。
+            stripped = q[seg_start : seg_start + m.end()]
+            if any(ch in stripped for ch in ("它", "他", "她", "其")):
+                result.explicit_anaphora = True
 
     # 4. 按分段边界扫描 mask 保留的连续中文块（≥2 字，上限 16 覆盖
     #    双公司复合；超限块由 Resolver 判为无法解析，不静默截断）。
