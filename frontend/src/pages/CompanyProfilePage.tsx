@@ -656,6 +656,10 @@ export default function CompanyProfilePage() {
   const impactAdviceWarnings = impactAdvice
     ? formatImpactAdviceWarnings(impactAdvice.method, impactAdvice.warnings)
     : [];
+  const impactSignalSegments = (impactAdvice?.segments || []).filter(segment => (
+    !['财务建议', '股权建议', '舆情建议', '综合建议'].includes(segment.title)
+  ));
+  const verificationNavigation = impactAdvice?.verification_navigation || [];
 
   // 8/23 分步渲染：profile 未到达时显示加载中（不得落入「加载失败」分支——
   // 首次渲染 profile=null 且 error=null，需区分加载中与加载失败）
@@ -966,34 +970,103 @@ export default function CompanyProfilePage() {
               </Card>
             ) : impactAdvice ? (
               <div className="space-y-3">
-                <div className="rounded-md border border-border/60 bg-muted/20 p-4">
-                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <Badge className={riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].color}>
-                      {riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].label}
-                    </Badge>
-                    <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
-                    <span>{impactAdvice.evidence_count} 条可回查证据</span>
-                  </div>
-                  {/* 8/23 可读性：LLM 输出为 Markdown 分节（**小节名**），
-                      渲染为加粗小节 + 独立行 */}
-                  <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground" />
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge className={riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].color}>
+                    {riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].label}
+                  </Badge>
+                  <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
+                  <span>{impactAdvice.evidence_count} 条可回查证据</span>
                 </div>
-                {impactAdvice.segments.map((segment, index) => (
-                  <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
-                    <p className="text-sm font-medium text-foreground">{segment.title}</p>
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{segment.detail}</p>
-                    {segment.evidence_ids.length > 0 && (
-                      <Button
-                        variant="link"
-                        size="sm"
-                        className="mt-1 h-auto p-0 text-xs"
-                        onClick={() => void openEvidenceDetails(segment.evidence_ids, `${segment.title} · 证据详情`)}
-                      >
-                        查看 {segment.evidence_ids.length} 条证据
-                      </Button>
-                    )}
+
+                {verificationNavigation.length > 0 && (
+                  <Card className="border-primary/30 bg-primary/[0.03]">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Shield className="h-4 w-4 text-primary" />
+                        优先核查清单
+                        <Badge variant="outline" className="text-[11px] font-normal">规则排序 · 人工核验</Badge>
+                      </CardTitle>
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        系统先说明风险点与量化依据，再给出固定核查步骤；判断结论由分析人员结合原始披露作出。
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {verificationNavigation.map((item, index) => (
+                        <div key={item.rule_id} className="rounded-md border border-border/70 bg-background p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-primary">{index + 1}</span>
+                            <p className="text-sm font-medium text-foreground">{item.rule_id} {item.rule_name}</p>
+                            <Badge className={getRiskBadgeStyle(item.severity)}>{item.severity}</Badge>
+                          </div>
+                          {item.explanation && (
+                            <p className="mt-2 text-sm leading-6 text-muted-foreground">风险点：{item.explanation}</p>
+                          )}
+                          {item.quantified_context && (
+                            <p className="mt-2 rounded bg-muted px-2.5 py-2 text-xs leading-5 text-foreground">
+                              {item.quantified_context}
+                            </p>
+                          )}
+                          {item.actions.length > 0 && (
+                            <div className="mt-3">
+                              <p className="text-xs font-medium text-foreground">建议核查</p>
+                              <ol className="mt-1.5 space-y-1 text-xs leading-5 text-muted-foreground">
+                                {item.actions.map((action, actionIndex) => (
+                                  <li key={action} className="flex gap-2">
+                                    <span className="text-primary">{actionIndex + 1}.</span>
+                                    <span>{action}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          )}
+                          {item.evidence_ids.length > 0 && (
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="mt-2 h-auto p-0 text-xs"
+                              onClick={() => void openEvidenceDetails(item.evidence_ids, `${item.rule_id} ${item.rule_name} · 核查证据`)}
+                            >
+                              查看 {item.evidence_ids.length} 条相关证据
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card className="border-border/60 bg-muted/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">
+                      {impactAdvice.method === 'llm' ? 'AI 辅助综合研判' : '系统综合摘要'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground" />
+                  </CardContent>
+                </Card>
+
+                {impactSignalSegments.length > 0 && (
+                  <div className="space-y-3 rounded-md border border-border/60 p-4">
+                    <p className="text-sm font-medium text-foreground">补充信号与证据</p>
+                    {impactSignalSegments.map((segment, index) => (
+                      <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
+                        <p className="text-sm font-medium text-foreground">{segment.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">{segment.detail}</p>
+                        {segment.evidence_ids.length > 0 && (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            className="mt-1 h-auto p-0 text-xs"
+                            onClick={() => void openEvidenceDetails(segment.evidence_ids, `${segment.title} · 证据详情`)}
+                          >
+                            查看 {segment.evidence_ids.length} 条证据
+                          </Button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
                 {impactAdviceWarnings.length > 0 && (
                   <p className="text-xs text-muted-foreground">{impactAdviceWarnings.join('；')}</p>
                 )}

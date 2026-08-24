@@ -341,6 +341,7 @@ def finance_node(state: AgentState) -> dict:
             "explanation": str(r.explanation or ""),
             "severity": r.severity or "",
             "current": dict(getattr(r, "current", None) or {}),
+            "history": list(getattr(r, "history", None) or []),
             "evidence_ids": [],
             "quality": dict(r.quality or {}),
             "calculation_trace": (

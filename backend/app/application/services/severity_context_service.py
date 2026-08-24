@@ -178,10 +178,24 @@ def _threshold_sentences(rule_id: str, detail: dict, severity: str) -> list[str]
     ]
 
 
+def _has_extreme_ratio(rule_id: str, detail: dict) -> bool:
+    """R2 分母异常时不展示失真的现金流/利润比。"""
+    if rule_id != "R2":
+        return False
+    current = detail.get("current") or {}
+    value = ((current.get("cf_to_profit_ratio") or {}).get("value"))
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) > 100
+
+
 def build_severity_context(
     rule_id: str, detail: dict, percentiles: dict, severity: str = ""
 ) -> list[str]:
     """组合量化句列表（分位 + 趋势 + 阈值；无数据项自动跳过）。"""
+    if _has_extreme_ratio(rule_id, detail):
+        return [
+            *_percentile_sentences(rule_id, percentiles),
+            "现金流/净利润比为极端值（需核查），不直接展示该比值",
+        ]
     return [
         *_percentile_sentences(rule_id, percentiles),
         *_trend_sentences(rule_id, detail),
@@ -197,3 +211,11 @@ def render_quantified_line(
     if not parts:
         return ""
     return "量化参考：" + "；".join(parts) + "。"
+
+
+def percentiles_for_rule(rule_id: str, percentile: float | None) -> dict[str, float]:
+    """将推导链中的单条规则分位还原为量化服务所需的指标映射。"""
+    metric_ids = _RULE_METRICS.get(rule_id, ())
+    if not metric_ids or not isinstance(percentile, (int, float)):
+        return {}
+    return {metric_ids[0]: float(percentile)}

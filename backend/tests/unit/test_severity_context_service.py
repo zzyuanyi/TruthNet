@@ -7,6 +7,7 @@
 
 from app.application.services.severity_context_service import (
     build_severity_context,
+    percentiles_for_rule,
     render_quantified_line,
 )
 
@@ -29,6 +30,11 @@ def test_percentile_skipped_when_missing():
         "R5", _detail({}), {"r1_gap": 87, "r6_oth_rcv_to_assets": 60}, "red"
     )
     assert not any("行业分位" in s for s in sentences)
+
+
+def test_percentiles_for_rule_rebuilds_rule_metric_mapping():
+    assert percentiles_for_rule("R1", 87.2) == {"r1_gap": 87.2}
+    assert percentiles_for_rule("R5", 87.2) == {}
 
 
 def test_trend_sentence_rising():
@@ -95,6 +101,17 @@ def test_threshold_sentence_lower_direction():
     threshold = [s for s in sentences if s.startswith("当前")]
     assert "超出" in threshold[0]
     assert "0.2比值" in threshold[0]
+
+
+def test_extreme_r2_ratio_is_not_rendered_as_a_literal_value():
+    line = render_quantified_line(
+        "R2",
+        _detail({"cf_to_profit_ratio": {"value": -3627.3, "unit": "ratio"}}),
+        {"r2_cf_ratio": 0.3},
+        "red",
+    )
+    assert "极端值（需核查）" in line
+    assert "-3627.3" not in line and "触发线" not in line
 
 
 def test_missing_data_returns_empty():

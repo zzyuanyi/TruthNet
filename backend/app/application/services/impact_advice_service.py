@@ -44,6 +44,18 @@ class ImpactAdviceSegment(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list, description="可回查证据 ID")
 
 
+class VerificationNavigationItem(BaseModel):
+    """核查导航主内容：L0 风险点 + L1 量化参考 + L2 固定核查动作。"""
+
+    rule_id: str = Field(default="")
+    rule_name: str = Field(default="")
+    severity: str = Field(default="unknown")
+    explanation: str = Field(default="")
+    quantified_context: str = Field(default="")
+    actions: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class ImpactAdviceResult(BaseModel):
     """影响与建议聚合结果。"""
 
@@ -55,6 +67,7 @@ class ImpactAdviceResult(BaseModel):
     overall_advice: str = Field(default="", description="整体建议（LLM 或模板）")
     method: str = Field(default="template", description="llm | template")
     segments: list[ImpactAdviceSegment] = Field(default_factory=list)
+    verification_navigation: list[VerificationNavigationItem] = Field(default_factory=list)
     evidence_count: int = Field(default=0)
     warnings: list[str] = Field(default_factory=list)
 
@@ -372,6 +385,62 @@ def _template_advice(
     return overall, all_segments
 
 
+def _build_verification_navigation(out: Any) -> list[VerificationNavigationItem]:
+    """从同一风险推导链构造核心核查导航，不依赖 LLM 成败。"""
+    from app.application.services.checklist_service import (
+        build_rule_actions,
+        pick_checklist_rules,
+        rule_display_name,
+    )
+    from app.application.services.severity_context_service import (
+        percentiles_for_rule,
+        render_quantified_line,
+    )
+
+    signals: dict[str, Any] = {}
+    triggered: list[tuple[str, str]] = []
+    for chain in getattr(out, "derivation_chains", []) or []:
+        if getattr(chain, "conclusion_type", "") != "rule_trigger":
+            continue
+        for signal in getattr(chain, "signals", []) or []:
+            rule_id = str(getattr(signal, "signal_id", "") or "")
+            if not rule_id:
+                continue
+            severity = str(getattr(signal, "severity", "") or "unknown")
+            signals[rule_id] = signal
+            triggered.append((rule_id, severity))
+
+    items: list[VerificationNavigationItem] = []
+    for rule_id, severity in pick_checklist_rules(triggered):
+        signal = signals.get(rule_id)
+        if signal is None:
+            continue
+        detail = {
+            "current": dict(getattr(signal, "current", {}) or {}),
+            "history": list(getattr(signal, "history", []) or []),
+        }
+        quantified_context = render_quantified_line(
+            rule_id,
+            detail,
+            percentiles_for_rule(
+                rule_id, getattr(signal, "industry_percentile", None)
+            ),
+            severity,
+        )
+        items.append(
+            VerificationNavigationItem(
+                rule_id=rule_id,
+                rule_name=str(getattr(signal, "label", "") or rule_display_name(rule_id)),
+                severity=severity,
+                explanation=str(getattr(signal, "explanation", "") or ""),
+                quantified_context=quantified_context,
+                actions=build_rule_actions(rule_id),
+                evidence_ids=list(getattr(signal, "evidence_ids", []) or []),
+            )
+        )
+    return items
+
+
 async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResult:
     """四路聚合生成影响与建议（会3）。"""
     from app.application.services.risk_scoring_service import assemble_and_score
@@ -407,6 +476,7 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
     finance_segments, finance_ev = _finance_signals(out)
 
     all_segments = finance_segments + equity_segments + events_segments
+    verification_navigation = _build_verification_navigation(out)
     all_evidence: list[str] = []
     for seg in all_segments:
         for eid in seg.evidence_ids:
@@ -514,6 +584,7 @@ async def assemble_impact_advice(code: str, as_of: str = "") -> ImpactAdviceResu
         overall_advice=overall_text,
         method=method,
         segments=all_segments,
+        verification_navigation=verification_navigation,
         evidence_count=len(all_evidence),
         warnings=warnings,
     )

@@ -94,6 +94,7 @@ class DerivationSignal(BaseModel):
     severity: str = Field(default="unknown")
     explanation: str = Field(default="")
     current: dict = Field(default_factory=dict)
+    history: list[dict] = Field(default_factory=list)
     industry_percentile: float | None = Field(default=None)
     data_refs: list[DerivationDataRef] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
@@ -168,6 +169,18 @@ class ImpactAdviceSegmentData(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list, description="可回查证据 ID")
 
 
+class VerificationNavigationItemData(BaseModel):
+    """画像页核查导航：L0 风险点 + L1 量化参考 + L2 核查动作。"""
+
+    rule_id: str = Field(default="")
+    rule_name: str = Field(default="")
+    severity: str = Field(default="unknown")
+    explanation: str = Field(default="")
+    quantified_context: str = Field(default="")
+    actions: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class ImpactAdviceData(BaseModel):
     """Phase E 会3：影响与建议聚合（画像页影响建议模块数据源）。"""
 
@@ -179,5 +192,6 @@ class ImpactAdviceData(BaseModel):
     overall_advice: str = Field(default="", description="整体建议（LLM 或模板）")
     method: str = Field(default="template", description="llm | template")
     segments: list[ImpactAdviceSegmentData] = Field(default_factory=list)
+    verification_navigation: list[VerificationNavigationItemData] = Field(default_factory=list)
     evidence_count: int = Field(default=0)
     warnings: list[str] = Field(default_factory=list)

@@ -27,6 +27,7 @@ from app.api.v1.schemas.risk import (
     FraudConclusionData,
     ImpactAdviceData,
     ImpactAdviceSegmentData,
+    VerificationNavigationItemData,
     MitigatingFactor,
     PatternMatch,
     RiskEvidence,
@@ -462,6 +463,18 @@ async def get_impact_advice(
                     evidence_ids=s.evidence_ids,
                 )
                 for s in result.segments
+            ],
+            verification_navigation=[
+                VerificationNavigationItemData(
+                    rule_id=item.rule_id,
+                    rule_name=item.rule_name,
+                    severity=item.severity,
+                    explanation=item.explanation,
+                    quantified_context=item.quantified_context,
+                    actions=item.actions,
+                    evidence_ids=item.evidence_ids,
+                )
+                for item in result.verification_navigation
             ],
             evidence_count=result.evidence_count,
             warnings=result.warnings,

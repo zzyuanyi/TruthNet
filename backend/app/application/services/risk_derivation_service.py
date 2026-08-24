@@ -62,6 +62,7 @@ def _rule_signals(finance_result) -> dict[str, RiskDerivationSignal]:
             severity=detail.get("severity") or "unknown",
             explanation=detail.get("explanation") or "",
             current=dict(detail.get("current") or {}),
+            history=list(detail.get("history") or []),
             industry_percentile=percentiles.get(metric_id) if metric_id else None,
             data_refs=refs,
             evidence_ids=evidence_ids,

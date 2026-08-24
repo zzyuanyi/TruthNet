@@ -111,6 +111,7 @@ class RiskDerivationSignal(BaseModel):
     severity: str = "unknown"
     explanation: str = ""
     current: dict = Field(default_factory=dict)
+    history: list[dict] = Field(default_factory=list)
     industry_percentile: float | None = None
     data_refs: list[RiskDataReference] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)

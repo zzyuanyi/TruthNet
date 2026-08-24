@@ -23,6 +23,7 @@ def _finance() -> FinanceResult:
                 "severity": "orange",
                 "explanation": "应收账款增速显著高于营业收入。",
                 "current": {"acct_rcv_growth": {"value": 45.0, "unit": "percent"}},
+                "history": [{"period": "20251231", "acct_rcv_growth": 45.0}],
                 "evidence_ids": ["ev_fin_r1"],
             }
         },
@@ -50,6 +51,7 @@ def test_derivation_contains_rule_metric_percentile_and_evidence():
     signal = by_id["rule:R1"].signals[0]
     assert signal.explanation == "应收账款增速显著高于营业收入。"
     assert signal.current["acct_rcv_growth"]["value"] == 45.0
+    assert signal.history[0]["period"] == "20251231"
     assert signal.industry_percentile == 92.0
     assert signal.data_refs[0].period == "20251231"
     assert signal.data_refs[0].evidence_id == "ev_fin_r1"
