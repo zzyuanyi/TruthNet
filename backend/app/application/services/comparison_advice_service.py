@@ -25,7 +25,7 @@ from app.api.v1.schemas.comparisons import (
 
 logger = logging.getLogger(__name__)
 
-_LLM_TIMEOUT_SECONDS = 20.0
+_LLM_TIMEOUT_SECONDS = 30.0
 _RISK_CN = {
     "red": "高危",
     "orange": "中高危",
@@ -128,7 +128,7 @@ def _template_advice(
                 "green": 1,
                 "unknown": 0,
             }.get(c.risk_level, 0),
-            -(c.overall_score if c.overall_score is not None else 0),
+            c.overall_score if c.overall_score is not None else float("-inf"),
         ),
         reverse=True,
     )
@@ -141,10 +141,16 @@ def _template_advice(
             f"{c.sec_name}（{c.wind_code}）：综合风险等级 {_RISK_CN.get(c.risk_level, c.risk_level)}"
             f"（评分 {score}），触发规则 {rules}。"
         )
-    overall_parts = [
-        "跨公司对比结论：",
-        "；".join(lines),
-    ]
+    rule_sets = [set(c.triggered_rules) for c in companies]
+    common_rules = set.intersection(*rule_sets) if rule_sets else set()
+    unique_rules = {
+        c.sec_name: sorted(
+            set(c.triggered_rules)
+            - set().union(*(rules for other, rules in zip(companies, rule_sets) if other != c))
+        )
+        for c in companies
+    }
+    overall_parts = ["**跨公司对比结论 · 风险排序**：" + "；".join(lines)]
     if worst:
         level_cn = _RISK_CN.get(worst.risk_level, worst.risk_level)
         score_part = (
@@ -153,15 +159,22 @@ def _template_advice(
             else "）"
         )
         overall_parts.append(
-            f"其中 {worst.sec_name} 风险等级最高（{level_cn}{score_part}"
+            f"**优先核验对象**：{worst.sec_name}风险等级最高（{level_cn}{score_part}，"
+            "应优先核查其触发规则对应的报表科目与披露明细。"
         )
+    if common_rules:
         overall_parts.append(
-            "，建议优先核查其触发规则对应的报表科目与披露明细，"
-            "再横向比较各家公司共同信号以识别行业共性问题。"
+            "**共同信号**：" + "、".join(sorted(common_rules))
+            + "。这些信号应先横向核验，以区分行业共性与公司特有异常。"
         )
-    else:
-        overall_parts.append("本次无可对比公司。")
-    overall = "".join(overall_parts)
+    unique_texts = [
+        f"{name}：{'、'.join(rules)}"
+        for name, rules in unique_rules.items()
+        if rules
+    ]
+    if unique_texts:
+        overall_parts.append("**公司特有信号**：" + "；".join(unique_texts) + "。")
+    overall = "\n\n".join(overall_parts) if overall_parts else "本次无可对比公司。"
     segments = [
         ComparisonAnalysisSegment(
             company_code=c.wind_code,

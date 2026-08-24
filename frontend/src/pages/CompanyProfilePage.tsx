@@ -20,6 +20,16 @@ const RULE_STATUS_LABELS: Record<string, string> = {
   not_applicable: '不适用',
   unknown: '未知',
 };
+
+// 规则严重度是内部枚举；页面统一使用面向分析人员的预警名称。
+const RISK_SEVERITY_LABELS: Record<string, string> = {
+  red: '高危预警',
+  orange: '中高危预警',
+  yellow: '中等预警',
+  blue: '低风险提示',
+  green: '正常',
+  unknown: '数据不足',
+};
 const RULE_UNIT_LABELS: Record<string, string> = {
   percent: '%',
   percentage_point: '个百分点',
@@ -243,6 +253,14 @@ export default function CompanyProfilePage() {
       unknown: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
     };
     return styles[level] || styles.unknown;
+  };
+  const getVerificationCardStyle = (level: string) => {
+    const styles: Record<string, string> = {
+      red: 'border-l-4 border-l-red-500 border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/20',
+      orange: 'border-l-4 border-l-orange-500 border-orange-200 bg-orange-50/60 dark:border-orange-900/60 dark:bg-orange-950/20',
+      yellow: 'border-l-4 border-l-yellow-500 border-yellow-200 bg-yellow-50/60 dark:border-yellow-900/60 dark:bg-yellow-950/20',
+    };
+    return styles[level] || 'border-l-4 border-l-muted-foreground/40 border-border/70 bg-background';
   };
   // B2 舆情影响结论（后端 events.impact_conclusions，需 include_impacts=true）
   // A2（8/9 老师要求）：触发规则关联证据的摘要（evidenceId → 平铺摘要）
@@ -838,7 +856,7 @@ export default function CompanyProfilePage() {
                         >
                           <span className="text-foreground">{r.rule_name || r.rule_id}</span>
                           <span className={`rounded-full px-1.5 py-0.5 ${getRiskBadgeStyle(r.severity)}`}>
-                            {r.severity}
+                            {RISK_SEVERITY_LABELS[r.severity] ?? RISK_SEVERITY_LABELS.unknown}
                           </span>
                         </button>
                       ))}
@@ -884,7 +902,7 @@ export default function CompanyProfilePage() {
                     <CardHeader className="pb-2">
                       <div className="flex items-center gap-2">
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle(chain.risk_level)}`}>
-                          {chain.risk_level}
+                          {RISK_SEVERITY_LABELS[chain.risk_level] ?? RISK_SEVERITY_LABELS.unknown}
                         </span>
                         <span className="text-sm font-medium">{chain.conclusion}</span>
                       </div>
@@ -894,7 +912,7 @@ export default function CompanyProfilePage() {
                         <div key={si} className="mb-3 rounded-lg border bg-muted/30 p-3">
                           <div className="mb-1 flex items-center justify-between">
                             <span className="text-sm font-medium">{signal.label}</span>
-                            <span className="text-xs text-muted-foreground">{signal.severity}</span>
+                            <span className="text-xs text-muted-foreground">{RISK_SEVERITY_LABELS[signal.severity] ?? RISK_SEVERITY_LABELS.unknown}</span>
                           </div>
                           <p className="mb-2 text-sm text-muted-foreground">{signal.explanation}</p>
                           {signal.industry_percentile != null && (
@@ -992,28 +1010,28 @@ export default function CompanyProfilePage() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {verificationNavigation.map((item, index) => (
-                        <div key={item.rule_id} className="rounded-md border border-border/70 bg-background p-3">
+                        <div key={item.rule_id} className={`rounded-md border p-3 ${getVerificationCardStyle(item.severity)}`}>
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-semibold text-primary">{index + 1}</span>
-                            <p className="text-sm font-medium text-foreground">{item.rule_id} {item.rule_name}</p>
-                            <Badge className={getRiskBadgeStyle(item.severity)}>{item.severity}</Badge>
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">{index + 1}</span>
+                            <p className="text-sm font-semibold text-foreground">{item.rule_id} {item.rule_name}</p>
+                            <Badge className={getRiskBadgeStyle(item.severity)}>{RISK_SEVERITY_LABELS[item.severity] ?? RISK_SEVERITY_LABELS.unknown}</Badge>
                           </div>
                           {item.explanation && (
-                            <p className="mt-2 text-sm leading-6 text-muted-foreground">风险点：{item.explanation}</p>
+                            <p className="mt-2 text-sm leading-6 text-muted-foreground"><span className="font-semibold text-foreground">风险点：</span>{item.explanation}</p>
                           )}
                           {item.quantified_context && (
-                            <p className="mt-2 rounded bg-muted px-2.5 py-2 text-xs leading-5 text-foreground">
+                            <p className="mt-2 rounded-md border border-primary/10 bg-background/80 px-2.5 py-2 text-xs font-medium leading-5 text-foreground shadow-sm">
                               {item.quantified_context}
                             </p>
                           )}
                           {item.actions.length > 0 && (
                             <div className="mt-3">
-                              <p className="text-xs font-medium text-foreground">建议核查</p>
-                              <ol className="mt-1.5 space-y-1 text-xs leading-5 text-muted-foreground">
+                              <p className="text-xs font-semibold text-foreground">建议核查</p>
+                              <ol className="mt-1.5 space-y-1.5 text-xs leading-5 text-foreground">
                                 {item.actions.map((action, actionIndex) => (
-                                  <li key={action} className="flex gap-2">
-                                    <span className="text-primary">{actionIndex + 1}.</span>
-                                    <span>{action}</span>
+                                  <li key={action} className="flex items-start gap-2">
+                                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{actionIndex + 1}</span>
+                                    <span className="font-medium">{action}</span>
                                   </li>
                                 ))}
                               </ol>
@@ -1035,14 +1053,14 @@ export default function CompanyProfilePage() {
                   </Card>
                 )}
 
-                <Card className="border-border/60 bg-muted/20">
+                <Card className="border-primary/25 border-l-4 border-l-primary bg-primary/[0.025]">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">
+                    <CardTitle className="text-sm font-semibold text-foreground">
                       {impactAdvice.method === 'llm' ? 'AI 辅助综合研判' : '系统综合摘要'}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground" />
+                    <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground [&_strong]:font-semibold [&_strong]:text-primary" />
                   </CardContent>
                 </Card>
 
@@ -1309,10 +1327,7 @@ export default function CompanyProfilePage() {
                                 </div>
                                 <div className="mt-1 flex items-center gap-2">
                                   <span className={`rounded px-1.5 py-0.5 text-[10px] ${getRiskBadgeStyle(riskLevel)}`}>
-                                    {riskLevel === 'red' ? '高危'
-                                      : riskLevel === 'orange' ? '中高危'
-                                      : riskLevel === 'yellow' ? '中等'
-                                      : riskLevel === 'blue' ? '低风险' : '正常'}
+                                    {RISK_SEVERITY_LABELS[riskLevel] ?? RISK_SEVERITY_LABELS.unknown}
                                   </span>
                                   <span className="text-[10px] text-muted-foreground">
                                     {Array.isArray(chain.risk_reasons) && chain.risk_reasons.length > 0
