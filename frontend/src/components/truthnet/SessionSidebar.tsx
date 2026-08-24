@@ -3,7 +3,6 @@
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -100,13 +99,13 @@ export function SessionSidebar({
       </div>
 
       {/* 会话列表（min-h-0：flex item 默认 min-height:auto 会按内容高度阻止收缩，导致列表撑开布局） */}
-      <ScrollArea className="flex-1 min-h-0">
-        <div ref={listParent} className="p-2 space-y-1">
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto">
+        <div ref={listParent} className="w-full min-w-0 p-2 space-y-1">
           {sessions.map(session => (
             <div
               key={session.session_id}
               className={cn(
-                'group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
+                'group flex w-full min-w-0 items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
                 'hover:bg-accent',
                 isBusy && session.session_id !== currentSessionId && 'cursor-not-allowed opacity-60',
                 currentSessionId === session.session_id && 'bg-accent'
@@ -136,17 +135,20 @@ export function SessionSidebar({
               {/* 删除按钮 */}
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 opacity-70 transition-opacity hover:opacity-100"
+                size="sm"
+                className="h-7 shrink-0 gap-1 px-1.5 text-xs text-muted-foreground hover:text-destructive"
                 aria-label={`删除会话：${session.title}`}
                 title="删除会话"
                 disabled={isBusy}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDeleteSession(session.session_id);
+                  if (window.confirm(`确认删除对话“${session.title}”？此操作不可恢复。`)) {
+                    onDeleteSession(session.session_id);
+                  }
                 }}
               >
-                <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                <Trash2 className="h-3.5 w-3.5" />
+                删除
               </Button>
             </div>
           ))}
@@ -158,7 +160,7 @@ export function SessionSidebar({
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
