@@ -925,15 +925,16 @@ def generate_answer_node(state: AgentState) -> dict:
         answer = _polish_answer(answer)
 
     # 风险等级：优先使用 risk 节点输出（否则回退 claim 最高严重度）
-    risk_level = (
-        _highest_severity(claims)
-        if len(requested_modules) == 1
-        else (
-            (getattr(risk_output, "risk_level", "") or _highest_severity(claims))
+    if len(requested_modules) == 1:
+        # 单模块不复用综合评分；但该模块全部未执行时也不能把空 Claim
+        # 的默认 green 误当作“正常”。
+        risk_level = "unknown" if finance_blocked else _highest_severity(claims)
+    else:
+        risk_level = (
+            getattr(risk_output, "risk_level", "") or _highest_severity(claims)
             if (risk_output is not None or claims)
             else "unknown"
         )
-    )
 
     # #4：研报 Claim/Evidence 合并进 FinalResponse（reducer 会再合并进
     # AgentState，validate_evidence → persist_turn 因此可完整落库/回查）
