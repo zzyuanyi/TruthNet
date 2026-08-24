@@ -356,6 +356,21 @@ export default function CompanyProfilePage() {
     loadInFlight.current = true;
     loadForCode.current = myCode;
     setError(null);
+    setLoading(true);
+    setProfile(null);
+    setFinancialAnomalies([]);
+    setEquityData(null);
+    setSentimentEvents([]);
+    setEventClusters([]);
+    setRiskData(null);
+    setImpactAdvice(null);
+    setDerivationChains([]);
+    setFinanceQuality(null);
+    setAnnouncementsAvailable(null);
+    setRuleDefinitions([]);
+    setRuleEvidenceSummary({});
+    setFinanceLoaded(false);
+    setEventsLoaded(false);
     // 8/23 分步渲染：先取公司基础信息（页头/概览依赖），其余请求并行发起，
     // 各数据到达即渲染对应区块——页面渐进填充，总耗时 = 最慢请求。
     try {
@@ -371,23 +386,37 @@ export default function CompanyProfilePage() {
     }
 
     const others = [
-      truthnetAPI.getFinance(code).then(res => {
-        if (loadForCode.current !== myCode) return;
-        setFinancialAnomalies(res.data?.rules || []);
-        setFinanceQuality(res.data?.data_quality || null);
-        setFinanceLoaded(true);
-      }),
+      truthnetAPI.getFinance(code)
+        .then(res => {
+          if (loadForCode.current !== myCode) return;
+          setFinancialAnomalies(res.data?.rules || []);
+          setFinanceQuality(res.data?.data_quality || null);
+        })
+        .catch(err => {
+          if (loadForCode.current !== myCode) return;
+          console.warn('财务数据加载失败:', err);
+        })
+        .finally(() => {
+          if (loadForCode.current === myCode) setFinanceLoaded(true);
+        }),
       truthnetAPI.getEquity(code).then(res => {
         if (loadForCode.current !== myCode) return;
         setEquityData(res.data);
       }),
-      truthnetAPI.getEvents(code).then(res => {
-        if (loadForCode.current !== myCode) return;
-        setSentimentEvents(res.data?.timeline || []);
-        setEventClusters(res.data?.event_clusters || []);
-        setAnnouncementsAvailable(res.data?.announcements_available ?? null);
-        setEventsLoaded(true);
-      }),
+      truthnetAPI.getEvents(code)
+        .then(res => {
+          if (loadForCode.current !== myCode) return;
+          setSentimentEvents(res.data?.timeline || []);
+          setEventClusters(res.data?.event_clusters || []);
+          setAnnouncementsAvailable(res.data?.announcements_available ?? null);
+        })
+        .catch(err => {
+          if (loadForCode.current !== myCode) return;
+          console.warn('舆情数据加载失败:', err);
+        })
+        .finally(() => {
+          if (loadForCode.current === myCode) setEventsLoaded(true);
+        }),
       truthnetAPI.getRisk(code).then(res => {
         if (loadForCode.current !== myCode) return;
         setRiskData(res.data);
@@ -407,7 +436,7 @@ export default function CompanyProfilePage() {
         setImpactAdvice(res.data);
       }),
     ];
-    // 单个请求失败不整页报错（区块保持空/占位），仅记录
+    // 其余单个请求失败不整页报错（区块保持空/占位），仅记录。
     others.forEach(p => p.catch(err => console.warn('画像页数据加载失败:', err)));
     setImpactAdviceLoading(true);
     await Promise.allSettled(others);
@@ -435,7 +464,14 @@ export default function CompanyProfilePage() {
       evidenceId: evidenceIds[index],
       ...(result.status === 'fulfilled'
         ? { data: result.value.data }
-        : { error: result.reason instanceof Error ? result.reason.message : '证据加载失败' }),
+        : {
+            error:
+              evidenceIds[index]?.startsWith('ev_fin_')
+                ? '该证据由本次分析即时生成，未持久化存储（对话/报告中的证据可完整回查）'
+                : result.reason instanceof Error
+                  ? result.reason.message
+                  : '证据加载失败',
+          }),
     })));
     setEvidenceDialogLoading(false);
   };
