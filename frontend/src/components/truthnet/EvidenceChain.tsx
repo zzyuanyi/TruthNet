@@ -37,6 +37,16 @@ const categoryLabelsMap: Record<string, string> = {
   regulatory: '监管证据',
 };
 
+const sourceTypeLabels: Record<string, string> = {
+  financial_statement: '财务报表',
+  neo4j_relationship: '股权关系',
+  announcement: '公司公告',
+  news: '公开新闻',
+  research_report: '研究报告',
+  regulation: '监管信息',
+  web_search: '联网线索',
+};
+
 export function EvidenceChain({ categories, onViewSource, onLinkToRule, filterEvidenceIds }: EvidenceChainProps) {
   // 2026-08-16 可读性：默认展开第一类证据，让用户在外面先看到基本介绍
   const [openCategories, setOpenCategories] = useState<Set<string>>(
@@ -211,7 +221,7 @@ function RiskEvidenceCard({ item, onViewSource, onLinkToRule }: {
       <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground flex-wrap">
         <span className="flex items-center gap-1">
           <Link2 className="h-3 w-3" />
-          {item.source_type || '未知来源'}
+          {sourceTypeLabels[item.source_type] || item.source_type || '未知来源'}
         </span>
         {item.claim_ids && item.claim_ids.length > 0 && (
           <span>·</span>

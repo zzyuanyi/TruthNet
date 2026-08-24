@@ -14,6 +14,7 @@ from app.agents.state import (
     AgentState,
     Claim,
     CompanyRef,
+    EvidenceRef,
     ExecutionPlan,
     EventsResult,
     FinanceResult,
@@ -85,6 +86,7 @@ def _claim(
 def _make_state(
     company: CompanyRef | None = None,
     claims: list | None = None,
+    evidence: list | None = None,
     plan: ExecutionPlan | None = None,
     module_status: dict | None = None,
     results: ModuleResults | None = None,
@@ -93,7 +95,7 @@ def _make_state(
         "user_query": "测试",
         "company": company,
         "claims": claims or [],
-        "evidence": [],
+        "evidence": evidence or [],
         "plan": plan,
         "module_status": module_status or {},
         "results": results or ModuleResults(),
@@ -766,6 +768,56 @@ def test_module_failure_no_signal_conclusion_is_degraded():
     assert "未发现明显异常信号" not in fr.answer
 
 
+@pytest.mark.parametrize(
+    ("requested_module", "expected_claim_type", "excluded_claim_types"),
+    [
+        ("finance", "financial", {"equity", "event"}),
+        ("equity", "equity", {"financial", "event"}),
+        ("events", "event", {"financial", "equity"}),
+    ],
+)
+def test_single_module_answer_filters_unrequested_claims_and_evidence(
+    requested_module, expected_claim_type, excluded_claim_types
+):
+    """异常上游即使混入三模块材料，单模块回答也只能展示本轮请求范围。"""
+    claims = [
+        _claim("FINANCE_ONLY", "financial", "red", "R1"),
+        _claim("EQUITY_ONLY", "equity", "orange", None),
+        _claim("EVENT_ONLY", "event", "yellow", None),
+    ]
+    evidence = [
+        EvidenceRef(
+            evidence_id="ev_fin", source_type="financial_statement", module="finance"
+        ),
+        EvidenceRef(
+            evidence_id="ev_equity", source_type="neo4j_relationship", module="equity"
+        ),
+        EvidenceRef(
+            evidence_id="ev_event", source_type="announcement", module="events"
+        ),
+    ]
+    other_module = next(
+        module
+        for module in ("finance", "equity", "events")
+        if module != requested_module
+    )
+    state = _make_state(
+        company=_company(),
+        claims=claims,
+        evidence=evidence,
+        plan=ExecutionPlan(requested_modules=[requested_module]),
+        module_status={other_module: ModuleStatus(state="partial")},
+    )
+
+    response = generate_answer_node(state)["final_response"]
+
+    assert {claim.claim_type for claim in response.claims} == {expected_claim_type}
+    assert {item.module for item in response.evidence} == {requested_module}
+    for excluded in excluded_claim_types:
+        assert excluded not in {claim.claim_type for claim in response.claims}
+    assert "模块部分完成" not in response.answer
+
+
 def test_report_period_without_financial_claims_discloses_scope_limit():
     plan = ExecutionPlan(
         intent="diagnose",
@@ -817,6 +869,8 @@ def test_risk_finance_executed_parent_scope_wording():
     claims = [_claim("c1", "financial", "red", "R1")]
     state = _finance_state(rule_statuses={"R1": "triggered"}, claims=claims)
     fr = generate_answer_node(state)["final_response"]
+    assert "财务分析完成" in fr.answer
+    assert "综合分析完成" not in fr.answer
     assert "基于母公司报表及当前数据覆盖" in fr.answer
     assert "共检测到 1 项风险信号" in fr.answer
 

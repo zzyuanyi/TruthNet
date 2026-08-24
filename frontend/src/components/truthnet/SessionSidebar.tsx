@@ -3,9 +3,7 @@
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, MessageSquare, Trash2, Building2, BarChart3 } from 'lucide-react';
 import type { Session } from '@/types/truthnet';
@@ -100,13 +98,13 @@ export function SessionSidebar({
       </div>
 
       {/* 会话列表（min-h-0：flex item 默认 min-height:auto 会按内容高度阻止收缩，导致列表撑开布局） */}
-      <ScrollArea className="flex-1 min-h-0">
-        <div ref={listParent} className="p-2 space-y-1">
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto">
+        <div ref={listParent} className="w-full min-w-0 p-2 space-y-1">
           {sessions.map(session => (
             <div
               key={session.session_id}
               className={cn(
-                'group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
+                'group w-full min-w-0 rounded-md px-3 py-2 cursor-pointer transition-colors',
                 'hover:bg-accent',
                 isBusy && session.session_id !== currentSessionId && 'cursor-not-allowed opacity-60',
                 currentSessionId === session.session_id && 'bg-accent'
@@ -119,35 +117,37 @@ export function SessionSidebar({
               aria-disabled={isBusy && session.session_id !== currentSessionId}
             >
               {/* 会话信息 */}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">
+              <div className="min-w-0" title={session.title}>
+                <div className="line-clamp-2 text-sm font-medium leading-5">
                   {session.title}
-                </div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {session.turn_count > 0 ? `${session.turn_count} 轮问答` : '新对话'}
                 </div>
               </div>
 
-              {/* 会话轮数徽标 */}
-              <Badge variant="secondary" className="shrink-0 text-xs px-1.5 py-0">
-                {isBusy && session.session_id === currentSessionId ? '分析中' : session.turn_count}
-              </Badge>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {session.turn_count > 0 ? `${session.turn_count} 轮问答` : '新对话'}
+                </div>
 
-              {/* 删除按钮 */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 opacity-70 transition-opacity hover:opacity-100"
-                aria-label={`删除会话：${session.title}`}
-                title="删除会话"
-                disabled={isBusy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteSession(session.session_id);
-                }}
-              >
-                <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-              </Button>
+                <div className="shrink-0">
+                  {/* 删除按钮 */}
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="h-6 w-6 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
+                    aria-label={`删除会话：${session.title}`}
+                    title="删除会话"
+                    disabled={isBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`确认删除对话“${session.title}”？此操作不可恢复。`)) {
+                        onDeleteSession(session.session_id);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
             </div>
           ))}
 
@@ -158,7 +158,7 @@ export function SessionSidebar({
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

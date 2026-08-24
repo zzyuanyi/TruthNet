@@ -367,6 +367,7 @@ export interface DerivationSignal {
   severity: string;
   explanation: string;
   current: Record<string, unknown>;
+  history: Record<string, unknown>[];
   industry_percentile?: number | null;
   data_refs: DerivationDataRef[];
   evidence_ids: string[];
@@ -636,6 +637,16 @@ export interface ImpactAdviceSegmentData {
   evidence_ids: string[];
 }
 
+export interface VerificationNavigationItem {
+  rule_id: string;
+  rule_name: string;
+  severity: string;
+  explanation: string;
+  quantified_context: string;
+  actions: string[];
+  evidence_ids: string[];
+}
+
 export interface ImpactAdviceData {
   wind_code: string;
   sec_name: string;
@@ -645,6 +656,7 @@ export interface ImpactAdviceData {
   overall_advice: string;
   method: 'llm' | 'template';
   segments: ImpactAdviceSegmentData[];
+  verification_navigation: VerificationNavigationItem[];
   evidence_count: number;
   warnings: string[];
 }

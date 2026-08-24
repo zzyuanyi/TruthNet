@@ -506,7 +506,8 @@ def persist_turn_node(state: AgentState) -> dict:
     module_status_json = _to_json(state.get("module_status", {}))
     panel_data_json = _to_json(_build_panel_data(state))
     response_meta_json = _to_json(_build_response_meta(state))
-    title = question[:30]
+    # 会话列表展示两行主题；保留更多首问上下文，避免相近的分析问题难以区分。
+    title = question[:48]
     provenance_ok = True
     provenance_error = ""
 

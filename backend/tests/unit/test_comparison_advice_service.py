@@ -87,6 +87,20 @@ async def test_template_fallback_two_companies(monkeypatch):
     assert not result.warnings
 
 
+def test_template_prioritizes_higher_score_with_same_risk_level():
+    """同为高危时，评分更高者必须排在优先核验对象，防止排序反向。"""
+    companies = [
+        svc.ComparisonAnalysisCompany(
+            wind_code="A", sec_name="华峰化学", risk_level="red", overall_score=0.350
+        ),
+        svc.ComparisonAnalysisCompany(
+            wind_code="B", sec_name="中泰化学", risk_level="red", overall_score=0.370
+        ),
+    ]
+    overall, _ = svc._template_advice(companies)
+    assert "中泰化学风险等级最高（高危评分 0.370）" in overall
+
+
 @pytest.mark.asyncio
 async def test_llm_success_uses_llm_method(monkeypatch):
     """LLM 成功：overall + per-company suggestions，method=llm。"""

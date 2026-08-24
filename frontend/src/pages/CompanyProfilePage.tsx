@@ -20,6 +20,16 @@ const RULE_STATUS_LABELS: Record<string, string> = {
   not_applicable: '不适用',
   unknown: '未知',
 };
+
+// 规则严重度是内部枚举；页面统一使用面向分析人员的预警名称。
+const RISK_SEVERITY_LABELS: Record<string, string> = {
+  red: '高危预警',
+  orange: '中高危预警',
+  yellow: '中等预警',
+  blue: '低风险提示',
+  green: '正常',
+  unknown: '数据不足',
+};
 const RULE_UNIT_LABELS: Record<string, string> = {
   percent: '%',
   percentage_point: '个百分点',
@@ -37,6 +47,61 @@ function formatChainPct(value: number | null | undefined): string {
   if (value >= 0.01) return `${value.toFixed(2)}%`;
   if (value >= 0.0001) return `${value.toFixed(4)}%`;
   return `${value.toExponential(2)}%`;
+}
+
+const EVIDENCE_FIELD_LABELS: Record<string, string> = {
+  acct_rcv: '应收账款',
+  admin_exp: '管理费用',
+  fin_exp: '财务费用',
+  less_oper_cost: '营业成本',
+  less_selling_dist_exp: '销售费用',
+  less_gerl_admin_exp: '管理费用',
+  net_cash_flows_oper_act: '经营活动现金流量净额',
+  oper_rev: '营业收入',
+  selling_exp: '销售费用',
+};
+
+const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
+  financial_statement: '财务报表',
+  neo4j_relationship: '股权关系',
+  announcement: '公告',
+  news: '新闻',
+  research_report: '研报',
+};
+
+const IMPACT_TEMPLATE_NOTICE = '智能解读暂时不可用，当前展示为基于规则与可回查证据生成的核查摘要。';
+
+function formatImpactAdviceWarnings(method: string, warnings: string[]): string[] {
+  const displayWarnings = warnings.map(warning => (
+    warning.includes('LLM 建议降级') ? IMPACT_TEMPLATE_NOTICE : warning
+  ));
+  if (method === 'template') displayWarnings.unshift(IMPACT_TEMPLATE_NOTICE);
+  return [...new Set(displayWarnings)];
+}
+
+function formatEvidencePeriod(period: unknown): string {
+  const value = String(period || '');
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
+  if (!match) return value || '期次未标注';
+  const [, year, month] = match;
+  const labels: Record<string, string> = { '03': '一季度', '06': '二季度', '09': '三季度', '12': '年报' };
+  return `${year}年${labels[month] || `${Number(month)}月`}`;
+}
+
+function formatEvidenceField(fieldPath: unknown): string {
+  const value = String(fieldPath || '');
+  const field = value.split('.').at(-1) || value;
+  return EVIDENCE_FIELD_LABELS[field] || field || '报表字段';
+}
+
+function uniqueEvidenceClaims(claims: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  return claims.filter(claim => {
+    const key = String(claim.text || claim.claim_id || '');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 
@@ -86,7 +151,9 @@ import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskR
 function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
   const sourceToCategory: Record<string, string> = {
     finance: 'finance',
+    financial_statement: 'finance',
     equity: 'equity',
+    neo4j_relationship: 'equity',
     event: 'event',
     announcement: 'event',
     news: 'event',
@@ -187,6 +254,14 @@ export default function CompanyProfilePage() {
     };
     return styles[level] || styles.unknown;
   };
+  const getVerificationCardStyle = (level: string) => {
+    const styles: Record<string, string> = {
+      red: 'border-l-4 border-l-red-500 border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/20',
+      orange: 'border-l-4 border-l-orange-500 border-orange-200 bg-orange-50/60 dark:border-orange-900/60 dark:bg-orange-950/20',
+      yellow: 'border-l-4 border-l-yellow-500 border-yellow-200 bg-yellow-50/60 dark:border-yellow-900/60 dark:bg-yellow-950/20',
+    };
+    return styles[level] || 'border-l-4 border-l-muted-foreground/40 border-border/70 bg-background';
+  };
   // B2 舆情影响结论（后端 events.impact_conclusions，需 include_impacts=true）
   // A2（8/9 老师要求）：触发规则关联证据的摘要（evidenceId → 平铺摘要）
   const [ruleEvidenceSummary, setRuleEvidenceSummary] = useState<Record<string, RuleEvidenceSummary>>({});
@@ -227,6 +302,7 @@ export default function CompanyProfilePage() {
     evidenceId: string;
     data?: EvidenceLookupData;
     error?: string;
+    isGenerated?: boolean;
   }>>([]);
   const [evidenceDialogLoading, setEvidenceDialogLoading] = useState(false);
   // 报告生成（P1：画像页入口 → 创建任务 → 跳报告页，状态轮询由 ReportPage 接管）
@@ -453,24 +529,26 @@ export default function CompanyProfilePage() {
   };
 
   const openEvidenceDetails = async (evidenceIds: string[], title: string) => {
+    const uniqueEvidenceIds = [...new Set(evidenceIds)];
     setEvidenceDialogTitle(title);
-    setEvidenceDialogItems(evidenceIds.map(evidenceId => ({ evidenceId })));
+    setEvidenceDialogItems(uniqueEvidenceIds.map(evidenceId => ({ evidenceId })));
     setEvidenceDialogLoading(true);
     setEvidenceDialogOpen(true);
     const results = await Promise.allSettled(
-      evidenceIds.map(evidenceId => truthnetAPI.getEvidence(evidenceId)),
+      uniqueEvidenceIds.map(evidenceId => truthnetAPI.getEvidence(evidenceId)),
     );
     setEvidenceDialogItems(results.map((result, index) => ({
-      evidenceId: evidenceIds[index],
+      evidenceId: uniqueEvidenceIds[index],
       ...(result.status === 'fulfilled'
         ? { data: result.value.data }
         : {
-            error:
-              evidenceIds[index]?.startsWith('ev_fin_')
-                ? '该证据由本次分析即时生成，未持久化存储（对话/报告中的证据可完整回查）'
-                : result.reason instanceof Error
-                  ? result.reason.message
-                  : '证据加载失败',
+            ...(uniqueEvidenceIds[index]?.startsWith('ev_fin_')
+              ? { isGenerated: true }
+              : {
+                  error: result.reason instanceof Error
+                    ? result.reason.message
+                    : '证据加载失败',
+                }),
           }),
     })));
     setEvidenceDialogLoading(false);
@@ -593,6 +671,13 @@ export default function CompanyProfilePage() {
     coverageGapText,
     impactAdvice?.overall_advice,
   ]);
+  const impactAdviceWarnings = impactAdvice
+    ? formatImpactAdviceWarnings(impactAdvice.method, impactAdvice.warnings)
+    : [];
+  const impactSignalSegments = (impactAdvice?.segments || []).filter(segment => (
+    !['财务建议', '股权建议', '舆情建议', '综合建议'].includes(segment.title)
+  ));
+  const verificationNavigation = impactAdvice?.verification_navigation || [];
 
   // 8/23 分步渲染：profile 未到达时显示加载中（不得落入「加载失败」分支——
   // 首次渲染 profile=null 且 error=null，需区分加载中与加载失败）
@@ -771,7 +856,7 @@ export default function CompanyProfilePage() {
                         >
                           <span className="text-foreground">{r.rule_name || r.rule_id}</span>
                           <span className={`rounded-full px-1.5 py-0.5 ${getRiskBadgeStyle(r.severity)}`}>
-                            {r.severity}
+                            {RISK_SEVERITY_LABELS[r.severity] ?? RISK_SEVERITY_LABELS.unknown}
                           </span>
                         </button>
                       ))}
@@ -817,7 +902,7 @@ export default function CompanyProfilePage() {
                     <CardHeader className="pb-2">
                       <div className="flex items-center gap-2">
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${getRiskBadgeStyle(chain.risk_level)}`}>
-                          {chain.risk_level}
+                          {RISK_SEVERITY_LABELS[chain.risk_level] ?? RISK_SEVERITY_LABELS.unknown}
                         </span>
                         <span className="text-sm font-medium">{chain.conclusion}</span>
                       </div>
@@ -827,7 +912,7 @@ export default function CompanyProfilePage() {
                         <div key={si} className="mb-3 rounded-lg border bg-muted/30 p-3">
                           <div className="mb-1 flex items-center justify-between">
                             <span className="text-sm font-medium">{signal.label}</span>
-                            <span className="text-xs text-muted-foreground">{signal.severity}</span>
+                            <span className="text-xs text-muted-foreground">{RISK_SEVERITY_LABELS[signal.severity] ?? RISK_SEVERITY_LABELS.unknown}</span>
                           </div>
                           <p className="mb-2 text-sm text-muted-foreground">{signal.explanation}</p>
                           {signal.industry_percentile != null && (
@@ -903,36 +988,105 @@ export default function CompanyProfilePage() {
               </Card>
             ) : impactAdvice ? (
               <div className="space-y-3">
-                <div className="rounded-md border border-border/60 bg-muted/20 p-4">
-                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <Badge className={riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].color}>
-                      {riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].label}
-                    </Badge>
-                    <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
-                    <span>{impactAdvice.evidence_count} 条可回查证据</span>
-                  </div>
-                  {/* 8/23 可读性：LLM 输出为 Markdown 分节（**小节名**），
-                      渲染为加粗小节 + 独立行 */}
-                  <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground" />
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge className={riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].color}>
+                    {riskLevelConfig[(impactAdvice.risk_level || 'unknown') as RiskLevel].label}
+                  </Badge>
+                  <span>{impactAdvice.as_of || '数据截止日暂无'}</span>
+                  <span>{impactAdvice.evidence_count} 条可回查证据</span>
                 </div>
-                {impactAdvice.segments.map((segment, index) => (
-                  <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
-                    <p className="text-sm font-medium text-foreground">{segment.title}</p>
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{segment.detail}</p>
-                    {segment.evidence_ids.length > 0 && (
-                      <Button
-                        variant="link"
-                        size="sm"
-                        className="mt-1 h-auto p-0 text-xs"
-                        onClick={() => void openEvidenceDetails(segment.evidence_ids, `${segment.title} · 证据详情`)}
-                      >
-                        查看 {segment.evidence_ids.length} 条证据
-                      </Button>
-                    )}
+
+                {verificationNavigation.length > 0 && (
+                  <Card className="border-primary/30 bg-primary/[0.03]">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Shield className="h-4 w-4 text-primary" />
+                        优先核查清单
+                        <Badge variant="outline" className="text-[11px] font-normal">规则排序 · 人工核验</Badge>
+                      </CardTitle>
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        系统先说明风险点与量化依据，再给出固定核查步骤；判断结论由分析人员结合原始披露作出。
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {verificationNavigation.map((item, index) => (
+                        <div key={item.rule_id} className={`rounded-md border p-3 ${getVerificationCardStyle(item.severity)}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">{index + 1}</span>
+                            <p className="text-sm font-semibold text-foreground">{item.rule_id} {item.rule_name}</p>
+                            <Badge className={getRiskBadgeStyle(item.severity)}>{RISK_SEVERITY_LABELS[item.severity] ?? RISK_SEVERITY_LABELS.unknown}</Badge>
+                          </div>
+                          {item.explanation && (
+                            <p className="mt-2 text-sm leading-6 text-muted-foreground"><span className="font-semibold text-foreground">风险点：</span>{item.explanation}</p>
+                          )}
+                          {item.quantified_context && (
+                            <p className="mt-2 rounded-md border border-primary/10 bg-background/80 px-2.5 py-2 text-xs font-medium leading-5 text-foreground shadow-sm">
+                              {item.quantified_context}
+                            </p>
+                          )}
+                          {item.actions.length > 0 && (
+                            <div className="mt-3">
+                              <p className="text-xs font-semibold text-foreground">建议核查</p>
+                              <ol className="mt-1.5 space-y-1.5 text-xs leading-5 text-foreground">
+                                {item.actions.map((action, actionIndex) => (
+                                  <li key={action} className="flex items-start gap-2">
+                                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{actionIndex + 1}</span>
+                                    <span className="font-medium">{action}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          )}
+                          {item.evidence_ids.length > 0 && (
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="mt-2 h-auto p-0 text-xs"
+                              onClick={() => void openEvidenceDetails(item.evidence_ids, `${item.rule_id} ${item.rule_name} · 核查证据`)}
+                            >
+                              查看 {item.evidence_ids.length} 条相关证据
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card className="border-primary/25 border-l-4 border-l-primary bg-primary/[0.025]">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-foreground">
+                      {impactAdvice.method === 'llm' ? 'AI 辅助综合研判' : '系统综合摘要'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <MarkdownRenderer content={impactAdvice.overall_advice} className="text-sm leading-6 text-foreground [&_strong]:font-semibold [&_strong]:text-primary" />
+                  </CardContent>
+                </Card>
+
+                {impactSignalSegments.length > 0 && (
+                  <div className="space-y-3 rounded-md border border-border/60 p-4">
+                    <p className="text-sm font-medium text-foreground">补充信号与证据</p>
+                    {impactSignalSegments.map((segment, index) => (
+                      <div key={`${segment.source_module}-${index}`} className="border-l-2 border-primary/40 pl-4">
+                        <p className="text-sm font-medium text-foreground">{segment.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">{segment.detail}</p>
+                        {segment.evidence_ids.length > 0 && (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            className="mt-1 h-auto p-0 text-xs"
+                            onClick={() => void openEvidenceDetails(segment.evidence_ids, `${segment.title} · 证据详情`)}
+                          >
+                            查看 {segment.evidence_ids.length} 条证据
+                          </Button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-                {impactAdvice.warnings.length > 0 && (
-                  <p className="text-xs text-muted-foreground">{impactAdvice.warnings.join('；')}</p>
+                )}
+                {impactAdviceWarnings.length > 0 && (
+                  <p className="text-xs text-muted-foreground">{impactAdviceWarnings.join('；')}</p>
                 )}
               </div>
             ) : (
@@ -1013,6 +1167,9 @@ export default function CompanyProfilePage() {
                       </Button>
                     </div>
                   </div>
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    单位说明：% 表示比例或同比增速；百分点表示两个百分比之间的差值。
+                  </p>
                   {configError && (
                     <p className="mb-2 text-xs text-destructive">{configError}</p>
                   )}
@@ -1170,10 +1327,7 @@ export default function CompanyProfilePage() {
                                 </div>
                                 <div className="mt-1 flex items-center gap-2">
                                   <span className={`rounded px-1.5 py-0.5 text-[10px] ${getRiskBadgeStyle(riskLevel)}`}>
-                                    {riskLevel === 'red' ? '高危'
-                                      : riskLevel === 'orange' ? '中高危'
-                                      : riskLevel === 'yellow' ? '中等'
-                                      : riskLevel === 'blue' ? '低风险' : '正常'}
+                                    {RISK_SEVERITY_LABELS[riskLevel] ?? RISK_SEVERITY_LABELS.unknown}
                                   </span>
                                   <span className="text-[10px] text-muted-foreground">
                                     {Array.isArray(chain.risk_reasons) && chain.risk_reasons.length > 0
@@ -1303,51 +1457,66 @@ export default function CompanyProfilePage() {
           <DialogHeader>
             <DialogTitle>{evidenceDialogTitle}</DialogTitle>
             <DialogDescription>
-              证据 ID、报表记录和关联声明均来自后端 provenance 查询。
+              可回查记录来自后端 provenance；本次计算输入在规则卡中按报表期次展示。
             </DialogDescription>
           </DialogHeader>
           {evidenceDialogLoading ? (
             <div className="py-8 text-center text-sm text-muted-foreground">正在加载证据详情…</div>
           ) : (
             <div className="space-y-4">
-              {evidenceDialogItems.map(item => {
+              {(() => {
+                const persistedItems = evidenceDialogItems.filter(item => item.data);
+                const generatedCount = evidenceDialogItems.filter(item => item.isGenerated).length;
+                const failedItems = evidenceDialogItems.filter(item => item.error && !item.isGenerated);
+                return <>
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    已定位 <span className="font-medium text-foreground">{persistedItems.length}</span> 条可回查来源记录
+                    {generatedCount > 0 && <>；另有 <span className="font-medium text-foreground">{generatedCount}</span> 项本次计算输入，已在“核查计算依据”中汇总展示。</>}
+                  </div>
+                  {failedItems.length > 0 && (
+                    <p className="text-xs text-destructive">{failedItems.length} 条来源记录暂时无法加载，请稍后重试。</p>
+                  )}
+                  {persistedItems.map(item => {
                 const evidence = item.data?.evidence || {};
                 const source = item.data?.source || {};
                 const record = source.record || {};
+                const claims = uniqueEvidenceClaims(item.data?.claims || []);
+                const displayedClaims = claims.slice(0, 3);
                 return (
                   <div key={item.evidenceId} className="rounded-md border border-border p-4">
-                    <code className="text-xs text-muted-foreground">{item.evidenceId}</code>
-                    {item.error ? (
-                      <p className="mt-2 text-sm text-destructive">{item.error}</p>
-                    ) : (
-                      <>
-                        <dl className="mt-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-                          <div><dt className="text-xs text-muted-foreground">来源标题</dt><dd>{String(evidence.source_title || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">来源类型</dt><dd>{String(evidence.source_type || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">记录</dt><dd>{String(evidence.source_record_id || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">报表期间</dt><dd>{String(evidence.period || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">字段</dt><dd>{String(evidence.field_path || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">解析状态</dt><dd>{source.resolved ? '已解析' : '未解析'}</dd></div>
-                        </dl>
-                        {Object.keys(record).length > 0 && (
-                          <details className="mt-3">
-                            <summary className="cursor-pointer text-xs text-muted-foreground">查看来源记录</summary>
-                            <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{JSON.stringify(record, null, 2)}</pre>
-                          </details>
+                    <p className="text-sm font-medium text-foreground">
+                      {formatEvidenceField(evidence.field_path)} · {formatEvidencePeriod(evidence.period)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {String(evidence.source_title || EVIDENCE_SOURCE_LABELS[String(evidence.source_type || '')] || '来源记录')}
+                      {' · '}{source.resolved ? '已定位原始记录' : '原始记录待补充'}
+                    </p>
+                    {claims.length > 0 && (
+                      <div className="mt-3 border-t border-border pt-3">
+                        <div className="text-xs text-muted-foreground">支持的结论</div>
+                        {displayedClaims.map((claim, index) => (
+                          <p key={String(claim.claim_id || index)} className="mt-1 text-sm">{String(claim.text || claim.claim_id || '-')}</p>
+                        ))}
+                        {claims.length > displayedClaims.length && (
+                          <p className="mt-1 text-xs text-muted-foreground">该记录还被 {claims.length - displayedClaims.length} 条关联分析复用。</p>
                         )}
-                        {item.data?.claims?.length ? (
-                          <div className="mt-3 border-t border-border pt-3">
-                            <div className="text-xs text-muted-foreground">关联声明</div>
-                            {item.data.claims.map((claim, index) => (
-                              <p key={String(claim.claim_id || index)} className="mt-1 text-sm">{String(claim.text || claim.claim_id || '-')}</p>
-                            ))}
-                          </div>
-                        ) : null}
-                      </>
+                      </div>
                     )}
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-xs text-muted-foreground">技术详情与来源记录</summary>
+                      <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-2">
+                        <div><dt className="inline">证据 ID：</dt><dd className="inline font-mono">{item.evidenceId}</dd></div>
+                        <div><dt className="inline">来源记录：</dt><dd className="inline">{String(evidence.source_record_id || '-')}</dd></div>
+                      </dl>
+                        {Object.keys(record).length > 0 && (
+                          <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{JSON.stringify(record, null, 2)}</pre>
+                        )}
+                    </details>
                   </div>
                 );
-              })}
+                  })}
+                </>;
+              })()}
             </div>
           )}
         </DialogContent>

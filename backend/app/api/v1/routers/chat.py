@@ -409,7 +409,12 @@ def _build_chat_response(
     从 Agent State 中提取结构化数据并转换为 API DTO。
     """
     final_response = result.get("final_response")
-    evidence = result.get("evidence", [])
+    # 回答层已按本轮请求模块裁剪展示材料；REST 不得重新透出未选模块证据。
+    evidence = (
+        getattr(final_response, "evidence", [])
+        if final_response is not None
+        else result.get("evidence", [])
+    )
     module_status = result.get("module_status", {})
     results = result.get("results")
 
@@ -483,7 +488,12 @@ def _build_chat_response(
         follow_ups = getattr(final_response, "follow_ups", []) or []
 
     # claims — 从 Agent State 透出（结构化问答结论声明，API 公共投影）
-    claims_items = [ClaimV1.from_claim(c) for c in result.get("claims", [])]
+    response_claims = (
+        getattr(final_response, "claims", [])
+        if final_response is not None
+        else result.get("claims", [])
+    )
+    claims_items = [ClaimV1.from_claim(c) for c in response_claims]
     # module_status — typed ModuleStatusV1（对象/dict/字符串/None 全兼容）
     module_status_items = {
         k: ModuleStatusV1.from_status(v) for k, v in module_status.items()

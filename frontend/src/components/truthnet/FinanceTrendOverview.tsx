@@ -72,6 +72,7 @@ interface TrendSeries {
   severity: string;
   currentValue: number;
   currentUnit: string;
+  isExtremeValue: boolean;
   trendPct: number;
   points: Array<{ period: string; value: number }>;
 }
@@ -106,6 +107,7 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
           severity: rule.severity,
           currentValue: current?.value ?? last,
           currentUnit: current?.unit ?? '',
+          isExtremeValue: currentMetric === 'cf_to_profit_ratio' && Math.abs(current?.value ?? last) > 100,
           trendPct,
           points,
         } satisfies TrendSeries;
@@ -144,7 +146,7 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
                     <p className="text-[10px] text-muted-foreground">{s.ruleId}</p>
                   </div>
                   <span className="shrink-0 text-sm font-semibold" style={{ color }}>
-                    {formatValue(s.currentValue, s.currentUnit)}
+                    {s.isExtremeValue ? '极端值（需核查）' : formatValue(s.currentValue, s.currentUnit)}
                   </span>
                 </div>
 
@@ -167,7 +169,12 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
                           fontSize: 12,
                         }}
                         labelFormatter={(label) => formatPeriod(String(label ?? ''))}
-                        formatter={(v: number | string) => [formatValue(Number(v), s.currentUnit), s.name]}
+                        formatter={(v: number | string) => [
+                          s.isExtremeValue && Math.abs(Number(v)) > 100
+                            ? '极端值（查看规则卡原始金额）'
+                            : formatValue(Number(v), s.currentUnit),
+                          s.name,
+                        ]}
                       />
                       <Area
                         type="monotone"
@@ -191,7 +198,9 @@ export function FinanceTrendOverview({ rules }: FinanceTrendOverviewProps) {
                     <Minus className="h-3 w-3" />
                   )}
                   <span>
-                    {Math.abs(s.trendPct).toFixed(1)}% {rising ? '上升' : falling ? '下降' : '持平'}
+                    {s.isExtremeValue
+                      ? '波动极端（需核查）'
+                      : `${Math.abs(s.trendPct).toFixed(1)}% ${rising ? '上升' : falling ? '下降' : '持平'}`}
                   </span>
                 </div>
               </div>

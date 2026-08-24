@@ -34,7 +34,26 @@ def _risk_output():
             SimpleNamespace(
                 conclusion_type="rule_trigger",
                 conclusion="R4 存货增速快于营收增速",
-                signals=[SimpleNamespace(explanation="存货增速 12.3% vs 营收 5.1%")],
+                signals=[
+                    SimpleNamespace(
+                        signal_id="R4",
+                        label="存货–营收背离",
+                        severity="orange",
+                        explanation="存货增速 12.3% vs 营收 5.1%",
+                        current={
+                            "growth_gap": {
+                                "value": 41.1,
+                                "unit": "percentage_point",
+                            }
+                        },
+                        history=[
+                            {"period": "20241231", "growth_gap": 20.0},
+                            {"period": "20250331", "growth_gap": 41.1},
+                        ],
+                        industry_percentile=88.0,
+                        evidence_ids=["ev_fin_1", "ev_fin_2"],
+                    )
+                ],
                 evidence_ids=["ev_fin_1", "ev_fin_2"],
             )
         ],
@@ -67,6 +86,10 @@ async def test_finance_segment_and_evidence(monkeypatch):
     assert result.evidence_count >= 2
     assert result.method == "template"
     assert "财务规则信号 1 项" in result.overall_advice
+    assert len(result.verification_navigation) == 1
+    item = result.verification_navigation[0]
+    assert item.rule_id == "R4" and len(item.actions) == 3
+    assert "行业分位" in item.quantified_context
 
 
 @pytest.mark.asyncio
@@ -105,12 +128,17 @@ async def test_llm_success_uses_llm_method(monkeypatch):
         return output
 
     # 8/17 收敛 C：mock llm_guard.llm_with_fallback（LLM 成功，used=True）
-    monkeypatch.setattr(
-        "app.agents.llm_guard.llm_with_fallback",
-        lambda *a, **kw: (output, True),
-    )
+    captured_timeout = None
+
+    def fake_with_fallback(*args, **kwargs):
+        nonlocal captured_timeout
+        captured_timeout = kwargs.get("timeout")
+        return output, True
+
+    monkeypatch.setattr("app.agents.llm_guard.llm_with_fallback", fake_with_fallback)
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "llm"
+    assert captured_timeout == 30.0
     assert "去化压力" in result.overall_advice
     modules = {s.source_module for s in result.segments}
     assert "finance" in modules and "overall" in modules

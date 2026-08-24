@@ -511,8 +511,8 @@ def test_persist_second_turn_increments_index(monkeypatch, sqlite_engine):
         assert title == "康美药业有风险吗"
 
 
-def test_title_truncated_to_30(monkeypatch, sqlite_engine):
-    """超长 question 截断为 30 字。"""
+def test_title_truncated_to_48(monkeypatch, sqlite_engine):
+    """超长 question 截断为 48 字。"""
     _patch_mysql(monkeypatch, sqlite_engine)
     long_q = "长" * 50
     pt.persist_turn_node(_make_state(query=long_q))
@@ -521,7 +521,7 @@ def test_title_truncated_to_30(monkeypatch, sqlite_engine):
         title = conn.execute(
             text("SELECT title FROM conversation_sessions")
         ).scalar_one()
-        assert len(title) == 30
+        assert len(title) == 48
 
 
 # ── 同 turn 重试幂等（Phase C 任务 8） ─────────────────────

@@ -60,10 +60,11 @@ const statusLabels = {
   insufficient_data: '数据不足',
 };
 
-// 单位可读化：percentage_point 按用户口径显示 %，不再出现英文 pp/ratio
+// 单位可读化：百分比与百分点表达不同的规则语义，避免把差值误读为比例。
 const displayUnitLabels: Record<string, string> = {
   percent: '%',
-  percentage_point: '%',
+  percentage_point: '个百分点',
+  pp: '个百分点',
   ratio: '',
   quarters: '个季度',
   days: '天',
@@ -71,6 +72,128 @@ const displayUnitLabels: Record<string, string> = {
   yuan: '元',
   times: '倍',
 };
+
+const calculationDescriptions: Record<string, string> = {
+  R1: '比较应收账款与营业收入的同比增速差，并以当期与上年同期数据计算同比。',
+  R2: '观察经营活动现金流与净利润（不含少数股东损益）的多期关系，并统计“净利润为正、经营现金流为负”的连续期数。',
+  R3: '计算货币资金占总资产比例、有息负债占总资产比例，并结合利息费用交叉核验。',
+  R4: '比较存货与营业收入的同比增速差，并结合存货周转天数判断积压风险。',
+  R5: '先计算毛利率和期间费用率，再将当期指标与历史平均水平比较，识别异常偏离。',
+  R6: '计算其他应收款占总资产比例及同比变化，并与应收账款等科目交叉核验。',
+  R7: '比较扣非净利润、净利润、营业收入和经营现金流的关系，识别利润质量与增长背离。',
+};
+
+const calculationFieldLabels: Record<string, string> = {
+  acct_rcv: '应收账款',
+  oper_rev: '营业收入',
+  net_cash_flows_oper_act: '经营活动现金流量净额',
+  net_profit_excl_min_int_inc: '净利润（不含少数股东损益）',
+  monetary_cap: '货币资金',
+  tot_assets: '资产总计',
+  st_borrow: '短期借款',
+  lt_borrow: '长期借款',
+  fin_exp: '财务费用',
+  inventories: '存货',
+  less_oper_cost: '营业成本',
+  less_selling_dist_exp: '销售费用',
+  less_gerl_admin_exp: '管理费用',
+  selling_exp: '销售费用',
+  admin_exp: '管理费用',
+  oth_rcv: '其他应收款',
+  net_profit: '净利润',
+  core_profit: '扣非净利润',
+  oper_profit: '营业利润',
+  tot_profit: '利润总额',
+};
+
+const sourceTableLabels: Record<string, string> = {
+  income_statement: '利润表',
+  balance_sheet: '资产负债表',
+  cash_flow_statement: '现金流量表',
+  cash_flow: '现金流量表',
+};
+
+function formatCalculationPeriod(period: string): string {
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(period);
+  if (!match) return period;
+  const [, year, month] = match;
+  const labels: Record<string, string> = {
+    '03': '一季度',
+    '06': '二季度',
+    '09': '三季度',
+    '12': '年报',
+  };
+  return `${year}年${labels[month] || `${Number(month)}月`}`;
+}
+
+function formatCalculationValue(value: number | string, unit?: string): string {
+  const numericValue = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return String(value);
+  if (unit === 'percent') return `${numericValue.toFixed(2)}%`;
+  if (unit === 'percentage_point' || unit === 'pp') return `${numericValue.toFixed(2)} 个百分点`;
+  if (Math.abs(numericValue) >= 100_000_000) return `${(numericValue / 100_000_000).toFixed(2)} 亿元`;
+  if (Math.abs(numericValue) >= 10_000) return `${(numericValue / 10_000).toFixed(2)} 万元`;
+  return `${numericValue.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}${unit === 'yuan' || unit === 'CNY' || unit === '元' ? ' 元' : ''}`;
+}
+
+function calculationFieldLabel(fieldPath: string, role?: string): string {
+  const field = fieldPath.split('.').at(-1) || fieldPath;
+  const roleField = role?.replace(/@\d{8}$/, '');
+  return calculationFieldLabels[field] || (roleField ? calculationFieldLabels[roleField] : undefined) || roleField || fieldPath;
+}
+
+type CalculationInputs = NonNullable<FinanceRuleItem['calculation_trace']>['inputs'];
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function calculationDataCheckWarnings(ruleId: string, inputs: CalculationInputs): string[] {
+  const warnings: string[] = [];
+  const latestPeriod = inputs.reduce((latest, input) => input.period > latest ? input.period : latest, '');
+
+  // R2 的分母过小会把现金流/利润比放大，必须把原始金额和口径提示一起呈现。
+  if (ruleId === 'R2') {
+    const cashflow = inputs.find(input => input.period === latestPeriod && input.field_path === 'net_cash_flows_oper_act');
+    const profit = inputs.find(input => input.period === latestPeriod && input.field_path === 'net_profit_excl_min_int_inc');
+    const cashflowValue = cashflow ? Number(cashflow.value) : NaN;
+    const profitValue = profit ? Number(profit.value) : NaN;
+    if (Number.isFinite(cashflowValue) && Number.isFinite(profitValue) && profitValue !== 0) {
+      const ratio = cashflowValue / Math.abs(profitValue);
+      if (Math.abs(ratio) > 100) {
+        warnings.push(`${formatCalculationPeriod(latestPeriod)}现金流/净利润比为 ${ratio.toFixed(1)}；净利润基数较小会放大该比值，请核对母公司报表范围与原始披露。`);
+      }
+    }
+  }
+
+  const byField = new Map<string, typeof inputs>();
+  for (const input of inputs) {
+    const entries = byField.get(input.field_path) || [];
+    entries.push(input);
+    byField.set(input.field_path, entries);
+  }
+  for (const fieldInputs of byField.values()) {
+    const ordered = [...fieldInputs].sort((a, b) => a.period.localeCompare(b.period));
+    const latest = ordered.at(-1);
+    const reference = ordered.slice(-5, -1)
+      .map(input => Math.abs(Number(input.value)))
+      .filter(Number.isFinite)
+      .filter(value => value > 0);
+    const current = latest ? Math.abs(Number(latest.value)) : NaN;
+    const baseline = median(reference);
+    if (!latest || baseline === null || !Number.isFinite(current) || current === 0) continue;
+    const relative = current / baseline;
+    if (relative <= 0.1) {
+      warnings.push(`${calculationFieldLabel(latest.field_path, latest.role)}最新绝对值较前四个可比报告期中位数低 ${((1 - relative) * 100).toFixed(1)}%，建议核对期次、报表范围与原始披露。`);
+    } else if (relative >= 10) {
+      warnings.push(`${calculationFieldLabel(latest.field_path, latest.role)}最新绝对值约为前四个可比报告期中位数的 ${relative.toFixed(1)} 倍，建议核对期次、报表范围与原始披露。`);
+    }
+  }
+  return [...new Set(warnings)].slice(0, 3);
+}
 
 function formatRuleValue(value: number | undefined, unit: string | undefined): string {
   if (typeof value !== 'number') return '--';
@@ -140,6 +263,12 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail, evidenceSummaries
       ? preferredMetric
       : Object.keys(rule.current)[0];
   const currentValue = currentMetric ? rule.current[currentMetric] : undefined;
+  const calculationWarnings = rule.calculation_trace
+    ? calculationDataCheckWarnings(rule.rule_id, rule.calculation_trace.inputs)
+    : [];
+  const hasExtremeCurrentRatio = currentMetric === 'cf_to_profit_ratio'
+    && typeof currentValue?.value === 'number'
+    && Math.abs(currentValue.value) > 100;
 
   return (
     <Card
@@ -193,13 +322,13 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail, evidenceSummaries
           <div>
             <div className="text-xs text-muted-foreground mb-1">当前值</div>
             <div className="text-lg font-semibold">
-              {formatRuleValue(currentValue?.value, currentValue?.unit)}
+              {hasExtremeCurrentRatio ? '极端值（需核查）' : formatRuleValue(currentValue?.value, currentValue?.unit)}
               <span className="text-xs text-muted-foreground ml-1">
                 
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {currentMetric}
+              {hasExtremeCurrentRatio ? '最近 4 期平均比值不直接展示' : currentMetric}
             </div>
               {latestHistoryPeriod(rule) && (
                 <div className="text-[10px] text-muted-foreground">
@@ -284,23 +413,49 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail, evidenceSummaries
         {rule.calculation_trace && rule.calculation_trace.inputs.length > 0 && (
           <details className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
             <summary className="cursor-pointer text-xs font-medium text-foreground">
-              查看计算过程
+              查看核查计算依据
             </summary>
             <div className="mt-2 space-y-2 text-xs text-muted-foreground">
-              <p>
-                公式：<span className="font-mono text-foreground">{rule.calculation_trace.formula}</span>
-                {rule.calculation_trace.calculation_version && `（${rule.calculation_trace.calculation_version}）`}
+              <p className="leading-5 text-foreground">
+                {calculationDescriptions[rule.calculation_trace.formula_id] || '根据下列报表原始数据，按规则口径计算并与触发线比较。'}
               </p>
-              <div className="max-h-40 space-y-1 overflow-y-auto">
-                {rule.calculation_trace.inputs.map((input, index) => (
-                  <div key={`${input.field_path}-${input.period}-${index}`} className="flex flex-wrap gap-x-2 rounded bg-background px-2 py-1">
-                    <span className="font-medium text-foreground">{input.role || input.field_path}</span>
-                    <span>{input.period}</span>
-                    <span>{input.value}{input.unit ? ` ${input.unit}` : ''}</span>
-                    <span className="text-[10px]">{input.source_table}</span>
-                  </div>
-                ))}
+              <div className="max-h-48 overflow-y-auto rounded border border-border/60 bg-background">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-muted/80 text-[10px] text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">核查字段</th>
+                      <th className="px-2 py-1.5 font-medium">数据期</th>
+                      <th className="px-2 py-1.5 text-right font-medium">报表值</th>
+                      <th className="px-2 py-1.5 font-medium">来源</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rule.calculation_trace.inputs.map((input, index) => (
+                      <tr key={`${input.field_path}-${input.period}-${index}`} className="border-t border-border/50">
+                        <td className="px-2 py-1.5 font-medium text-foreground">{calculationFieldLabel(input.field_path, input.role)}</td>
+                        <td className="px-2 py-1.5">{formatCalculationPeriod(input.period)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-foreground">{formatCalculationValue(input.value, input.unit)}</td>
+                        <td className="px-2 py-1.5">{sourceTableLabels[input.source_table] || input.source_table}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+              <details className="pt-1">
+                <summary className="cursor-pointer text-[10px] text-muted-foreground">技术口径（公式与版本）</summary>
+                <p className="mt-1 break-words font-mono text-[10px] leading-4 text-muted-foreground">
+                  {rule.calculation_trace.formula}
+                  {rule.calculation_trace.calculation_version && `（${rule.calculation_trace.calculation_version}）`}
+                </p>
+              </details>
+              {calculationWarnings.length > 0 && (
+                <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-2 text-xs text-yellow-900 dark:text-yellow-200">
+                  <p className="font-medium">数据核查提示</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4 leading-5">
+                    {calculationWarnings.map(warning => <li key={warning}>{warning}</li>)}
+                  </ul>
+                </div>
+              )}
             </div>
           </details>
         )}

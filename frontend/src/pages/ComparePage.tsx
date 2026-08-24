@@ -266,9 +266,21 @@ const DEFAULT_COMPARISON_RULES = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'];
 function formatFinancialValue(value: number | null, unit: string): string {
   if (value == null) return '暂无数据';
   if (unit === 'CNY') return `${(value / 100000000).toFixed(2)} 亿元`;
-  if (unit === 'percent' || unit === 'ratio' || unit === 'pp') return `${value.toFixed(2)}%`;
+  if (unit === 'percent') return `${value.toFixed(2)}%`;
+  if (unit === 'ratio') return `${value.toFixed(2)} 倍`;
+  if (unit === 'pp') return `${value.toFixed(2)} 个百分点`;
   if (unit === 'days') return `${value.toFixed(2)} 天`;
   return `${value}${unit}`;
+}
+
+function formatRuleMetricValue(value: number | null, unit: string): string {
+  if (value == null) return '暂无数据';
+  if (unit === 'bool') return Number(value) === 1 ? '是' : '否';
+  if (unit === 'ratio') return `${value.toFixed(2)} 倍`;
+  if (unit === 'pp' || unit === 'percentage_point') return `${value.toFixed(1)} 个百分点`;
+  if (unit === 'percent') return `${value.toFixed(1)}%`;
+  if (unit === 'days') return `${value.toFixed(0)} 天`;
+  return `${value}${unitLabelMap[unit] ?? unit}`;
 }
 
 function formatReportPeriod(period: string): string {
@@ -301,6 +313,44 @@ interface RuleMatrixRow {
   ruleId: string;
   label: string;
   cells: RuleMatrixCell[];
+}
+
+interface IndicatorTableRow extends IndicatorCompare {
+  relatedRules: string[];
+}
+
+const RISK_SEVERITY_LABELS: Record<string, string> = {
+  red: '高危预警',
+  orange: '中高危预警',
+  yellow: '中等预警',
+  blue: '低风险提示',
+  green: '正常',
+  unknown: '数据不足',
+};
+
+function buildIndicatorTableRows(indicators: IndicatorCompare[]): IndicatorTableRow[] {
+  const rows = new Map<string, IndicatorTableRow>();
+  indicators.forEach(indicator => {
+    const key = indicator.label || indicator.indicator;
+    const ruleId = indicator.indicator.match(/^(R\d+)/i)?.[1]?.toUpperCase();
+    const existing = rows.get(key);
+    if (!existing) {
+      rows.set(key, {
+        ...indicator,
+        companies: [...indicator.companies],
+        relatedRules: ruleId ? [ruleId] : [],
+      });
+      return;
+    }
+    if (ruleId && !existing.relatedRules.includes(ruleId)) existing.relatedRules.push(ruleId);
+    const cells = new Map(existing.companies.map(cell => [cell.wind_code, cell]));
+    indicator.companies.forEach(cell => {
+      const current = cells.get(cell.wind_code);
+      if (!current || (current.value == null && cell.value != null)) cells.set(cell.wind_code, cell);
+    });
+    existing.companies = Array.from(cells.values());
+  });
+  return Array.from(rows.values());
 }
 
 function buildRuleMatrix(companies: CompanyRiskSummary[]): RuleMatrixRow[] {
@@ -349,15 +399,15 @@ function buildComparisonConclusions(companies: CompanyRiskSummary[]): string[] {
   });
   const conclusions: string[] = [];
 
-  const best = ranked[0];
-  const worst = ranked[ranked.length - 1];
+  const highestRisk = ranked[0];
+  const relativelyStable = ranked[ranked.length - 1];
   const riskText = ranked
     .map((c, i) => `${i + 1}. ${c.sec_name}：${riskLevelConfig[c.risk_level as RiskLevel]?.label ?? c.risk_level}（${c.partial ? '暂无评分' : `${c.overall_score.toFixed(3)} 分`}）`)
     .join('；');
   conclusions.push(`风险排序：${riskText}`);
-  if (best && worst) {
+  if (highestRisk && relativelyStable) {
     conclusions.push(
-      `当前相对更稳的是${best.sec_name}，风险最集中的是${worst.sec_name}；两者差异主要看综合评分、触发规则数量和是否存在高危模式。`,
+      `当前相对风险较低的是${relativelyStable.sec_name}，风险最集中的是${highestRisk.sec_name}；两者差异主要看综合评分、触发规则数量和是否存在高危模式。`,
     );
   }
 
@@ -423,6 +473,7 @@ export default function ComparePage() {
   const [analysisProgress, setAnalysisProgress] = useState<{ ready: number; total: number } | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [showAllIndicators, setShowAllIndicators] = useState(false);
   // 8/23 舆情信号：每家公司负面事件（评分保底/舆情维度的证据展示）
   const [negativeEvents, setNegativeEvents] = useState<Record<string, TimelineEvent[]>>({});
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -660,6 +711,14 @@ export default function ComparePage() {
   }, [searchParams]);
 
   const ruleMatrix = useMemo(() => buildRuleMatrix(companies), [companies]);
+  const indicatorTableRows = useMemo(
+    () => buildIndicatorTableRows(comparisonData?.indicators || []),
+    [comparisonData],
+  );
+  const priorityIndicatorRows = indicatorTableRows.filter(row =>
+    row.companies.some(cell => cell.status === 'triggered'),
+  );
+  const visibleIndicatorRows = showAllIndicators ? indicatorTableRows : priorityIndicatorRows;
   const comparisonConclusions = useMemo(
     () => buildComparisonConclusions(companies),
     [companies],
@@ -1101,24 +1160,29 @@ export default function ComparePage() {
                             )}
                           </div>
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[560px] text-sm">
-                              <thead className="text-left text-xs text-muted-foreground">
+                            <table className="w-full min-w-[560px] table-fixed text-sm tabular-nums">
+                              <colgroup>
+                                <col className="w-32" />
+                                {comparisonData.companies.map(company => <col key={company.wind_code} />)}
+                                {comparisonData.companies.length === 2 && <col />}
+                              </colgroup>
+                              <thead className="text-xs text-muted-foreground">
                                 <tr className="bg-background">
-                                  <th className="px-3 py-1.5 font-medium">期次</th>
+                                  <th className="px-3 py-2 text-left font-medium">期次</th>
                                   {comparisonData.companies.map(company => (
-                                    <th key={company.wind_code} className="px-3 py-1.5 font-medium">
+                                    <th key={company.wind_code} className="px-3 py-2 text-right font-medium">
                                       {company.sec_name}
                                     </th>
                                   ))}
                                   {comparisonData.companies.length === 2 && (
-                                    <th className="px-3 py-1.5 font-medium">差值（第一家-第二家）</th>
+                                    <th className="px-3 py-2 text-right font-medium">差值（第一家-第二家）</th>
                                   )}
                                 </tr>
                               </thead>
                               <tbody className="divide-y">
                                 {periods.map(p => (
                                   <tr key={p.period}>
-                                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">
+                                    <td className="h-14 whitespace-nowrap px-3 py-2 text-left text-muted-foreground">
                                       {formatReportPeriod(p.period)}
                                     </td>
                                     {comparisonData.companies.map(company => {
@@ -1126,18 +1190,18 @@ export default function ComparePage() {
                                         value => value.wind_code === company.wind_code,
                                       );
                                       return (
-                                        <td key={company.wind_code} className="px-3 py-1.5">
-                                          <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
-                                          {item?.status && item.status !== 'ok' && (
-                                            <div className="mt-0.5 text-[10px] text-muted-foreground">
-                                              数据不足
+                                        <td key={company.wind_code} className="h-14 px-3 py-2 align-middle text-right">
+                                          <div className="grid h-10 grid-rows-[1fr_14px]">
+                                            <div className="flex items-center justify-end whitespace-nowrap">{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
+                                            <div className="text-[10px] leading-[14px] text-muted-foreground">
+                                              {item?.status && item.status !== 'ok' ? '数据不足' : '\u00A0'}
                                             </div>
-                                          )}
+                                          </div>
                                         </td>
                                       );
                                     })}
                                     {comparisonData.companies.length === 2 && (
-                                      <td className="whitespace-nowrap px-3 py-1.5 font-medium">
+                                      <td className="h-14 whitespace-nowrap px-3 py-2 text-right font-medium">
                                         {(() => {
                                           const a = p.companies?.[0]?.value;
                                           const b = p.companies?.[1]?.value;
@@ -1164,73 +1228,72 @@ export default function ComparePage() {
 
             {/* 指标对比 */}
             <Card>
-              <CardHeader>
+              <CardHeader className="flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                   <BarChart3 className="h-4 w-4" />
-                  指标对比
+                  风险指标对比
                 </CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setShowAllIndicators(value => !value)}
+                >
+                  {showAllIndicators ? '仅看异常指标' : '展开全部指标'}
+                </Button>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {(comparisonData?.indicators && comparisonData.indicators.length > 0 ? comparisonData.indicators : comparisonData?.companies?.[0] ? [
-                    { indicator: 'risk_level', label: '风险等级', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: 0, unit: '', severity: c.risk_level, status: '' })) },
-                    { indicator: 'overall_score', label: '综合评分', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.overall_score, unit: '分', severity: '', status: '' })) },
-                    { indicator: 'triggered_rules', label: '触发规则数', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.triggered_rules.length, unit: '条', severity: '', status: '' })) },
-                    { indicator: 'coverage', label: '数据覆盖率', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.coverage, unit: '%', severity: '', status: '' })) },
-                    { indicator: 'pattern_matches', label: '模式匹配', companies: comparisonData.companies.map(c => ({ wind_code: c.wind_code, sec_name: c.sec_name, value: c.pattern_matches?.length ?? 0, unit: '个', severity: '', status: '' })) },
-                  ] : []).map((indicator) => {
-                    return (
-                      <div key={indicator.indicator} className="space-y-2">
-                        <div className="flex items-center gap-2 text-sm font-medium">
-                          <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                          {indicator.label}
-                        </div>
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                          {indicator.companies.map((ci) => {
-                            const isRisk = indicator.indicator === 'risk_level';
-                            const unitText = unitLabelMap[ci.unit ?? ''] ?? ci.unit ?? '';
-                            const displayValue = ci.value == null
-                              ? '暂无数据'
-                              : indicator.indicator === 'coverage'
-                                ? `${(ci.value * 100).toFixed(0)}%`
-                                : `${ci.value}${unitText}`;
-                            return (
-                              <div
-                                key={ci.wind_code}
-                                className="p-3 rounded-lg border bg-card text-center"
-                              >
-                                {/* 8/23 可读性：每格标注公司名称 */}
-                                <p className="mb-1 text-xs font-medium text-muted-foreground truncate">
-                                  {ci.sec_name || ci.wind_code}
-                                </p>
-                                {isRisk ? (
-                                  <Badge className={cn('text-xs', getRiskLevelStyle(ci.severity || String(ci.value ?? '')))}>
-                                    {riskLevelConfig[ci.severity as RiskLevel]?.label || ci.severity || String(ci.value ?? '-')}
-                                  </Badge>
-                                ) : (
-                                  <span className="text-lg font-medium">
-                                    {displayValue}
-                                  </span>
-                                )}
-
-                                  {!isRisk && ci.status && ci.status !== 'not_applicable' && (
-                                    <p className="mt-1 text-[10px] text-muted-foreground">
-                                      {INDICATOR_STATUS_LABELS[ci.status] ?? ci.status}
-                                    </p>
-                                  )}
-                                  {!isRisk && ci.severity && ['red', 'orange', 'yellow', 'blue', 'green', 'unknown'].includes(ci.severity) && (
-                                    <Badge className={cn('mt-1 text-[10px]', getRiskLevelStyle(ci.severity))}>
-                                      {riskLevelConfig[ci.severity as RiskLevel]?.label}
-                                    </Badge>
-                                  )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  {showAllIndicators ? '展示全部规则计算指标；同名指标已合并并标注关联规则。' : '默认仅展示至少一家触发预警的指标，便于横向定位异常。'}
+                </p>
+                {visibleIndicatorRows.length > 0 ? (
+                  <div className="overflow-x-auto rounded-md border border-border/60">
+                    <table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
+                        <tr>
+                          <th className="w-48 px-3 py-2 font-medium">指标</th>
+                          <th className="w-20 px-3 py-2 font-medium">关联规则</th>
+                          {companies.map(company => (
+                            <th key={company.wind_code} className="min-w-44 px-3 py-2 font-medium">{company.sec_name}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/70">
+                        {visibleIndicatorRows.map(row => (
+                          <tr key={row.indicator} className="align-middle">
+                            <td className="px-3 py-2.5 font-medium text-foreground">{row.label}</td>
+                            <td className="px-3 py-2.5 text-xs text-muted-foreground">{row.relatedRules.join(' / ') || '—'}</td>
+                            {companies.map(company => {
+                              const cell = row.companies.find(item => item.wind_code === company.wind_code);
+                              const insufficient = !cell || cell.status === 'insufficient_data' || cell.value == null;
+                              const severity = insufficient ? 'unknown' : (cell.severity || 'green');
+                              return (
+                                <td key={company.wind_code} className="px-3 py-2.5">
+                                  <div className="flex min-h-11 flex-col justify-center gap-1">
+                                    <span className={cn('font-semibold', insufficient ? 'text-muted-foreground' : 'text-foreground')}>
+                                      {formatRuleMetricValue(cell?.value ?? null, cell?.unit ?? '')}
+                                    </span>
+                                    {insufficient ? (
+                                      <span className="text-[11px] text-muted-foreground">数据不足</span>
+                                    ) : cell?.status === 'triggered' ? (
+                                      <Badge className={cn('w-fit text-[10px]', getRiskLevelStyle(severity))}>
+                                        {RISK_SEVERITY_LABELS[severity] ?? RISK_SEVERITY_LABELS.unknown}
+                                      </Badge>
+                                    ) : (
+                                      <span className="text-[11px] text-muted-foreground">未触发</span>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="py-5 text-center text-sm text-muted-foreground">当前没有可横向比较的触发指标。</p>
+                )}
               </CardContent>
             </Card>
 

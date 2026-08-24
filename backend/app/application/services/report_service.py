@@ -505,6 +505,7 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
             rule_display_name,
         )
         from app.application.services.severity_context_service import (
+            percentiles_for_rule,
             render_quantified_line,
         )
 
@@ -527,7 +528,9 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
                         "current": rule_dict.get("current") or {},
                         "history": rule_dict.get("history") or [],
                     },
-                    {},
+                    percentiles_for_rule(
+                        rid, (data.get("rule_percentiles") or {}).get(rid)
+                    ),
                     sev,
                 )
                 title = f"{rid} {rule_display_name(rid)}"
@@ -761,11 +764,19 @@ def _collect_report_data(company_code: str, as_of: str = "") -> dict:
                 }
                 for m in out.pattern_matches
             ]
+            data["rule_percentiles"] = {
+                str(signal.signal_id): signal.industry_percentile
+                for chain in out.derivation_chains
+                if chain.conclusion_type == "rule_trigger"
+                for signal in chain.signals
+                if signal.industry_percentile is not None
+            }
             data["limitations"] = list(out.mitigating_factors or [])
         except Exception:  # noqa: BLE001 — 风险评分失败不阻塞报告
             logger.warning("report: risk scoring failed", exc_info=True)
             data["risk_level"] = "unknown"
             data["pattern_matches"] = []
+            data["rule_percentiles"] = {}
 
         # 财务规则（真实触发）
         try:
