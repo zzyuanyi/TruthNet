@@ -267,7 +267,7 @@ function formatFinancialValue(value: number | null, unit: string): string {
   if (value == null) return '暂无数据';
   if (unit === 'CNY') return `${(value / 100000000).toFixed(2)} 亿元`;
   if (unit === 'percent') return `${value.toFixed(2)}%`;
-  if (unit === 'ratio') return `${value.toFixed(2)}×`;
+  if (unit === 'ratio') return `${value.toFixed(2)} 倍`;
   if (unit === 'pp') return `${value.toFixed(2)} 个百分点`;
   if (unit === 'days') return `${value.toFixed(2)} 天`;
   return `${value}${unit}`;
@@ -276,7 +276,7 @@ function formatFinancialValue(value: number | null, unit: string): string {
 function formatRuleMetricValue(value: number | null, unit: string): string {
   if (value == null) return '暂无数据';
   if (unit === 'bool') return Number(value) === 1 ? '是' : '否';
-  if (unit === 'ratio') return `${value.toFixed(2)}×`;
+  if (unit === 'ratio') return `${value.toFixed(2)} 倍`;
   if (unit === 'pp' || unit === 'percentage_point') return `${value.toFixed(1)} 个百分点`;
   if (unit === 'percent') return `${value.toFixed(1)}%`;
   if (unit === 'days') return `${value.toFixed(0)} 天`;
@@ -1160,24 +1160,29 @@ export default function ComparePage() {
                             )}
                           </div>
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[560px] text-sm">
-                              <thead className="text-left text-xs text-muted-foreground">
+                            <table className="w-full min-w-[560px] table-fixed text-sm tabular-nums">
+                              <colgroup>
+                                <col className="w-32" />
+                                {comparisonData.companies.map(company => <col key={company.wind_code} />)}
+                                {comparisonData.companies.length === 2 && <col />}
+                              </colgroup>
+                              <thead className="text-xs text-muted-foreground">
                                 <tr className="bg-background">
-                                  <th className="px-3 py-1.5 font-medium">期次</th>
+                                  <th className="px-3 py-2 text-left font-medium">期次</th>
                                   {comparisonData.companies.map(company => (
-                                    <th key={company.wind_code} className="px-3 py-1.5 font-medium">
+                                    <th key={company.wind_code} className="px-3 py-2 text-right font-medium">
                                       {company.sec_name}
                                     </th>
                                   ))}
                                   {comparisonData.companies.length === 2 && (
-                                    <th className="px-3 py-1.5 font-medium">差值（第一家-第二家）</th>
+                                    <th className="px-3 py-2 text-right font-medium">差值（第一家-第二家）</th>
                                   )}
                                 </tr>
                               </thead>
                               <tbody className="divide-y">
                                 {periods.map(p => (
                                   <tr key={p.period}>
-                                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">
+                                    <td className="h-14 whitespace-nowrap px-3 py-2 text-left text-muted-foreground">
                                       {formatReportPeriod(p.period)}
                                     </td>
                                     {comparisonData.companies.map(company => {
@@ -1185,10 +1190,10 @@ export default function ComparePage() {
                                         value => value.wind_code === company.wind_code,
                                       );
                                       return (
-                                        <td key={company.wind_code} className="px-3 py-1.5 align-middle">
-                                          <div className="flex min-h-10 flex-col justify-center">
-                                            <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
-                                            <div className="mt-0.5 min-h-3 text-[10px] text-muted-foreground">
+                                        <td key={company.wind_code} className="h-14 px-3 py-2 align-middle text-right">
+                                          <div className="grid h-10 grid-rows-[1fr_14px]">
+                                            <div className="flex items-center justify-end whitespace-nowrap">{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
+                                            <div className="text-[10px] leading-[14px] text-muted-foreground">
                                               {item?.status && item.status !== 'ok' ? '数据不足' : '\u00A0'}
                                             </div>
                                           </div>
@@ -1196,7 +1201,7 @@ export default function ComparePage() {
                                       );
                                     })}
                                     {comparisonData.companies.length === 2 && (
-                                      <td className="whitespace-nowrap px-3 py-1.5 font-medium">
+                                      <td className="h-14 whitespace-nowrap px-3 py-2 text-right font-medium">
                                         {(() => {
                                           const a = p.companies?.[0]?.value;
                                           const b = p.companies?.[1]?.value;
