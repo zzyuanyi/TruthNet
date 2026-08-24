@@ -93,9 +93,9 @@ def _claims_for_evidence(evidence_id: str) -> list[dict]:
         rows = (
             conn.execute(
                 text(
-                    "SELECT c.* FROM claims c "
+                    "SELECT DISTINCT c.* FROM claims c "
                     "JOIN claim_evidence_links l ON l.claim_id = c.claim_id "
-                    "WHERE l.evidence_id = :eid ORDER BY l.sequence_no, c.claim_id"
+                    "WHERE l.evidence_id = :eid ORDER BY c.claim_id"
                 ),
                 {"eid": evidence_id},
             )

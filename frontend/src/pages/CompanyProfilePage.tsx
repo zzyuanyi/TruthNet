@@ -39,6 +39,50 @@ function formatChainPct(value: number | null | undefined): string {
   return `${value.toExponential(2)}%`;
 }
 
+const EVIDENCE_FIELD_LABELS: Record<string, string> = {
+  acct_rcv: '应收账款',
+  admin_exp: '管理费用',
+  fin_exp: '财务费用',
+  less_oper_cost: '营业成本',
+  less_selling_dist_exp: '销售费用',
+  less_gerl_admin_exp: '管理费用',
+  net_cash_flows_oper_act: '经营活动现金流量净额',
+  oper_rev: '营业收入',
+  selling_exp: '销售费用',
+};
+
+const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
+  financial_statement: '财务报表',
+  announcement: '公告',
+  news: '新闻',
+  research_report: '研报',
+};
+
+function formatEvidencePeriod(period: unknown): string {
+  const value = String(period || '');
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
+  if (!match) return value || '期次未标注';
+  const [, year, month] = match;
+  const labels: Record<string, string> = { '03': '一季度', '06': '二季度', '09': '三季度', '12': '年报' };
+  return `${year}年${labels[month] || `${Number(month)}月`}`;
+}
+
+function formatEvidenceField(fieldPath: unknown): string {
+  const value = String(fieldPath || '');
+  const field = value.split('.').at(-1) || value;
+  return EVIDENCE_FIELD_LABELS[field] || field || '报表字段';
+}
+
+function uniqueEvidenceClaims(claims: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  return claims.filter(claim => {
+    const key = String(claim.text || claim.claim_id || '');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -227,6 +271,7 @@ export default function CompanyProfilePage() {
     evidenceId: string;
     data?: EvidenceLookupData;
     error?: string;
+    isGenerated?: boolean;
   }>>([]);
   const [evidenceDialogLoading, setEvidenceDialogLoading] = useState(false);
   // 报告生成（P1：画像页入口 → 创建任务 → 跳报告页，状态轮询由 ReportPage 接管）
@@ -453,24 +498,26 @@ export default function CompanyProfilePage() {
   };
 
   const openEvidenceDetails = async (evidenceIds: string[], title: string) => {
+    const uniqueEvidenceIds = [...new Set(evidenceIds)];
     setEvidenceDialogTitle(title);
-    setEvidenceDialogItems(evidenceIds.map(evidenceId => ({ evidenceId })));
+    setEvidenceDialogItems(uniqueEvidenceIds.map(evidenceId => ({ evidenceId })));
     setEvidenceDialogLoading(true);
     setEvidenceDialogOpen(true);
     const results = await Promise.allSettled(
-      evidenceIds.map(evidenceId => truthnetAPI.getEvidence(evidenceId)),
+      uniqueEvidenceIds.map(evidenceId => truthnetAPI.getEvidence(evidenceId)),
     );
     setEvidenceDialogItems(results.map((result, index) => ({
-      evidenceId: evidenceIds[index],
+      evidenceId: uniqueEvidenceIds[index],
       ...(result.status === 'fulfilled'
         ? { data: result.value.data }
         : {
-            error:
-              evidenceIds[index]?.startsWith('ev_fin_')
-                ? '该证据由本次分析即时生成，未持久化存储（对话/报告中的证据可完整回查）'
-                : result.reason instanceof Error
-                  ? result.reason.message
-                  : '证据加载失败',
+            ...(uniqueEvidenceIds[index]?.startsWith('ev_fin_')
+              ? { isGenerated: true }
+              : {
+                  error: result.reason instanceof Error
+                    ? result.reason.message
+                    : '证据加载失败',
+                }),
           }),
     })));
     setEvidenceDialogLoading(false);
@@ -1306,51 +1353,66 @@ export default function CompanyProfilePage() {
           <DialogHeader>
             <DialogTitle>{evidenceDialogTitle}</DialogTitle>
             <DialogDescription>
-              证据 ID、报表记录和关联声明均来自后端 provenance 查询。
+              可回查记录来自后端 provenance；本次计算输入在规则卡中按报表期次展示。
             </DialogDescription>
           </DialogHeader>
           {evidenceDialogLoading ? (
             <div className="py-8 text-center text-sm text-muted-foreground">正在加载证据详情…</div>
           ) : (
             <div className="space-y-4">
-              {evidenceDialogItems.map(item => {
+              {(() => {
+                const persistedItems = evidenceDialogItems.filter(item => item.data);
+                const generatedCount = evidenceDialogItems.filter(item => item.isGenerated).length;
+                const failedItems = evidenceDialogItems.filter(item => item.error && !item.isGenerated);
+                return <>
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    已定位 <span className="font-medium text-foreground">{persistedItems.length}</span> 条可回查来源记录
+                    {generatedCount > 0 && <>；另有 <span className="font-medium text-foreground">{generatedCount}</span> 项本次计算输入，已在“核查计算依据”中汇总展示。</>}
+                  </div>
+                  {failedItems.length > 0 && (
+                    <p className="text-xs text-destructive">{failedItems.length} 条来源记录暂时无法加载，请稍后重试。</p>
+                  )}
+                  {persistedItems.map(item => {
                 const evidence = item.data?.evidence || {};
                 const source = item.data?.source || {};
                 const record = source.record || {};
+                const claims = uniqueEvidenceClaims(item.data?.claims || []);
+                const displayedClaims = claims.slice(0, 3);
                 return (
                   <div key={item.evidenceId} className="rounded-md border border-border p-4">
-                    <code className="text-xs text-muted-foreground">{item.evidenceId}</code>
-                    {item.error ? (
-                      <p className="mt-2 text-sm text-destructive">{item.error}</p>
-                    ) : (
-                      <>
-                        <dl className="mt-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-                          <div><dt className="text-xs text-muted-foreground">来源标题</dt><dd>{String(evidence.source_title || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">来源类型</dt><dd>{String(evidence.source_type || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">记录</dt><dd>{String(evidence.source_record_id || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">报表期间</dt><dd>{String(evidence.period || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">字段</dt><dd>{String(evidence.field_path || '-')}</dd></div>
-                          <div><dt className="text-xs text-muted-foreground">解析状态</dt><dd>{source.resolved ? '已解析' : '未解析'}</dd></div>
-                        </dl>
-                        {Object.keys(record).length > 0 && (
-                          <details className="mt-3">
-                            <summary className="cursor-pointer text-xs text-muted-foreground">查看来源记录</summary>
-                            <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{JSON.stringify(record, null, 2)}</pre>
-                          </details>
+                    <p className="text-sm font-medium text-foreground">
+                      {formatEvidenceField(evidence.field_path)} · {formatEvidencePeriod(evidence.period)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {String(evidence.source_title || EVIDENCE_SOURCE_LABELS[String(evidence.source_type || '')] || '来源记录')}
+                      {' · '}{source.resolved ? '已定位原始记录' : '原始记录待补充'}
+                    </p>
+                    {claims.length > 0 && (
+                      <div className="mt-3 border-t border-border pt-3">
+                        <div className="text-xs text-muted-foreground">支持的结论</div>
+                        {displayedClaims.map((claim, index) => (
+                          <p key={String(claim.claim_id || index)} className="mt-1 text-sm">{String(claim.text || claim.claim_id || '-')}</p>
+                        ))}
+                        {claims.length > displayedClaims.length && (
+                          <p className="mt-1 text-xs text-muted-foreground">该记录还被 {claims.length - displayedClaims.length} 条关联分析复用。</p>
                         )}
-                        {item.data?.claims?.length ? (
-                          <div className="mt-3 border-t border-border pt-3">
-                            <div className="text-xs text-muted-foreground">关联声明</div>
-                            {item.data.claims.map((claim, index) => (
-                              <p key={String(claim.claim_id || index)} className="mt-1 text-sm">{String(claim.text || claim.claim_id || '-')}</p>
-                            ))}
-                          </div>
-                        ) : null}
-                      </>
+                      </div>
                     )}
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-xs text-muted-foreground">技术详情与来源记录</summary>
+                      <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-2">
+                        <div><dt className="inline">证据 ID：</dt><dd className="inline font-mono">{item.evidenceId}</dd></div>
+                        <div><dt className="inline">来源记录：</dt><dd className="inline">{String(evidence.source_record_id || '-')}</dd></div>
+                      </dl>
+                        {Object.keys(record).length > 0 && (
+                          <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{JSON.stringify(record, null, 2)}</pre>
+                        )}
+                    </details>
                   </div>
                 );
-              })}
+                  })}
+                </>;
+              })()}
             </div>
           )}
         </DialogContent>
