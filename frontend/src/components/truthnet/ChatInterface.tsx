@@ -1,6 +1,7 @@
 // 织网鉴真 TruthNet - 对话界面
 
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { cn } from '@/lib/utils';
 import { ThinkingBubble } from '@/components/thinking-bubble';
@@ -144,6 +145,7 @@ export function ChatInterface({
   const [confirmingCode, setConfirmingCode] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [msgParent] = useAutoAnimate();
+  const navigate = useNavigate();
 
   // 8.11 P0（审查）+ 契约修复：新候选轮次（turn_id 或 revision 变化）重置确认状态，
   // 避免第二次歧义或同轮后续 mention 确认时按钮全部被禁用
@@ -193,14 +195,24 @@ export function ChatInterface({
               <p className="text-xs text-muted-foreground mb-6">输入上市公司名称或股票代码，穿透股权 · 交叉验证 · 对齐舆情</p>
               <div className="grid grid-cols-2 gap-2 max-w-lg mx-auto">
                 {[
-                  { icon: TrendingUp, label: '财务核查', text: '分析金牌家居财务风险' },
-                  { icon: FileText, label: '现金流核验', text: '查看比亚迪经营现金流' },
-                  { icon: Zap, label: '股权穿透', text: '查看金牌家居股权穿透' },
-                  { icon: Shield, label: '横向对比', text: '对比华峰化学、中泰化学和利尔化学' },
+                  { icon: TrendingUp, label: '财务核查', text: '分析金牌家居财务风险', navigateTo: undefined },
+                  { icon: FileText, label: '现金流核验', text: '查看比亚迪经营现金流', navigateTo: undefined },
+                  { icon: Zap, label: '股权穿透', text: '查看金牌家居股权穿透', navigateTo: undefined },
+                  { icon: Shield, label: '横向对比', text: '华峰化学 · 中泰化学 · 利尔化学', navigateTo: '/compare?codes=002064.SZ,002092.SZ,002258.SZ' },
                 ].map((card, i) => (
                   <button
                     key={i}
-                    onClick={() => { setInput(card.text); setTimeout(() => { if (card.text.trim()) onSendMessage(card.text.trim()); setInput(''); }, 0); }}
+                    onClick={() => {
+                      if (card.navigateTo) {
+                        navigate(card.navigateTo);
+                        return;
+                      }
+                      setInput(card.text);
+                      setTimeout(() => {
+                        if (card.text.trim()) onSendMessage(card.text.trim());
+                        setInput('');
+                      }, 0);
+                    }}
                     className="text-left p-3 rounded-md border border-border/60 hover:border-primary/30 hover:bg-muted/30 transition-colors group"
                   >
                     <card.icon className="h-4 w-4 text-primary/60 mb-1.5 group-hover:text-primary transition-colors" />
