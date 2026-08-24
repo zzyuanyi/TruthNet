@@ -336,7 +336,11 @@ def _build_interpretation_segments(state: AgentState, claims: list) -> list[str]
                 f"{len(fields)} 个字段覆盖率仅 {pct}%（有效 {valid}/{total} 期）"
             )
         limitations.extend(other_warnings)
+    plan = state.get("plan")
+    requested_modules = set(getattr(plan, "requested_modules", []) or [])
     for name, ms in (state.get("module_status") or {}).items():
+        if requested_modules and name not in requested_modules:
+            continue
         if getattr(ms, "state", "") in ("partial", "failed"):
             # 8/23 可读性：模块状态转中文（"模块 events 状态: partial"
             # 用户看不懂 → "舆情事件模块部分完成，数据可能不完整"）

@@ -22,6 +22,7 @@ from app.agents.state import (
     Claim,
     CompanyRef,
     ExecutionPlan,
+    EvidenceRef,
     FinalResponse,
     ModuleResults,
     ModuleStatus,
@@ -127,6 +128,34 @@ def test_build_chat_response_assembles_claims_and_module_status():
     result_empty = _stub_result()
     result_empty["claims"] = []
     assert _build_chat_response(result_empty, "tr2").data.claims == []
+
+
+def test_build_chat_response_prefers_scoped_final_materials():
+    """回答层已裁剪范围时，REST 不得重新透出状态中未选模块材料。"""
+    result = _stub_result()
+    result["evidence"] = [
+        EvidenceRef(
+            evidence_id="ev_unrequested",
+            source_type="neo4j_relationship",
+            module="equity",
+        )
+    ]
+    result["final_response"] = FinalResponse(
+        answer="仅展示财务分析",
+        claims=[Claim(claim_id="c_fin", text="财务信号", claim_type="financial")],
+        evidence=[
+            EvidenceRef(
+                evidence_id="ev_fin",
+                source_type="financial_statement",
+                module="finance",
+            )
+        ],
+    )
+
+    data = _build_chat_response(result, "tr_scoped").data
+
+    assert [claim.claim_id for claim in data.claims] == ["c_fin"]
+    assert [item.evidence_id for item in data.evidence] == ["ev_fin"]
 
 
 def test_build_chat_response_exposes_intent():

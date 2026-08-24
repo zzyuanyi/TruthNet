@@ -190,10 +190,57 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+_MODULE_CLAIM_TYPES = {
+    "finance": {"financial"},
+    "equity": {"equity"},
+    "events": {"event"},
+}
+_EVIDENCE_MODULE_BY_SOURCE_TYPE = {
+    "financial_statement": "finance",
+    "neo4j_relationship": "equity",
+    "ownership_record": "equity",
+    "announcement": "events",
+    "event_cluster": "events",
+    "news_article": "events",
+    "regulation": "events",
+    "web_search": "events",
+}
+
+
+def _scope_analysis_items(
+    state: AgentState, claims: list, evidence: list
+) -> tuple[list, list, set[str]]:
+    """按本轮请求模块过滤展示材料，阻断异常上游结果串入单模块回答。"""
+    plan = state.get("plan")
+    requested_modules = set(getattr(plan, "requested_modules", []) or [])
+    if not requested_modules:
+        return claims, evidence, requested_modules
+
+    allowed_claim_types = set().union(
+        *(_MODULE_CLAIM_TYPES.get(module, set()) for module in requested_modules)
+    )
+    if len(requested_modules) > 1:
+        allowed_claim_types.add("cross_validation")
+    scoped_claims = [
+        claim
+        for claim in claims
+        if getattr(claim, "claim_type", "") in allowed_claim_types
+    ]
+    scoped_evidence = []
+    for item in evidence:
+        module = getattr(item, "module", "") or _EVIDENCE_MODULE_BY_SOURCE_TYPE.get(
+            getattr(item, "source_type", ""), ""
+        )
+        if module in requested_modules:
+            scoped_evidence.append(item)
+    return scoped_claims, scoped_evidence, requested_modules
+
+
 def generate_answer_node(state: AgentState) -> dict:
     company = state.get("company")
-    claims = state.get("claims", [])
-    evidence = state.get("evidence", [])
+    claims, evidence, requested_modules = _scope_analysis_items(
+        state, state.get("claims", []), state.get("evidence", [])
+    )
     finance_ran, finance = _finance_executed(state)
     finance_blocked = _finance_all_blocked(finance)
     finance_unknown_type = finance_blocked and any(
@@ -718,7 +765,11 @@ def generate_answer_node(state: AgentState) -> dict:
     # ② 多类核心信号摘要（含评级/交叉验证/综合风险）
     risk_output = state.get("risk_output")
     results = state.get("results")
-    summary = _build_signal_summary(claims, results=results, risk_output=risk_output)
+    # 单模块问答不得借用综合风险评分（可能包含未请求模块的信号）。
+    scoped_risk_output = risk_output if len(requested_modules) != 1 else None
+    summary = _build_signal_summary(
+        claims, results=results, risk_output=scoped_risk_output
+    )
     # ③ 财务触发规则明细（V12 §4.3 规则触发清单）
     rule_details = _build_rule_details(state)
 
@@ -773,7 +824,9 @@ def generate_answer_node(state: AgentState) -> dict:
     if summary:
         seg = summary + "。"
         append_segment(seg)
-    brief = _build_company_brief_analysis(state, claims, risk_output=risk_output)
+    brief = _build_company_brief_analysis(
+        state, claims, risk_output=scoped_risk_output
+    )
     if brief:
         append_segment(brief)
     append_segment(_build_cross_module_observation(state, claims))
@@ -873,9 +926,13 @@ def generate_answer_node(state: AgentState) -> dict:
 
     # 风险等级：优先使用 risk 节点输出（否则回退 claim 最高严重度）
     risk_level = (
-        (getattr(risk_output, "risk_level", "") or _highest_severity(claims))
-        if (risk_output is not None or claims)
-        else "unknown"
+        _highest_severity(claims)
+        if len(requested_modules) == 1
+        else (
+            (getattr(risk_output, "risk_level", "") or _highest_severity(claims))
+            if (risk_output is not None or claims)
+            else "unknown"
+        )
     )
 
     # #4：研报 Claim/Evidence 合并进 FinalResponse（reducer 会再合并进

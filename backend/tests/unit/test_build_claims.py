@@ -11,6 +11,7 @@ from app.agents.state import (
     EquityResult,
     EventsResult,
     EvidenceRef,
+    ExecutionPlan,
     FinanceResult,
     ModuleResults,
     RuntimeState,
@@ -41,11 +42,12 @@ def _ev(
     )
 
 
-def _make_state(results: ModuleResults) -> AgentState:
+def _make_state(results: ModuleResults, plan: ExecutionPlan | None = None) -> AgentState:
     return {
         "user_query": "测试",
         "company": _company(),
         "results": results,
+        "plan": plan,
         "runtime": RuntimeState(trace_id="t", session_id="s"),
     }
 
@@ -347,3 +349,41 @@ def test_evidence_collected_from_all_modules():
     assert len(result["claims"]) == 3
     for c in result["claims"]:
         assert c.evidence_ids
+
+
+def test_single_module_scope_ignores_unrequested_results():
+    """异常上游混入其他模块结果时，BuildClaims 不得将其带入本轮证据链。"""
+    results = ModuleResults(
+        finance=FinanceResult(
+            rule_statuses={"R1": "triggered"},
+            rule_details={"R1": {"evidence_ids": ["ev_fin"], "severity": "red"}},
+            evidence=[_ev("ev_fin")],
+        ),
+        equity=EquityResult(
+            chains=[{"path": ["A"], "total_stake": 0.1}],
+            evidence=[_ev("ev_equity", source_type="ownership_record")],
+        ),
+        events=EventsResult(
+            timeline=[
+                {
+                    "category": "负面",
+                    "sentiment": "negative",
+                    "object_id": "src_event",
+                }
+            ],
+            evidence=[
+                _ev(
+                    "ev_event",
+                    source_type="announcement",
+                    source_record_id="src_event",
+                )
+            ],
+        ),
+    )
+
+    result = build_claims_node(
+        _make_state(results, ExecutionPlan(requested_modules=["finance"]))
+    )
+
+    assert {claim.claim_type for claim in result["claims"]} == {"financial"}
+    assert {item.evidence_id for item in result["evidence"]} == {"ev_fin"}

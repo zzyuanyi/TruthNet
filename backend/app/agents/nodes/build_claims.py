@@ -16,15 +16,33 @@ from app.domain.risk.severity import event_signal_severity, highest_risk_level
 _VALID_SEVERITIES = frozenset({"red", "orange", "yellow", "blue", "green", "unknown"})
 
 
-def _collect_evidence(results) -> list[EvidenceRef]:
-    """从模块结果中汇总所有 Evidence。"""
+def _requested_modules(state: AgentState) -> set[str]:
+    """返回本轮明确请求的模块；空集表示非模块型问答或综合兼容路径。"""
+    plan = state.get("plan")
+    return set(getattr(plan, "requested_modules", []) or [])
+
+
+def _collect_evidence(results, requested_modules: set[str]) -> list[EvidenceRef]:
+    """从本轮请求范围内的模块结果汇总 Evidence。"""
     evidence: list[EvidenceRef] = []
     if results:
-        if results.finance and results.finance.evidence:
+        if (
+            results.finance
+            and results.finance.evidence
+            and (not requested_modules or "finance" in requested_modules)
+        ):
             evidence.extend(results.finance.evidence)
-        if results.equity and results.equity.evidence:
+        if (
+            results.equity
+            and results.equity.evidence
+            and (not requested_modules or "equity" in requested_modules)
+        ):
             evidence.extend(results.equity.evidence)
-        if results.events and results.events.evidence:
+        if (
+            results.events
+            and results.events.evidence
+            and (not requested_modules or "events" in requested_modules)
+        ):
             evidence.extend(results.events.evidence)
     return evidence
 
@@ -388,16 +406,22 @@ def build_claims_node(state: AgentState) -> dict:
     company = state.get("company")
     company_name = company.sec_name if company else "目标公司"
     claims: list[Claim] = []
+    requested_modules = _requested_modules(state)
 
     # 收集 evidence 并建立索引（按 evidence_id 去重，保留顺序）
-    evidence = _collect_evidence(results)
+    evidence = _collect_evidence(results, requested_modules)
     evidence_index: dict[str, EvidenceRef] = {}
     for ev in evidence:
         if ev.evidence_id not in evidence_index:
             evidence_index[ev.evidence_id] = ev
 
     # ── 财务 Claim ───────────────────────────────────────
-    if results and results.finance and results.finance.rule_statuses:
+    if (
+        results
+        and results.finance
+        and results.finance.rule_statuses
+        and (not requested_modules or "finance" in requested_modules)
+    ):
         rule_details = results.finance.rule_details or {}
         for ordinal, (rule_id, status) in enumerate(
             results.finance.rule_statuses.items()
@@ -438,16 +462,21 @@ def build_claims_node(state: AgentState) -> dict:
         results
         and results.equity
         and (results.equity.chains or results.equity.chain_details)
+        and (not requested_modules or "equity" in requested_modules)
     ):
         _append_equity_claims(state, claims, evidence_index, company_name)
 
     # ── 事件 Claim（公告、评级、事件簇各自只绑定可回查证据） ──
-    if results and results.events:
+    if (
+        results
+        and results.events
+        and (not requested_modules or "events" in requested_modules)
+    ):
         _append_event_claims(state, claims, evidence_index, company_name)
 
     # ── 交叉验证 Claim（读取 state.cross_validation，B4/B3 联动） ──
     cross_validation = state.get("cross_validation")
-    if cross_validation is not None:
+    if cross_validation is not None and len(requested_modules) != 1:
         checks = cross_validation.checks or []
         for ordinal, check in enumerate(checks):
             if check.status != "fail":
