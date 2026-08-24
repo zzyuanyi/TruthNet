@@ -1013,6 +1013,9 @@ export default function CompanyProfilePage() {
                       </Button>
                     </div>
                   </div>
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    单位说明：% 表示比例或同比增速；百分点表示两个百分比之间的差值。
+                  </p>
                   {configError && (
                     <p className="mb-2 text-xs text-destructive">{configError}</p>
                   )}
