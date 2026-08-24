@@ -53,10 +53,21 @@ const EVIDENCE_FIELD_LABELS: Record<string, string> = {
 
 const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   financial_statement: '财务报表',
+  neo4j_relationship: '股权关系',
   announcement: '公告',
   news: '新闻',
   research_report: '研报',
 };
+
+const IMPACT_TEMPLATE_NOTICE = '智能解读暂时不可用，当前展示为基于规则与可回查证据生成的核查摘要。';
+
+function formatImpactAdviceWarnings(method: string, warnings: string[]): string[] {
+  const displayWarnings = warnings.map(warning => (
+    warning.includes('LLM 建议降级') ? IMPACT_TEMPLATE_NOTICE : warning
+  ));
+  if (method === 'template') displayWarnings.unshift(IMPACT_TEMPLATE_NOTICE);
+  return [...new Set(displayWarnings)];
+}
 
 function formatEvidencePeriod(period: unknown): string {
   const value = String(period || '');
@@ -130,7 +141,9 @@ import type { FinanceResponseData, EventsResponseData, EquityResponseData, RiskR
 function groupEvidenceBySource(evidences: RiskEvidence[]): EvidenceCategory[] {
   const sourceToCategory: Record<string, string> = {
     finance: 'finance',
+    financial_statement: 'finance',
     equity: 'equity',
+    neo4j_relationship: 'equity',
     event: 'event',
     announcement: 'event',
     news: 'event',
@@ -640,6 +653,9 @@ export default function CompanyProfilePage() {
     coverageGapText,
     impactAdvice?.overall_advice,
   ]);
+  const impactAdviceWarnings = impactAdvice
+    ? formatImpactAdviceWarnings(impactAdvice.method, impactAdvice.warnings)
+    : [];
 
   // 8/23 分步渲染：profile 未到达时显示加载中（不得落入「加载失败」分支——
   // 首次渲染 profile=null 且 error=null，需区分加载中与加载失败）
@@ -978,8 +994,8 @@ export default function CompanyProfilePage() {
                     )}
                   </div>
                 ))}
-                {impactAdvice.warnings.length > 0 && (
-                  <p className="text-xs text-muted-foreground">{impactAdvice.warnings.join('；')}</p>
+                {impactAdviceWarnings.length > 0 && (
+                  <p className="text-xs text-muted-foreground">{impactAdviceWarnings.join('；')}</p>
                 )}
               </div>
             ) : (

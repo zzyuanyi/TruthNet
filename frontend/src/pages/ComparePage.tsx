@@ -1126,13 +1126,13 @@ export default function ComparePage() {
                                         value => value.wind_code === company.wind_code,
                                       );
                                       return (
-                                        <td key={company.wind_code} className="px-3 py-1.5">
-                                          <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
-                                          {item?.status && item.status !== 'ok' && (
-                                            <div className="mt-0.5 text-[10px] text-muted-foreground">
-                                              数据不足
+                                        <td key={company.wind_code} className="px-3 py-1.5 align-middle">
+                                          <div className="flex min-h-10 flex-col justify-center">
+                                            <div>{formatFinancialValue(item?.value ?? null, item?.unit ?? '')}</div>
+                                            <div className="mt-0.5 min-h-3 text-[10px] text-muted-foreground">
+                                              {item?.status && item.status !== 'ok' ? '数据不足' : '\u00A0'}
                                             </div>
-                                          )}
+                                          </div>
                                         </td>
                                       );
                                     })}
