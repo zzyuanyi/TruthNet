@@ -128,12 +128,19 @@ async def test_llm_success_uses_llm_method(monkeypatch):
         return output
 
     # 8/17 收敛 C：mock llm_guard.llm_with_fallback（LLM 成功，used=True）
+    captured_timeout = None
+
+    def fake_with_fallback(*args, **kwargs):
+        nonlocal captured_timeout
+        captured_timeout = kwargs.get("timeout")
+        return output, True
+
     monkeypatch.setattr(
-        "app.agents.llm_guard.llm_with_fallback",
-        lambda *a, **kw: (output, True),
+        "app.agents.llm_guard.llm_with_fallback", fake_with_fallback
     )
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "llm"
+    assert captured_timeout == 30.0
     assert "去化压力" in result.overall_advice
     modules = {s.source_module for s in result.segments}
     assert "finance" in modules and "overall" in modules

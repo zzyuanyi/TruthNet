@@ -30,7 +30,9 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 _IMPACT_MONTHS = 36
-_LLM_TIMEOUT_SECONDS = 18.0
+# 影响与建议的结构化输出包含综合研判与多条建议；18 秒会让正常的
+# DeepSeek 响应过早降级。保留兜底机制，仅给予一次更合理的等待窗口。
+_LLM_TIMEOUT_SECONDS = 30.0
 
 
 class ImpactAdviceSegment(BaseModel):
