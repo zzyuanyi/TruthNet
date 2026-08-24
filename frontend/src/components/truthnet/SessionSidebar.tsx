@@ -4,7 +4,6 @@ import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Plus, MessageSquare, Trash2, Building2, BarChart3 } from 'lucide-react';
 import type { Session } from '@/types/truthnet';
@@ -129,12 +128,7 @@ export function SessionSidebar({
                   {session.turn_count > 0 ? `${session.turn_count} 轮问答` : '新对话'}
                 </div>
 
-                <div className="flex shrink-0 items-center gap-1">
-                  {/* 会话轮数徽标 */}
-                  <Badge variant="secondary" className="px-1.5 py-0 text-xs">
-                    {isBusy && session.session_id === currentSessionId ? '分析中' : session.turn_count}
-                  </Badge>
-
+                <div className="shrink-0">
                   {/* 删除按钮 */}
                   <Button
                     variant="ghost"
