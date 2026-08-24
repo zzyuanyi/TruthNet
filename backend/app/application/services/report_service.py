@@ -382,6 +382,15 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
         HRFlowable,
     )
     from reportlab.lib import colors
+    from app.application.services.report_charts import (
+        extract_trend_points,
+        holding_bar_drawing,
+        pick_trend_rules,
+        risk_badge_drawing,
+        trend_drawing,
+        trend_title,
+        truncate_holder,
+    )
 
     pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
     styles = getSampleStyleSheet()
@@ -436,15 +445,24 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
     story.append(Spacer(1, 8))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey))
 
-    # 风险等级
+    # 风险等级（8/23 图表化：风险色块 + 五级图例；绘制失败降级回文字）
     story.append(Paragraph("一、综合风险", h2))
-    story.append(
-        Paragraph(
-            f"风险等级：{_RISK_LEVEL_CN.get(data.get('risk_level', 'unknown'), data.get('risk_level', 'unknown'))}；"
-            f"综合分：{data.get('overall_score', '—')}",
-            body,
+    try:
+        badge = risk_badge_drawing(
+            data.get("risk_level", "unknown"),
+            data.get("overall_score", "—"),
         )
-    )
+        story.append(Spacer(1, 2))
+        story.append(badge)
+    except Exception:  # noqa: BLE001 — 图表失败不阻塞报告
+        logger.warning("report: risk badge drawing failed", exc_info=True)
+        story.append(
+            Paragraph(
+                f"风险等级：{_RISK_LEVEL_CN.get(data.get('risk_level', 'unknown'), data.get('risk_level', 'unknown'))}；"
+                f"综合分：{data.get('overall_score', '—')}",
+                body,
+            )
+        )
 
     # 财务规则结果（8/23 规整：状态/等级中文化）
     story.append(Paragraph("二、财务规则结果", h2))
@@ -476,6 +494,80 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
         story.append(t)
     else:
         story.append(Paragraph("无规则触发或数据不足。", body))
+
+    # 8/23 叙事落地：核查导航清单（每条触发规则：L1 量化参考 + L2 核查动作，
+    # 纯映射无 LLM）
+    triggered_rules = [r for r in rules if r.get("status") == "triggered"]
+    if triggered_rules:
+        from app.application.services.checklist_service import (
+            build_rule_actions,
+            pick_checklist_rules,
+            rule_display_name,
+        )
+        from app.application.services.severity_context_service import (
+            render_quantified_line,
+        )
+
+        picked = pick_checklist_rules(
+            [
+                (str(r.get("rule_id", "")), str(r.get("severity") or ""))
+                for r in triggered_rules
+            ]
+        )
+        if picked:
+            story.append(Spacer(1, 8))
+            story.append(Paragraph("核查建议清单", h2))
+            for rid, sev in picked:
+                rule_dict = next(
+                    (r for r in triggered_rules if r.get("rule_id") == rid), {}
+                )
+                ql = render_quantified_line(
+                    rid,
+                    {
+                        "current": rule_dict.get("current") or {},
+                        "history": rule_dict.get("history") or [],
+                    },
+                    {},
+                    sev,
+                )
+                title = f"{rid} {rule_display_name(rid)}"
+                if ql:
+                    title += f"（{ql}）"
+                story.append(Paragraph(f"• {title}", body))
+                for action in build_rule_actions(rid):
+                    story.append(Paragraph(f"　· {action}", body))
+
+    # 8/23 图表化：关键指标趋势折线（复用 rule.history，2 列布局；失败/无数据跳过）
+    try:
+        trend_rules = pick_trend_rules(rules, limit=4)
+        if trend_rules:
+            story.append(Spacer(1, 8))
+            story.append(Paragraph("关键指标趋势", h2))
+            cells: list[object] = []
+            for r in trend_rules:
+                pts = extract_trend_points(r)
+                if not pts:
+                    continue
+                title = trend_title(r)
+                cells.append(
+                    trend_drawing(title, pts, str(r.get("severity") or "unknown"))
+                )
+            for i in range(0, len(cells), 2):
+                row = cells[i : i + 2]
+                row = row + [Paragraph("", body)] * (2 - len(row))
+                t2 = Table([row], colWidths=[238, 238])
+                t2.setStyle(
+                    TableStyle(
+                        [
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                        ]
+                    )
+                )
+                story.append(t2)
+    except Exception:  # noqa: BLE001 — 图表失败不阻塞报告
+        logger.warning("report: trend drawing failed", exc_info=True)
 
     # 股权链路（8.09 四轮/五轮审查：措辞随 path_type——ownership 是持股关系，
     # 不得一律称"控制链/最终控制"；内部英文 risk_label 渲染为中文，不直接展示）
@@ -526,6 +618,35 @@ def _generate_report_pdf(report_id: str, job: dict) -> Path:
             shown += 1
         if shown == 0:
             story.append(Paragraph("无显著持股链（≥1% 或无风险提示链）。", body))
+
+        # 8/23 图表化：主要股东持股比例条形图（前 5，复用 ordered 风险排序）
+        try:
+            holders: list[tuple[str, float, str]] = []
+            for c in ordered:
+                pct = float(c.get("final_control_pct") or 0)
+                if pct < 1.0:
+                    continue
+                path_names = c.get("path_names") or []
+                holder = (
+                    path_names[-2]
+                    if len(path_names) > 1
+                    else (path_names[0] if path_names else c.get("chain_id"))
+                )
+                holders.append(
+                    (
+                        truncate_holder(str(holder)),
+                        pct,
+                        str(c.get("risk_level") or "green"),
+                    )
+                )
+                if len(holders) >= 5:
+                    break
+            bar = holding_bar_drawing(holders)
+            if bar:
+                story.append(Spacer(1, 6))
+                story.append(bar)
+        except Exception:  # noqa: BLE001 — 图表失败不阻塞报告
+            logger.warning("report: holding bar drawing failed", exc_info=True)
     else:
         story.append(Paragraph("无可用持股链数据。", body))
 
@@ -657,6 +778,9 @@ def _collect_report_data(company_code: str, as_of: str = "") -> dict:
                     "status": r.status,
                     "severity": r.severity,
                     "explanation": r.explanation,
+                    # 8/23 图表化：收 history/current 供趋势折线绘制
+                    "history": list(getattr(r, "history", []) or []),
+                    "current": dict(getattr(r, "current", {}) or {}),
                 }
                 for rid, r in results.items()
             ]

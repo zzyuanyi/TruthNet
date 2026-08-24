@@ -28,7 +28,6 @@ export function AppHeader() {
       match: (p: string) => p.startsWith('/company/'),
     },
     { id: 'compare', href: '/compare', label: '跨公司对比', icon: TrendingUp, match: (p: string) => p === '/compare' },
-    { id: 'settings', href: '/settings', label: '设置', icon: Settings, match: (p: string) => p === '/settings' },
   ];
 
   return (
@@ -67,9 +66,22 @@ export function AppHeader() {
 
       {/* 右侧 */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground hidden sm:inline">
           TruthNet 织网鉴真
         </span>
+        {/* 设置入口（右上角，常规布局；8/23 老师建议调整） */}
+        <Link
+          to="/settings"
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors',
+            pathname === '/settings'
+              ? 'bg-primary/10 text-primary font-medium'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+          )}
+        >
+          <Settings className="h-4 w-4" />
+          设置
+        </Link>
       </div>
     </header>
   );
