@@ -166,6 +166,20 @@ export interface FinanceRuleItem {
   warnings: string[];
   /** 相似指标案例（后端 FinanceRuleItem.similar_cases，仅触发规则可能非空） */
   similar_cases?: SimilarCasesResult | null;
+  /** 规则计算过程（公式与原始输入），用于前端可回查展示 */
+  calculation_trace?: {
+    formula_id: string;
+    formula: string;
+    calculation_version?: string;
+    inputs: Array<{
+      source_table: string;
+      field_path: string;
+      period: string;
+      value: number | string;
+      unit?: string;
+      role?: string;
+    }>;
+  } | null;
   /** 推导链 (Phase E) */
   derivation_chains: DerivationChain[];
 }
