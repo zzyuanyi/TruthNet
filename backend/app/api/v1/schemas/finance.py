@@ -76,6 +76,10 @@ class FinanceRuleItem(BaseModel):
         description="行业分位指标（typed：rule_id/metric_id/p50/p75/p95/company_percentile）",
     )
     quality: dict = Field(default_factory=dict, description="数据质量标记")
+    calculation_trace: dict | None = Field(
+        default=None,
+        description="可复算血缘：formula_id/formula/calculation_version/inputs",
+    )
     explanation: str = Field(default="", description="LLM 解读文本")
     evidence_ids: list[str] = Field(default_factory=list)
     claim_ids: list[str] = Field(default_factory=list)

@@ -474,10 +474,27 @@ def test_concurrent_tasks_do_not_queue_indefinitely(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_equity_facts_skip_neo4j_when_graph_backend_is_networkx(monkeypatch):
+    """Lite/NetworkX 配置不得暗中连接 Neo4j。"""
+    from app.application.services import events_impact_service as svc
+
+    monkeypatch.setattr(svc.settings, "GRAPH_BACKEND", "networkx")
+    facts, eids, warnings = await svc.build_equity_impact_facts("600518.SH", "gv")
+    assert facts == []
+    assert eids == set()
+    assert warnings == [
+        "IMPACT_EQUITY_FACTS_SKIPPED: "
+        "GRAPH_BACKEND=networkx，未使用 Neo4j 股权影响事实"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_equity_neo4j_failure_returns_warning(monkeypatch):
     """Neo4j 查询失败 → 空事实 + IMPACT_EQUITY_FACTS_FAILED warning。"""
     from app.application.services import events_impact_service as svc
     from app.infrastructure.graph.neo4j import equity_graph as eg_mod
+
+    monkeypatch.setattr(svc.settings, "GRAPH_BACKEND", "neo4j")
 
     class _FailingGraph:
         async def get_graph(self, *a, **k):
@@ -497,6 +514,8 @@ async def test_equity_evidence_refs_failure_returns_warning(monkeypatch):
     from app.application.services import events_impact_service as svc
     from app.domain.equity.models import EquityEdge, EquityGraph, EquityNode
     from app.infrastructure.graph.neo4j import equity_graph as eg_mod
+
+    monkeypatch.setattr(svc.settings, "GRAPH_BACKEND", "neo4j")
 
     edge = EquityEdge(
         source="A",

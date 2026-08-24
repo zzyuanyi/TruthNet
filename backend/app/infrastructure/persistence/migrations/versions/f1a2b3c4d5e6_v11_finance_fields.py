@@ -87,8 +87,12 @@ _FIN_FIELDS: dict[str, list[str]] = {
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
     for table, fields in _FIN_FIELDS.items():
+        existing = {column["name"] for column in inspector.get_columns(table)}
         for name in fields:
+            if name in existing:
+                continue
             op.add_column(
                 table,
                 sa.Column(
@@ -98,9 +102,15 @@ def upgrade() -> None:
                     comment="金融企业专属字段",
                 ),
             )
+            existing.add(name)
 
 
 def downgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
     for table, fields in _FIN_FIELDS.items():
+        existing = {column["name"] for column in inspector.get_columns(table)}
         for name in fields:
+            if name not in existing:
+                continue
             op.drop_column(table, name)
+            existing.remove(name)

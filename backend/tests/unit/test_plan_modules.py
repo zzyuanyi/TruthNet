@@ -99,6 +99,25 @@ def test_diagnosis_all_modules_both_crosschecks():
     assert "financial_vs_cashflow" in plan.cross_checks
 
 
+def test_domain_scoped_risk_questions_do_not_expand_to_all_modules():
+    """明确领域 + 风险词只执行对应模块，避免通用“风险”导致过度路由。"""
+    cases = {
+        "康美药业是否存在存贷双高？": ["finance"],
+        "康美药业的舆情风险如何？": ["events"],
+        "康美药业有哪些负面公告和风险事件？": ["events"],
+        "康美药业的股权风险如何？": ["equity"],
+        "康美药业的财务造假风险如何？": ["finance"],
+    }
+    for question, expected in cases.items():
+        plan = plan_modules_node(_state(question))["plan"]
+        assert plan.requested_modules == expected, question
+
+
+def test_explicit_cross_domain_diagnosis_still_expands_all_modules():
+    plan = plan_modules_node(_state("全面评估这家公司的风险"))["plan"]
+    assert set(plan.requested_modules) == {"finance", "equity", "events"}
+
+
 def test_finance_only_no_crosscheck():
     """利润如何 → 仅 finance，无交叉校验。
 

@@ -63,6 +63,20 @@ def test_exact_code_kind():
     assert result.matches[0].company.sec_name == "康美药业"
 
 
+def test_exact_code_ignores_empty_company_names():
+    """空名称不能凭 INSTR(text, '') 命中并把精确代码误判为截断。"""
+    engine = _make_engine(
+        [("target", "600518.SH", "康美药业", None)]
+        + [(f"empty-{i}", f"{601000 + i}.SH", "", None) for i in range(7)]
+    )
+
+    result = _lookup(engine, "600518.SH")
+
+    assert [match.company.wind_code for match in result.matches] == ["600518.SH"]
+    assert result.matches[0].match_kind == "exact_code"
+    assert result.truncated is False
+
+
 def test_exact_name_kind():
     engine = _make_engine(
         [("c1", "600518.SH", "康美药业", None), ("c2", "600519.SH", "贵州茅台", None)]

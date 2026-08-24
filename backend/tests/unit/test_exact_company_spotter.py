@@ -12,7 +12,10 @@
 
 import pytest
 
-from app.application.models.company_resolution import EntityMention
+from app.application.models.company_resolution import (
+    CandidateLookupResult,
+    EntityMention,
+)
 from app.application.services.company_entity_resolver import _merge_exact_spots
 from app.application.services.exact_company_spotter import (
     ExactNameSpan,
@@ -198,3 +201,36 @@ def test_merge_no_spots_returns_original(monkeypatch):
     )
     mentions = [EntityMention(mention_id="m_0_4", text="伊利股份", start=0, end=4)]
     assert _merge_exact_spots("任意文本", mentions) == mentions
+
+
+def test_merge_preserves_explicit_market_alias_over_shorter_exact_spot(monkeypatch):
+    """完整市场别名不得被其内部的另一证券短名覆盖。"""
+    monkeypatch.setattr(
+        "app.application.services.exact_company_spotter.spot_exact_company_spans",
+        lambda q: [ExactNameSpan("太平洋", 0, 3)],
+    )
+    mentions = [EntityMention(mention_id="m_0_5", text="太平洋保险", start=0, end=5)]
+    merged = _merge_exact_spots("太平洋保险最新净利润", mentions)
+    assert [(m.text, m.start, m.end) for m in merged] == [("太平洋保险", 0, 5)]
+
+
+def test_merge_rejects_spot_absent_from_injected_candidate_source(monkeypatch):
+    """全局名称索引不得把当前注入候选仓库不认识的名称带入 Resolver。"""
+    monkeypatch.setattr(
+        "app.application.services.exact_company_spotter.spot_exact_company_spans",
+        lambda q: [ExactNameSpan("金百泽", 5, 8)],
+    )
+    mentions = [
+        EntityMention(mention_id="m_0_8", text="证券机构对金百泽", start=0, end=8)
+    ]
+
+    class _EmptyOutcome:
+        budget_exhausted = False
+        result = CandidateLookupResult()
+
+    merged = _merge_exact_spots(
+        "证券机构对金百泽的评价如何",
+        mentions,
+        candidate_lookup=lambda _text: _EmptyOutcome(),
+    )
+    assert [(m.text, m.start, m.end) for m in merged] == [("证券机构对金百泽", 0, 8)]

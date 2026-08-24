@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import align_by_period, fetch_series, prev_year_period
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -245,6 +249,21 @@ def evaluate_r4(company_code: str, as_of: str = "20260331", periods: int = 8):
         f"ev_bs_inventories_{current_period}",
         f"ev_is_oper_rev_{current_period}",
     ]
+    attach_calculation_trace(
+        result,
+        formula=(
+            "inventory_yoy-oper_rev_yoy; yoy=(current/prior_year)-1; "
+            "turnover_days=avg_inventory/(single_quarter_oper_cost*4)*365"
+        ),
+        inputs=inputs_from_aligned(
+            aligned,
+            {
+                "inv": "inventories",
+                "or_": "oper_rev",
+                "cost": "less_oper_cost",
+            },
+        ),
+    )
     if severity == "red":
         result.explanation = (
             f"存货增速（{inv_yoy*100:.1f}%）远超营业收入增速（{or_yoy*100:.1f}%），"

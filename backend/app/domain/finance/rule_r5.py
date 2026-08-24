@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import align_by_period, fetch_series
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -222,9 +226,18 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         coverage=oper_rev_sr.coverage,
         data_completeness=round(valid_or / 6, 2),
         missing_periods=6 - valid_or,
-        extra={"history_periods_available": valid_or},
+        extra={
+            "history_periods_available": valid_or,
+            "expense_rate_deviation_extreme": (
+                er_deviation is not None and abs(er_deviation) > 100
+            ),
+        },
     )
     result.warnings = field_warnings
+    if er_deviation is not None and abs(er_deviation) > 100:
+        result.warnings.append(
+            "历史费用率基线受极低营收期影响，用户文案不直接展示超过 100pp 的偏离值"
+        )
     # 多期展示序列：最近 8 期毛利率（gm_list 已在计算中构建）
     gm_series: list[dict] = []
     periods_hist = ordered
@@ -240,12 +253,37 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.history = gm_series
 
     result.evidence_ids = [f"ev_is_oper_rev_{as_of}", f"ev_is_oper_cost_{as_of}"]
+    attach_calculation_trace(
+        result,
+        formula=(
+            "gross_margin=(oper_rev-less_oper_cost)/oper_rev; "
+            "expense_rate=(selling_exp+admin_exp+fin_exp)/oper_rev; "
+            "deviation=current-mean(history_excluding_current)"
+        ),
+        inputs=inputs_from_aligned(
+            aligned,
+            {
+                "oper_rev": "oper_rev",
+                "less_oper_cost": "less_oper_cost",
+                "selling_exp": "less_selling_dist_exp",
+                "admin_exp": "less_gerl_admin_exp",
+                "fin_exp": "less_fin_exp",
+            },
+        ),
+    )
     if severity == "red":
         if gm_deviation is not None and er_deviation is not None:
-            result.explanation = (
-                f"毛利率较历史均值偏离 {gm_deviation:.1f}pp，"
-                f"费用率下降 {er_deviation:.1f}pp，利润两端同时优化，异常信号叠加。"
-            )
+            if abs(er_deviation) > 100:
+                result.explanation = (
+                    f"毛利率较历史均值偏离 {gm_deviation:.1f}pp；"
+                    "历史费用率基线受极低营收期影响，费用率偏离不作直接风险解释。"
+                )
+            else:
+                result.explanation = (
+                    f"毛利率较历史均值偏离 {gm_deviation:.1f}pp，"
+                    f"费用率较历史均值下降 {abs(er_deviation):.1f}pp，"
+                    "利润两端同时优化，异常信号叠加。"
+                )
         elif gm_deviation is not None:
             result.explanation = (
                 f"毛利率较历史均值偏离 {gm_deviation:.1f}pp，"
@@ -253,7 +291,7 @@ def evaluate_r5(company_code: str, as_of: str = "20260331", periods: int = 8):
             )
         elif er_deviation is not None:
             result.explanation = (
-                f"费用率较历史均值下降 {er_deviation:.1f}pp，"
+                f"费用率较历史均值下降 {abs(er_deviation):.1f}pp，"
                 "毛利率数据不足，存在异常信号。"
             )
         else:

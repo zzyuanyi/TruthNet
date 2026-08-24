@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -228,6 +232,14 @@ def evaluate_r1(company_code: str, as_of: str = "20260331", periods: int = 8):
         f"ev_bs_acct_rcv_{as_of}",
         f"ev_is_oper_rev_{as_of}",
     ]
+    attach_calculation_trace(
+        result,
+        formula="acct_rcv_yoy - oper_rev_yoy; yoy=(current/prior_year)-1",
+        inputs=inputs_from_aligned(
+            aligned,
+            {"ar": "acct_rcv", "or_": "oper_rev"},
+        ),
+    )
     template = _build_explanation(
         severity,
         ar_pct,

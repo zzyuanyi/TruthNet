@@ -1,0 +1,289 @@
+{
+  "generated_at": "2026-08-23T22:17:12+08:00",
+  "database": "truthnet_test",
+  "mode": "apply",
+  "current_universe_count": 5549,
+  "current_universe_source": "sse+szse+bse-via-akshare",
+  "current_universe_provider_version": "1.18.74",
+  "current_universe_retrieved_at": "2026-08-23T14:17:12+00:00",
+  "current_universe_sha256": "b29ddcf67aebb51b7733e9e98a09975509eadb24fac715001f2e043a57ef7cfd",
+  "planned_count": 39,
+  "inserted_count": 39,
+  "remaining_count": 0,
+  "planned": [
+    {
+      "code": "001232",
+      "wind_code": "001232.SZ",
+      "sec_name": "嘉立创",
+      "exchange_code": "XSHE",
+      "entity_id": "company_001232_SZ"
+    },
+    {
+      "code": "001248",
+      "wind_code": "001248.SZ",
+      "sec_name": "华润新能源",
+      "exchange_code": "XSHE",
+      "entity_id": "company_001248_SZ"
+    },
+    {
+      "code": "001399",
+      "wind_code": "001399.SZ",
+      "sec_name": "惠科股份",
+      "exchange_code": "XSHE",
+      "entity_id": "company_001399_SZ"
+    },
+    {
+      "code": "301583",
+      "wind_code": "301583.SZ",
+      "sec_name": "托伦斯",
+      "exchange_code": "XSHE",
+      "entity_id": "company_301583_SZ"
+    },
+    {
+      "code": "301655",
+      "wind_code": "301655.SZ",
+      "sec_name": "C绿控传动",
+      "exchange_code": "XSHE",
+      "entity_id": "company_301655_SZ"
+    },
+    {
+      "code": "301677",
+      "wind_code": "301677.SZ",
+      "sec_name": "欣兴工具",
+      "exchange_code": "XSHE",
+      "entity_id": "company_301677_SZ"
+    },
+    {
+      "code": "301707",
+      "wind_code": "301707.SZ",
+      "sec_name": "展芯股份",
+      "exchange_code": "XSHE",
+      "entity_id": "company_301707_SZ"
+    },
+    {
+      "code": "301717",
+      "wind_code": "301717.SZ",
+      "sec_name": "超纯应材",
+      "exchange_code": "XSHE",
+      "entity_id": "company_301717_SZ"
+    },
+    {
+      "code": "603468",
+      "wind_code": "603468.SH",
+      "sec_name": "津富士达",
+      "exchange_code": "XSHG",
+      "entity_id": "company_603468_SH"
+    },
+    {
+      "code": "688797",
+      "wind_code": "688797.SH",
+      "sec_name": "臻宝科技",
+      "exchange_code": "XSHG",
+      "entity_id": "company_688797_SH"
+    },
+    {
+      "code": "688806",
+      "wind_code": "688806.SH",
+      "sec_name": "泰诺麦博",
+      "exchange_code": "XSHG",
+      "entity_id": "company_688806_SH"
+    },
+    {
+      "code": "688825",
+      "wind_code": "688825.SH",
+      "sec_name": "长鑫科技",
+      "exchange_code": "XSHG",
+      "entity_id": "company_688825_SH"
+    },
+    {
+      "code": "688826",
+      "wind_code": "688826.SH",
+      "sec_name": "C频准",
+      "exchange_code": "XSHG",
+      "entity_id": "company_688826_SH"
+    },
+    {
+      "code": "688828",
+      "wind_code": "688828.SH",
+      "sec_name": "国仪公司",
+      "exchange_code": "XSHG",
+      "entity_id": "company_688828_SH"
+    },
+    {
+      "code": "688836",
+      "wind_code": "688836.SH",
+      "sec_name": "C宇树",
+      "exchange_code": "XSHG",
+      "entity_id": "company_688836_SH"
+    },
+    {
+      "code": "920038",
+      "wind_code": "920038.BJ",
+      "sec_name": "森合高科",
+      "exchange_code": "BJ",
+      "entity_id": "company_920038_BJ"
+    },
+    {
+      "code": "920059",
+      "wind_code": "920059.BJ",
+      "sec_name": "双英集团",
+      "exchange_code": "BJ",
+      "entity_id": "company_920059_BJ"
+    },
+    {
+      "code": "920065",
+      "wind_code": "920065.BJ",
+      "sec_name": "千岸科技",
+      "exchange_code": "BJ",
+      "entity_id": "company_920065_BJ"
+    },
+    {
+      "code": "920072",
+      "wind_code": "920072.BJ",
+      "sec_name": "科莱瑞迪",
+      "exchange_code": "BJ",
+      "entity_id": "company_920072_BJ"
+    },
+    {
+      "code": "920079",
+      "wind_code": "920079.BJ",
+      "sec_name": "乔路铭",
+      "exchange_code": "BJ",
+      "entity_id": "company_920079_BJ"
+    },
+    {
+      "code": "920081",
+      "wind_code": "920081.BJ",
+      "sec_name": "欧伦电气",
+      "exchange_code": "BJ",
+      "entity_id": "company_920081_BJ"
+    },
+    {
+      "code": "920083",
+      "wind_code": "920083.BJ",
+      "sec_name": "金戈新材",
+      "exchange_code": "BJ",
+      "entity_id": "company_920083_BJ"
+    },
+    {
+      "code": "920093",
+      "wind_code": "920093.BJ",
+      "sec_name": "N信胜",
+      "exchange_code": "BJ",
+      "entity_id": "company_920093_BJ"
+    },
+    {
+      "code": "920107",
+      "wind_code": "920107.BJ",
+      "sec_name": "恒兴股份",
+      "exchange_code": "BJ",
+      "entity_id": "company_920107_BJ"
+    },
+    {
+      "code": "920117",
+      "wind_code": "920117.BJ",
+      "sec_name": "龙鑫智能",
+      "exchange_code": "BJ",
+      "entity_id": "company_920117_BJ"
+    },
+    {
+      "code": "920126",
+      "wind_code": "920126.BJ",
+      "sec_name": "永大股份",
+      "exchange_code": "BJ",
+      "entity_id": "company_920126_BJ"
+    },
+    {
+      "code": "920136",
+      "wind_code": "920136.BJ",
+      "sec_name": "永励精密",
+      "exchange_code": "BJ",
+      "entity_id": "company_920136_BJ"
+    },
+    {
+      "code": "920138",
+      "wind_code": "920138.BJ",
+      "sec_name": "杰理科技",
+      "exchange_code": "BJ",
+      "entity_id": "company_920138_BJ"
+    },
+    {
+      "code": "920161",
+      "wind_code": "920161.BJ",
+      "sec_name": "龙辰科技",
+      "exchange_code": "BJ",
+      "entity_id": "company_920161_BJ"
+    },
+    {
+      "code": "920165",
+      "wind_code": "920165.BJ",
+      "sec_name": "珈凯生物",
+      "exchange_code": "BJ",
+      "entity_id": "company_920165_BJ"
+    },
+    {
+      "code": "920176",
+      "wind_code": "920176.BJ",
+      "sec_name": "维琪科技",
+      "exchange_code": "BJ",
+      "entity_id": "company_920176_BJ"
+    },
+    {
+      "code": "920189",
+      "wind_code": "920189.BJ",
+      "sec_name": "康美特",
+      "exchange_code": "BJ",
+      "entity_id": "company_920189_BJ"
+    },
+    {
+      "code": "920193",
+      "wind_code": "920193.BJ",
+      "sec_name": "吉和昌",
+      "exchange_code": "BJ",
+      "entity_id": "company_920193_BJ"
+    },
+    {
+      "code": "920211",
+      "wind_code": "920211.BJ",
+      "sec_name": "新睿电子",
+      "exchange_code": "BJ",
+      "entity_id": "company_920211_BJ"
+    },
+    {
+      "code": "920218",
+      "wind_code": "920218.BJ",
+      "sec_name": "新天力",
+      "exchange_code": "BJ",
+      "entity_id": "company_920218_BJ"
+    },
+    {
+      "code": "920220",
+      "wind_code": "920220.BJ",
+      "sec_name": "朗信电气",
+      "exchange_code": "BJ",
+      "entity_id": "company_920220_BJ"
+    },
+    {
+      "code": "920222",
+      "wind_code": "920222.BJ",
+      "sec_name": "益坤电气",
+      "exchange_code": "BJ",
+      "entity_id": "company_920222_BJ"
+    },
+    {
+      "code": "920238",
+      "wind_code": "920238.BJ",
+      "sec_name": "长鹰硬科",
+      "exchange_code": "BJ",
+      "entity_id": "company_920238_BJ"
+    },
+    {
+      "code": "920258",
+      "wind_code": "920258.BJ",
+      "sec_name": "聚仁新材",
+      "exchange_code": "BJ",
+      "entity_id": "company_920258_BJ"
+    }
+  ],
+  "remaining": []
+}

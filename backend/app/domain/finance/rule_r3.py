@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -292,6 +296,24 @@ def evaluate_r3(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.history = dq_series
 
     result.evidence_ids = [f"ev_bs_monetary_cap_{as_of}", f"ev_bs_borrow_{as_of}"]
+    attach_calculation_trace(
+        result,
+        formula=(
+            "cash_to_assets=monetary_cap/tot_assets; "
+            "debt_to_assets=(st_borrow+lt_borrow)/tot_assets; "
+            "implied_rate=abs(less_fin_exp)/(st_borrow+lt_borrow)"
+        ),
+        inputs=inputs_from_aligned(
+            aligned,
+            {
+                "cash": "monetary_cap",
+                "st_borrow": "st_borrow",
+                "lt_borrow": "lt_borrow",
+                "assets": "tot_assets",
+                "fin_exp": "less_fin_exp",
+            },
+        ),
+    )
     if severity == "red":
         result.explanation = (
             f"货币资金占总资产 {cash_to_assets:.1f}%，有息负债占 {debt_to_assets:.1f}%，"

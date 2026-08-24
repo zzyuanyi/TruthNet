@@ -84,6 +84,39 @@ def build_finance_rule_evidence_drafts(*, rules, wind_code: str, as_of: str) -> 
         if r is None:
             continue
         ev_ids: list[str] = []
+        trace = getattr(r, "calculation_trace", None)
+        if trace is not None and trace.inputs:
+            for item in trace.inputs:
+                period = str(item.period)
+                eid = normalize_rule_evidence_id(
+                    item.field_path,
+                    wind_code,
+                    as_of,
+                    period=period,
+                )
+                ev_ids.append(eid)
+                if eid in unique_drafts:
+                    continue
+                unique_drafts[eid] = {
+                    "evidence_id": eid,
+                    "source_type": "financial_statement",
+                    "source_record_id": f"{wind_code}|{period}",
+                    "company_code": wind_code,
+                    "field_path": item.field_path,
+                    "period": period,
+                    "value": str(item.value),
+                    "unit": item.unit,
+                    "statement_scope": "parent_company",
+                    "source_title": (
+                        f"{r.rule_name or rid} · {display_period(period)} · 母公司报表"
+                    ),
+                    "module": "finance",
+                    "source_table": item.source_table,
+                }
+            rule_evidence_map[rid] = list(dict.fromkeys(ev_ids))
+            continue
+
+        # 兼容尚未提供 calculation_trace 的旧规则/测试桩。
         for legacy_ev in r.evidence_ids:
             eid = normalize_rule_evidence_id(legacy_ev, wind_code, as_of)
             ev_ids.append(eid)

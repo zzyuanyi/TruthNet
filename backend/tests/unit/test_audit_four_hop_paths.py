@@ -17,13 +17,37 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _neo4j_available() -> bool:
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
+    from neo4j import GraphDatabase
 
-    load_dotenv(_REPO_ROOT / ".env")
-    return bool(os.environ.get("NEO4J_PASSWORD"))
+    values = dotenv_values(_REPO_ROOT / ".env")
+    uri = os.environ.get("NEO4J_URI") or values.get("NEO4J_URI")
+    user = os.environ.get("NEO4J_USER") or values.get("NEO4J_USER") or "neo4j"
+    password = os.environ.get("NEO4J_PASSWORD") or values.get("NEO4J_PASSWORD")
+    if not uri or not password:
+        return False
+    driver = None
+    try:
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        record = driver.execute_query(
+            "MATCH ()-[r:OWNS]->() "
+            "WHERE r.graph_version = $graph_version AND r.is_latest = true "
+            "RETURN count(r) AS relationships",
+            graph_version="equity-2026Q2",
+            database_="neo4j",
+        ).records[0]
+        return int(record["relationships"]) > 0
+    except Exception:
+        return False
+    finally:
+        if driver is not None:
+            driver.close()
 
 
-@pytest.mark.skipif(not _neo4j_available(), reason="需 Neo4j 真库")
+@pytest.mark.skipif(
+    not _neo4j_available(),
+    reason="需含 equity-2026Q2 OWNS 关系的 Neo4j 真库",
+)
 def test_audit_script_runs_without_driver_warning():
     """v3.6：-W error::RuntimeWarning 下脚本须正常完成（driver.close() 已 await）。"""
     proc = subprocess.run(

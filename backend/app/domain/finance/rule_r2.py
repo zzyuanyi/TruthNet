@@ -6,6 +6,10 @@
 """
 
 from app.domain.finance._fetch import fetch_series
+from app.domain.finance.calculation_trace import (
+    attach_calculation_trace,
+    inputs_from_aligned,
+)
 from app.domain.finance.financial_rule_config import (
     get_execution_version,
     disabled_rule_result,
@@ -219,11 +223,15 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         "cf_to_profit_ratio": {"value": round(avg_ratio, 3), "unit": "ratio"},
         "consec_neg_cf": {"value": max_consec_neg, "unit": "quarters"},
     }
+    ratio_extreme = abs(avg_ratio) > 100
     result.quality = build_parent_scope_quality(
         coverage=net_profit_sr.coverage,
         data_completeness=round(valid_pairs / 4, 2),
         missing_periods=4 - valid_pairs,
-        extra={"profit_sign": "positive" if has_pos_profit_this else "negative"},
+        extra={
+            "profit_sign": "positive" if has_pos_profit_this else "negative",
+            "cashflow_profit_ratio_extreme": ratio_extreme,
+        },
     )
     # 多期展示序列：最近 8 期现金流/利润比（图表趋势用）。
     # P2-3（核验修订）：复用同一份对齐结果，不再跨报表按数组下标拼接。
@@ -240,21 +248,56 @@ def evaluate_r2(company_code: str, as_of: str = "20260331", periods: int = 8):
         result.history = cf_series
 
     result.warnings = field_warnings
+    if ratio_extreme:
+        result.warnings.append(
+            "现金流/利润比绝对值超过 100，用户文案不直接展示极端比率；请核对原始利润与现金流金额"
+        )
     result.evidence_ids = [
         f"ev_is_net_profit_{as_of}",
         f"ev_cf_oper_{as_of}",
     ]
+    trace_periods = list(recent_periods)
+    t4 = prev_year_period(cur_period, ordered)
+    if t4 is not None and t4 not in trace_periods:
+        trace_periods.append(t4)
+    attach_calculation_trace(
+        result,
+        formula=(
+            "mean(net_cash_flows_oper_act/abs(net_profit_excl_min_int_inc)); "
+            "count consecutive periods where profit>0 and operating_cashflow<0"
+        ),
+        inputs=inputs_from_aligned(
+            aligned,
+            {
+                "np": "net_profit_excl_min_int_inc",
+                "cf": "net_cash_flows_oper_act",
+            },
+            periods=trace_periods,
+        ),
+    )
 
     if severity == "red":
+        ratio_text = (
+            "现金流/利润比呈极端值，具体以原始利润和现金流金额为准"
+            if ratio_extreme
+            else f"平均现金流/利润比仅 {avg_ratio:.2f}，盈利缺乏现金支撑"
+        )
         result.explanation = (
             f"最近 {max_consec_neg} 个季度净利润为正但经营现金流为负，"
-            f"平均现金流/利润比仅 {avg_ratio:.2f}，盈利缺乏现金支撑（数据期：{fmt_period(cur_period)}，母公司报表）。"
+            f"{ratio_text}（数据期：{fmt_period(cur_period)}，母公司报表）。"
         )
     elif severity == "orange":
-        result.explanation = (
-            f"净利润为正但经营现金流近 {max_consec_neg} 个季度为负，"
-            f"现金流/利润比（{avg_ratio:.2f}）低于健康水平（数据期：{fmt_period(cur_period)}，母公司报表）。"
-        )
+        if max_consec_neg > 0:
+            result.explanation = (
+                f"净利润为正但经营现金流近 {max_consec_neg} 个季度为负，"
+                f"现金流/利润比（{avg_ratio:.2f}）低于健康水平"
+                f"（数据期：{fmt_period(cur_period)}，母公司报表）。"
+            )
+        else:
+            result.explanation = (
+                f"经营现金流对利润的平均覆盖偏弱，现金流/利润比仅 {avg_ratio:.2f}，"
+                f"低于健康水平（数据期：{fmt_period(cur_period)}，母公司报表）。"
+            )
     elif severity == "yellow":
         result.explanation = f"本期经营现金流为负，与正利润背离，建议关注（数据期：{fmt_period(cur_period)}，母公司报表）。"
     return result

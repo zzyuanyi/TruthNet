@@ -199,7 +199,9 @@ def _mention_offset_key(m: EntityMention) -> tuple[int, int]:
 
 
 def _merge_exact_spots(
-    query: str, mentions: list[EntityMention]
+    query: str,
+    mentions: list[EntityMention],
+    candidate_lookup=None,
 ) -> list[EntityMention]:
     """v3.3.3 收口批次 C（方案 §3.5）：数据库精确名称 spotting 并行通道。
 
@@ -218,6 +220,48 @@ def _merge_exact_spots(
         return mentions
     if not spans:
         return mentions
+
+    # 精确名称索引与当前 Resolver 的候选仓库必须同源。测试、动态切库或
+    # lite/full profile 切换时，默认 provider 的缓存可能包含当前注入仓库
+    # 不认识的名称；这类 span 若直接覆盖 extractor 结果，会造成跨库串数。
+    # resolve() 传入带 memoize/预算的 _budgeted_lookup，因此这里的验证
+    # 不增加后续查询次数；直接单测 _merge_exact_spots 时保持旧接口兼容。
+    if candidate_lookup is not None:
+        validated = []
+        for span in spans:
+            outcome = candidate_lookup(span.text)
+            if getattr(outcome, "budget_exhausted", False):
+                continue
+            result = getattr(outcome, "result", outcome)
+            if result is not None and result.matches:
+                validated.append(span)
+        spans = validated
+        if not spans:
+            return mentions
+
+    # 显式市场别名是完整主体表达，优先级高于其内部恰好出现的证券短名。
+    # 例如公司主表同时存在“太平洋”时，“太平洋保险”仍必须先规范到
+    # “中国太保”，不能被较短 exact spot 覆盖。
+    from app.application.services.company_name_aliases import is_company_name_alias
+
+    alias_mentions = [
+        m
+        for m in mentions
+        if m.start is not None
+        and m.end is not None
+        and is_company_name_alias(m.text or "")
+    ]
+    if alias_mentions:
+        spans = [
+            span
+            for span in spans
+            if not any(
+                not (span.end <= mention.start or mention.end <= span.start)
+                for mention in alias_mentions
+            )
+        ]
+        if not spans:
+            return mentions
 
     def _fragments_covered_by_spots(text: str) -> bool:
         """复合段按连接词切分的所有子片段是否都被精确 spot 覆盖。
@@ -1451,7 +1495,11 @@ class CompanyEntityResolver:
         raw_mentions = extraction.mentions
         # v3.3.3 收口批次 C（方案 §3.5）：数据库精确名称 spotting 并行
         # 通道补召回（官方三题反例），身份仍由 Repository 二次链接
-        raw_mentions = _merge_exact_spots(user_query, raw_mentions)
+        raw_mentions = _merge_exact_spots(
+            user_query,
+            raw_mentions,
+            candidate_lookup=self._budgeted_lookup,
+        )
         if not raw_mentions:
             current_code = self._current_company_code(memory)
             # 最终续审 §5 B2/B4：确定性主体决策（零 LLM）——元数据来自
