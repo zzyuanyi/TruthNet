@@ -869,6 +869,8 @@ def test_risk_finance_executed_parent_scope_wording():
     claims = [_claim("c1", "financial", "red", "R1")]
     state = _finance_state(rule_statuses={"R1": "triggered"}, claims=claims)
     fr = generate_answer_node(state)["final_response"]
+    assert "财务分析完成" in fr.answer
+    assert "综合分析完成" not in fr.answer
     assert "基于母公司报表及当前数据覆盖" in fr.answer
     assert "共检测到 1 项风险信号" in fr.answer
 

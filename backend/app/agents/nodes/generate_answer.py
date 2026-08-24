@@ -429,9 +429,9 @@ def generate_answer_node(state: AgentState) -> dict:
                 chitchat_answer = (
                     f"{intro}我可以核查财务勾稽、股权控制链和公告舆情。\n"
                     "你可以这样问：\n"
-                    "- 分析康美药业 2025 年报的财务异常\n"
-                    "- 查看金牌家居的实际控制人链路\n"
-                    "- 核对贵州茅台近期公告与财务数据\n"
+                    "- 分析金牌家居财务风险\n"
+                    "- 查看比亚迪经营现金流\n"
+                    "- 查看金牌家居股权穿透\n"
                     "请输入上市公司名称或股票代码开始分析。"
                 )
             _emit_segment(state, chitchat_answer)
@@ -453,7 +453,7 @@ def generate_answer_node(state: AgentState) -> dict:
             elif any(kw in ql for kw in _CAPABILITY_KW):
                 guide_answer = (
                     "我可以核查上市公司的财务勾稽、股权控制链和公告舆情。"
-                    "例如可以问“分析康美药业 2025 年报”或“查看金牌家居的实控人链路”。"
+                    "例如可以问“分析金牌家居财务风险”或“查看金牌家居股权穿透”。"
                     "请输入上市公司名称或股票代码开始分析。"
                 )
             else:
@@ -732,6 +732,10 @@ def generate_answer_node(state: AgentState) -> dict:
                     else "未发现明显异常信号。"
                 )
             )
+        )
+    elif mode == "finance" and risk_count:
+        conclusion = (
+            name_code + "财务分析完成，" + RISK_SIGNAL_IN_SCOPE.format(n=risk_count)
         )
     elif risk_count:
         if finance_ran:

@@ -193,10 +193,10 @@ export function ChatInterface({
               <p className="text-xs text-muted-foreground mb-6">输入上市公司名称或股票代码，穿透股权 · 交叉验证 · 对齐舆情</p>
               <div className="grid grid-cols-2 gap-2 max-w-lg mx-auto">
                 {[
-                  { icon: TrendingUp, label: '财务核查', text: '分析金牌家居的财务风险，并给出量化参考和核查建议' },
-                  { icon: FileText, label: '证据回查', text: '解释比亚迪现金流–利润背离的原始财报证据' },
-                  { icon: Zap, label: '股权穿透', text: '查看金牌家居的主要股东与股权穿透链路' },
-                  { icon: Shield, label: '横向对比', text: '对比华峰化学、中泰化学和利尔化学的财务风险' },
+                  { icon: TrendingUp, label: '财务核查', text: '分析金牌家居财务风险' },
+                  { icon: FileText, label: '现金流核验', text: '查看比亚迪经营现金流' },
+                  { icon: Zap, label: '股权穿透', text: '查看金牌家居股权穿透' },
+                  { icon: Shield, label: '横向对比', text: '对比华峰化学、中泰化学和利尔化学' },
                 ].map((card, i) => (
                   <button
                     key={i}
@@ -291,7 +291,7 @@ export function ChatInterface({
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入问题，如：分析金牌家居的财务风险并查看核查建议..."
+            placeholder="输入问题，如：分析金牌家居财务风险..."
             className="min-h-[60px] max-h-[200px] resize-none"
             disabled={isLoading}
           />
