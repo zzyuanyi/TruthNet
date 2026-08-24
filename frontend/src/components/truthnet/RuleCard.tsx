@@ -281,6 +281,30 @@ export function RuleCard({ rule, onViewEvidence, onViewDetail, evidenceSummaries
           {rule.explanation}
         </p>
 
+        {rule.calculation_trace && rule.calculation_trace.inputs.length > 0 && (
+          <details className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium text-foreground">
+              查看计算过程
+            </summary>
+            <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+              <p>
+                公式：<span className="font-mono text-foreground">{rule.calculation_trace.formula}</span>
+                {rule.calculation_trace.calculation_version && `（${rule.calculation_trace.calculation_version}）`}
+              </p>
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                {rule.calculation_trace.inputs.map((input, index) => (
+                  <div key={`${input.field_path}-${input.period}-${index}`} className="flex flex-wrap gap-x-2 rounded bg-background px-2 py-1">
+                    <span className="font-medium text-foreground">{input.role || input.field_path}</span>
+                    <span>{input.period}</span>
+                    <span>{input.value}{input.unit ? ` ${input.unit}` : ''}</span>
+                    <span className="text-[10px]">{input.source_table}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </details>
+        )}
+
         {/* A2（8/9 老师要求）：关联证据直接平铺在信号下方，点击可进详情弹窗（次级入口） */}
         {false && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5">

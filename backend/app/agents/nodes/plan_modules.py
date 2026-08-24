@@ -2116,6 +2116,19 @@ def plan_modules_node(state: AgentState) -> dict:
             }
 
     if company is None:
+        # 系统生成的规则明细追问在未恢复会话主体时，也应给出可执行引导，
+        # 不能落入 simple_query 而只返回泛化回答。
+        if _detect_rule_detail_follow_up(user_query) is not None:
+            return {
+                "plan": ExecutionPlan(
+                    intent="guide",
+                    requested_modules=[],
+                    cross_checks=[],
+                    as_of=as_of,
+                    as_of_kind=as_of_kind,
+                    requested_period_text=period_text,
+                )
+            }
         if _detect_event_list_requested(user_query) and not any(
             cue in user_query for cue in _RESEARCH_CUES
         ):
