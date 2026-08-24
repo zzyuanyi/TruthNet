@@ -146,7 +146,9 @@ def _template_advice(
     unique_rules = {
         c.sec_name: sorted(
             set(c.triggered_rules)
-            - set().union(*(rules for other, rules in zip(companies, rule_sets) if other != c))
+            - set().union(
+                *(rules for other, rules in zip(companies, rule_sets) if other != c)
+            )
         )
         for c in companies
     }
@@ -164,13 +166,12 @@ def _template_advice(
         )
     if common_rules:
         overall_parts.append(
-            "**共同信号**：" + "、".join(sorted(common_rules))
+            "**共同信号**："
+            + "、".join(sorted(common_rules))
             + "。这些信号应先横向核验，以区分行业共性与公司特有异常。"
         )
     unique_texts = [
-        f"{name}：{'、'.join(rules)}"
-        for name, rules in unique_rules.items()
-        if rules
+        f"{name}：{'、'.join(rules)}" for name, rules in unique_rules.items() if rules
     ]
     if unique_texts:
         overall_parts.append("**公司特有信号**：" + "；".join(unique_texts) + "。")

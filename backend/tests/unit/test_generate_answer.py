@@ -797,7 +797,9 @@ def test_single_module_answer_filters_unrequested_claims_and_evidence(
         ),
     ]
     other_module = next(
-        module for module in ("finance", "equity", "events") if module != requested_module
+        module
+        for module in ("finance", "equity", "events")
+        if module != requested_module
     )
     state = _make_state(
         company=_company(),

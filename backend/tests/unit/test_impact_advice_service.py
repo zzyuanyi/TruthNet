@@ -135,9 +135,7 @@ async def test_llm_success_uses_llm_method(monkeypatch):
         captured_timeout = kwargs.get("timeout")
         return output, True
 
-    monkeypatch.setattr(
-        "app.agents.llm_guard.llm_with_fallback", fake_with_fallback
-    )
+    monkeypatch.setattr("app.agents.llm_guard.llm_with_fallback", fake_with_fallback)
     result = await assemble_impact_advice("600518.SH", "")
     assert result.method == "llm"
     assert captured_timeout == 30.0

@@ -192,6 +192,8 @@ class ImpactAdviceData(BaseModel):
     overall_advice: str = Field(default="", description="整体建议（LLM 或模板）")
     method: str = Field(default="template", description="llm | template")
     segments: list[ImpactAdviceSegmentData] = Field(default_factory=list)
-    verification_navigation: list[VerificationNavigationItemData] = Field(default_factory=list)
+    verification_navigation: list[VerificationNavigationItemData] = Field(
+        default_factory=list
+    )
     evidence_count: int = Field(default=0)
     warnings: list[str] = Field(default_factory=list)

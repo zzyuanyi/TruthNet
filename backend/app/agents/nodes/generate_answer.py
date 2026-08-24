@@ -824,9 +824,7 @@ def generate_answer_node(state: AgentState) -> dict:
     if summary:
         seg = summary + "。"
         append_segment(seg)
-    brief = _build_company_brief_analysis(
-        state, claims, risk_output=scoped_risk_output
-    )
+    brief = _build_company_brief_analysis(state, claims, risk_output=scoped_risk_output)
     if brief:
         append_segment(brief)
     append_segment(_build_cross_module_observation(state, claims))

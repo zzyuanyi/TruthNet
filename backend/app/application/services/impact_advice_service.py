@@ -69,7 +69,9 @@ class ImpactAdviceResult(BaseModel):
     overall_advice: str = Field(default="", description="整体建议（LLM 或模板）")
     method: str = Field(default="template", description="llm | template")
     segments: list[ImpactAdviceSegment] = Field(default_factory=list)
-    verification_navigation: list[VerificationNavigationItem] = Field(default_factory=list)
+    verification_navigation: list[VerificationNavigationItem] = Field(
+        default_factory=list
+    )
     evidence_count: int = Field(default=0)
     warnings: list[str] = Field(default_factory=list)
 
@@ -424,15 +426,15 @@ def _build_verification_navigation(out: Any) -> list[VerificationNavigationItem]
         quantified_context = render_quantified_line(
             rule_id,
             detail,
-            percentiles_for_rule(
-                rule_id, getattr(signal, "industry_percentile", None)
-            ),
+            percentiles_for_rule(rule_id, getattr(signal, "industry_percentile", None)),
             severity,
         )
         items.append(
             VerificationNavigationItem(
                 rule_id=rule_id,
-                rule_name=str(getattr(signal, "label", "") or rule_display_name(rule_id)),
+                rule_name=str(
+                    getattr(signal, "label", "") or rule_display_name(rule_id)
+                ),
                 severity=severity,
                 explanation=str(getattr(signal, "explanation", "") or ""),
                 quantified_context=quantified_context,

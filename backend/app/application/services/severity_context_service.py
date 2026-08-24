@@ -183,8 +183,12 @@ def _has_extreme_ratio(rule_id: str, detail: dict) -> bool:
     if rule_id != "R2":
         return False
     current = detail.get("current") or {}
-    value = ((current.get("cf_to_profit_ratio") or {}).get("value"))
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) > 100
+    value = (current.get("cf_to_profit_ratio") or {}).get("value")
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and abs(value) > 100
+    )
 
 
 def build_severity_context(

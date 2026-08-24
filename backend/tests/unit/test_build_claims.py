@@ -42,7 +42,9 @@ def _ev(
     )
 
 
-def _make_state(results: ModuleResults, plan: ExecutionPlan | None = None) -> AgentState:
+def _make_state(
+    results: ModuleResults, plan: ExecutionPlan | None = None
+) -> AgentState:
     return {
         "user_query": "测试",
         "company": _company(),
