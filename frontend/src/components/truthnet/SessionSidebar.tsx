@@ -132,8 +132,8 @@ export function SessionSidebar({
                   {/* 删除按钮 */}
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 px-1.5 text-xs text-muted-foreground hover:text-destructive"
+                    size="icon-sm"
+                    className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
                     aria-label={`删除会话：${session.title}`}
                     title="删除会话"
                     disabled={isBusy}
@@ -145,7 +145,6 @@ export function SessionSidebar({
                     }}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    删除
                   </Button>
                 </div>
               </div>
