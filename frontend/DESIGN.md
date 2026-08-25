@@ -151,22 +151,25 @@
 
 ## 市场脉搏地球（对话主界面欢迎区，2026-08 新增）
 
-> 用户构想：「眼睛在上俯瞰，下面半个旋转地球，全球金融舆情每 10 秒亮起一个点，点击看详情，10 分钟外的消息自动熄灭」。
+> 用户构想（2026-08-25 修订）：「半圆舷窗正好包裹上半球，其余保持页面网格底板；当日全量存量 + 每 10 分钟更新；国家聚合强度——某区域新闻越多，那个国家的点就点亮得越狠」。
 
 ### 数据链路
-- 后端 `/api/v1/market-pulse`：聚合 6 个免费公开 RSS 源（CNBC 要闻/MarketWatch 头条/WSJ 市场/华尔街见闻等），覆盖 US/CN/ASIA/EU 四区域；每条含 `lat/lng`（区域锚点 + 确定性抖动防重叠）与 `severity`（标题关键词推断：critical > warning > info，中英双语词表）；60s 进程内缓存防打爆上游；单源失败自动降级不计入 items。
-- 前端 `MarketPulseGlobe`：10s 轮询（`truthnetFetch` 直连），30s 一次 TTL 清理，10 分钟外的亮点自动消失。
+- 后端 `/api/v1/market-pulse`：聚合 6 个免费公开 RSS 源（CNBC 要闻/MarketWatch 头条/WSJ 市场/华尔街见闻等），覆盖 US/CN/ASIA/EU 四区域；每条含 `lat/lng`（国家锚点 + 确定性抖动防重叠）与 `severity`（标题关键词推断：critical > warning > info，中英双语词表）；600s（10 分钟）进程内缓存，与前端轮询同节奏；单源失败自动降级不计入 items。
+- **当日存量模式**（评委演示场景：屏幕不能是空的）：不再只留 10 分钟增量，`published_at` 当天（本地时区）的新闻全部保留，滚动累积到 24 点重置；演示时永远有几十条存量点亮各大洲。
+- **国家热点聚合 `clusters`**：按国家分组（美/中/港/日/英/欧盟等约 20 个锚点），`count` 条数 → `intensity ∈ [0.3, 1]`（log 归一 + 严重度加权：critical ×3、warning ×1.5）；某国多条新闻 → 该国亮点半径/高度/透明度按 intensity 放大——「A 股十条 → 中国区点亮得狠」。
+- 前端 `MarketPulseGlobe`：10 分钟轮询（`truthnetFetch` 直连，与后端缓存天然对齐）。
 
 ### 视觉与交互
-- **深空电影感视窗**（参考 Serene 品牌页的夜景地球意象，2026-08-25 定稿）：地球区不随主题变亮，固定为「太空舷窗」——自上而下深空渐变（`#01040a` → 品牌色调和的 `#020a14` → `#041527`，经 `color-mix` 从 `--color-primary` 派生，主题换色时氛围随之变调）。
-- **半球构图**：地球画布比卡片高 260px 并下移 150px，球体从底部「升起」，顶部由星空承接；取景 lat 18 / lng 108 / altitude 1.55。
+- **半圆舷窗**（2026-08-25 定稿）：不再是方形卡片——`aspect-[2/1] rounded-t-full` 拱顶窗口（宽 ≤660px），球心锚定半圆圆心（正方形画布 `top-0` 贴顶，下半被 overflow 裁掉），只露上半球，取景 lat 18 / lng 108 / altitude 1.05（球缘贴满拱顶两侧）；窗口外透出页面网格底板，包裹感强、不打破对话区和谐。
+- **深空底色**：固定「太空舷窗」不随主题变亮——自上而下深空渐变（`#01040a` → 品牌色调和的 `#020a14` → `#041527`，经 `color-mix` 从 `--color-primary` 派生，主题换色时氛围随之变调）；外圈 `ring-1 ring-white/10` 薄壳 + 顶部品牌色外发光。
+- **眼睛与球留白**：`TruthNetMark` 悬于舷窗正上方，底边与顶弧隔 10px 空白（`-translate-y-[calc(100%+10px)]`），根容器 `pt-14` 防溢出遮盖上文；`drop-shadow` 品牌色辉光（呼应「织网鉴真一直在观测」）。
 - **固定夜景贴图** `earth-night.jpg`（城市灯光）：不再浅色切日间图——电影感优先，亮暗主题都保持深空质感；贴图一律本地资产 `public/assets/globe/`（禁 unpkg CDN——国内不可达且曾因版本路径 404 导致地球隐形）。
-- **氛围层**（z 序：星空 0 < 地平辉光 0 < 地球 1 < 暗角 2）：确定性种子星空 64 颗（`.tn-star` 交错闪烁，reduce-motion 关闭）、地平线品牌色 radial 辉光、`radial-gradient` 暗角渐晕让边缘融入深空；去掉经纬网与 bump 贴图（显旧）。
-- 大气辉光 `#7fb0e8` / altitude 0.28（柔和大圈，模拟大气散射）。
+- **氛围层**（z 序：星空 0 < 地球 1 < 暗角 2）：确定性种子星空 48 颗（`.tn-star` 交错闪烁，reduce-motion 关闭）、`radial-gradient` 暗角渐晕让边缘融入深空；去掉经纬网与 bump 贴图（显旧）。
+- 大气辉光 `#7fb0e8` / altitude 0.25（柔和大圈，模拟大气散射）。
 - 区块标题：`MARKET PULSE · 全球舆情脉搏` mono eyebrow + `LIVE`（呼吸绿点），让组件在欢迎区可识别。
-- 亮点：环形柱按 severity 三色分级（info 蓝 `#5da2ff` / warning 琥珀 `#f5b042` / critical 红 `#ff5d5d`，语义风险色专用于数据标注的既有例外），柱高随严重度抬升；同坐标抖动散布防重叠，单点聚合上限 4 条；warning/critical 附加扩散涟漪环（上限 8，`ringColor` 插值随扩散渐隐至 0）。
-- 交互：点击亮点弹出该坐标舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；顶部 `TruthNetMark` 眼睛悬浮于地球上空俯瞰，`drop-shadow` 品牌色辉光（呼应「织网鉴真一直在观测」）。
-- 状态条：三级别计数 + 轮询节奏（10s）+ 留存窗口（10min）+ 最近更新时间 + 失效源提示，`font-mono text-[10px]`。
+- **国家亮点**（clusters 驱动，一国家一点）：颜色按该国 `top_severity` 三色分级（info 蓝 `#5da2ff` / warning 琥珀 `#f5b042` / critical 红 `#ff5d5d`，语义风险色专用于数据标注的既有例外）；点半径 `0.3 + intensity × 0.62`、高度 `0.16 + intensity × 0.5`、透明度 `0.55 + intensity × 0.45`；warning/critical 或 intensity ≥ 0.9 的国家附加扩散涟漪环（上限 6，`ringColor` 插值随扩散渐隐至 0）。
+- 交互：点击国家亮点弹出该国舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；hover 显示国家/条数/强度 tooltip。
+- 状态条：当日总量 + Top4 热点国家（色点 + 计数）+ 更新节奏（10 分钟）+ 最近更新时间 + 失效源提示，`font-mono text-[10px]`。
 
 ### 构建约束
 - three/globe 生态体积大，已按 `manualChunks` 三段拆包：`vendor-three`（three 核心）/ `vendor-three-ext`（examples）/ `vendor-globe`（globe.gl 系列），全部低于 1300kB 告警线；仅被懒加载页面引用，不进首屏主包。

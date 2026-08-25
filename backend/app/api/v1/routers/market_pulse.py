@@ -8,7 +8,11 @@ from fastapi import APIRouter
 
 from app.api.v1.schemas.common import ApiMeta, V12Response
 from app.application.services.market_pulse_service import fetch_market_pulse
-from app.schemas.market_pulse import MarketPulseData, MarketPulseItemDTO
+from app.schemas.market_pulse import (
+    MarketPulseClusterDTO,
+    MarketPulseData,
+    MarketPulseItemDTO,
+)
 
 router = APIRouter(prefix="/market-pulse", tags=["market-pulse"])
 
@@ -30,6 +34,7 @@ async def get_market_pulse() -> V12Response[MarketPulseData]:
         poll_seconds=payload["poll_seconds"],
         regions=payload["regions"],
         items=[MarketPulseItemDTO(**item) for item in payload["items"]],
+        clusters=[MarketPulseClusterDTO(**c) for c in payload["clusters"]],
         ok_sources=payload["ok_sources"],
         failed_sources=payload["failed_sources"],
     )
