@@ -1,22 +1,43 @@
 import { Reveal } from '@/components/reveal';
-import { ArrowDown, FileText, Shield, TrendingUp, Zap } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
+import '@phosphor-icons/web/duotone';
 import { MarketPulseGlobe } from '@/components/truthnet/MarketPulseGlobe';
 
 interface QuickAction {
-  icon: typeof TrendingUp;
+  /** Phosphor duotone 图标类名（如 ph-file-magnifying-glass） */
+  icon: string;
   label: string;
-  text: string;
+  /** 卡片展示的功能描述（10~15 字） */
+  desc: string;
+  /** 点击后实际发送的示例问题 */
+  sample: string;
   href?: string;
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
-  { icon: TrendingUp, label: '财务核查', text: '分析金牌家居财务风险' },
-  { icon: FileText, label: '现金流核验', text: '查看比亚迪经营现金流' },
-  { icon: Zap, label: '股权穿透', text: '查看金牌家居股权穿透' },
   {
-    icon: Shield,
+    icon: 'ph-file-magnifying-glass',
+    label: '财务核查',
+    desc: '勾稽交叉核验，识别科目粉饰',
+    sample: '分析金牌家居财务风险',
+  },
+  {
+    icon: 'ph-coins',
+    label: '现金流核验',
+    desc: '三表现金流配比与造血体检',
+    sample: '查看比亚迪经营现金流',
+  },
+  {
+    icon: 'ph-tree-structure',
+    label: '股权穿透',
+    desc: '逐层穿透股东与关联网络',
+    sample: '查看金牌家居股权穿透',
+  },
+  {
+    icon: 'ph-chart-bar-horizontal',
     label: '横向对比',
-    text: '华峰化学 · 中泰化学 · 利尔化学',
+    desc: '同业对标，定位风险水位差',
+    sample: '华峰化学 · 中泰化学 · 利尔化学',
     href: '/compare?codes=002064.SZ,002092.SZ,002258.SZ',
   },
 ];
@@ -88,14 +109,17 @@ export function WelcomeHero({ onSendSample, onOpenCompare }: WelcomeHeroProps) {
           {QUICK_ACTIONS.map((action, i) => (
             <Reveal key={action.label} delay={520 + i * 90} className="h-full">
               <button
-                onClick={() => (action.href ? onOpenCompare() : onSendSample(action.text))}
+                onClick={() => (action.href ? onOpenCompare() : onSendSample(action.sample))}
                 className="tn-glass-card group flex h-full w-full flex-col items-start rounded-md p-4 text-left animate-tn-wave"
                 style={{ animationDelay: `${i * 260}ms` }}
               >
-                <action.icon className="mb-3 h-5 w-5 shrink-0 text-primary transition-colors duration-300 group-hover:text-primary" />
+                <i
+                  aria-hidden
+                  className={`ph-duotone ${action.icon} mb-3 shrink-0 text-[26px] leading-none text-primary transition-transform duration-300 group-hover:scale-110`}
+                />
                 <span className="text-sm font-medium text-foreground">{action.label}</span>
                 <span className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {action.text}
+                  {action.desc}
                 </span>
               </button>
             </Reveal>
