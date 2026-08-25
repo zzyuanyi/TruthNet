@@ -612,7 +612,7 @@ export default function CompanyProfilePage() {
         setEquityData(res.data);
       }),
       truthnetAPI
-        .getEvents(code)
+        .getEvents(code, true, riskData?.as_of)
         .then((res) => {
           if (loadForCode.current !== myCode) return;
           setSentimentEvents(res.data?.timeline || []);

@@ -160,9 +160,28 @@ async def _lifespan(app: FastAPI):
                 logger.warning("WS janitor 执行失败", exc_info=True)
 
     janitor_task = asyncio.create_task(_ws_janitor_loop())
+
+    # 全球舆情脉搏：后台每 10 分钟定点增量爬取（当日/24h 存量累积入库）
+    try:
+        from app.application.services import market_pulse_service
+
+        market_pulse_service.start_pulse_scheduler()
+        logger.info(
+            "market-pulse 调度器已注册：每 %ds 增量爬取，24h 存量",
+            int(market_pulse_service._CRAWL_INTERVAL),
+        )
+    except Exception:  # noqa: BLE001 — 舆情调度失败不阻塞启动
+        logger.warning("market-pulse 调度器启动失败", exc_info=True)
+
     try:
         yield
     finally:
+        try:
+            from app.application.services import market_pulse_service
+
+            market_pulse_service.stop_pulse_scheduler()
+        except Exception:  # noqa: BLE001
+            pass
         janitor_stop.set()
         try:
             await janitor_task

@@ -136,7 +136,8 @@ def _fetch_event_clusters(wind_code: str, start_date: date) -> list[EventCluster
     repo = MySQLEventClusterRepository()
     try:
         records = repo.list_by_company_sync(wind_code, start_date, date(2100, 1, 1))
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 event_clusters 失败 wind_code=%s: %s", wind_code, exc)
         return []
     clusters = []
     for rec in records:
@@ -173,33 +174,33 @@ def _fetch_event_clusters(wind_code: str, start_date: date) -> list[EventCluster
 def _fetch_announcements(
     wind_code: str, start_date: str, limit: int = 200
 ) -> list[dict]:
-    """查询公告元数据（months 过滤：ann_dt >= start_date）。"""
-    from sqlalchemy import create_engine, text
+    """查询公告元数据（months 过滤：ann_dt >= start_date）。lite 模式走 SQLite。"""
+    from sqlalchemy import text
 
-    url = (
-        f"mysql+pymysql://{settings.MYSQL_USER}:{settings.MYSQL_PASSWORD}"
-        f"@{settings.MYSQL_HOST}:{settings.MYSQL_PORT}/{settings.MYSQL_DATABASE}"
-        "?charset=utf8mb4"
-    )
-    engine = create_engine(url, echo=False)
-    with engine.connect() as conn:
-        rows = (
-            conn.execute(
-                text(
-                    "SELECT object_id, ann_dt, n_info_title, n_info_fcode, "
-                    "sentiment, source_uri "
-                    "FROM announcements "
-                    "WHERE wind_code = :code AND is_latest = 1 "
-                    "AND ann_dt >= :start "
-                    "ORDER BY ann_dt DESC "
-                    "LIMIT :limit"
-                ),
-                {"code": wind_code, "start": start_date, "limit": limit},
+    from app.domain.finance._engine_utils import get_engine
+
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    text(
+                        "SELECT object_id, ann_dt, n_info_title, n_info_fcode, "
+                        "sentiment, source_uri "
+                        "FROM announcements "
+                        "WHERE wind_code = :code AND is_latest = 1 "
+                        "AND ann_dt >= :start "
+                        "ORDER BY ann_dt DESC "
+                        "LIMIT :limit"
+                    ),
+                    {"code": wind_code, "start": start_date, "limit": limit},
+                )
+                .mappings()
+                .all()
             )
-            .mappings()
-            .all()
-        )
-    return [dict(r) for r in rows]
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
 
 
 def _fetch_rating_changes(wind_code: str, start_date: str) -> list[RatingChange]:
@@ -275,6 +276,10 @@ async def get_company_events(
         default=False,
         description="是否生成舆情影响结论（⑧ B2：默认 false 不调用 LLM）",
     ),
+    as_of: str = Query(
+        default="",
+        description="数据时点锚（YYYY-MM-DD）：以该日期为'今天'回溯 months 个月，演示历史案例用",
+    ),
 ):
     """舆情事件 — 事件簇 + 公告时间线 + 评级拐点。"""
     trace_id = _trace()
@@ -299,33 +304,16 @@ async def get_company_events(
     sec_name = company.sec_name
     data_warnings: list[str] = []  # ⑧ B2 影响结论降级提示（字符串级，不进 WarningItem）
 
-    if settings.SQL_BACKEND != "mysql":
-        return V12Response(
-            data=EventsResponseData(
-                wind_code=wind_code,
-                sec_name=sec_name,
-                announcements_available=False,
-                months_covered=months,
-                warnings=["DATA_SOURCE_UNAVAILABLE: 非 full profile 不提供事件数据"],
-            ),
-            meta=ApiMeta(
-                request_id=trace_id,
-                trace_id=trace_id,
-                generated_at=datetime.now(timezone.utc).isoformat(),
-                dataset_version=settings.DATASET_VERSION,
-            ),
-            warnings=[
-                WarningItem(
-                    code="DATA_SOURCE_UNAVAILABLE",
-                    message="非 full profile 不提供事件数据。",
-                    module="events",
-                    recoverable=True,
-                )
-            ],
-        )
+    # lite/演示模式：数据在 SQLite 中，查询为空自然降级，不再硬拦截
 
-    # months → 起始日期（真实过滤）
-    cutoff = date.today() - timedelta(days=months * 30)
+    # months → 起始日期（真实过滤）；as_of 提供时以该时点为"今天"回溯（历史案例演示）
+    anchor = date.today()
+    if as_of:
+        try:
+            anchor = datetime.strptime(as_of, "%Y-%m-%d").date()
+        except ValueError:
+            pass  # 非法 as_of 回退今天
+    cutoff = anchor - timedelta(days=months * 30)
     cutoff_str = cutoff.strftime("%Y-%m-%d")
 
     # 事件簇（按日期过滤）

@@ -273,9 +273,9 @@ export const truthnetAPI = {
   // 舆情事件: GET /api/v1/companies/{code}/events
   // B2 契约修复：默认 include_impacts=true（画像页影响与建议区块消费
   // impact_conclusions；后端默认 false 时恒为空列表）
-  getEvents: (code: string, includeImpacts: boolean = true) =>
+  getEvents: (code: string, includeImpacts: boolean = true, asOf?: string) =>
     request<EventsData>('GET', `/companies/${encodeURIComponent(code)}/events`, {
-      params: { include_impacts: includeImpacts },
+      params: { include_impacts: includeImpacts, ...(asOf ? { as_of: asOf } : {}) },
     }),
 
   // 股权穿透: GET /api/v1/companies/{code}/equity
