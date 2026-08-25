@@ -158,7 +158,8 @@
 - 前端 `MarketPulseGlobe`：10s 轮询（`truthnetFetch` 直连），30s 一次 TTL 清理，10 分钟外的亮点自动消失。
 
 ### 视觉与交互
-- 地球：`react-globe.gl`，blue-marble 贴图 + 大气层辉光 + 经纬网，`autoRotate` 常转（速度 0.6，禁缩放），初始视点亚太大区（lat 22 / lng 105）。
+- 地球：`react-globe.gl`，贴图**本地资产** `public/assets/globe/`（取自 three-globe 示例包，禁 unpkg CDN——国内不可达且曾因版本路径 404 导致地球隐形）；浅色主题 blue-marble / 深色主题 earth-night 城市灯光（MutationObserver 跟随 `.dark` 切换），叠加拓扑 bump 贴图 + 大气层辉光 + 经纬网，`autoRotate` 常转（速度 0.6，禁缩放），初始视点亚太大区（lat 22 / lng 105）。
+- 区块标题：`MARKET PULSE · 全球舆情脉搏` mono eyebrow + `LIVE`，让组件在欢迎区可识别。
 - 亮点：环形柱按 severity 三色分级（info 蓝 `#3b82f6` / warning 琥珀 `#f59e0b` / critical 红 `#ef4444`，语义风险色专用于数据标注的既有例外），柱高随严重度抬升；同坐标抖动散布防重叠，单点聚合上限 4 条。
 - 交互：点击亮点弹出该坐标舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；顶部 `TruthNetMark` 眼睛悬浮于地球上空俯瞰（呼应「织网鉴真一直在观测」）。
 - 状态条：三级别计数 + 轮询节奏（10s）+ 留存窗口（10min）+ 最近更新时间 + 失效源提示，`font-mono text-[10px]`。

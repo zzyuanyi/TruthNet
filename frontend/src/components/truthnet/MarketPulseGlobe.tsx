@@ -45,6 +45,12 @@ const SEVERITY_LABEL: Record<PulseItem['severity'], string> = {
   critical: '高危',
 };
 
+/** 地球贴图（本地资产，public/assets/globe/，无 CDN 依赖；深色主题用城市灯光夜景）*/
+const GLOBE_TEXTURE = {
+  day: '/assets/globe/earth-blue-marble.jpg',
+  night: '/assets/globe/earth-night.jpg',
+};
+
 /** 抖动坐标，避免同一城市的多条消息重叠成一个点 */
 function jitter(v: number, seed: number): number {
   const r = Math.sin(seed * 9973) * 10000;
@@ -66,6 +72,17 @@ export function MarketPulseGlobe() {
   const [tick, setTick] = useState(0); // TTL 清理驱动
   const [selectedPoint, setSelectedPoint] = useState<{ lat: number; lng: number; items: PulseItem[] } | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isDark, setIsDark] = useState(false);
+
+  // 主题跟随：深色主题切换为夜景地球（城市灯光）
+  useEffect(() => {
+    const root = document.documentElement;
+    const sync = () => setIsDark(root.classList.contains('dark'));
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  }, []);
 
   // 尺寸自适应
   useEffect(() => {
@@ -163,11 +180,18 @@ export function MarketPulseGlobe() {
   const critCount = items.filter((i) => i.severity === 'critical').length;
 
   return (
-    <div className="relative">
-      {/* 眼睛悬在地球上空 */}
-      <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
-        <TruthNetMark className="h-12 w-16 text-primary drop-shadow-md" />
+    <div>
+      {/* 区块标题 */}
+      <div className="mb-2 flex items-center justify-between px-1 font-mono text-[10px] tracking-widest text-muted-foreground">
+        <span>MARKET PULSE · 全球舆情脉搏</span>
+        <span className="hidden sm:inline">LIVE</span>
       </div>
+
+      <div className="relative">
+        {/* 眼睛悬在地球上空 */}
+        <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
+          <TruthNetMark className="h-12 w-16 text-primary drop-shadow-md" />
+        </div>
 
       <div ref={globeWrap} className="relative h-[380px] w-full overflow-hidden rounded-lg border border-border bg-card sm:h-[420px]">
         <Globe
@@ -175,8 +199,8 @@ export function MarketPulseGlobe() {
           width={size.width}
           height={size.height}
           backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl="//unpkg.com/react-globe.gl@2.32.0/example/hexed-pole/img/earth-blue-marble.jpg"
-          bumpImageUrl="//unpkg.com/react-globe.gl/example/hexed-pole/img/earth-topology.png"
+          globeImageUrl={isDark ? GLOBE_TEXTURE.night : GLOBE_TEXTURE.day}
+          bumpImageUrl="/assets/globe/earth-topology.png"
           showGraticules
           showAtmosphere
           atmosphereColor="#4f8cc6"
@@ -193,6 +217,7 @@ export function MarketPulseGlobe() {
         />
         {/* 顶部渐隐遮罩，避免地球顶部和卡片边缘生硬相接 */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-background/60 to-transparent" />
+      </div>
       </div>
 
       {/* 状态条 */}

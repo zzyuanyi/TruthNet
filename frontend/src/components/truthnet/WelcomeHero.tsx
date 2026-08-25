@@ -104,7 +104,7 @@ export function WelcomeHero({ onSendSample, onOpenCompare }: WelcomeHeroProps) {
 
         {/* 全球舆情监控：旋转地球 + 鉴真之眼 */}
         <Reveal delay={860}>
-          <div className="mt-10">
+          <div className="mt-8">
             <MarketPulseGlobe />
           </div>
         </Reveal>
