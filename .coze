@@ -3,7 +3,7 @@ requires = ["nodejs-24"]
 
 [dev]
 build = ["pnpm", "install", "--dir", "frontend"]
-run = ["pnpm", "run", "--dir", "frontend", "dev"]
+run = ["bash", "scripts/dev_stack.sh"]
 
 [deploy]
 build = ["pnpm", "run", "--dir", "frontend", "build"]
