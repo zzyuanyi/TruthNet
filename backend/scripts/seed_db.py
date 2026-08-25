@@ -7,6 +7,7 @@
 
 只需在首次 clone 后运行一次；库已存在且有数据时自动跳过（除非 --force）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,10 +37,12 @@ def main() -> int:
     exists = db.exists()
     if exists and not args.force:
         try:
-            n = sqlite3.connect(db).execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
-            ).fetchone()[0]
-        except Exception:
+            n = (
+                sqlite3.connect(db)
+                .execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
+                .fetchone()[0]
+            )
+        except Exception:  # noqa: BLE001
             n = 0
         if n:
             print(f"[seed] {db} 已存在且有 {n} 张表，跳过（--force 可强制重建）")

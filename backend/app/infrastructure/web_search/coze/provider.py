@@ -26,7 +26,7 @@ class CozeWebSearchProvider:
             from coze_coding_dev_sdk import SearchClient
 
             self._client = SearchClient()
-        except Exception:  # noqa: BLE001 — 导入/初始化失败一律降级
+        except Exception:
             logger.warning("Coze: SDK 初始化失败，Provider 不可用", exc_info=True)
             self._client = None
 
@@ -43,14 +43,16 @@ class CozeWebSearchProvider:
         count = max_results if max_results is not None else 5
         try:
             response = self._client.web_search(query=query, count=count)
-        except Exception:  # noqa: BLE001 — provider 层吞异常，守卫服务负责日志语义
+        except Exception:
             logger.warning("Coze: 联网搜索失败，fail-closed 返回空", exc_info=True)
             return []
 
         results: list[SearchResult] = []
         for item in response.web_items or []:
             url = getattr(item, "url", "") or ""
-            snippet = getattr(item, "summary", None) or getattr(item, "snippet", "") or ""
+            snippet = (
+                getattr(item, "summary", None) or getattr(item, "snippet", "") or ""
+            )
             results.append(
                 SearchResult(
                     title=getattr(item, "title", "") or "",
