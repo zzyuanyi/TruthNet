@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { Plus, MessageSquare, Trash2, Building2, BarChart3 } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Building2, BarChart3, PanelLeftClose } from 'lucide-react';
 import type { Session } from '@/types/truthnet';
 import type { InvolvedCompany } from '@/pages/ChatPage';
 
@@ -20,6 +20,7 @@ interface SessionSidebarProps {
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
+  onCollapse?: () => void;
 }
 
 export function SessionSidebar({
@@ -31,22 +32,33 @@ export function SessionSidebar({
   onSelectSession,
   onNewSession,
   onDeleteSession,
+  onCollapse,
 }: SessionSidebarProps) {
   const [listParent] = useAutoAnimate();
   const navigate = useNavigate();
 
   return (
-    <div className="w-60 border-r border-border flex flex-col bg-muted/30 h-full">
-      {/* 头部：新建会话按钮 */}
-      <div className="p-4 border-b border-border">
+    <div className="flex h-full w-full flex-col bg-muted/30">
+      {/* 头部：新建会话按钮 + 收起 */}
+      <div className="flex items-center gap-2 border-b border-border p-4">
         <Button
-          className="w-full justify-start gap-2"
+          className="flex-1 justify-start gap-2"
           variant="outline"
           onClick={onNewSession}
           disabled={isBusy}
         >
           <Plus className="h-4 w-4" />
           新建对话
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label="收起会话侧边栏"
+          title="收起会话侧边栏"
+          onClick={onCollapse}
+        >
+          <PanelLeftClose className="h-4 w-4" />
         </Button>
       </div>
 

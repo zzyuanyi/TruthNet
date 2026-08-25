@@ -55,6 +55,7 @@ export default function ChatPage() {
   const [panelData, setPanelData] = useState<PanelData | null>(null);
   const [panelState, setPanelState] = useState<PanelState>('empty');
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const wsRef = useRef<ReturnType<typeof wsClient.create> | null>(null);
   // 8/17：WS 连接代数（epoch）——每次 create 递增；旧连接迟到的
@@ -697,17 +698,39 @@ export default function ChatPage() {
 
   return (
     <div className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden">
-      {/* 左侧：会话侧边栏 */}
-      <SessionSidebar
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        currentCompanyCode={currentCompanyCode}
-        involvedCompanies={involvedCompanies}
-        isBusy={isLoading}
-        onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
-        onDeleteSession={handleDeleteSession}
-      />
+      {/* 左侧：会话侧边栏（可收起） */}
+      <div
+        className={cn(
+          'relative h-full min-h-0 shrink-0 transition-[width] duration-300',
+          sidebarCollapsed ? 'w-0' : 'w-60 border-r border-border',
+        )}
+      >
+        {!sidebarCollapsed && (
+          <SessionSidebar
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            currentCompanyCode={currentCompanyCode}
+            involvedCompanies={involvedCompanies}
+            isBusy={isLoading}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSession}
+            onDeleteSession={handleDeleteSession}
+            onCollapse={() => setSidebarCollapsed(true)}
+          />
+        )}
+        {sidebarCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute left-0 top-2 z-20 h-8 w-8 translate-x-1/2 rounded-l-none border border-border bg-background/90 shadow-sm hover:bg-accent"
+            aria-label="展开会话侧边栏"
+            title="展开会话侧边栏"
+            onClick={() => setSidebarCollapsed(false)}
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
 
       {/* 中间：对话区（h-full：父级 h-[calc(100vh-64px)] 为 definite，补齐百分比高度链，否则 ChatInterface h-full 失效导致聊天区无滚动） */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col h-full">
