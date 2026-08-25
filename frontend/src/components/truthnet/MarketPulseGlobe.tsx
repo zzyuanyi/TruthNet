@@ -130,25 +130,28 @@ export function MarketPulseGlobe() {
     return () => ro.disconnect();
   }, []);
 
-  // 10 分钟轮询；失败后 15s 快速重试（成功恢复长间隔），避免后端重启窗口期长时间显示 0
+  // 10 分钟轮询；失败后退避快速重试（15s 起步、加倍、上限 60s，成功后重置），避免后端重启窗口期长时间显示 0
   useEffect(() => {
     let alive = true;
     let retryTimer = 0;
+    let retryDelay = 15_000;
     const load = async () => {
       try {
-        const data = await truthnetFetch<PulseData>('/api/v1/market-pulse');
+        const data = await truthnetFetch<PulseData>('/market-pulse');
         if (!alive) return;
         setItems(data.items ?? []);
         setClusters(data.clusters ?? []);
         setFailedSources(Array.isArray(data.failed_sources) ? data.failed_sources.length : 0);
         setLastUpdated(new Date());
         setNetError(false);
+        retryDelay = 15_000;
       } catch {
-        /* 网络异常时保留旧点，15s 后快速重试 */
+        /* 网络异常时保留旧点，退避后快速重试 */
         if (alive) {
           setNetError(items.length === 0);
           window.clearTimeout(retryTimer);
-          retryTimer = window.setTimeout(load, 15_000);
+          retryTimer = window.setTimeout(load, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 60_000);
         }
       }
     };
