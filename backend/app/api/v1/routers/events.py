@@ -308,7 +308,9 @@ async def get_company_events(
 
     # months → 起始日期（真实过滤）；as_of 提供时以该时点为"今天"回溯（历史案例演示）
     anchor = date.today()
-    if as_of:
+    # 注意：直接以普通函数调用时（非 FastAPI 路由注入），Query(default="") 不会被解析为 str，
+    # as_of 可能是 Query 占位对象而非字符串，此时等价于未提供，用今天兜底。
+    if isinstance(as_of, str) and as_of:
         try:
             anchor = datetime.strptime(as_of, "%Y-%m-%d").date()
         except ValueError:
