@@ -220,3 +220,69 @@ body {
     break-inside: avoid;
   }
 }
+
+/* ─── 织网鉴真 Logo：瞳孔扫视 + 织网入场动画 ─── */
+.tn-scan {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tn-scan 2.8s ease-in-out infinite;
+}
+@keyframes tn-scan {
+  0%,
+  100% {
+    transform: translateX(-55%);
+  }
+  50% {
+    transform: translateX(55%);
+  }
+}
+
+/* 入场：网线逐条描出 */
+.tn-intro .tn-line {
+  stroke-dasharray: 120;
+  stroke-dashoffset: 120;
+  animation: tn-draw 0.9s ease-out forwards;
+}
+@keyframes tn-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 入场：节点点亮 */
+.tn-node {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.tn-intro .tn-node {
+  opacity: 0;
+  animation: tn-node-in 0.4s ease-out 0.6s forwards;
+}
+@keyframes tn-node-in {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 入场：瞳孔浮现后开始扫视 */
+.tn-intro .tn-scan {
+  opacity: 0;
+  animation:
+    tn-pupil-in 0.5s ease-out 1.05s forwards,
+    tn-scan 3s ease-in-out 1.5s infinite;
+}
+@keyframes tn-pupil-in {
+  from {
+    opacity: 0;
+    transform: translateX(-55%) scale(0.2);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-55%) scale(1);
+  }
+}

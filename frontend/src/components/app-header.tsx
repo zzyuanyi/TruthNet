@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { MessageSquare, Shield, TrendingUp, Settings } from 'lucide-react';
+import { TruthNetMark } from '@/components/truthnet/TruthNetMark';
 
 export function AppHeader() {
   const location = useLocation();
@@ -34,7 +35,7 @@ export function AppHeader() {
     <header data-no-print className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border/60 bg-background/95 px-4 md:px-5 backdrop-blur-sm">
       <div className="flex items-center gap-4 md:gap-6">
         <Link to="/" className="flex items-center gap-2">
-          <Shield className="h-5 w-5 text-primary" />
+          <TruthNetMark className="h-5 w-8 text-primary" />
           <span className="text-lg font-bold tracking-tight text-foreground">
             织网鉴真
           </span>

@@ -270,14 +270,14 @@ export function ChatInterface({
       </ScrollArea>
 
       {/* 输入区域 */}
-      <div className={cn('border-t p-4', messages.length === 0 ? 'border-white/10 bg-[#0a0a0a]' : 'border-border bg-gradient-to-t from-muted/20 to-background')}>
+      <div className="border-t border-border bg-gradient-to-t from-muted/20 to-background p-4">
         <div className="flex gap-2">
           <Textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="输入问题，如：分析金牌家居财务风险..."
-            className={cn('min-h-[60px] max-h-[200px] resize-none', messages.length === 0 && 'border-white/10 bg-white/5 text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-white/20')}
+            className="min-h-[60px] max-h-[200px] resize-none"
             disabled={isLoading}
           />
           <Button
@@ -293,7 +293,7 @@ export function ChatInterface({
             )}
           </Button>
         </div>
-        <p className={cn('text-xs mt-2', messages.length === 0 ? 'text-white/40' : 'text-muted-foreground')}>
+        <p className="mt-2 text-xs text-muted-foreground">
           按 Enter 发送，Shift + Enter 换行
         </p>
       </div>

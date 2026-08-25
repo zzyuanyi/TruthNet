@@ -87,13 +87,12 @@
 > 2026-08 升级：首页欢迎区（ChatInterface 空状态）参考「暗黑电影感 landing」（NOVA_AI 排版语言），作为**进入工具前的「电影开场」**，与上述 Operate 克制主体形成「开场 → 工具」体验分层。**仅作用于欢迎区**，不扩展到画像页 / 对话流程等产品主体。
 
 ### 定位
-- 欢迎区 = 首屏沉浸式 hero（暗黑电影感），营造可信且有仪式感的开场；进入对话后回到亮色 Operate 审计终端。
-- 意象锚点：深空黑幕 + 一束低调的海军蓝光晕，像财报法证台前的一道「追光」。
+- 欢迎区 = 首屏沉浸式 hero，营造可信且有仪式感的开场，**配色与主题（明/暗）完全同步**——系统深色则深色、浅色则浅色。
 
-### 配色（局部暗色，引用既有 ink 家族，不新增色相）
-- 背景基色 `#0a0a0a`（近黑），叠加两层 `radial-gradient`：顶部 `rgba(15,58,93,0.42)`（ink）→ 透明、右下 `rgba(47,106,153,0.16)` → 透明。
-- 叠加 44px 极淡网格 `rgba(255,255,255,0.025)`，营造精细节奏（非 AI 味蓝紫渐变 / mesh）。
-- 文本：`text-white` / `white/55`（副标题）/ `white/35`（mono 提示）；快捷卡片 `bg-white/[0.03]` + `border-white/10`。
+### 配色（语义化，跟随主题变量，不硬编码色值）
+- 背景用 `bg-background`，叠加两层 `radial-gradient`：顶部 `color-mix(in srgb, var(--color-primary) 18%, transparent)` → 透明、右侧 `color-mix(in srgb, var(--color-primary) 10%, transparent)` → 透明。
+- 叠加极淡网格 `color-mix(in srgb, var(--color-foreground) 5%, transparent)`，营造精细节奏（非 AI 味蓝紫渐变 / mesh）。
+- 文本：`text-foreground` / `text-muted-foreground` / `text-primary`；快捷卡片 `bg-card` + `border-border`，hover `bg-primary` + `text-primary-foreground`。
 
 ### 字体
 - 标题：IBM Plex Sans `font-medium` + `tracking-tight`（延续既有字体，**不引入** Flexo Soft Medium 等外部在线字体资产）。
@@ -106,3 +105,19 @@
 ### 动效（欢迎区专属入场）
 - Reveal 交错入场：IntersectionObserver（threshold 0.15）触发，`translate-y-8 + opacity-0` → `translate-y-0 + opacity-100`，`duration-700 ease-out`，`transitionDelay` 以 90–120ms 递增。
 - 这是**欢迎区专属**的入场动画，主体（Operate）仍保持「无自动入场浮入」原则；完整遵守 `--reduce-motion` 降级。
+
+## Logo 动效（织网鉴真 · 眼）
+
+> 2026-08 升级：队名「织网鉴真」落到品牌标记——「数据点织网 → 融合成一只眼 → 瞳孔持续扫视」，呼应「织网 + 鉴真（观察）」。
+
+### 意象锚点
+- 一堆数据点 / 网线从四周汇聚，交织成上下眼睑 + 瞳孔的「眼」；瞳孔左右扫视，寓意「一直在观测、持续鉴真」。
+
+### 实现
+- `TruthNetMark`（SVG，`64×40` ≈ 1.6:1）：上下眼睑弧线 + 8 条瞳孔→眼睑辐射线（网） + 8 个数据点节点 + 扫视瞳孔（实心 + 半透明外圈），全程 `currentColor`。
+- 常驻态（header logo，`h-5 w-8 text-primary`）：仅瞳孔 `.tn-scan` 持续扫视（`translateX` 往返，`transform-box: fill-box`）。
+- 开场态（`IntroLogo` overlay，`.tn-intro`）：网线 `.tn-line` 逐条描出（`stroke-dashoffset`）→ 节点 `.tn-node` 点亮 → 瞳孔 `.tn-scan` 浮现后扫视 → 整体 `scale(0.14) + opacity-0` 缩小淡出，露出主界面常驻小眼。
+
+### 动效约束
+- 所有动画遵守 `--reduce-motion` 全局降级（`[style*="--reduce-motion: reduce"] *` 已禁用动画）。
+- 开场 overlay 用 `data-no-print` 排除打印；`z-[100]` 覆盖全屏，约 3s 后自行卸载。
