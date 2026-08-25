@@ -1,29 +1,40 @@
-@import url("https://fonts.googleapis.cn/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.cn/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @theme {
-  --color-background: #ffffff;
-  --color-foreground: #0a0a0a;
+  /* ─── 金融审计终端色板：深海军蓝 ink + 冷调中性（去「科技蓝」AI 味） ─── */
+  --color-background: #f6f8fa;
+  --color-foreground: #0d253d;
   --color-card: #ffffff;
-  --color-card-foreground: #0a0a0a;
+  --color-card-foreground: #0d253d;
   --color-popover: #ffffff;
-  --color-popover-foreground: #0a0a0a;
-  --color-primary: #2563eb;
+  --color-popover-foreground: #0d253d;
+  --color-primary: #0f3a5d;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #f1f5f9;
-  --color-secondary-foreground: #0f172a;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-accent: #f1f5f9;
-  --color-accent-foreground: #0f172a;
-  --color-destructive: #ef4444;
+  --color-secondary: #eef2f6;
+  --color-secondary-foreground: #0d253d;
+  --color-muted: #eef2f6;
+  --color-muted-foreground: #5c6b7a;
+  --color-accent: #e8edf3;
+  --color-accent-foreground: #0d253d;
+  --color-destructive: #d92d20;
   --color-destructive-foreground: #ffffff;
-  --color-border: #e2e8f0;
-  --color-input: #e2e8f0;
-  --color-ring: #2563eb;
+  --color-border: #e3e8ee;
+  --color-input: #d5dde6;
+  --color-ring: #0f3a5d;
   --radius: 0.5rem;
-  --font-sans: "Inter", system-ui, sans-serif;
+
+  /* ─── 字体：IBM Plex（UI）+ IBM Plex Mono（数据/数字），弃用 Inter ─── */
+  --font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* ─── 图表数据色（符合金融语义） ─── */
+  --chart-1: #0f3a5d;
+  --chart-2: #2f6a99;
+  --chart-3: #b45309;
+  --chart-4: #16a34a;
+  --chart-5: #dc2626;
 }
 
 * {
@@ -34,60 +45,46 @@ body {
   background-color: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+  /* 金融信号：数字等宽对齐，财报指标纵向可比 */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ─── UI 升级：页面微纹理背景（让磨砂玻璃可见） ─── */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(ellipse 80% 60% at 50% -20%, color-mix(in srgb, var(--color-primary) 4%, transparent), transparent),
-    radial-gradient(ellipse 60% 50% at 80% 80%, color-mix(in srgb, var(--color-ring) 3%, transparent), transparent);
-  pointer-events: none;
-}
-
-/* ─── UI 升级：卡片磨砂玻璃 ─── */
+/* ─── 卡片：实底 + hairline，去磨砂玻璃（Operate 工具不使用玻璃拟态） ─── */
 [data-slot="card"] {
-  background: color-mix(in srgb, var(--color-card) 82%, transparent) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: var(--color-card) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
-/* ─── UI 升级：输入框聚焦发光环 ─── */
-[data-slot="textarea"]:focus {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--color-ring) 30%, transparent),
-    0 0 30px -6px var(--color-ring) !important;
+/* ─── 输入框聚焦：克制的边框加深，去发光环 ─── */
+[data-slot="textarea"]:focus,
+[data-slot="input"]:focus {
+  box-shadow: none !important;
 }
 
-/* ─── UI 升级：暗色主题层次 ─── */
+/* ─── 暗色主题：深海军蓝近黑，保持蓝家族一致 ─── */
 .dark {
-  --color-background: #09090b;
-  --color-foreground: #fafafa;
-  --color-card: #18181b;
-  --color-card-foreground: #fafafa;
-  --color-popover: #18181b;
-  --color-popover-foreground: #fafafa;
-  --color-primary: #3b82f6;
-  --color-primary-foreground: #fafafa;
-  --color-secondary: #27272a;
-  --color-secondary-foreground: #fafafa;
-  --color-muted: #27272a;
-  --color-muted-foreground: #a1a1aa;
-  --color-accent: #27272a;
-  --color-accent-foreground: #fafafa;
+  --color-background: #0a1622;
+  --color-foreground: #e6edf3;
+  --color-card: #10202f;
+  --color-card-foreground: #e6edf3;
+  --color-popover: #10202f;
+  --color-popover-foreground: #e6edf3;
+  --color-primary: #4f8cc6;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #16283a;
+  --color-secondary-foreground: #e6edf3;
+  --color-muted: #16283a;
+  --color-muted-foreground: #8ba0b3;
+  --color-accent: #1a3047;
+  --color-accent-foreground: #e6edf3;
   --color-destructive: #ef4444;
-  --color-destructive-foreground: #fafafa;
-  --color-border: #27272a;
-  --color-input: #27272a;
-  --color-ring: #3b82f6;
-}
-.dark body::before {
-  background:
-    radial-gradient(ellipse 60% 40% at 20% 10%, color-mix(in srgb, var(--color-primary) 8%, transparent), transparent),
-    radial-gradient(ellipse 50% 50% at 80% 90%, color-mix(in srgb, var(--color-ring) 6%, transparent), transparent);
+  --color-destructive-foreground: #ffffff;
+  --color-border: #1e3348;
+  --color-input: #1e3348;
+  --color-ring: #4f8cc6;
 }
 
 /* Custom scrollbar */
@@ -117,30 +114,12 @@ body::before {
   word-break: break-word;
 }
 
-/* ─── 动效增强：卡片入场浮入 ─── */
+/* ─── 卡片 hover：仅边框微调（可点性提示），不做位移与投影，避免误导 ─── */
 [data-slot="card"] {
-  animation: card-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-  transition: border-color 0.2s ease, box-shadow 0.25s ease;
+  transition: border-color 0.2s ease;
 }
 
-@keyframes card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ─── 动效增强：卡片 hover 微交互（仅边框高亮+柔化阴影，不做位移，避免误导可点性） ─── */
-[data-slot="card"]:hover {
-  border-color: color-mix(in srgb, var(--color-border) 45%, var(--color-primary) 55%);
-  box-shadow: 0 10px 30px -14px color-mix(in srgb, var(--color-foreground) 22%, transparent);
-}
-
-/* ─── 动效增强：骨架屏 shimmer 扫光 ─── */
+/* ─── 骨架屏 shimmer 扫光 ─── */
 @keyframes shimmer {
   0% {
     background-position: 200% 0;
@@ -161,7 +140,7 @@ body::before {
   animation: shimmer 1.6s ease-in-out infinite;
 }
 
-/* ─── 动效增强：尊重「减少动画」设置 ─── */
+/* ─── 尊重「减少动画」设置 ─── */
 [style*="--reduce-motion: reduce"] *,
 [style*="--reduce-motion: reduce"] *::before,
 [style*="--reduce-motion: reduce"] *::after {
@@ -178,35 +157,30 @@ body::before {
   :root.dark,
   .dark {
     --color-background: #ffffff;
-    --color-foreground: #0a0a0a;
+    --color-foreground: #0d253d;
     --color-card: #ffffff;
-    --color-card-foreground: #0a0a0a;
+    --color-card-foreground: #0d253d;
     --color-popover: #ffffff;
-    --color-popover-foreground: #0a0a0a;
-    --color-primary: #2563eb;
+    --color-popover-foreground: #0d253d;
+    --color-primary: #0f3a5d;
     --color-primary-foreground: #ffffff;
-    --color-secondary: #f1f5f9;
-    --color-secondary-foreground: #0f172a;
-    --color-muted: #f1f5f9;
-    --color-muted-foreground: #64748b;
-    --color-accent: #f1f5f9;
-    --color-accent-foreground: #0f172a;
-    --color-destructive: #ef4444;
+    --color-secondary: #eef2f6;
+    --color-secondary-foreground: #0d253d;
+    --color-muted: #eef2f6;
+    --color-muted-foreground: #5c6b7a;
+    --color-accent: #e8edf3;
+    --color-accent-foreground: #0d253d;
+    --color-destructive: #d92d20;
     --color-destructive-foreground: #ffffff;
-    --color-border: #e2e8f0;
-    --color-input: #e2e8f0;
-    --color-ring: #2563eb;
+    --color-border: #e3e8ee;
+    --color-input: #d5dde6;
+    --color-ring: #0f3a5d;
   }
 
   /* 保留必要的背景色（badge / 图表） */
   * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
-  }
-
-  /* 关闭微纹理背景 */
-  body::before {
-    display: none !important;
   }
 
   /* 隐藏导航与操作元素 */
@@ -230,7 +204,7 @@ body::before {
     height: auto !important;
   }
 
-  /* 卡片去除磨砂/入场动画/阴影，避免分页碎裂 */
+  /* 卡片去除磨砂/动画/阴影，避免分页碎裂 */
   [data-slot="card"] {
     background: var(--color-card) !important;
     backdrop-filter: none !important;

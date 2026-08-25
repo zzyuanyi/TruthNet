@@ -33,8 +33,8 @@ const nodeTypeConfig = {
   },
   fund: {
     icon: Network,
-    color: 'text-purple-600',
-    bgColor: 'bg-purple-500/10',
+    color: 'text-teal-600',
+    bgColor: 'bg-teal-500/10',
     label: '基金',
   },
 };

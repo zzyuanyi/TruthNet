@@ -31,8 +31,8 @@ export function ThinkingBubble({ steps, duration, defaultOpen = false }: Thinkin
         className={cn(
           'flex items-center gap-1.5 text-[12px] rounded-lg px-2.5 py-1.5 transition-all duration-200',
           open
-            ? 'bg-violet-50 text-violet-700'
-            : 'bg-gray-50 text-gray-500 hover:bg-violet-50 hover:text-violet-600'
+            ? 'bg-primary/10 text-primary'
+            : 'bg-muted text-muted-foreground hover:bg-primary/5 hover:text-primary'
         )}
       >
         <Brain className="h-3.5 w-3.5" />
@@ -51,15 +51,15 @@ export function ThinkingBubble({ steps, duration, defaultOpen = false }: Thinkin
       </button>
 
       {open && (
-        <div className="mt-1.5 ml-1 border-l-2 border-violet-200 pl-3 space-y-2 animate-fade-in">
+        <div className="mt-1.5 ml-1 border-l-2 border-primary/20 pl-3 space-y-2 animate-fade-in">
           {steps.map((step, i) => (
             <div key={i} className="flex gap-2 items-start">
               <div className="mt-0.5 shrink-0">
-                <Sparkles className="h-3 w-3 text-violet-400" />
+                <Sparkles className="h-3 w-3 text-primary/60" />
               </div>
               <div>
-                <div className="text-[12px] font-medium text-violet-700">{step.label}</div>
-                <div className="text-[11px] text-gray-500 leading-relaxed">{step.detail}</div>
+                <div className="text-[12px] font-medium text-primary">{step.label}</div>
+                <div className="text-[11px] text-muted-foreground leading-relaxed">{step.detail}</div>
               </div>
             </div>
           ))}
