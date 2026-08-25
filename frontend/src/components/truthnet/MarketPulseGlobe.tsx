@@ -104,6 +104,7 @@ export function MarketPulseGlobe() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [selected, setSelected] = useState<PulseCluster | null>(null);
   const [isDark, setIsDark] = useState(true);
+  const [netError, setNetError] = useState(false);
 
   // 主题跟随：暗色=夜景地球+深空窗；亮色=蓝色大理石地球+白昼窗
   useEffect(() => {
@@ -129,9 +130,10 @@ export function MarketPulseGlobe() {
     return () => ro.disconnect();
   }, []);
 
-  // 10 分钟轮询（后端缓存同节奏）
+  // 10 分钟轮询；失败后 15s 快速重试（成功恢复长间隔），避免后端重启窗口期长时间显示 0
   useEffect(() => {
     let alive = true;
+    let retryTimer = 0;
     const load = async () => {
       try {
         const data = await truthnetFetch<PulseData>('/api/v1/market-pulse');
@@ -140,8 +142,14 @@ export function MarketPulseGlobe() {
         setClusters(data.clusters ?? []);
         setFailedSources(Array.isArray(data.failed_sources) ? data.failed_sources.length : 0);
         setLastUpdated(new Date());
+        setNetError(false);
       } catch {
-        /* 网络异常时保留旧点，下次轮询重试 */
+        /* 网络异常时保留旧点，15s 后快速重试 */
+        if (alive) {
+          setNetError(items.length === 0);
+          window.clearTimeout(retryTimer);
+          retryTimer = window.setTimeout(load, 15_000);
+        }
       }
     };
     load();
@@ -149,7 +157,9 @@ export function MarketPulseGlobe() {
     return () => {
       alive = false;
       window.clearInterval(timer);
+      window.clearTimeout(retryTimer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 自动旋转 + 取景：球体几乎填满半圆，边缘被薄壳裁掉一点，包裹感更强
@@ -316,7 +326,13 @@ export function MarketPulseGlobe() {
       {/* 状态条：总量 + 热点国家 + 更新节奏 */}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10px] tracking-wider text-muted-foreground">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-foreground/80">当日 {totalCount} 条</span>
+          <span className="text-foreground/80">
+            {netError && totalCount === 0 ? (
+              <span className="text-warning-600/90 dark:text-warning-400/90">信号中断，重连中…</span>
+            ) : (
+              `当日 ${totalCount} 条`
+            )}
+          </span>
           {topClusters.map((c) => (
             <span key={c.country} className="flex items-center gap-1">
               <span
