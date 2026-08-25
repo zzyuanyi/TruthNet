@@ -9,9 +9,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Send, Loader2, User, Bot, Shield, TrendingUp, Zap, FileText, Info } from 'lucide-react';
+import { Send, Loader2, User, Bot, Info } from 'lucide-react';
 import type { Message, RiskLevel, ComparisonNextStep, PendingCompanyCandidates } from '@/types/truthnet';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
+import { WelcomeHero } from '@/components/truthnet/WelcomeHero';
 
 // 来源类型中文标签（与画像页 sourceTypeIcons 口径一致）
 const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -187,42 +188,13 @@ export function ChatInterface({
     <div className="flex flex-col h-full">
       {/* 消息列表（min-h-0：防止 flex item 被内容撑开，确保内部滚动 + 自动滚底生效） */}
       <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
+        {messages.length === 0 ? (
+          <WelcomeHero
+            onSendSample={(text) => onSendMessage(text)}
+            onOpenCompare={() => navigate('/compare?codes=002064.SZ,002092.SZ,002258.SZ')}
+          />
+        ) : (
         <div ref={msgParent} className="p-4 space-y-4">
-          {messages.length === 0 && (
-            <div className="text-center py-8">
-              <Shield className="h-10 w-10 text-primary/40 mx-auto mb-3" />
-              <h3 className="text-base font-medium text-foreground mb-1">织网鉴真 · 财报反欺诈助手</h3>
-              <p className="text-xs text-muted-foreground mb-6">输入上市公司名称或股票代码，穿透股权 · 交叉验证 · 对齐舆情</p>
-              <div className="grid grid-cols-2 gap-2 max-w-lg mx-auto">
-                {[
-                  { icon: TrendingUp, label: '财务核查', text: '分析金牌家居财务风险', navigateTo: undefined },
-                  { icon: FileText, label: '现金流核验', text: '查看比亚迪经营现金流', navigateTo: undefined },
-                  { icon: Zap, label: '股权穿透', text: '查看金牌家居股权穿透', navigateTo: undefined },
-                  { icon: Shield, label: '横向对比', text: '华峰化学 · 中泰化学 · 利尔化学', navigateTo: '/compare?codes=002064.SZ,002092.SZ,002258.SZ' },
-                ].map((card, i) => (
-                  <button
-                    key={i}
-                    onClick={() => {
-                      if (card.navigateTo) {
-                        navigate(card.navigateTo);
-                        return;
-                      }
-                      setInput(card.text);
-                      setTimeout(() => {
-                        if (card.text.trim()) onSendMessage(card.text.trim());
-                        setInput('');
-                      }, 0);
-                    }}
-                    className="text-left p-3 rounded-md border border-border/60 hover:border-primary/30 hover:bg-muted/30 transition-colors group"
-                  >
-                    <card.icon className="h-4 w-4 text-primary/60 mb-1.5 group-hover:text-primary transition-colors" />
-                    <p className="text-xs font-medium text-foreground mb-0.5">{card.label}</p>
-                    <p className="text-[10px] text-muted-foreground leading-relaxed">{card.text}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {messages.map(message => (
             <MessageBubble
@@ -294,17 +266,18 @@ export function ChatInterface({
             </div>
           )}
         </div>
+        )}
       </ScrollArea>
 
       {/* 输入区域 */}
-      <div className="border-t border-border p-4 bg-gradient-to-t from-muted/20 to-background">
+      <div className={cn('border-t p-4', messages.length === 0 ? 'border-white/10 bg-[#0a0a0a]' : 'border-border bg-gradient-to-t from-muted/20 to-background')}>
         <div className="flex gap-2">
           <Textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="输入问题，如：分析金牌家居财务风险..."
-            className="min-h-[60px] max-h-[200px] resize-none"
+            className={cn('min-h-[60px] max-h-[200px] resize-none', messages.length === 0 && 'border-white/10 bg-white/5 text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-white/20')}
             disabled={isLoading}
           />
           <Button
@@ -320,7 +293,7 @@ export function ChatInterface({
             )}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
+        <p className={cn('text-xs mt-2', messages.length === 0 ? 'text-white/40' : 'text-muted-foreground')}>
           按 Enter 发送，Shift + Enter 换行
         </p>
       </div>

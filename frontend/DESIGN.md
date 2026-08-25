@@ -79,3 +79,30 @@
 - 禁止玻璃拟态、mesh 渐变背景、发光环、卡片自动入场浮入动画。
 - 禁止 Inter 作默认字体、禁止三栏等分无区分卡片、禁止为「好看」堆叠无信息量动画。
 - 禁止全角标点（代码 / className 中）。
+
+---
+
+## 首页欢迎 Hero（暗黑电影感开场，局部专属）
+
+> 2026-08 升级：首页欢迎区（ChatInterface 空状态）参考「暗黑电影感 landing」（NOVA_AI 排版语言），作为**进入工具前的「电影开场」**，与上述 Operate 克制主体形成「开场 → 工具」体验分层。**仅作用于欢迎区**，不扩展到画像页 / 对话流程等产品主体。
+
+### 定位
+- 欢迎区 = 首屏沉浸式 hero（暗黑电影感），营造可信且有仪式感的开场；进入对话后回到亮色 Operate 审计终端。
+- 意象锚点：深空黑幕 + 一束低调的海军蓝光晕，像财报法证台前的一道「追光」。
+
+### 配色（局部暗色，引用既有 ink 家族，不新增色相）
+- 背景基色 `#0a0a0a`（近黑），叠加两层 `radial-gradient`：顶部 `rgba(15,58,93,0.42)`（ink）→ 透明、右下 `rgba(47,106,153,0.16)` → 透明。
+- 叠加 44px 极淡网格 `rgba(255,255,255,0.025)`，营造精细节奏（非 AI 味蓝紫渐变 / mesh）。
+- 文本：`text-white` / `white/55`（副标题）/ `white/35`（mono 提示）；快捷卡片 `bg-white/[0.03]` + `border-white/10`。
+
+### 字体
+- 标题：IBM Plex Sans `font-medium` + `tracking-tight`（延续既有字体，**不引入** Flexo Soft Medium 等外部在线字体资产）。
+- 品牌词标 / 版本标注：IBM Plex Mono `font-mono` + `tracking-widest`。
+
+### 布局
+- 多行交错大标题：`织网鉴真`（pl-6）→ `财报反欺诈`（无缩进）→ `· 智能问答`（pl-12，`font-light`），营造电影感的视觉纵深与节奏。
+- 快捷入口 2×2 网格，卡片左对齐图标 + 标题 + 描述，hover 反白（`bg-white` + `text-black`）。
+
+### 动效（欢迎区专属入场）
+- Reveal 交错入场：IntersectionObserver（threshold 0.15）触发，`translate-y-8 + opacity-0` → `translate-y-0 + opacity-100`，`duration-700 ease-out`，`transitionDelay` 以 90–120ms 递增。
+- 这是**欢迎区专属**的入场动画，主体（Operate）仍保持「无自动入场浮入」原则；完整遵守 `--reduce-motion` 降级。
