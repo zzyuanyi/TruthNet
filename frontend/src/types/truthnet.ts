@@ -504,6 +504,10 @@ export interface EquityNodeDTO {
   risk_level: string | null;
   mock: boolean;
   source_system: string;
+  /** 8/25 下游风险可视化：负面风险信号（下游子公司/被投资企业，可与 RiskBadge 对齐） */
+  risk_signals?: DownstreamRiskSignal[];
+  /** 图内方向标记（target/upstream/downstream，用于节点视觉与 tooltip 区分） */
+  direction?: 'target' | 'upstream' | 'downstream';
 }
 
 export interface EquityEdgeDTO {

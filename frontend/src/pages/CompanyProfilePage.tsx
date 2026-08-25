@@ -1359,6 +1359,7 @@ export default function CompanyProfilePage() {
                         nodes={equityData.nodes}
                         edges={equityData.edges}
                         targetId={equityData.target?.entity_id || ''}
+                        downstreamRelations={equityData.downstream_relations}
                       />
                     </Suspense>
                   </div>

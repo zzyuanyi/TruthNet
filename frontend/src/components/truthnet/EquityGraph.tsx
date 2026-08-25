@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, ExtensionCategory, Graph, register } from '@antv/g6';
-import type { EquityNodeDTO, EquityEdgeDTO } from '@/types/truthnet';
+import type {
+  DownstreamRelation,
+  DownstreamRiskSignal,
+  EquityNodeDTO,
+  EquityEdgeDTO,
+} from '@/types/truthnet';
 
 interface EquityGraphProps {
   nodes: EquityNodeDTO[];
   edges: EquityEdgeDTO[];
   targetId: string;
+  /** 8/25 下游（子公司/被投资企业）直接持股关系：合并进股权图并展示风险信号 */
+  downstreamRelations?: DownstreamRelation[];
 }
 
 const RISK_LEVEL_COLORS: Record<string, string> = {
@@ -13,6 +20,7 @@ const RISK_LEVEL_COLORS: Record<string, string> = {
   orange: '#f97316',
   yellow: '#eab308',
   blue: '#3b82f6',
+  green: '#22c55e',
   unknown: '#6b7280',
 };
 
@@ -21,6 +29,7 @@ const RISK_LEVEL_LABELS: Record<string, string> = {
   orange: '中高危',
   yellow: '中等',
   blue: '低风险',
+  green: '正常',
   unknown: '未知',
 };
 
@@ -40,6 +49,7 @@ const NODE_RADIUS: Record<string, number> = {
 
 interface GraphLayoutNode extends EquityNodeDTO {
   nodeType: string;
+  direction: 'target' | 'upstream' | 'downstream';
   hop: number;
   x: number;
   y: number;
@@ -96,13 +106,18 @@ function computeGraphLayout(
 
   const byHop = new Map<number, GraphLayoutNode[]>();
   nodes.forEach(n => {
-    const nodeType =
-      n.id === targetId || n.entity_id === targetId
-        ? 'target'
-        : mapEntityType(n.entity_type || '');
+    const isTarget =
+      n.id === targetId || n.entity_id === targetId || n.direction === 'target';
+    const isDownstream = !isTarget && n.direction === 'downstream';
+    const nodeType = isTarget ? 'target' : mapEntityType(n.entity_type || '');
+    const direction: GraphLayoutNode['direction'] = isTarget
+      ? 'target'
+      : isDownstream
+        ? 'downstream'
+        : 'upstream';
     const h = hops.get(n.id)!;
     if (!byHop.has(h)) byHop.set(h, []);
-    byHop.get(h)!.push({ ...n, nodeType, hop: h, x: 0, y: 0 });
+    byHop.get(h)!.push({ ...n, nodeType, direction, hop: h, x: 0, y: 0 });
   });
 
   const layerCount = Math.max(1, maxHop + 1);
@@ -136,22 +151,35 @@ function nodeFill(d: GraphLayoutNode): string {
 
 function nodeInnerText(d: GraphLayoutNode): string {
   if (d.nodeType === 'target') return '目标';
+  if (d.direction === 'downstream') return '下';
   if (d.nodeType === 'person') return '人';
   if (d.nodeType === 'fund') return '机构';
   return '';
 }
 
 function tooltipContent(d: GraphLayoutNode): string {
+  const directionLabel =
+    d.direction === 'downstream'
+      ? '下游 · 子公司/被投资企业'
+      : d.direction === 'target'
+        ? '目标公司'
+        : '上游 · 股东/关联方';
   const typeLabel =
-    d.nodeType === 'target'
-      ? '目标公司'
-      : d.nodeType === 'person'
-        ? '自然人'
-        : d.nodeType === 'fund'
-          ? '机构投资者'
-          : '公司';
-  const risk = d.risk_level ? `风险等级：${RISK_LEVEL_LABELS[d.risk_level] || d.risk_level}` : '';
-  return `<div style="font-weight:600;margin-bottom:4px">${d.name}（第 ${d.hop} 层）</div><div>类型：${typeLabel}</div>${risk ? `<div>${risk}</div>` : ''}`;
+    d.nodeType === 'person'
+      ? '自然人'
+      : d.nodeType === 'fund'
+        ? '机构投资者'
+        : '公司';
+  const risk = d.risk_level
+    ? `风险等级：${RISK_LEVEL_LABELS[d.risk_level] || d.risk_level}`
+    : '';
+  const signals =
+    d.risk_signals && d.risk_signals.length > 0
+      ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(128,128,128,.35)">负面风险信号：${d.risk_signals
+          .map((s) => s.title)
+          .join('；')}</div>`
+      : '';
+  return `<div style="font-weight:600;margin-bottom:4px">${d.name}</div><div>${directionLabel} · ${typeLabel}</div>${risk ? `<div>${risk}</div>` : ''}${signals}`;
 }
 
 function isRiskNode(d: GraphLayoutNode): boolean {
@@ -179,7 +207,12 @@ class BreathingCircle extends Circle {
 
 register(ExtensionCategory.NODE, 'breathing-circle', BreathingCircle);
 
-export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
+export function EquityGraph({
+  nodes,
+  edges,
+  targetId,
+  downstreamRelations,
+}: EquityGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 520 });
@@ -198,9 +231,64 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
     return () => window.removeEventListener('resize', updateDimensions);
   }, []);
 
+  // 8/25 下游风险可视化：把下游（子公司/被投资企业）转成节点+边合并进图，
+  // 让股权图在展示上游穿透的同时，也呈现下游主体的风险信号。
+  const merged = useMemo(() => {
+    const relations = downstreamRelations ?? [];
+    if (relations.length === 0) return { nodes, edges };
+    // 边 source/target 的语义是 node.id；需定位目标节点的真实 id
+    const targetNode = nodes.find(
+      (n) => n.id === targetId || n.entity_id === targetId,
+    );
+    const actualTargetId = targetNode?.id ?? targetId;
+
+    const dsNodes: EquityNodeDTO[] = relations.map((r, i) => {
+      const key = r.entity_id || r.wind_code || `ds${i}`;
+      const id = `downstream:${key}`;
+      return {
+        id,
+        entity_id: r.entity_id || id,
+        name: r.sec_name,
+        entity_type: 'Company',
+        wind_code: r.wind_code || null,
+        match_confidence: null,
+        risk_level: r.risk_level ?? 'unknown',
+        mock: true,
+        source_system: 'downstream',
+        risk_signals: r.risk_signals ?? [],
+        direction: 'downstream' as const,
+      };
+    });
+
+    const dsEdges: EquityEdgeDTO[] = relations.map((r, i) => {
+      const key = r.entity_id || r.wind_code || `ds${i}`;
+      return {
+        id: `downstream:edge:${key}`,
+        source: actualTargetId,
+        target: `downstream:${key}`,
+        relation_type: r.relation || '持股',
+        ownership_pct: r.ownership_pct,
+        control_pct: null,
+        valid_from: null,
+        valid_to: null,
+        source_id: null,
+        match_confidence: null,
+        relationship_id: null,
+        source_record_id: null,
+        report_period: null,
+        ann_dt: null,
+        is_latest: true,
+        mock: true,
+        source_system: 'downstream',
+      };
+    });
+
+    return { nodes: [...nodes, ...dsNodes], edges: [...edges, ...dsEdges] };
+  }, [nodes, edges, downstreamRelations, targetId]);
+
   const layout = useMemo(
-    () => computeGraphLayout(nodes, edges, targetId, dimensions.width),
-    [nodes, edges, targetId, dimensions.width],
+    () => computeGraphLayout(merged.nodes, merged.edges, targetId, dimensions.width),
+    [merged, targetId, dimensions.width],
   );
 
   // 用 G6 渲染（Canvas 渲染器）；主题色经 getComputedStyle 读取，主题切换时需重新渲染
@@ -230,7 +318,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
           id: n.id,
           data: { ...n },
         })),
-        edges: edges.map(e => ({
+        edges: merged.edges.map(e => ({
           id: e.id,
           source: e.source,
           target: e.target,
@@ -349,7 +437,7 @@ export function EquityGraph({ nodes, edges, targetId }: EquityGraphProps) {
         container.querySelectorAll('canvas').forEach(c => c.remove());
       }
     };
-  }, [layout, edges]);
+  }, [layout, merged]);
 
   const handleZoomIn = () => graphRef.current?.zoomBy(1.3);
   const handleZoomOut = () => graphRef.current?.zoomBy(0.7);
