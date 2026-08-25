@@ -39,6 +39,21 @@ const RISK_SEVERITY_LABELS: Record<string, string> = {
   green: "正常",
   unknown: "数据不足",
 };
+
+// 后端色彩词表（red/orange/yellow/blue/green/unknown）→ 信封卡皮肤等级
+const chainSeveritySkin = (
+  level: string | undefined,
+): "critical" | "high" | "medium" | "low" | "info" =>
+  ({
+    red: "critical",
+    orange: "high",
+    yellow: "medium",
+    blue: "low",
+    green: "info",
+    unknown: "info",
+  } as Record<string, "critical" | "high" | "medium" | "low" | "info">)[
+    level ?? ""
+  ] ?? "info";
 const RULE_UNIT_LABELS: Record<string, string> = {
   percent: "%",
   percentage_point: "个百分点",
@@ -1186,7 +1201,8 @@ export default function CompanyProfilePage() {
                   <InsightDisclosure
                     key={ci}
                     severity={
-                      chain.risk_level as "high" | "medium" | "low" | "info"
+                      // 后端 derivation_chains 用色彩词表（red/orange/yellow/blue/green），映射到信封皮肤
+                      chainSeveritySkin(chain.risk_level)
                     }
                     defaultOpen={ci === 0}
                     title={<span>{chain.conclusion}</span>}

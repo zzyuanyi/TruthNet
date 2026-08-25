@@ -72,7 +72,8 @@ export function InsightDisclosure({
   const [mounted, setMounted] = useState(false);
   const panelId = useId();
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const skin = SEVERITY_SKIN[severity];
+  // 防御兜底：未知 severity（如后端色彩词表 red/yellow 直传）回落 info，绝不因皮肤缺失崩溃
+  const skin = SEVERITY_SKIN[severity] ?? SEVERITY_SKIN.info;
 
   useEffect(() => setMounted(true), []);
 
