@@ -1,7 +1,6 @@
 // 织网鉴真 TruthNet - 企业画像页
 // T3: 5 区块（概览/财务/股权/舆情/证据），使用新组件
 
-import type { LucideIcon } from "lucide-react";
 import {
   useState,
   useEffect,
@@ -158,9 +157,6 @@ import {
 import {
   ArrowLeft,
   AlertTriangle,
-  TrendingUp,
-  GitBranch,
-  Newspaper,
   FileText,
   ChevronDown,
   ChevronRight,
@@ -169,17 +165,22 @@ import {
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
+import "@phosphor-icons/web/duotone";
 import {
   truthnetAPI,
   type EvidenceLookupData,
   type RuleDefinition,
 } from "@/lib/api-client";
-const EquityGraph = lazy(() =>
-  import("@/components/truthnet/EquityGraph").then((m) => ({
-    default: m.EquityGraph,
+import { RelatedPartyTable } from "@/components/truthnet/RelatedPartyTable";
+const EquityOrbit3D = lazy(() =>
+  import("@/components/truthnet/EquityOrbit3D").then((m) => ({
+    default: m.EquityOrbit3D,
   })),
 );
-import { RelatedPartyTable } from "@/components/truthnet/RelatedPartyTable";
+import type {
+  OrbitGraphNode,
+  OrbitGraphEdge,
+} from "@/components/truthnet/EquityOrbit3D";
 import {
   RuleCard,
   type RuleEvidenceSummary,
@@ -262,15 +263,15 @@ const riskLevelConfig: Record<RiskLevel, { label: string; color: string }> = {
   unknown: { label: "未知", color: "bg-gray-500 text-white" },
 };
 
-// 区块标题：mono 编号 + 主色方块 + 细线，对齐主界面设计语言
+// 区块标题：mono 编号 + 主色方块 + Phosphor 双色图标 + 扫光标题，对齐主界面设计语言
 function SectionHeading({
   index,
-  icon: Icon,
+  ph,
   title,
   hint,
 }: {
   index: string;
-  icon: LucideIcon;
+  ph: string;
   title: string;
   hint?: string;
 }) {
@@ -283,8 +284,8 @@ function SectionHeading({
         className="size-1.5 bg-primary shadow-[0_0_8px_var(--color-primary)]"
         aria-hidden
       />
-      <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight">
-        <Icon className="size-5 text-primary" strokeWidth={2.2} />
+      <h2 className="tn-sweep relative flex items-center gap-2 overflow-hidden text-xl font-bold tracking-tight">
+        <i className={`ph ph-duotone ${ph} text-[22px] leading-none text-primary`} />
         {title}
       </h2>
       {hint ? (
@@ -302,13 +303,13 @@ function SectionHeading({
 
 // 锚点导航项
 const navItems = [
-  { id: "overview", label: "概览", icon: AlertTriangle },
-  { id: "conclusions", label: "核心结论", icon: FileText },
-  { id: "impact", label: "影响与建议", icon: Shield },
-  { id: "financial", label: "财务异常", icon: TrendingUp },
-  { id: "equity", label: "股权穿透", icon: GitBranch },
-  { id: "sentiment", label: "舆情时间线", icon: Newspaper },
-  { id: "evidence", label: "证据引用", icon: FileText },
+  { id: "overview", label: "概览", ph: "ph-gauge" },
+  { id: "conclusions", label: "核心结论", ph: "ph-file-text" },
+  { id: "impact", label: "影响与建议", ph: "ph-shield-star" },
+  { id: "financial", label: "财务异常", ph: "ph-chart-bar-up" },
+  { id: "equity", label: "股权穿透", ph: "ph-tree-structure" },
+  { id: "sentiment", label: "舆情时间线", ph: "ph-newspaper" },
+  { id: "evidence", label: "证据引用", ph: "ph-files" },
 ];
 
 export default function CompanyProfilePage() {
@@ -355,6 +356,7 @@ export default function CompanyProfilePage() {
   // 8/23 分步渲染：区分「未加载」与「无数据」（区块级骨架 vs 暂无）
   const [financeLoaded, setFinanceLoaded] = useState(false);
   const [eventsLoaded, setEventsLoaded] = useState(false);
+  const [orbitDetail, setOrbitDetail] = useState<OrbitGraphNode | null>(null);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = {
@@ -715,7 +717,7 @@ export default function CompanyProfilePage() {
 
   const handleViewRuleEvidence = (ruleId: string) => {
     const rule = financialAnomalies.find((item) => item.rule_id === ruleId);
-    if (rule) {
+    if (rule && (rule.evidence_ids?.length ?? 0) > 0) {
       void openEvidenceDetails(
         rule.evidence_ids,
         `${rule.rule_name || rule.rule_id} · 证据详情`,
@@ -916,7 +918,15 @@ export default function CompanyProfilePage() {
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
               >
-                <item.icon className="h-4 w-4" />
+                <i
+                  className={cn(
+                    "ph ph-duotone text-[15px] leading-none",
+                    item.ph,
+                    activeSection === item.id
+                      ? "opacity-100"
+                      : "opacity-70",
+                  )}
+                />
                 {item.label}
               </button>
             ))}
@@ -1184,7 +1194,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.conclusions} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <FileText className="h-5 w-5" />
+                <i className="ph ph-duotone ph-file-text text-[20px] text-primary" />
                 核心结论
               </h2>
             </Reveal>
@@ -1302,7 +1312,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.impact} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <TrendingUp className="h-5 w-5" />
+                <i className="ph ph-duotone ph-shield-star text-[20px] text-primary" />
                 影响与建议
               </h2>
             </Reveal>
@@ -1496,7 +1506,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.financial} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <TrendingUp className="h-5 w-5" />
+                <i className="ph ph-duotone ph-chart-bar-up text-[20px] text-primary" />
                 财务异常
               </h2>
             </Reveal>
@@ -1511,25 +1521,64 @@ export default function CompanyProfilePage() {
             ) : financialAnomalies.length > 0 ? (
               <>
                 <FinanceTrendOverview rules={financialAnomalies} />
-                <div className="space-y-3">
-                  {financialAnomalies.map((anomaly) => (
-                    <RuleCard
-                      key={anomaly.rule_id}
-                      rule={anomaly}
-                      onViewEvidence={handleViewRuleEvidence}
-                      // A2：触发规则证据直接平铺在信号下方（弹窗仅作次级入口）
-                      evidenceSummaries={
-                        anomaly.status === "triggered"
-                          ? (anomaly.evidence_ids || [])
-                              .map((id) => ruleEvidenceSummary[id])
-                              .filter((x): x is RuleEvidenceSummary =>
-                                Boolean(x),
-                              )
-                          : undefined
-                      }
-                    />
-                  ))}
+                <div className="grid gap-2.5 md:grid-cols-2">
+                  {financialAnomalies
+                    .filter((a) => a.status === "triggered")
+                    .map((anomaly, i) => (
+                      <div
+                        key={anomaly.rule_id}
+                        className="tn-rise"
+                        style={{ animationDelay: `${i * 70}ms` }}
+                      >
+                        <RuleCard
+                          rule={anomaly}
+                          onViewEvidence={handleViewRuleEvidence}
+                          evidenceSummaries={(anomaly.evidence_ids || [])
+                            .map((id) => ruleEvidenceSummary[id])
+                            .filter((x): x is RuleEvidenceSummary => Boolean(x))}
+                        />
+                      </div>
+                    ))}
                 </div>
+                {financialAnomalies.some((a) => a.status !== "triggered") && (
+                  <div className="tn-sweep relative mt-3 overflow-hidden rounded-lg border border-border/50 bg-muted/25 px-3 py-2.5">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                        未触发 · {financialAnomalies.filter((a) => a.status !== "triggered").length} 项规则运行正常
+                      </span>
+                      <span className="h-px flex-1 bg-gradient-to-r from-border to-transparent" />
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {financialAnomalies
+                        .filter((a) => a.status !== "triggered")
+                        .map((a) => (
+                          <button
+                            key={a.rule_id}
+                            onClick={() => handleViewRuleEvidence(a.rule_id)}
+                            className="group inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/80 px-2.5 py-1 text-[11px] text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
+                          >
+                            <span
+                              className={`size-1.5 rounded-full ${
+                                a.status === "insufficient_data"
+                                  ? "bg-yellow-500/70"
+                                  : a.status === "not_applicable"
+                                    ? "bg-gray-400/70"
+                                    : "bg-emerald-500/80 shadow-[0_0_6px_rgba(16,185,129,0.6)]"
+                              }`}
+                            />
+                            {a.rule_name || a.rule_id}
+                            <span className="font-mono text-[10px] opacity-60 group-hover:opacity-100">
+                              {a.status === "insufficient_data"
+                                ? "数据不足"
+                                : a.status === "not_applicable"
+                                  ? "不适用"
+                                  : "通过"}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
                 {ruleDefinitions.length > 0 && (
                   <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-4">
                     <div className="mb-3 flex items-center gap-2 flex-wrap">
@@ -1699,7 +1748,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.equity} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <GitBranch className="h-5 w-5" />
+                <i className="ph ph-duotone ph-tree-structure text-[20px] text-primary" />
                 股权穿透图
               </h2>
             </Reveal>
@@ -1833,24 +1882,127 @@ export default function CompanyProfilePage() {
                           )}{" "}
                         跳
                       </Badge>
-                      <span>从左到右为向上穿透层级，可滚轮缩放、按住拖拽</span>
+                      <span>中心恒星为标的公司，行星按穿透层级环绕；hover 看摘要，点击行星展开全景详情</span>
                     </div>
                     <div className="mt-4">
                       <Suspense
                         fallback={
                           <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-                            股权图谱加载中…
+                            恒星系穿透模型渲染中…
                           </div>
                         }
                       >
-                        <EquityGraph
-                          nodes={equityData.nodes}
-                          edges={equityData.edges}
+                        <EquityOrbit3D
+                          nodes={equityData.nodes as unknown as OrbitGraphNode[]}
+                          edges={equityData.edges as unknown as OrbitGraphEdge[]}
                           targetId={equityData.target?.entity_id || ""}
-                          downstreamRelations={equityData.downstream_relations}
+                          onSelectNode={(n) => setOrbitDetail(n)}
                         />
                       </Suspense>
                     </div>
+
+                    <Dialog
+                      open={orbitDetail !== null}
+                      onOpenChange={(open) => {
+                        if (!open) setOrbitDetail(null);
+                      }}
+                    >
+                      <DialogContent className="max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle className="flex items-center gap-2">
+                            <span className="inline-block h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
+                            {orbitDetail?.name}
+                            <Badge variant="outline" className="text-[10px]">
+                              {orbitDetail?.entity_type === "person"
+                                ? "自然人"
+                                : orbitDetail?.entity_type === "listed_company"
+                                  ? "上市公司"
+                                  : "企业主体"}
+                            </Badge>
+                          </DialogTitle>
+                          <DialogDescription className="text-xs">
+                            股权穿透 · 关联关系全景
+                          </DialogDescription>
+                        </DialogHeader>
+                        {orbitDetail && (
+                          <div className="space-y-3">
+                            <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                              <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                直接关联（{equityData.edges.filter(
+                                  (e) => e.source === orbitDetail.id || e.target === orbitDetail.id,
+                                ).length} 条）
+                              </div>
+                              <div className="space-y-1.5">
+                                {equityData.edges
+                                  .filter(
+                                    (e) => e.source === orbitDetail.id || e.target === orbitDetail.id,
+                                  )
+                                  .map((e, i) => {
+                                    const isSource = e.source === orbitDetail.id;
+                                    const otherId = isSource ? e.target : e.source;
+                                    const other =
+                                      equityData.nodes.find((n) => n.id === otherId)?.name ?? otherId;
+                                    return (
+                                      <div
+                                        key={e.id || i}
+                                        className="flex items-center justify-between gap-2 rounded border border-border/40 bg-card/60 px-2.5 py-1.5"
+                                      >
+                                        <span className="min-w-0 truncate text-xs text-foreground">
+                                          {isSource ? "持股 → " : "← 持股 "}
+                                          {other}
+                                        </span>
+                                        <span className="shrink-0 font-mono text-[11px] font-semibold text-primary">
+                                          {e.ownership_pct != null ? `${e.ownership_pct}%` : (e.relation_type ?? "—")}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                              </div>
+                            </div>
+                            <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                              <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                所在穿透链路
+                              </div>
+                              {(equityData.equity_chains as Array<Record<string, unknown>> || [])
+                                .filter((c) =>
+                                  Array.isArray(c.path_names)
+                                    ? (c.path_names as string[]).some(
+                                        (nm) => nm === orbitDetail.name,
+                                      )
+                                    : false,
+                                )
+                                .slice(0, 4)
+                                .map((c, i) => (
+                                  <div
+                                    key={i}
+                                    className="mb-1 flex items-center justify-between gap-2 text-xs"
+                                  >
+                                    <span className="min-w-0 truncate text-muted-foreground">
+                                      {(c.path_names as string[]).join(" → ")}
+                                    </span>
+                                    <span className="shrink-0 font-mono font-semibold text-foreground">
+                                      {typeof c.final_control_pct === "number"
+                                        ? `${c.final_control_pct.toFixed(2)}%`
+                                        : "—"}
+                                    </span>
+                                  </div>
+                                ))}
+                              {(equityData.equity_chains || []).filter((c) =>
+                                Array.isArray(c.path_names)
+                                  ? (c.path_names as unknown as string[]).some(
+                                      (nm) => nm === orbitDetail.name,
+                                    )
+                                  : false,
+                              ).length === 0 && (
+                                <div className="text-xs text-muted-foreground">
+                                  未出现在多跳穿透链中（仅直接持股）
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </DialogContent>
+                    </Dialog>
                   </CardContent>
                 </Card>
 
@@ -1880,7 +2032,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.sentiment} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <Newspaper className="h-5 w-5" />
+                <i className="ph ph-duotone ph-newspaper text-[20px] text-primary" />
                 舆情时间线
               </h2>
             </Reveal>
@@ -1936,7 +2088,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.evidence} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <FileText className="h-5 w-5" />
+                <i className="ph ph-duotone ph-files text-[20px] text-primary" />
                 证据引用
               </h2>
             </Reveal>

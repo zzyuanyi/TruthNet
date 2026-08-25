@@ -185,3 +185,23 @@
 
 ### 构建约束
 - three/globe 生态体积大，已按 `manualChunks` 三段拆包：`vendor-three`（three 核心）/ `vendor-three-ext`（examples）/ `vendor-globe`（globe.gl 系列），全部低于 1300kB 告警线；仅被懒加载页面引用，不进首屏主包。
+## 企业画像页（2026-08 升级）
+
+### 股权穿透 · 3D 恒星系（EquityOrbit3D）
+- 隐喻：标的公司=恒星（发光核心+电离环），股东=行星按持股比例定轨道半径/大小/速度公转，行星带自家小卫星；第三层节点=细碎星尘微光粒子。
+- 背景：400+ 星尘粒子 + 中央泛 primary 色星云（加法混合 Sprite）。
+- 交互两级：hover=玻璃拟态轻卡（名称/类型/持股比，跟随指针）；click=完整详情 Dialog（含权益链路径）。
+- 顶点描边发光（shader 注 onBeforeCompile）+ 拖拽旋转/滚轮缩放，`prefers-reduced-motion` 时公转速度×0.2。
+
+### 集成化原则（用户明确要求：逻辑清楚、信息不漏、密度更高）
+- 长列表一律分级：触发规则=双列网格信封卡；未触发规则=灰化 chip 墙一行带过；只在一处展开全量细节。
+- 分区导航：左侧 sticky 锚点导航（Phosphor Duotone 小图标）+ 滚动高亮。
+- 财务异常区：概览→触发（双列信封）→未触发（chip 墙），三段式压缩纵向长度。
+
+### 图标语言
+- 画像页 section 标题与导航统一 Phosphor Duotone（ph-chart-bar-up / ph-tree-structure / ph-newspaper / ph-shield-star / ph-file-text / ph-files / ph-gauge），弃 lucide 直线图标（用户认定 AI 味重）。
+
+### 特效规范
+- 标题扫光：`.tn-sweep`（一次性 2.6s，hover 复放 1.1s）。
+- 卡片入场：`.tn-rise`（0.55s 上浮+微缩放，交错 70ms）。
+- 顶部噪声 tn-noise + primary 光斑 blur 已有，保持。
