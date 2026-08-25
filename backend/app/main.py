@@ -43,6 +43,7 @@ from app.api.v1.routers import equity as equity_v1
 from app.api.v1.routers import events as events_v1
 from app.api.v1.routers import finance as finance_v1
 from app.api.v1.routers import health as health_v1
+from app.api.v1.routers import market_pulse as market_pulse_v1
 from app.api.v1.routers import provenance as provenance_v1
 from app.api.v1.routers import reports as reports_v1
 from app.api.v1.routers import risk as risk_v1
@@ -222,6 +223,7 @@ async def health_check():
 
 # ── V12 路由注册（每个 URL 只注册一次）──
 app.include_router(health_v1.router, prefix="/api/v1")
+app.include_router(market_pulse_v1.router, prefix="/api/v1")
 app.include_router(companies_v1.router, prefix="/api/v1")
 app.include_router(equity_v1.router, prefix="/api/v1")
 app.include_router(finance_v1.router, prefix="/api/v1")

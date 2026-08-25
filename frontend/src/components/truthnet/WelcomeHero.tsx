@@ -1,5 +1,6 @@
 import { Reveal } from '@/components/reveal';
 import { ArrowDown, FileText, Shield, TrendingUp, Zap } from 'lucide-react';
+import { MarketPulseGlobe } from '@/components/truthnet/MarketPulseGlobe';
 
 interface QuickAction {
   icon: typeof TrendingUp;
@@ -82,23 +83,31 @@ export function WelcomeHero({ onSendSample, onOpenCompare }: WelcomeHeroProps) {
           </p>
         </Reveal>
 
-        {/* 快捷入口 */}
-        <div className="mt-10 grid grid-cols-2 gap-3">
+        {/* 快捷入口：1×4 玻璃拟态 + 波浪滚动 */}
+        <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-4">
           {QUICK_ACTIONS.map((action, i) => (
             <Reveal key={action.label} delay={520 + i * 90} className="h-full">
               <button
                 onClick={() => (action.href ? onOpenCompare() : onSendSample(action.text))}
-                className="group flex h-full w-full flex-col items-start rounded-md border border-border bg-card p-4 text-left shadow-none transition-all duration-300 hover:border-primary hover:bg-primary hover:text-primary-foreground"
+                className="tn-glass-card group flex h-full w-full flex-col items-start rounded-md p-4 text-left animate-tn-wave"
+                style={{ animationDelay: `${i * 260}ms` }}
               >
-                <action.icon className="mb-3 h-5 w-5 shrink-0 text-primary transition-colors duration-300 group-hover:text-primary-foreground" />
-                <span className="text-sm font-medium">{action.label}</span>
-                <span className="mt-1 text-xs leading-relaxed text-muted-foreground transition-colors duration-300 group-hover:text-primary-foreground/80">
+                <action.icon className="mb-3 h-5 w-5 shrink-0 text-primary transition-colors duration-300 group-hover:text-primary" />
+                <span className="text-sm font-medium text-foreground">{action.label}</span>
+                <span className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {action.text}
                 </span>
               </button>
             </Reveal>
           ))}
         </div>
+
+        {/* 全球舆情监控：旋转地球 + 鉴真之眼 */}
+        <Reveal delay={860}>
+          <div className="mt-10">
+            <MarketPulseGlobe />
+          </div>
+        </Reveal>
 
         {/* 底部提示 */}
         <Reveal delay={900}>

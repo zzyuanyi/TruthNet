@@ -240,6 +240,20 @@ async function request<T>(
 // API 客户端
 // ---------------------------------------------------------------------------
 
+/** 轻量 fetch 封装：GET /api/v1/{path} 并解包 V12 响应的 data 字段 */
+export async function truthnetFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ title: 'Network Error', detail: res.statusText }));
+    throw new Error(`${(error as { title?: string }).title ?? 'Error'}: ${(error as { detail?: string }).detail ?? res.status}`);
+  }
+  const json = (await res.json()) as V12Response<T>;
+  return json.data;
+}
+
 export const truthnetAPI = {
   // 健康检查（后端实际路径为 /api/v1/healthz，审计 P2-1 修正原 /health 404）
   health: () => request<{ status: string; version?: string; profile?: string }>('GET', '/healthz'),
@@ -402,6 +416,27 @@ export const truthnetAPI = {
         session_id: sessionId,
       }),
     }),
+
+  // 全球市场舆情脉冲: GET /api/v1/market-pulse
+  getMarketPulse: () =>
+    request<{
+      items: Array<{
+        id: string;
+        title: string;
+        url: string;
+        source: string;
+        region_code: string;
+        country: string;
+        lat: number;
+        lng: number;
+        published_at: string;
+        severity: 'info' | 'positive' | 'warning' | 'negative';
+        keywords: string[];
+      }>;
+      ok_sources: number;
+      failed_sources: number;
+      fetched_at: string;
+    }>('GET', '/market-pulse'),
 };
 
 // ---------------------------------------------------------------------------

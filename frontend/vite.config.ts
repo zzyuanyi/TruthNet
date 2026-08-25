@@ -37,6 +37,10 @@ export default defineConfig({
       output: {
         manualChunks(id: string) {
           if (!id.includes('node_modules')) return;
+          // three.js + react-globe.gl 单独拆包（体积大且仅地球组件使用）
+          if (id.includes('react-globe.gl') || id.includes('globe.gl') || id.includes('three-globe') || id.includes('three-render-objects')) return 'vendor-globe';
+          if (id.includes('/three/examples/')) return 'vendor-three-ext';
+          if (id.includes('/three/')) return 'vendor-three';
           if (id.includes('/d3-') || id.includes('/d3/') || id.includes('d3-selection') || id.includes('d3-interpolate')) return 'vendor-d3';
           if (id.includes('recharts') || id.includes('victory-vendor') || id.includes('/d3')) return 'vendor-charts';
           if (id.includes('react-syntax-highlighter') || id.includes('refractor') || id.includes('prismjs') || id.includes('highlight.js')) return 'vendor-syntax';

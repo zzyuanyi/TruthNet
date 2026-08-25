@@ -100,7 +100,9 @@
 
 ### 布局
 - 多行交错大标题：`织网鉴真`（pl-6）→ `财报反欺诈`（无缩进）→ `· 智能问答`（pl-12，`font-light`），营造电影感的视觉纵深与节奏。
-- 快捷入口 2×2 网格，卡片左对齐图标 + 标题 + 描述，hover 反白（`bg-white` + `text-black`）。
+- 快捷入口 **1×4 一行四张**（`grid-cols-2 sm:grid-cols-4`，移动端回落 2×2），卡片竖排：图标 + 标题 + 描述。
+- 快捷卡为**液态玻璃**（`.tn-glass-card`，用户指定参考 Serene 语言）：低透明度底 + `backdrop-blur` + 顶部 1px 高光内阴影 + `mask-composite` 渐变描边；**这是欢迎区专属例外**，产品主体（画像页/表格/对话流）仍遵守「实底 + hairline、禁玻璃拟态」。
+- 卡片波浪动画 `tn-wave`：透明度/亮度/位移三通道同周期起伏，`animation-delay` 按索引递增（约 120ms），形成一行扫过的波动节奏；`--reduce-motion` 时静止。
 
 ### 动效（欢迎区专属入场）
 - Reveal 交错入场：IntersectionObserver（threshold 0.15）触发，`translate-y-8 + opacity-0` → `translate-y-0 + opacity-100`，`duration-700 ease-out`，`transitionDelay` 以 90–120ms 递增。
@@ -114,7 +116,8 @@
 - 一堆数据点 / 网线从四周汇聚，交织成上下眼睑 + 瞳孔的「眼」；瞳孔左右扫视，寓意「一直在观测、持续鉴真」。
 
 ### 实现
-- `TruthNetMark`（SVG，`64×40` ≈ 1.6:1）：上下眼睑弧线 + 8 条瞳孔→眼睑辐射线（网） + 8 个数据点节点 + 扫视瞳孔（实心 + 半透明外圈），全程 `currentColor`。
+- `TruthNetMark`（SVG，`64×40` ≈ 1.6:1）：上下眼睑弧线 + 8 条瞳孔→眼睑辐射线（网） + 8 个数据点节点 + 扫视瞳孔，全程 `currentColor`。
+- **瞳孔 = T/N 字母融合字形**（2026-08 按用户要求重构）：瞳环（半透明圆）中央以镜面对称笔画同时读出 T 与 N（横竖笔画共用），科技几何感、**去神秘学**——不做孤立三角/射线光环等共济会式构图。
 - 常驻态（header logo，`h-5 w-8 text-primary`）：仅瞳孔 `.tn-scan` 持续扫视（`translateX` 往返，`transform-box: fill-box`）。
 - 开场态（`IntroLogo` overlay，`.tn-intro`）：网线 `.tn-line` 逐条描出（`stroke-dashoffset`）→ 节点 `.tn-node` 点亮 → 瞳孔 `.tn-scan` 浮现后扫视 → 整体 `scale(0.14) + opacity-0` 缩小淡出，露出主界面常驻小眼。
 
@@ -145,3 +148,20 @@
 - 数字滚动（`CountUpNumber`）：hero 综合评分（0→score，800ms）+ bento 指标卡（规则数/舆情数/时间线事件数），`requestAnimationFrame` + ease-out，`prefers-reduced-motion` 时直接显示终值。
 - 指标卡悬浮：`tn-lift`（-2px 上浮 + shadow-md）+ `tn-card-sheen`（对角高光扫过）。
 - 全站噪点：`tn-noise`（SVG feTurbulence，`opacity-[0.035]`，`pointer-events-none`），压住 AI 味的"塑料平涂感"。
+
+## 市场脉搏地球（对话主界面欢迎区，2026-08 新增）
+
+> 用户构想：「眼睛在上俯瞰，下面半个旋转地球，全球金融舆情每 10 秒亮起一个点，点击看详情，10 分钟外的消息自动熄灭」。
+
+### 数据链路
+- 后端 `/api/v1/market-pulse`：聚合 6 个免费公开 RSS 源（CNBC 要闻/MarketWatch 头条/WSJ 市场/华尔街见闻等），覆盖 US/CN/ASIA/EU 四区域；每条含 `lat/lng`（区域锚点 + 确定性抖动防重叠）与 `severity`（标题关键词推断：critical > warning > info，中英双语词表）；60s 进程内缓存防打爆上游；单源失败自动降级不计入 items。
+- 前端 `MarketPulseGlobe`：10s 轮询（`truthnetFetch` 直连），30s 一次 TTL 清理，10 分钟外的亮点自动消失。
+
+### 视觉与交互
+- 地球：`react-globe.gl`，blue-marble 贴图 + 大气层辉光 + 经纬网，`autoRotate` 常转（速度 0.6，禁缩放），初始视点亚太大区（lat 22 / lng 105）。
+- 亮点：环形柱按 severity 三色分级（info 蓝 `#3b82f6` / warning 琥珀 `#f59e0b` / critical 红 `#ef4444`，语义风险色专用于数据标注的既有例外），柱高随严重度抬升；同坐标抖动散布防重叠，单点聚合上限 4 条。
+- 交互：点击亮点弹出该坐标舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；顶部 `TruthNetMark` 眼睛悬浮于地球上空俯瞰（呼应「织网鉴真一直在观测」）。
+- 状态条：三级别计数 + 轮询节奏（10s）+ 留存窗口（10min）+ 最近更新时间 + 失效源提示，`font-mono text-[10px]`。
+
+### 构建约束
+- three/globe 生态体积大，已按 `manualChunks` 三段拆包：`vendor-three`（three 核心）/ `vendor-three-ext`（examples）/ `vendor-globe`（globe.gl 系列），全部低于 1300kB 告警线；仅被懒加载页面引用，不进首屏主包。

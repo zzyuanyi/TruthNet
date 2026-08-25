@@ -323,3 +323,64 @@ body {
   );
   pointer-events: none;
 }
+
+/* ---------- 液态玻璃卡（欢迎区快捷入口 1×4） ---------- */
+.tn-glass-card {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-card) 55%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease,
+    background 0.25s ease;
+}
+
+/* 顶部高光描边（亮暗自适应，模拟玻璃边缘反光） */
+.tn-glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-foreground) 22%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+.tn-glass-card:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  box-shadow: 0 8px 28px -8px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--color-card) 75%, transparent);
+}
+
+/* ---------- 波浪浮动（四张卡交错起伏） ---------- */
+@keyframes tn-wave {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-tn-wave {
+  animation: tn-wave 4s ease-in-out infinite;
+}
+
+.animate-tn-wave:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.animate-tn-wave:nth-child(3) {
+  animation-delay: 1s;
+}
+
+.animate-tn-wave:nth-child(4) {
+  animation-delay: 1.5s;
+}
