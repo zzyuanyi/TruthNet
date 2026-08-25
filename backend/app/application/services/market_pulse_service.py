@@ -157,6 +157,51 @@ def _strip_ns(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+# ---------------------------------------------------------------------------
+# 内容级地理识别：标题命中关键词 → 覆盖源默认国别（哪块有新闻哪块亮）
+# 坐标一律取首都（用户要求：亮点落在相应国家的首都位置）
+# ---------------------------------------------------------------------------
+_GEO_RULES: tuple[tuple[str, str, float, float, tuple[str, ...]], ...] = (
+    # (country, region_code, lat, lng, keywords) —— 顺序即优先级：香港先于中国
+    ("中国香港", "ASIA", 22.32, 114.17, ("hong kong", "hang seng", "香港", "恒生")),
+    ("中国", "CN", 39.90, 116.41,
+     ("china", "chinese", "beijing", "shanghai", "shenzhen", "yuan",
+      "中国", "北京", "上海", "深圳", "人民币", "A股", "a股")),
+    ("美国", "US", 38.90, -77.04,
+     ("u.s.", "us stocks", "us fed", "wall street", "nasdaq", "dow jones",
+      "the dow", "s&p", "washington", "treasury", "white house",
+      "美股", "美元", "美联储", "纳斯达克", "华盛顿", "白宫")),
+    ("日本", "ASIA", 35.68, 139.69,
+     ("japan", "tokyo", "nikkei", "yen", "boj", "日本", "东京", "日经", "日元", "日本央行")),
+    ("韩国", "ASIA", 37.57, 126.98, ("korea", "seoul", "kospi", "韩国", "首尔")),
+    ("印度", "ASIA", 28.61, 77.21, ("india", "mumbai", "rupee", "印度", "孟买", "卢比")),
+    ("新加坡", "ASIA", 1.35, 103.82, ("singapore", "新加坡")),
+    ("澳大利亚", "ASIA", -35.28, 149.13, ("australia", "sydney", "aussie", "澳大利亚", "悉尼")),
+    ("德国", "EU", 52.52, 13.40,
+     ("germany", "german", "berlin", "frankfurt", "dax", "德国", "柏林", "法兰克福")),
+    ("法国", "EU", 48.86, 2.35, ("france", "french", "paris", "法国", "巴黎")),
+    ("英国", "EU", 51.51, -0.13,
+     ("britain", "london", "ftse", "sterling", "pound", "英国", "伦敦", "英镑")),
+    ("俄罗斯", "EU", 55.76, 37.62, ("russia", "moscow", "ruble", "俄罗斯", "莫斯科", "卢布")),
+    ("加拿大", "US", 45.42, -75.70, ("canada", "toronto", "加拿大", "多伦多")),
+)
+
+# 聚合兜底：未命中内容识别的国家也统一锚定首都（如「欧洲」→ 布鲁塞尔）
+_COUNTRY_CAPITALS: dict[str, tuple[float, float]] = {
+    country: (lat, lng) for country, _, lat, lng, _ in _GEO_RULES
+}
+_COUNTRY_CAPITALS["欧洲"] = (50.85, 4.35)  # 布鲁塞尔（欧盟总部）
+
+
+def _detect_geo(title: str) -> tuple[str, str, float, float] | None:
+    """标题关键词 → (国家, 区域, 首都纬度, 首都经度)；未命中返回 None 走源默认。"""
+    text = title.lower()
+    for country, region, lat, lng, keywords in _GEO_RULES:
+        if any(kw in text or kw in title for kw in keywords):
+            return country, region, lat, lng
+    return None
+
+
 _SEVERITY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (
         (
@@ -225,16 +270,17 @@ def _parse_feed(xml_text: str, source: PulseSource) -> list[dict[str, object]]:
             pub_date = pub_date.replace(tzinfo=timezone.utc)
 
         digest = hashlib.md5(link.encode("utf-8")).hexdigest()[:12]
+        geo = _detect_geo(title)  # 内容级识别：标题指向哪国，亮点就落在该国首都
         items.append(
             {
                 "id": f"mp_{digest}",
                 "title": title,
                 "url": link,
                 "source_name": source.name,
-                "region_code": source.region_code,
-                "country": source.country,
-                "lat": source.lat,
-                "lng": source.lng,
+                "region_code": geo[1] if geo else source.region_code,
+                "country": geo[0] if geo else source.country,
+                "lat": geo[2] if geo else source.lat,
+                "lng": geo[3] if geo else source.lng,
                 "published_at": pub_date,
                 "severity": _infer_severity(title),
             }
@@ -382,6 +428,10 @@ def _build_clusters(items: list[dict[str, object]]) -> list[dict[str, object]]:
             c["top_title"] = it["title"]
 
     for c in clusters.values():
+        # 亮点统一锚定该国首都（历史行坐标可能是源城市，如上海 → 北京）
+        cap = _COUNTRY_CAPITALS.get(str(c["country"]))
+        if cap:
+            c["lat"], c["lng"] = cap
         c["intensity"] = round(min(1.0, 0.25 + 0.75 * c["count"] / _INTENSITY_SAT), 2)
     return sorted(clusters.values(), key=lambda c: c["count"], reverse=True)
 

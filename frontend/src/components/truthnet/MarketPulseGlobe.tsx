@@ -290,12 +290,13 @@ export function MarketPulseGlobe() {
               pointLng="lng"
               pointColor="color"
               pointAltitude={((d: object) => {
+                // 贴面光圈：高度趋近于 0（不立柱），大小全靠半径表达热点强度
                 const c = d as ClusterPoint;
-                return 0.16 + c.intensity * 0.5;
+                return 0.012 + c.intensity * 0.02;
               }) as never}
               pointRadius={((d: object) => {
                 const c = d as ClusterPoint;
-                return 0.3 + c.intensity * 0.62;
+                return 0.26 + c.intensity * 0.58;
               }) as never}
               pointLabel={((d: object) => {
                 const c = d as ClusterPoint;
