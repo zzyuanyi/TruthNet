@@ -1482,13 +1482,13 @@ export default function CompanyProfilePage() {
                   src="/assets/hero-globe.jpg"
                   alt=""
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.07] dark:opacity-[0.22]"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center opacity-[0.18] dark:opacity-[0.4]"
                 />
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 bg-gradient-to-b from-card/70 via-card/40 to-card/80 dark:from-card/60 dark:via-card/30 dark:to-card/70"
+                  className="pointer-events-none absolute inset-0 bg-gradient-to-b from-card/50 via-card/20 to-card/75 dark:from-card/45 dark:via-card/15 dark:to-card/60"
                 />
-                <CardContent className="relative py-10 text-center">
+                <CardContent className="relative flex min-h-[260px] flex-col items-center justify-center py-10 text-center">
                   <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card/80 backdrop-blur-sm">
                     <Newspaper className="h-5 w-5 text-primary" />
                   </div>
