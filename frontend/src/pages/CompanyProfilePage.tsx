@@ -172,15 +172,11 @@ import {
   type RuleDefinition,
 } from "@/lib/api-client";
 import { RelatedPartyTable } from "@/components/truthnet/RelatedPartyTable";
-const EquityOrbit3D = lazy(() =>
-  import("@/components/truthnet/EquityOrbit3D").then((m) => ({
-    default: m.EquityOrbit3D,
-  })),
-);
+import { EquityGraph } from "@/components/truthnet/EquityGraph";
 import type {
-  OrbitGraphNode,
-  OrbitGraphEdge,
-} from "@/components/truthnet/EquityOrbit3D";
+  EquityGraphData,
+  EquityGraphNode,
+} from "@/components/truthnet/EquityGraph";
 import {
   RuleCard,
   type RuleEvidenceSummary,
@@ -356,7 +352,7 @@ export default function CompanyProfilePage() {
   // 8/23 分步渲染：区分「未加载」与「无数据」（区块级骨架 vs 暂无）
   const [financeLoaded, setFinanceLoaded] = useState(false);
   const [eventsLoaded, setEventsLoaded] = useState(false);
-  const [orbitDetail, setOrbitDetail] = useState<OrbitGraphNode | null>(null);
+  const [orbitDetail, setOrbitDetail] = useState<EquityNodeDTO | null>(null);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = {
@@ -1882,23 +1878,20 @@ export default function CompanyProfilePage() {
                           )}{" "}
                         跳
                       </Badge>
-                      <span>中心恒星为标的公司，行星按穿透层级环绕；hover 看摘要，点击行星展开全景详情</span>
+                      <span>悬停节点看摘要与持股信息，点击节点展开全景详情（含上下游风险）</span>
                     </div>
                     <div className="mt-4">
-                      <Suspense
-                        fallback={
-                          <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-                            恒星系穿透模型渲染中…
-                          </div>
+                      <EquityGraph
+                        data={equityData as unknown as EquityGraphData}
+                        onNodeClick={(n) =>
+                          setOrbitDetail({
+                            id: n.id,
+                            name: n.name,
+                            entity_type: n.type,
+                            risk_level: n.risk_level,
+                          })
                         }
-                      >
-                        <EquityOrbit3D
-                          nodes={equityData.nodes as unknown as OrbitGraphNode[]}
-                          edges={equityData.edges as unknown as OrbitGraphEdge[]}
-                          targetId={equityData.target?.entity_id || ""}
-                          onSelectNode={(n) => setOrbitDetail(n)}
-                        />
-                      </Suspense>
+                      />
                     </div>
 
                     <Dialog
@@ -1919,6 +1912,22 @@ export default function CompanyProfilePage() {
                                   ? "上市公司"
                                   : "企业主体"}
                             </Badge>
+                            {orbitDetail?.risk_level && orbitDetail.risk_level !== "unknown" && (
+                              <Badge
+                                variant="outline"
+                                className={
+                                  orbitDetail.risk_level === "red"
+                                    ? "border-red-500/40 bg-red-500/10 text-red-500"
+                                    : orbitDetail.risk_level === "orange"
+                                      ? "border-orange-500/40 bg-orange-500/10 text-orange-500"
+                                      : orbitDetail.risk_level === "yellow"
+                                        ? "border-yellow-500/40 bg-yellow-500/10 text-yellow-500"
+                                        : "border-border text-muted-foreground"
+                                }
+                              >
+                                风险 {orbitDetail.risk_level === "red" ? "高" : orbitDetail.risk_level === "orange" ? "中高" : "中"}
+                              </Badge>
+                            )}
                           </DialogTitle>
                           <DialogDescription className="text-xs">
                             股权穿透 · 关联关系全景

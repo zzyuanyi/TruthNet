@@ -13,6 +13,8 @@ interface EquityGraphProps {
   targetId: string;
   /** 8/25 下游（子公司/被投资企业）直接持股关系：合并进股权图并展示风险信号 */
   downstreamRelations?: DownstreamRelation[];
+  /** 节点点击：上报布局节点（含类型/风险等级/信号/持股），由页面弹全量详情 */
+  onNodeClick?: (node: GraphLayoutNode) => void;
 }
 
 const RISK_LEVEL_COLORS: Record<string, string> = {
@@ -212,6 +214,7 @@ export function EquityGraph({
   edges,
   targetId,
   downstreamRelations,
+  onNodeClick,
 }: EquityGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
@@ -424,6 +427,13 @@ export function EquityGraph({
     });
     graphRef.current = graph;
 
+    // 节点点击 → 页面级详情弹窗（hover 轻提示已由 tooltip 提供）
+    graph.on('node:click', (evt: { target: { id: string | number } }) => {
+      const id = String(evt.target?.id ?? '');
+      const node = data.nodes.find(n => String(n.id) === id);
+      if (node) onNodeClick?.(node);
+    });
+
     return () => {
       disposed = true;
       if (graphRef.current === graph) graphRef.current = null;
@@ -494,7 +504,7 @@ export function EquityGraph({
 
       {/* Hint */}
       <div className="absolute top-3 right-3 z-10 bg-background/90 backdrop-blur-sm border border-border rounded-md px-2 py-1 text-xs text-muted-foreground">
-        分层穿透视图 · 滚轮缩放 · 拖拽平移
+        分层穿透视图 · 悬停摘要 · 点击查看详情
       </div>
     </div>
   );
