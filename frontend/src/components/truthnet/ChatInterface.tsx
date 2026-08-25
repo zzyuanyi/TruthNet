@@ -162,11 +162,14 @@ export function ChatInterface({
     onConfirmCompany?.(pendingCandidates.turn_id, mentionId, pendingCandidates.revision, windCode);
   };
 
-  // 自动滚动到底部
+  // 自动滚动到底部：仅在消息数增加（新消息到达/恢复历史）时触发，
+  // 首次挂载的空会话保持在顶部，展示织网鉴真 Hero
+  const prevMsgCount = useRef(0);
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && messages.length > prevMsgCount.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
+    prevMsgCount.current = messages.length;
   }, [messages]);
 
   // 发送消息
