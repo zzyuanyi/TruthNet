@@ -20,6 +20,7 @@ from app.application.ports.web_search_provider import WebSearchProvider
 from app.core.config import settings
 from app.infrastructure.web_search.anysearch.provider import AnySearchWebSearchProvider
 from app.infrastructure.web_search.bocha.provider import BochaWebSearchProvider
+from app.infrastructure.web_search.coze.provider import CozeWebSearchProvider
 from app.infrastructure.web_search.mock.provider import MockWebSearchProvider
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ _PROVIDER_CLASSES: dict[str, type] = {
     "mock": MockWebSearchProvider,
     "bocha": BochaWebSearchProvider,
     "anysearch": AnySearchWebSearchProvider,
+    # 平台托管联网搜索（沙箱预置 SDK、免 Key）：地球舆情深挖等场景默认走此源
+    "coze": CozeWebSearchProvider,
 }
 
 

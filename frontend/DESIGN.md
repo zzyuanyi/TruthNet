@@ -180,6 +180,7 @@
 - 区块标题：`MARKET PULSE · 全球舆情脉搏` mono eyebrow + `LIVE`（呼吸绿点），让组件在欢迎区可识别。
 - **国家亮点**（clusters 驱动，一国家一点）：颜色按该国 `top_severity` 三色分级（info 蓝 `#5da2ff` / warning 琥珀 `#f5b042` / critical 红 `#ff5d5d`，语义风险色专用于数据标注的既有例外）；点半径 `0.3 + intensity × 0.62`、高度 `0.16 + intensity × 0.5`、透明度 `0.55 + intensity × 0.45`；warning/critical 或 intensity ≥ 0.9 的国家附加扩散涟漪环（上限 6，`ringColor` 插值随扩散渐隐至 0）。
 - 交互：点击国家亮点弹出该国舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；hover 显示国家/条数/强度 tooltip。
+- **联网深挖**（Dialog 底部虚线分区）：主按钮「联网深挖该国舆情」（primary 描边 + 脉冲圆点 loading）；结果卡用虚线边框 + 联网徽章 + 来源域名 + 时间，与 RSS 实卡形成「监控/检索」两种来源的视觉区分；切换国家自动清空上一轮。
 - 状态条：当日总量 + Top4 热点国家（色点 + 计数）+ 更新节奏（10 分钟）+ 最近更新时间 + 失效源提示，`font-mono text-[10px]`。
 
 ### 构建约束

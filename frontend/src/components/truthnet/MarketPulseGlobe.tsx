@@ -43,6 +43,15 @@ interface PulseData {
   fetched_at: string;
 }
 
+/** 联网深挖结果（后端 /market-pulse/dig，truthnetFetch 已解包 data） */
+interface DigItem {
+  title: string;
+  url: string;
+  snippet: string;
+  domain: string;
+  published_at: string | null;
+}
+
 /** 前端轮询间隔：10 分钟（后端同为 10 分钟缓存，天然对齐） */
 const POLL_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -136,6 +145,30 @@ export function MarketPulseGlobe() {
   const [selected, setSelected] = useState<PulseCluster | null>(null);
   const [isDark, setIsDark] = useState(true);
   const [netError, setNetError] = useState(false);
+  // 联网深挖：按需对该国实时联网搜索（与 RSS 监控互补）
+  const [digging, setDigging] = useState(false);
+  const [digItems, setDigItems] = useState<DigItem[] | null>(null);
+
+  // 切换国家/关闭弹窗时清空上一轮深挖结果
+  useEffect(() => {
+    setDigItems(null);
+    setDigging(false);
+  }, [selected?.country]);
+
+  const runDig = useCallback(async (country: string) => {
+    setDigging(true);
+    setDigItems(null);
+    try {
+      const data = await truthnetFetch<{ items: DigItem[] }>(
+        `/market-pulse/dig?country=${encodeURIComponent(country)}`,
+      );
+      setDigItems(data.items ?? []);
+    } catch {
+      setDigItems([]);
+    } finally {
+      setDigging(false);
+    }
+  }, []);
 
   // 主题跟随：暗色=夜景地球+深空窗；亮色=蓝色大理石地球+白昼窗
   useEffect(() => {
@@ -453,6 +486,65 @@ export function MarketPulseGlobe() {
                     </a>
                   ))
               : null}
+          </div>
+
+          {/* 联网深挖：按需对该国实时联网搜索，补充 RSS 固定源的盲区 */}
+          <div className="mt-4 border-t border-border pt-3">
+            <button
+              type="button"
+              onClick={() => selected && runDig(selected.country)}
+              disabled={digging || !selected}
+              className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-60"
+            >
+              {digging ? (
+                <>
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/40 border-t-primary" />
+                  联网检索中…
+                </>
+              ) : (
+                <>
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                  联网深挖该国舆情
+                </>
+              )}
+            </button>
+
+            {digItems !== null && !digging && (
+              <div className="mt-3 space-y-2">
+                <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  联网检索 · {digItems.length} 条命中 · 来源为公开网络
+                </p>
+                {digItems.map((d) => (
+                  <a
+                    key={d.url}
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block rounded-md border border-dashed border-border bg-muted/30 p-3 transition-colors hover:border-primary"
+                  >
+                    <div className="mb-1 flex items-center gap-2">
+                      <Badge variant="outline" className="border-primary/50 text-primary">
+                        联网
+                      </Badge>
+                      <span className="truncate font-mono text-[10px] text-muted-foreground">
+                        {d.domain}
+                      </span>
+                      {d.published_at && (
+                        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+                          {d.published_at.slice(5, 16).replace('T', ' ')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm font-medium leading-snug">{d.title}</p>
+                    {d.snippet && (
+                      <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                        {d.snippet}
+                      </p>
+                    )}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

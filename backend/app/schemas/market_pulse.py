@@ -39,6 +39,25 @@ class MarketPulseClusterDTO(BaseModel):
     latest_published_at: datetime
 
 
+class MarketPulseDigItemDTO(BaseModel):
+    """联网深挖单条结果（真实联网搜索命中，非 RSS）。"""
+
+    title: str
+    url: str
+    snippet: str = Field("", description="摘要（AI summary 优先）")
+    domain: str = ""
+    published_at: str | None = Field(None, description="发布时间（原文可空）")
+
+
+class MarketPulseDigData(BaseModel):
+    """国家热点联网深挖载荷。"""
+
+    country: str
+    query: str = Field(..., description="实际使用的搜索词（透明可追溯）")
+    items: list[MarketPulseDigItemDTO] = Field(default_factory=list)
+    fetched_at: datetime
+
+
 class MarketPulseData(BaseModel):
     """全球舆情脉搏载荷。"""
 

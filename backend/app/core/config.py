@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     # anysearch = AnySearch（带 A 股代码走 finance MCP 垂直域；无码 query
     #   可走 REST /v1/search 通用入口，但 provider 会做相关性 Gate，低质
     #   结果返回空；免费注册 Key 见 `竞赛管理/docs/reference/AnySearch-API规范.md` §2.4）。
-    WEB_SEARCH_BACKEND: str = "off"  # off | mock | bocha | anysearch
+    WEB_SEARCH_BACKEND: str = "off"  # off | mock | bocha | anysearch | coze
     WEB_SEARCH_API_KEY: str = ""  # bocha/通用 Key（Bearer）
     # AnySearch 专用 Key（as_sk_*，独立于 bocha；匿名可用但限流低）
     ANYSEARCH_API_KEY: str = ""
