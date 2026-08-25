@@ -1,5 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Globe, { type GlobeMethods } from 'react-globe.gl';
+import * as THREE from 'three';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { truthnetFetch } from '@/lib/api-client';
@@ -87,6 +88,36 @@ function hexAlpha(hex: string, alpha: number): string {
 }
 
 type ClusterPoint = PulseCluster & { color: string };
+
+// ---------------------------------------------------------------------------
+// 信号灯标记：径向渐变光晕贴图（中心白核 → severity 色 → 渐隐）
+// 呈现「监控大屏信号灯」质感，替代潦草的六边形柱
+// ---------------------------------------------------------------------------
+const glowTextureCache = new Map<string, THREE.Texture>();
+
+function getGlowTexture(color: string): THREE.Texture {
+  let tex = glowTextureCache.get(color);
+  if (tex) return tex;
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 2d unavailable');
+  const h = color.replace('#', '');
+  const n = parseInt(h, 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,0.98)');
+  grad.addColorStop(0.16, `rgba(${r},${g},${b},0.92)`);
+  grad.addColorStop(0.40, `rgba(${r},${g},${b},0.36)`);
+  grad.addColorStop(0.72, `rgba(${r},${g},${b},0.10)`);
+  grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  tex = new THREE.CanvasTexture(canvas);
+  glowTextureCache.set(color, tex);
+  return tex;
+}
 
 /**
  * 市场舆情地球：半圆舷窗包裹旋转地球，融入对话主界面的网格底板。
@@ -207,6 +238,25 @@ export function MarketPulseGlobe() {
 
   const onPointClick = useCallback((point: ClusterPoint) => setSelected(point), []);
 
+  // 信号灯光晕：Sprite 贴在球面坐标（参与深度遮挡，转到球背面自动隐没）；
+  // 暗色用叠加混合出「发光体」质感，亮色用普通混合保持清晰
+  const objectThreeObject = useCallback(
+    (d: object) => {
+      const c = d as ClusterPoint;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: getGlowTexture(c.color),
+          blending: isDark ? THREE.AdditiveBlending : THREE.NormalBlending,
+          depthWrite: false,
+          transparent: true,
+        }),
+      );
+      sprite.scale.setScalar(6.5 + c.intensity * 11);
+      return sprite;
+    },
+    [isDark],
+  );
+
   const totalCount = items.length;
   const topClusters = clusters.slice(0, 4);
 
@@ -288,15 +338,12 @@ export function MarketPulseGlobe() {
               pointsData={points}
               pointLat="lat"
               pointLng="lng"
-              pointColor="color"
-              pointAltitude={((d: object) => {
-                // 贴面光圈：高度趋近于 0（不立柱），大小全靠半径表达热点强度
-                const c = d as ClusterPoint;
-                return 0.012 + c.intensity * 0.02;
-              }) as never}
+              pointColor={() => '#ffffff'}
+              pointAltitude={0.008}
               pointRadius={((d: object) => {
+                // 白色亮核（信号灯的芯），高级感的光晕由 objects 层负责
                 const c = d as ClusterPoint;
-                return 0.26 + c.intensity * 0.58;
+                return 0.1 + c.intensity * 0.13;
               }) as never}
               pointLabel={((d: object) => {
                 const c = d as ClusterPoint;
@@ -305,6 +352,12 @@ export function MarketPulseGlobe() {
               pointResolution={14}
               pointsMerge={false}
               onPointClick={onPointClick as never}
+              objectsData={points}
+              objectLat="lat"
+              objectLng="lng"
+              objectAltitude={0.012}
+              objectThreeObject={objectThreeObject as never}
+              onObjectClick={onPointClick as never}
               ringsData={rings}
               ringLat="lat"
               ringLng="lng"
