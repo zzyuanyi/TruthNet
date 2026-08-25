@@ -173,10 +173,6 @@ import {
 } from "@/lib/api-client";
 import { RelatedPartyTable } from "@/components/truthnet/RelatedPartyTable";
 import { EquityGraph } from "@/components/truthnet/EquityGraph";
-import type {
-  EquityGraphData,
-  EquityGraphNode,
-} from "@/components/truthnet/EquityGraph";
 import {
   RuleCard,
   type RuleEvidenceSummary,
@@ -197,6 +193,7 @@ import type {
   FinanceResponseData,
   EventsResponseData,
   EquityResponseData,
+  EquityNodeDTO,
   RiskResponseData,
   RiskLevel,
   FinanceRuleItem,
@@ -1882,15 +1879,11 @@ export default function CompanyProfilePage() {
                     </div>
                     <div className="mt-4">
                       <EquityGraph
-                        data={equityData as unknown as EquityGraphData}
-                        onNodeClick={(n) =>
-                          setOrbitDetail({
-                            id: n.id,
-                            name: n.name,
-                            entity_type: n.type,
-                            risk_level: n.risk_level,
-                          })
-                        }
+                        nodes={equityData?.nodes ?? []}
+                        edges={equityData?.edges ?? []}
+                        targetId={code}
+                        downstreamRelations={equityData?.downstream_relations ?? []}
+                        onNodeClick={(n) => setOrbitDetail(n)}
                       />
                     </div>
 
