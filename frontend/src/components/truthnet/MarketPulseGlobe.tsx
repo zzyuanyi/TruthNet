@@ -3,7 +3,6 @@ import Globe, { type GlobeMethods } from 'react-globe.gl';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { truthnetFetch } from '@/lib/api-client';
-import { TruthNetMark } from '@/components/truthnet/TruthNetMark';
 
 /** 单条市场舆情（后端 /api/v1/market-pulse，truthnetFetch 已解包 data） */
 interface PulseItem {
@@ -60,6 +59,7 @@ const SEVERITY_LABEL: Record<PulseItem['severity'], string> = {
 
 /** 地球贴图：夜景城市灯光（电影感，本地资产，无 CDN 依赖） */
 const GLOBE_NIGHT_TEXTURE = '/assets/globe/earth-night.jpg';
+const GLOBE_DAY_TEXTURE = '/assets/globe/earth-blue-marble.jpg';
 
 /** 确定性星空（种子随机，避免重渲闪烁；透过球体边缘缝隙点缀深空） */
 const STARS = (() => {
@@ -103,6 +103,17 @@ export function MarketPulseGlobe() {
   const [failedSources, setFailedSources] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [selected, setSelected] = useState<PulseCluster | null>(null);
+  const [isDark, setIsDark] = useState(true);
+
+  // 主题跟随：暗色=夜景地球+深空窗；亮色=蓝色大理石地球+白昼窗
+  useEffect(() => {
+    const el = document.documentElement;
+    const sync = () => setIsDark(el.classList.contains('dark'));
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  }, []);
 
   // 画布尺寸自适应：画布为正方形（宽 = 半圆宽），球心锚定半圆圆心
   useEffect(() => {
@@ -187,7 +198,7 @@ export function MarketPulseGlobe() {
   const topClusters = clusters.slice(0, 4);
 
   return (
-    <div className="pt-14">
+    <div>
       {/* 区块标题 */}
       <div className="mb-1 flex items-center justify-between px-1 font-mono text-[10px] tracking-widest text-muted-foreground">
         <span>MARKET PULSE · 全球舆情脉搏</span>
@@ -199,46 +210,53 @@ export function MarketPulseGlobe() {
 
       {/* 半圆舷窗：正好包裹地球，外圈一层薄壳，其余透出页面网格底板 */}
       <div className="relative mx-auto w-full max-w-[660px]">
-        {/* 眼睛悬在舷窗上方，与顶弧隔出一小段空白 */}
         <div
-          className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[calc(100%+10px)]"
-          style={{ filter: 'drop-shadow(0 0 16px color-mix(in srgb, var(--color-primary) 55%, transparent))' }}
-        >
-          <TruthNetMark className="h-11 w-[3.5rem] text-primary" />
-        </div>
-
-        <div
-          className="relative aspect-[2/1] w-full overflow-hidden rounded-t-full ring-1 ring-white/[0.10]"
-          style={{
-            background:
-              'linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 10%, #01040a) 0%, ' +
-              'color-mix(in srgb, var(--color-primary) 20%, #020a14) 60%, ' +
-              'color-mix(in srgb, var(--color-primary) 36%, #041527) 100%)',
-            boxShadow:
-              'inset 0 1px 1px rgba(255,255,255,0.10), ' +
-              '0 -22px 70px -26px color-mix(in srgb, var(--color-primary) 45%, transparent)',
-          }}
-        >
-          {/* 星空：透过球缘缝隙点缀深空 */}
-          <div className="pointer-events-none absolute inset-0 z-0">
-            {STARS.map((s) => (
-              <span
-                key={s.id}
-                className="tn-star absolute rounded-full bg-white"
-                style={
-                  {
-                    left: `${s.left}%`,
-                    top: `${s.top}%`,
-                    width: s.size,
-                    height: s.size,
-                    '--star-o': s.opacity,
-                    '--star-delay': `${s.delay}s`,
-                    '--star-d': `${s.duration}s`,
-                  } as CSSProperties
+          className={`relative aspect-[2/1] w-full overflow-hidden rounded-t-full ${isDark ? 'ring-1 ring-white/[0.10]' : 'ring-1 ring-black/[0.08]'}`}
+          style={
+            isDark
+              ? {
+                  background:
+                    'linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 10%, #01040a) 0%, ' +
+                    'color-mix(in srgb, var(--color-primary) 20%, #020a14) 60%, ' +
+                    'color-mix(in srgb, var(--color-primary) 36%, #041527) 100%)',
+                  boxShadow:
+                    'inset 0 1px 1px rgba(255,255,255,0.10), ' +
+                    '0 -22px 70px -26px color-mix(in srgb, var(--color-primary) 45%, transparent)',
                 }
-              />
-            ))}
-          </div>
+              : {
+                  // 白昼模式：浅色天穹渐变，地球换蓝色大理石，避免黑乎乎一团
+                  background:
+                    'linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 5%, #f3f7fc) 0%, ' +
+                    'color-mix(in srgb, var(--color-primary) 10%, #e3edf8) 60%, ' +
+                    'color-mix(in srgb, var(--color-primary) 18%, #cfe0f2) 100%)',
+                  boxShadow:
+                    'inset 0 1px 1px rgba(255,255,255,0.80), ' +
+                    '0 -22px 60px -30px color-mix(in srgb, var(--color-primary) 30%, transparent)',
+                }
+          }
+        >
+          {/* 星空：仅暗色模式的深空点缀 */}
+          {isDark && (
+            <div className="pointer-events-none absolute inset-0 z-0">
+              {STARS.map((s) => (
+                <span
+                  key={s.id}
+                  className="tn-star absolute rounded-full bg-white"
+                  style={
+                    {
+                      left: `${s.left}%`,
+                      top: `${s.top}%`,
+                      width: s.size,
+                      height: s.size,
+                      '--star-o': s.opacity,
+                      '--star-delay': `${s.delay}s`,
+                      '--star-d': `${s.duration}s`,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+            </div>
+          )}
 
           {/* 地球：正方形画布锚定半圆（球心=半圆圆心），下半被裁，只露上半球 */}
           <div
@@ -250,7 +268,7 @@ export function MarketPulseGlobe() {
               width={size.width}
               height={size.height}
               backgroundColor="rgba(0,0,0,0)"
-              globeImageUrl={GLOBE_NIGHT_TEXTURE}
+              globeImageUrl={isDark ? GLOBE_NIGHT_TEXTURE : GLOBE_DAY_TEXTURE}
               showAtmosphere
               atmosphereColor="#7fb0e8"
               atmosphereAltitude={0.25}
@@ -283,12 +301,13 @@ export function MarketPulseGlobe() {
             />
           </div>
 
-          {/* 暗角渐晕：半圆边缘压暗，向页面底板自然过渡 */}
+          {/* 暗角渐晕：边缘收束，向页面底板自然过渡（暗色压暗 / 亮色提白） */}
           <div
             className="pointer-events-none absolute inset-0 z-[2]"
             style={{
-              background:
-                'radial-gradient(120% 120% at 50% 100%, transparent 52%, rgba(2,8,18,0.42) 88%, rgba(2,8,18,0.72) 100%)',
+              background: isDark
+                ? 'radial-gradient(120% 120% at 50% 100%, transparent 52%, rgba(2,8,18,0.42) 88%, rgba(2,8,18,0.72) 100%)'
+                : 'radial-gradient(120% 120% at 50% 100%, transparent 52%, rgba(243,247,252,0.46) 88%, rgba(227,237,248,0.78) 100%)',
             }}
           />
         </div>
