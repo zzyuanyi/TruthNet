@@ -1,0 +1,20 @@
+# TruthNet backend runtime dependencies
+# 安装：cd backend && pip install -r requirements.txt
+# 注：coze_coding_dev_sdk 为平台沙箱预置包（PyPI 无公开版），本地不安装会由
+#     web_search/coze provider 自动降级关闭，不影响其余功能（联网深挖需另行配 bocha Key）。
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+starlette>=0.36
+pydantic>=2.6
+pydantic-settings>=2.2
+sqlalchemy>=2.0
+alembic>=1.13
+python-dotenv>=1.0
+httpx>=0.27
+networkx>=3.2
+openai>=1.30
+tenacity>=8.2
+reportlab>=4.1
+pyyaml>=6.0
+langgraph>=0.2
