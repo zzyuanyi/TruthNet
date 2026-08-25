@@ -31,35 +31,79 @@
 | 图谱可视化 | D3.js | 🔸 待接入 |
 | 测试 | pytest / Ruff / pre-commit / CI (3 OS) | 通用 |
 
-## 新成员最短启动流程
+## 新成员最短启动流程（Current · V13 织网鉴真）★ 看这一段即可跑起来
+
+> 一套代码双运行：**沙箱（Coze）** 与 **本地自搭** 都能跑，区别只有一节「联网搜索」。以下以本地为主讲。
+
+### 1. 环境要求
+
+| 项 | 版本 | 说明 |
+|---|---|---|
+| Node.js | ≥ 20 | 前端 |
+| pnpm | 任意较新 | **必须用 pnpm**，禁用 npm/yarn |
+| Python | 3.11+ | 后端 |
+| SQLite | 内置 | 无需装数据库服务，`data/*.db` 即库 |
+
+### 2. 后端（1 分钟，零配置）
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/zzyuanyi/TruthNet.git
-cd TruthNet
+cd backend
+pip install -r requirements.txt          # 依赖清单（约 14 项）
+python scripts/seed_db.py                # 一键灌演示数据（康美画像 + 6 簇舆情），库存在则自动跳过
+python -m uvicorn app.main:app --app-dir backend --port 8000
+```
 
-# 2. 创建 conda 环境
-conda create -n truthnet python=3.11 -y
-conda activate truthnet
-pip install -r requirements.txt
+- 健康检查：`curl http://127.0.0.1:8000/healthz`
+- 样例接口：`curl "http://127.0.0.1:8000/api/v1/companies?query=康美"`
+- **演示数据**：不含 seed 时画像页是空壳。`seed_db.py` 会从 `data/fixtures/truthnet_seed.sqlite.sql` 重建 `data/truthnet.db`，包含：康美药业完整画像、财务异常规则、股权穿透（上下穿透 + 风险着色）、2018-10 存货质疑 → 2019-08 顶格处罚的 6 簇舆情时间线。测试验收用它。
 
-# 3. 配置环境
-cp .env.example .env
-# 编辑 .env, 设置 TRUTHNET_PROFILE=lite
+### 3. 前端（1 分钟，零配置）
 
-# 4. 验证环境
-python scripts/doctor.py
-python scripts/verify_v12_stack.py
-python scripts/verify_full_stack.py --profile lite
+```bash
+cd ../frontend
+pnpm install
+pnpm dev                                   # http://localhost:5173（或 .coze 指定端口）
+```
 
-# 5. 运行测试
-python -m pytest backend/tests -v
-ruff check . && ruff format --check .
+- **前后端自动打通**：`vite.config.ts` 已把 `/api/v1` 代理到 `http://127.0.0.1:8000`，本地后端跑在 8000 即可直接用，无需再配。
+- **默认主题**：深色 + 中字号，可在右上角设置切换。
 
-# 6. 启动后端
-python -m uvicorn app.main:app --app-dir backend --reload
-# → http://127.0.0.1:8000/healthz
-# → http://127.0.0.1:8000/api/v1/companies?query=茅台
+### 4. 即插即用（clone 后就能看到效果）vs 需操作
+
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 智能问答（本地可跑） | 🟢 即插即用 | 底层走 SQLite + 内置规则 |
+| 企业画像 / 股权穿透 / 舆情时间线 | 🟢 即插即用 | `seed` 已灌好康美演示数据 |
+| 全球舆情脉搏（地球 + 10min 爬取） | 🟢 即插即用 | 首次启动后约 10 分钟爬到首批 RSS（CNBC/华尔街见闻等） |
+| **联网深挖**（点国家亮点实时搜） | 🟡 需配置 Key | 见下节 |
+| 聪明问答·大模型生成式回答 | 🟡 需配置 Key | 沙箱内置；本地需配 LLM Key |
+
+### 5. 联网搜索的两种模式（唯一环境差异）
+
+- **网站沙箱（Coze）**：免 Key，`coze_coding_dev_sdk`（沙箱预置）自动启用，联网深挖开箱即用。
+- **本地自搭**：该 SDK 是沙箱预置包（PyPI 无），自动降级关闭**不影响其余功能**；如需联网深挖，`.env` 里设：
+  ```bash
+  cp .env.example .env
+  WEB_SEARCH_BACKEND=bocha     # 需 BOCHA_API_KEY
+  ```
+  可选值：`off`（默认）/ `mock` / `bocha` / `coze`。
+
+### 6. 环境变量样板（`.env`）
+
+```bash
+cp .env.example .env                    # 默认值可零改动直接跑
+TRUTHNET_PROFILE=full                   # 沙箱用 full / lite
+WEB_SEARCH_BACKEND=off                  # 本地默认关闭，演示时按需开
+```
+
+### 7. 验证口令
+
+```bash
+# 后端
+curl http://127.0.0.1:8000/api/v1/market-pulse        # 全球舆情（含 clusters）
+curl "http://127.0.0.1:8000/api/v1/companies/600518.SH/equity"  # 股权穿透
+# 前端浏览器
+http://localhost:5173/company/600518.SH               # 康美画像直达
 ```
 
 ## Lite vs Full Profile
