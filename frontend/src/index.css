@@ -369,6 +369,48 @@ body {
   }
 }
 
+/* ---------- 拆信封展开（画像页分析卡就地展开） ---------- */
+@keyframes tn-envelope-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) scaleY(0.86);
+    filter: blur(6px);
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+    filter: blur(0);
+  }
+}
+
+.tn-envelope-open {
+  animation: tn-envelope-reveal 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top center;
+  will-change: transform, opacity, filter;
+}
+
+/* 逐条明细的级联滑入 */
+.tn-envelope-item {
+  opacity: 0;
+  animation: tn-envelope-slide 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(120ms + var(--i, 0) * 55ms);
+  will-change: transform, opacity;
+}
+
+@keyframes tn-envelope-slide {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 /* 深空星星：柔和交错闪烁 */
 .tn-star {
   opacity: var(--star-o, 0.5);

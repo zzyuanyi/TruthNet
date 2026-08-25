@@ -138,6 +138,14 @@
 ### 动效
 - 复用 `Reveal`：hero 整体 + 6 个区块标题（核心结论/影响与建议/财务异常/股权穿透图/舆情时间线/证据引用）滚动进入时 `translate-y-8 opacity-0 → translate-y-0 opacity-100` 淡入上浮。
 
+### 详略得当：拆信封式就地展开（2026-08-25 新增，`InsightDisclosure` 组件）
+> 用户构想：「点一下卡片弹出来一块详细分析，不是跳页面，就像拆信封一样啪叽弹出来」。
+
+- 折叠态：severity 左侧色条 + 触发标题（粗）+ 一句话结论（muted）+ 最右侧箭头胶囊（`ph-caret` 旋转 90°）；复用 `.tn-glass-card` 语言但走 `bg-card` 实底，保持产品主体克制。
+- 展开态：`grid-template-rows 0fr → 1fr` 平滑展开（纯 CSS，无 JS 测高）；内容块 `tn-envelope-open` 入场（`scale(0.97) → 1` + `opacity 0 → 1`，cubic-bezier(0.16,1,0.3,1) 380ms，逐块 30ms stagger）；分割线上移入。
+- severity 语言与市场脉搏地球对齐：high/critical → 红系 `--destructive`，medium/warning → 橙系，low/info → primary 淡底。
+- 已落地三处：核心结论列表（每条结论一封信）、财务异常 `RuleCard`（规则名+触发状态为封面，展开看完整推理与修复建议）、股权穿透 `equity` 链（每层股权一封信）。文字密集区从"平铺墙"变为"点开看"，首屏一眼扫完所有封面。
+
 ### 配色
 - 全程语义化（`bg-card` / `border-border` / `text-foreground` / `text-muted-foreground` / `text-primary`），光晕与渐变用 `bg-primary/*` 透明度，随明暗主题自动切换。
 
