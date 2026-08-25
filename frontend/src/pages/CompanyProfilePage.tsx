@@ -142,6 +142,7 @@ import { RiskTimeline } from '@/components/truthnet/RiskTimeline';
 import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
 import { FinanceTrendOverview } from '@/components/truthnet/FinanceTrendOverview';
 import { ExportSnapshotButton } from '@/components/ExportSnapshotButton';
+import { Reveal } from '@/components/reveal';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -745,29 +746,50 @@ export default function CompanyProfilePage() {
       {/* 右侧内容区 */}
       <div ref={scrollContainerRef} onScroll={handleScrollSync} className="flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl p-6">
-          {/* 概览区块 */}
+          {/* 概览区块 · Hero 头部 */}
           <div ref={sectionRefs.overview} className="mb-8">
-            <div className="mb-4 flex items-center gap-4">
-              <h1 className="text-2xl font-bold text-foreground">{profile.sec_name}</h1>
-              <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
-              <span className="text-sm text-muted-foreground">{profile.wind_code}</span>
-              <ExportSnapshotButton className="ml-auto gap-1.5" />
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                data-no-print
-                onClick={handleGenerateReport}
-                disabled={reportCreating}
-              >
-                {reportCreating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FileText className="h-3.5 w-3.5" />
-                )}
-                生成报告
-              </Button>
-            </div>
+            <Reveal>
+              <div className="relative mb-6 overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-primary/10 blur-3xl"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-primary/[0.06] blur-3xl"
+                />
+                <div className="relative">
+                  <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.3em] text-muted-foreground sm:text-xs">
+                    财报反欺诈画像 · 多源交叉验证
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+                      {profile.sec_name}
+                    </h1>
+                    <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
+                    <span className="font-mono text-sm text-muted-foreground">{profile.wind_code}</span>
+                  </div>
+                  <div className="mt-5 flex flex-wrap items-center gap-2">
+                    <ExportSnapshotButton className="gap-1.5" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      data-no-print
+                      onClick={handleGenerateReport}
+                      disabled={reportCreating}
+                    >
+                      {reportCreating ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" />
+                      )}
+                      生成报告
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
             <Card className="overflow-hidden">
               <div className="bg-gradient-to-r from-muted/30 to-muted/10 px-6 py-3 border-b border-border/50">
                 <div className="flex items-center gap-2">
@@ -784,35 +806,38 @@ export default function CompanyProfilePage() {
                   </div>
                 ) : (
                 <>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="bg-muted/50 rounded-md p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-1">综合风险等级</p>
-                    <p className="text-2xl font-bold">{riskConfig.label}</p>
+                {/* 风险概览指标（bento 网格） */}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="col-span-2 flex flex-col justify-center rounded-xl border border-border bg-gradient-to-br from-primary/15 to-primary/5 p-5">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      综合风险等级
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="text-3xl font-bold leading-none text-foreground">{riskConfig.label}</p>
+                      <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
+                    </div>
                   </div>
-                  <div className="bg-muted/50 rounded-md p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-1">触发规则数</p>
+                  <div className="flex flex-col justify-center rounded-xl bg-muted/50 p-5 text-center">
+                    <p className="mb-1 text-xs text-muted-foreground">触发规则数</p>
                     <p className="text-2xl font-bold">{triggeredRules.length}</p>
                   </div>
-                  <div className="bg-muted/50 rounded-md p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-1">舆情事件数</p>
+                  <div className="flex flex-col justify-center rounded-xl bg-muted/50 p-5 text-center">
+                    <p className="mb-1 text-xs text-muted-foreground">舆情事件数</p>
                     <p className="text-2xl font-bold">{sentimentEvents.length}</p>
                   </div>
-                </div>
-
-                {/* A3（8/9 老师要求）：数据截止日 / 数据模块 / 覆盖状态
-                    （2026-08-16 口径整改：截止日由后端从库内真实期次推导；
-                    覆盖率不再显示百分比，改为真实数据模块数 x/4） */}
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="rounded-md border border-border/60 p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-1">数据截止日</p>
+                  {/* A3（8/9 老师要求）：数据截止日 / 数据模块 / 覆盖状态
+                      （2026-08-16 口径整改：截止日由后端从库内真实期次推导；
+                      覆盖率不再显示百分比，改为真实数据模块数 x/4） */}
+                  <div className="flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
+                    <p className="mb-1 text-xs text-muted-foreground">数据截止日</p>
                     <p className="text-sm font-semibold">{riskData?.as_of || '-'}</p>
                   </div>
-                  <div className="rounded-md border border-border/60 p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-1">数据模块</p>
+                  <div className="flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
+                    <p className="mb-1 text-xs text-muted-foreground">数据模块</p>
                     <p className="text-sm font-semibold">{coverageModulesText}</p>
                   </div>
-                  <div className="rounded-md border border-border/60 p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-1">覆盖状态</p>
+                  <div className="col-span-2 flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
+                    <p className="mb-1 text-xs text-muted-foreground">覆盖状态</p>
                     <p className="text-sm font-semibold">{coverageStatusText}</p>
                   </div>
                 </div>
@@ -884,10 +909,12 @@ export default function CompanyProfilePage() {
           
           {/* 核心结论区块 (Phase E P0-1) */}
           <div ref={sectionRefs.conclusions} className="mb-8">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <FileText className="h-5 w-5" />
-              核心结论
-            </h2>
+            <Reveal>
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <FileText className="h-5 w-5" />
+                核心结论
+              </h2>
+            </Reveal>
             {riskData === null ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
@@ -975,10 +1002,12 @@ export default function CompanyProfilePage() {
           <Separator className="my-6" />
 
 <div ref={sectionRefs.impact} className="mb-8">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <TrendingUp className="h-5 w-5" />
-              影响与建议
-            </h2>
+            <Reveal>
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <TrendingUp className="h-5 w-5" />
+                影响与建议
+              </h2>
+            </Reveal>
             {impactAdviceLoading ? (
               <Card>
                 <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
@@ -1102,10 +1131,12 @@ export default function CompanyProfilePage() {
 
           {/* 财务规则区块 - 使用 RuleCard 组件 */}
           <div ref={sectionRefs.financial} className="mb-8">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <TrendingUp className="h-5 w-5" />
-              财务异常
-            </h2>
+            <Reveal>
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <TrendingUp className="h-5 w-5" />
+                财务异常
+              </h2>
+            </Reveal>
             {!financeLoaded ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
@@ -1264,10 +1295,12 @@ export default function CompanyProfilePage() {
 
           {/* 股权穿透区块：移除缺列关联方表，保留多跳分层穿透图 */}
           <div ref={sectionRefs.equity} className="mb-8">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <GitBranch className="h-5 w-5" />
-              股权穿透图
-            </h2>
+            <Reveal>
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <GitBranch className="h-5 w-5" />
+                股权穿透图
+              </h2>
+            </Reveal>
             {equityData === null ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
@@ -1390,10 +1423,12 @@ export default function CompanyProfilePage() {
 
           {/* 舆情时间线区块 - 使用 RiskTimeline 组件 */}
           <div ref={sectionRefs.sentiment} className="mb-8">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <Newspaper className="h-5 w-5" />
-              舆情时间线
-            </h2>
+            <Reveal>
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <Newspaper className="h-5 w-5" />
+                舆情时间线
+              </h2>
+            </Reveal>
             {!eventsLoaded ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
@@ -1424,10 +1459,12 @@ export default function CompanyProfilePage() {
 
           {/* 证据引用区块 - 使用 EvidenceChain 组件 */}
           <div ref={sectionRefs.evidence} className="mb-8">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-              <FileText className="h-5 w-5" />
-              证据引用
-            </h2>
+            <Reveal>
+              <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
+                <FileText className="h-5 w-5" />
+                证据引用
+              </h2>
+            </Reveal>
             {riskData === null ? (
               <Card>
                 <CardContent className="py-6 space-y-3">

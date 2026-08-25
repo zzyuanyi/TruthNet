@@ -121,3 +121,17 @@
 ### 动效约束
 - 所有动画遵守 `--reduce-motion` 全局降级（`[style*="--reduce-motion: reduce"] *` 已禁用动画）。
 - 开场 overlay 用 `data-no-print` 排除打印；`z-[100]` 覆盖全屏，约 3s 后自行卸载。
+
+## 企业画像页（公司财报反欺诈画像）
+
+> 2026-08 升级：布局与特效参考「Sentra 单页」的 hero + bento + reveal 语言；颜色与内容一律遵循主题变量，不硬编码色值。
+
+### 布局
+- 顶部 hero 头部：eyebrow（mono、字距 `0.3em`）+ 大字号公司名（`text-3xl/4xl`）+ 风险徽章 + wind_code；右侧 `bg-primary/10 + blur-3xl` 光晕；导出/生成报告按钮内置 hero 内。
+- 风险概览指标 bento 网格（`grid-cols-2 sm:grid-cols-4`）：综合风险等级横跨 2 列（`from-primary/15 to-primary/5` 渐变主卡），触发规则数/舆情事件数/数据截止日/数据模块各 1 格，覆盖状态横跨 2 列，移动端与桌面端每行均铺满。
+
+### 动效
+- 复用 `Reveal`：hero 整体 + 6 个区块标题（核心结论/影响与建议/财务异常/股权穿透图/舆情时间线/证据引用）滚动进入时 `translate-y-8 opacity-0 → translate-y-0 opacity-100` 淡入上浮。
+
+### 配色
+- 全程语义化（`bg-card` / `border-border` / `text-foreground` / `text-muted-foreground` / `text-primary`），光晕与渐变用 `bg-primary/*` 透明度，随明暗主题自动切换。
