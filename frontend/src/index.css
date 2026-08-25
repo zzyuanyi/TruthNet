@@ -369,6 +369,29 @@ body {
   }
 }
 
+/* 深空星星：柔和交错闪烁 */
+.tn-star {
+  opacity: var(--star-o, 0.5);
+  animation: tn-star-twinkle var(--star-d, 4s) ease-in-out var(--star-delay, 0s) infinite;
+  will-change: opacity;
+}
+
+@keyframes tn-star-twinkle {
+  0%,
+  100% {
+    opacity: var(--star-o, 0.5);
+  }
+  50% {
+    opacity: calc(var(--star-o, 0.5) * 0.25);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tn-star {
+    animation: none;
+  }
+}
+
 .animate-tn-wave {
   animation: tn-wave 4s ease-in-out infinite;
 }

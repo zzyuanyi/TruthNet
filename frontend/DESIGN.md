@@ -158,10 +158,14 @@
 - 前端 `MarketPulseGlobe`：10s 轮询（`truthnetFetch` 直连），30s 一次 TTL 清理，10 分钟外的亮点自动消失。
 
 ### 视觉与交互
-- 地球：`react-globe.gl`，贴图**本地资产** `public/assets/globe/`（取自 three-globe 示例包，禁 unpkg CDN——国内不可达且曾因版本路径 404 导致地球隐形）；浅色主题 blue-marble / 深色主题 earth-night 城市灯光（MutationObserver 跟随 `.dark` 切换），叠加拓扑 bump 贴图 + 大气层辉光 + 经纬网，`autoRotate` 常转（速度 0.6，禁缩放），初始视点亚太大区（lat 22 / lng 105）。
-- 区块标题：`MARKET PULSE · 全球舆情脉搏` mono eyebrow + `LIVE`，让组件在欢迎区可识别。
-- 亮点：环形柱按 severity 三色分级（info 蓝 `#3b82f6` / warning 琥珀 `#f59e0b` / critical 红 `#ef4444`，语义风险色专用于数据标注的既有例外），柱高随严重度抬升；同坐标抖动散布防重叠，单点聚合上限 4 条。
-- 交互：点击亮点弹出该坐标舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；顶部 `TruthNetMark` 眼睛悬浮于地球上空俯瞰（呼应「织网鉴真一直在观测」）。
+- **深空电影感视窗**（参考 Serene 品牌页的夜景地球意象，2026-08-25 定稿）：地球区不随主题变亮，固定为「太空舷窗」——自上而下深空渐变（`#01040a` → 品牌色调和的 `#020a14` → `#041527`，经 `color-mix` 从 `--color-primary` 派生，主题换色时氛围随之变调）。
+- **半球构图**：地球画布比卡片高 260px 并下移 150px，球体从底部「升起」，顶部由星空承接；取景 lat 18 / lng 108 / altitude 1.55。
+- **固定夜景贴图** `earth-night.jpg`（城市灯光）：不再浅色切日间图——电影感优先，亮暗主题都保持深空质感；贴图一律本地资产 `public/assets/globe/`（禁 unpkg CDN——国内不可达且曾因版本路径 404 导致地球隐形）。
+- **氛围层**（z 序：星空 0 < 地平辉光 0 < 地球 1 < 暗角 2）：确定性种子星空 64 颗（`.tn-star` 交错闪烁，reduce-motion 关闭）、地平线品牌色 radial 辉光、`radial-gradient` 暗角渐晕让边缘融入深空；去掉经纬网与 bump 贴图（显旧）。
+- 大气辉光 `#7fb0e8` / altitude 0.28（柔和大圈，模拟大气散射）。
+- 区块标题：`MARKET PULSE · 全球舆情脉搏` mono eyebrow + `LIVE`（呼吸绿点），让组件在欢迎区可识别。
+- 亮点：环形柱按 severity 三色分级（info 蓝 `#5da2ff` / warning 琥珀 `#f5b042` / critical 红 `#ff5d5d`，语义风险色专用于数据标注的既有例外），柱高随严重度抬升；同坐标抖动散布防重叠，单点聚合上限 4 条；warning/critical 附加扩散涟漪环（上限 8，`ringColor` 插值随扩散渐隐至 0）。
+- 交互：点击亮点弹出该坐标舆情列表（Dialog，标题可跳原文、来源/时间/级别徽章）；顶部 `TruthNetMark` 眼睛悬浮于地球上空俯瞰，`drop-shadow` 品牌色辉光（呼应「织网鉴真一直在观测」）。
 - 状态条：三级别计数 + 轮询节奏（10s）+ 留存窗口（10min）+ 最近更新时间 + 失效源提示，`font-mono text-[10px]`。
 
 ### 构建约束

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Globe, { type GlobeMethods } from 'react-globe.gl';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -34,9 +34,9 @@ const POLL_INTERVAL_MS = 10 * 1000;
 const MAX_PER_POINT = 4;
 
 const SEVERITY_COLOR: Record<PulseItem['severity'], string> = {
-  info: '#3b82f6',
-  warning: '#f59e0b',
-  critical: '#ef4444',
+  info: '#5da2ff',
+  warning: '#f5b042',
+  critical: '#ff5d5d',
 };
 
 const SEVERITY_LABEL: Record<PulseItem['severity'], string> = {
@@ -45,11 +45,37 @@ const SEVERITY_LABEL: Record<PulseItem['severity'], string> = {
   critical: '高危',
 };
 
-/** 地球贴图（本地资产，public/assets/globe/，无 CDN 依赖；深色主题用城市灯光夜景）*/
-const GLOBE_TEXTURE = {
-  day: '/assets/globe/earth-blue-marble.jpg',
-  night: '/assets/globe/earth-night.jpg',
-};
+/** 地球贴图：夜景城市灯光（电影感，本地资产，无 CDN 依赖） */
+const GLOBE_NIGHT_TEXTURE = '/assets/globe/earth-night.jpg';
+
+/** 半球构图：地球画布比卡片更高并下移，营造"从底部升起"的电影感裁切 */
+const GLOBE_CROP_EXTRA_H = 260;
+const GLOBE_CROP_OFFSET_Y = 150;
+
+/** 确定性星空（种子随机，避免 SSR/重渲闪烁） */
+const STARS = (() => {
+  let seed = 20260825;
+  const rnd = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  return Array.from({ length: 64 }, (_, i) => ({
+    id: i,
+    left: rnd() * 100,
+    top: rnd() * 58, // 星星集中在上半部（下半部被地球占据）
+    size: 0.8 + rnd() * 1.7,
+    opacity: 0.22 + rnd() * 0.58,
+    delay: rnd() * 4,
+    duration: 2.6 + rnd() * 3.2,
+  }));
+})();
+
+/** #rrggbb → rgba()，用于涟漪环随扩散渐隐 */
+function hexAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.replace(/(.)/g, '$1$1') : h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
+}
 
 /** 抖动坐标，避免同一城市的多条消息重叠成一个点 */
 function jitter(v: number, seed: number): number {
@@ -72,17 +98,6 @@ export function MarketPulseGlobe() {
   const [tick, setTick] = useState(0); // TTL 清理驱动
   const [selectedPoint, setSelectedPoint] = useState<{ lat: number; lng: number; items: PulseItem[] } | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [isDark, setIsDark] = useState(false);
-
-  // 主题跟随：深色主题切换为夜景地球（城市灯光）
-  useEffect(() => {
-    const root = document.documentElement;
-    const sync = () => setIsDark(root.classList.contains('dark'));
-    sync();
-    const mo = new MutationObserver(sync);
-    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
-    return () => mo.disconnect();
-  }, []);
 
   // 尺寸自适应
   useEffect(() => {
@@ -138,9 +153,9 @@ export function MarketPulseGlobe() {
     if (!globeRef.current) return undefined;
     const g = globeRef.current;
     g.controls().autoRotate = true;
-    g.controls().autoRotateSpeed = 0.6;
+    g.controls().autoRotateSpeed = 0.45;
     g.controls().enableZoom = false;
-    g.pointOfView({ lat: 22, lng: 105, altitude: 2.4 }, 0);
+    g.pointOfView({ lat: 18, lng: 108, altitude: 1.55 }, 0);
     return () => {
       g.controls().autoRotate = false;
     };
@@ -159,13 +174,22 @@ export function MarketPulseGlobe() {
       .flat()
       .map((it) => ({
         ...it,
-        // 环形柱：半径 0.35、高度按严重度
         lat: it.lat,
         lng: it.lng,
         color: SEVERITY_COLOR[it.severity] ?? SEVERITY_COLOR.info,
-        altitude: it.severity === 'critical' ? 0.5 : it.severity === 'warning' ? 0.32 : 0.2,
+        altitude: it.severity === 'critical' ? 0.45 : it.severity === 'warning' ? 0.3 : 0.18,
       }));
   }, [items]);
+
+  // 涟漪环：只给 warning/critical 的点加扩散环（上限 8，避免噪杂）
+  const rings = useMemo(
+    () =>
+      points
+        .filter((p) => p.severity !== 'info')
+        .slice(0, 8)
+        .map((p) => ({ lat: p.lat, lng: p.lng, color: p.color, maxR: 4, speed: 1.5, period: 1800 })),
+    [points],
+  );
 
   const onPointClick = useCallback((point: (typeof points)[number]) => {
     // 找回同区域的全部消息（含被聚合截断的）
@@ -184,40 +208,100 @@ export function MarketPulseGlobe() {
       {/* 区块标题 */}
       <div className="mb-2 flex items-center justify-between px-1 font-mono text-[10px] tracking-widest text-muted-foreground">
         <span>MARKET PULSE · 全球舆情脉搏</span>
-        <span className="hidden sm:inline">LIVE</span>
+        <span className="hidden items-center gap-1.5 sm:flex">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          LIVE
+        </span>
       </div>
 
       <div className="relative">
-        {/* 眼睛悬在地球上空 */}
-        <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
-          <TruthNetMark className="h-12 w-16 text-primary drop-shadow-md" />
+        {/* 眼睛悬在地球上空，带品牌色辉光 */}
+        <div
+          className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2"
+          style={{ filter: 'drop-shadow(0 0 16px color-mix(in srgb, var(--color-primary) 55%, transparent))' }}
+        >
+          <TruthNetMark className="h-12 w-16 text-primary" />
         </div>
 
-      <div ref={globeWrap} className="relative h-[380px] w-full overflow-hidden rounded-lg border border-border bg-card sm:h-[420px]">
-        <Globe
-          ref={globeRef as never}
-          width={size.width}
-          height={size.height}
-          backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl={isDark ? GLOBE_TEXTURE.night : GLOBE_TEXTURE.day}
-          bumpImageUrl="/assets/globe/earth-topology.png"
-          showGraticules
-          showAtmosphere
-          atmosphereColor="#4f8cc6"
-          atmosphereAltitude={0.16}
-          pointsData={points}
-          pointLat="lat"
-          pointLng="lng"
-          pointColor="color"
-          pointAltitude="altitude"
-          pointRadius={0.32}
-          pointResolution={12}
-          onPointClick={onPointClick as never}
-          labelsData={[]}
-        />
-        {/* 顶部渐隐遮罩，避免地球顶部和卡片边缘生硬相接 */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-background/60 to-transparent" />
-      </div>
+        {/* 深空电影感视窗：不随主题变亮，如同一扇望向太空的舷窗 */}
+        <div
+          ref={globeWrap}
+          className="relative h-[400px] w-full overflow-hidden rounded-lg border border-white/[0.06] sm:h-[440px]"
+          style={{
+            background:
+              'linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 10%, #01040a) 0%, ' +
+              'color-mix(in srgb, var(--color-primary) 22%, #020a14) 55%, ' +
+              'color-mix(in srgb, var(--color-primary) 38%, #041527) 100%)',
+          }}
+        >
+          {/* 星空：确定性散布 + 交错闪烁 */}
+          <div className="pointer-events-none absolute inset-0 z-0">
+            {STARS.map((s) => (
+              <span
+                key={s.id}
+                className="tn-star absolute rounded-full bg-white"
+                style={
+                  {
+                    left: `${s.left}%`,
+                    top: `${s.top}%`,
+                    width: s.size,
+                    height: s.size,
+                    '--star-o': s.opacity,
+                    '--star-delay': `${s.delay}s`,
+                    '--star-d': `${s.duration}s`,
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </div>
+
+          {/* 地平线辉光：地球升起处的柔光 */}
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-2/3"
+            style={{
+              background:
+                'radial-gradient(72% 60% at 50% 108%, color-mix(in srgb, var(--color-primary) 32%, transparent), transparent 70%)',
+            }}
+          />
+
+          {/* 地球：画布加高下移，从底部升起，顶部被星空承接 */}
+          <div className="absolute inset-x-0 z-[1]" style={{ top: GLOBE_CROP_OFFSET_Y }}>
+            <Globe
+              ref={globeRef as never}
+              width={size.width}
+              height={size.height + GLOBE_CROP_EXTRA_H}
+              backgroundColor="rgba(0,0,0,0)"
+              globeImageUrl={GLOBE_NIGHT_TEXTURE}
+              showAtmosphere
+              atmosphereColor="#7fb0e8"
+              atmosphereAltitude={0.28}
+              pointsData={points}
+              pointLat="lat"
+              pointLng="lng"
+              pointColor="color"
+              pointAltitude="altitude"
+              pointRadius={0.3}
+              pointResolution={12}
+              onPointClick={onPointClick as never}
+              ringsData={rings}
+              ringLat="lat"
+              ringLng="lng"
+              ringColor={({ color }: { color: string }) => (t: number) => hexAlpha(color, 0.55 * (1 - t))}
+              ringMaxRadius="maxR"
+              ringPropagationSpeed="speed"
+              ringRepeatPeriod="period"
+            />
+          </div>
+
+          {/* 暗角渐晕：边缘压暗融入深空 */}
+          <div
+            className="pointer-events-none absolute inset-0 z-[2]"
+            style={{
+              background:
+                'radial-gradient(125% 95% at 50% 34%, transparent 44%, rgba(2,8,18,0.5) 86%, rgba(2,8,18,0.78) 100%)',
+            }}
+          />
+        </div>
       </div>
 
       {/* 状态条 */}
