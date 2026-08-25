@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Moon, Sun, Monitor, Zap, Type, Eye, Info, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -30,14 +30,26 @@ const DEFAULTS: Settings = {
   showIndustryBenchmarks: true,
 };
 
-function loadSettings(): Settings {
+function loadSettings(): Settings | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULTS;
+    if (!raw) return null;
     return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
-    return DEFAULTS;
+    return null;
   }
+}
+
+/** 无存储时，从当前实际 DOM 状态推导（而非默认值），保证设置页反映当前状态 */
+function deriveCurrentSettings(): Settings {
+  const root = document.documentElement;
+  const px = parseFloat(getComputedStyle(root).fontSize);
+  const fontSize: Settings['fontSize'] = px >= 17 ? 'lg' : px <= 15 ? 'sm' : 'md';
+  return {
+    ...DEFAULTS,
+    theme: root.classList.contains('dark') ? 'dark' : 'light',
+    fontSize,
+  };
 }
 
 function saveSettings(s: Settings) {
@@ -67,9 +79,15 @@ const RISK_LABELS: Record<RiskLevel, string> = {
 export default function SettingsPage() {
   useDocumentTitle('设置');
   const navigate = useNavigate();
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [settings, setSettings] = useState<Settings>(() => loadSettings() ?? deriveCurrentSettings());
+  // 首次挂载跳过副作用：进入设置页展示的是"当前实际状态"，用户点选后才应用变更
+  const skipApplyRef = useRef(true);
 
   useEffect(() => {
+    if (skipApplyRef.current) {
+      skipApplyRef.current = false;
+      return;
+    }
     saveSettings(settings);
     // 应用主题
     const root = document.documentElement;

@@ -22,7 +22,7 @@ import type {
   ComparisonNextStep,
   PendingCompanyCandidates,
 } from '@/types/truthnet';
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 // 8/23：本对话涉及公司（code + 名称，侧边栏展示"名称（代码）"）。
@@ -54,8 +54,8 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [panelData, setPanelData] = useState<PanelData | null>(null);
   const [panelState, setPanelState] = useState<PanelState>('empty');
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const wsRef = useRef<ReturnType<typeof wsClient.create> | null>(null);
   // 8/17：WS 连接代数（epoch）——每次 create 递增；旧连接迟到的
@@ -772,7 +772,7 @@ export default function ChatPage() {
           title={panelCollapsed ? '展开分析面板' : '收起分析面板'}
           onClick={() => setPanelCollapsed(!panelCollapsed)}
         >
-          {panelCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          {panelCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
         </Button>
       </div>
     </div>

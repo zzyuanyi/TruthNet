@@ -57,7 +57,7 @@ interface WelcomeHeroProps {
 export function WelcomeHero({ onSendSample, onOpenCompare }: WelcomeHeroProps) {
   return (
     <div
-      className="relative flex min-h-full flex-col justify-center px-6 py-14 text-foreground sm:px-10 lg:px-16"
+      className="relative flex min-h-full flex-col justify-start px-6 pt-8 pb-14 text-foreground sm:px-10 sm:pt-12 lg:px-16"
       style={{
         background: [
           'radial-gradient(60% 45% at 50% 0%, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 72%)',
@@ -69,16 +69,8 @@ export function WelcomeHero({ onSendSample, onOpenCompare }: WelcomeHeroProps) {
       }}
     >
       <div className="relative mx-auto w-full max-w-xl">
-        {/* 品牌词标 */}
-        <Reveal delay={0}>
-          <div className="flex items-center justify-between font-mono text-[11px] tracking-widest text-muted-foreground">
-            <span>( TRUTHNET )</span>
-            <span>[ v0.2 ]</span>
-          </div>
-        </Reveal>
-
         {/* 主标题：多行交错 */}
-        <div className="mt-10">
+        <div>
           <h2 className="sr-only">织网鉴真 · 财报反欺诈 · 智能问答</h2>
           <Reveal delay={100}>
             <p className="pl-6 text-4xl font-medium leading-[1.08] tracking-tight text-foreground sm:pl-10 sm:text-5xl">
@@ -99,13 +91,13 @@ export function WelcomeHero({ onSendSample, onOpenCompare }: WelcomeHeroProps) {
 
         {/* 副标题 */}
         <Reveal delay={440}>
-          <p className="mt-8 max-w-md text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-6 max-w-md text-sm leading-relaxed text-muted-foreground">
             输入上市公司名称或股票代码，穿透股权 · 交叉验证 · 对齐舆情
           </p>
         </Reveal>
 
         {/* 快捷入口：1×4 玻璃拟态 + 波浪滚动 */}
-        <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-4">
+        <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-4">
           {QUICK_ACTIONS.map((action, i) => (
             <Reveal key={action.label} delay={520 + i * 90} className="h-full">
               <button
