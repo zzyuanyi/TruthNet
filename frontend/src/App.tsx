@@ -18,10 +18,30 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 // ── Suspense fallback ──
 function PageLoader() {
   return (
-    <div className="flex min-h-[60vh] items-center justify-center">
-      <div className="space-y-4 text-center">
-        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-primary/30 border-t-primary" />
-        <p className="text-sm text-muted-foreground">加载中...</p>
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-white">
+      <div className="flex flex-col items-center gap-5">
+        {/* 织网纹路：经纬网格交织动画 */}
+        <div className="relative h-24 w-24">
+          <svg viewBox="0 0 100 100" className="h-full w-full text-neutral-900" aria-hidden="true">
+            <g fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.85">
+              {/* 经线 */}
+              <path d="M50 2 C 50 30, 50 70, 50 98" className="tn-boot-line" style={{ animationDelay: '0ms' }} />
+              <path d="M20 6 C 26 34, 26 66, 20 94" className="tn-boot-line" style={{ animationDelay: '120ms' }} />
+              <path d="M80 6 C 74 34, 74 66, 80 94" className="tn-boot-line" style={{ animationDelay: '240ms' }} />
+              {/* 纬线 */}
+              <path d="M2 50 C 30 50, 70 50, 98 50" className="tn-boot-line" style={{ animationDelay: '360ms' }} />
+              <path d="M6 20 C 34 26, 66 26, 94 20" className="tn-boot-line" style={{ animationDelay: '480ms' }} />
+              <path d="M6 80 C 34 74, 66 74, 94 80" className="tn-boot-line" style={{ animationDelay: '600ms' }} />
+            </g>
+            <circle cx="50" cy="50" r="4.5" fill="currentColor" className="tn-boot-core" />
+          </svg>
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-base font-medium tracking-[0.3em] text-neutral-900">织网鉴真</p>
+          <div className="h-px w-28 overflow-hidden bg-neutral-200">
+            <div className="tn-boot-bar h-full w-1/3 bg-neutral-900" />
+          </div>
+        </div>
       </div>
     </div>
   );

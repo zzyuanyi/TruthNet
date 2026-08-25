@@ -25,7 +25,7 @@ interface Settings {
 const DEFAULTS: Settings = {
   theme: 'dark',
   reduceMotion: false,
-  fontSize: 'lg',
+  fontSize: 'md',
   showRiskColors: true,
   showIndustryBenchmarks: true,
 };

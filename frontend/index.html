@@ -12,14 +12,14 @@
         try {
           var saved = JSON.parse(localStorage.getItem('truthnet-settings') || 'null');
           var theme = saved && saved.theme ? saved.theme : 'dark';
-          var fontSize = saved && saved.fontSize ? saved.fontSize : 'lg';
+          var fontSize = saved && saved.fontSize ? saved.fontSize : 'md';
           if (theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.documentElement.classList.add('dark');
           }
-          document.documentElement.style.fontSize = { sm: '14px', md: '16px', lg: '18px' }[fontSize] || '18px';
+          document.documentElement.style.fontSize = { sm: '14px', md: '16px', lg: '18px' }[fontSize] || '16px';
         } catch (e) {
           document.documentElement.classList.add('dark');
-          document.documentElement.style.fontSize = '18px';
+          document.documentElement.style.fontSize = '16px';
         }
       })();
     </script>

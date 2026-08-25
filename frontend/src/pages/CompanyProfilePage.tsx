@@ -2069,7 +2069,7 @@ export default function CompanyProfilePage() {
                 />
                 <CardContent className="relative flex min-h-[260px] flex-col items-center justify-center py-10 text-center">
                   <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card/80 backdrop-blur-sm">
-                    <Newspaper className="h-5 w-5 text-primary" />
+                    <i className="ph-duotone ph-newspaper text-[22px] text-primary" aria-hidden="true" />
                   </div>
                   <p className="text-sm text-foreground/80">
                     舆情事件数据源待接入（需 full profile）

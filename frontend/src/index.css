@@ -490,3 +490,10 @@ body {
 .animate-tn-wave:nth-child(4) {
   animation-delay: 1.5s;
 }
+/* ── 启动加载动画（白底·深色织网纹路） ── */
+.tn-boot-line { stroke-dasharray: 220; stroke-dashoffset: 220; animation: tn-boot-draw 1.4s ease-out forwards; }
+@keyframes tn-boot-draw { to { stroke-dashoffset: 0; } }
+.tn-boot-core { transform-origin: 50% 50%; animation: tn-boot-pulse 1.8s ease-in-out infinite; }
+@keyframes tn-boot-pulse { 0%,100% { transform: scale(1); opacity: .9 } 50% { transform: scale(1.35); opacity: .5 } }
+.tn-boot-bar { animation: tn-boot-slide 1.2s ease-in-out infinite; }
+@keyframes tn-boot-slide { 0% { transform: translateX(-120%) } 100% { transform: translateX(340%) } }
