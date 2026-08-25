@@ -114,3 +114,4 @@ frontend/public/*.tar.gz
 
 # CI 诊断日志（勿入库）
 assets/Skip to content*.txt
+assets/Screenshot*.jpg
