@@ -135,3 +135,13 @@
 
 ### 配色
 - 全程语义化（`bg-card` / `border-border` / `text-foreground` / `text-muted-foreground` / `text-primary`），光晕与渐变用 `bg-primary/*` 透明度，随明暗主题自动切换。
+
+### 素材（公开素材库，Unsplash 免费可商用，已下载至 `public/assets/`）
+- `hero-finance.jpg`（深色 K 线蜡烛图）：hero 头部底图，`opacity-10` + 深色渐变遮罩，浅色主题下同样保留（低透明度不干扰）。
+- `hero-abstract.jpg`（发光电路板）：风险概览 bento 区底图，`opacity-5`，只做质感不做信息。
+- `hero-globe.jpg`（太空地球夜景）：舆情时间线区底图，`opacity-10` + 自下而上渐隐，隐喻"全局监控"。
+
+### 金融级微交互（ui-ux-pro-max 情报落地）
+- 数字滚动（`CountUpNumber`）：hero 综合评分（0→score，800ms）+ bento 指标卡（规则数/舆情数/时间线事件数），`requestAnimationFrame` + ease-out，`prefers-reduced-motion` 时直接显示终值。
+- 指标卡悬浮：`tn-lift`（-2px 上浮 + shadow-md）+ `tn-card-sheen`（对角高光扫过）。
+- 全站噪点：`tn-noise`（SVG feTurbulence，`opacity-[0.035]`，`pointer-events-none`），压住 AI 味的"塑料平涂感"。

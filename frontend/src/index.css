@@ -286,3 +286,40 @@ body {
     transform: translateX(-55%) scale(1);
   }
 }
+
+/* ─── 高级质感：胶片噪点纹理（本地 SVG，无外部依赖） ─── */
+.tn-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+}
+
+/* ─── 高级质感：区块卡片悬浮精修（仅 transform/opacity，GPU 友好） ─── */
+.tn-lift {
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+.tn-lift:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  box-shadow: 0 8px 24px -12px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+/* 卡片顶部 1px 高光内衬线，模拟金属切割面 */
+.tn-card-sheen {
+  position: relative;
+}
+.tn-card-sheen::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-foreground) 14%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}

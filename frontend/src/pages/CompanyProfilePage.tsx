@@ -143,6 +143,7 @@ import { EvidenceChain } from '@/components/truthnet/EvidenceChain';
 import { FinanceTrendOverview } from '@/components/truthnet/FinanceTrendOverview';
 import { ExportSnapshotButton } from '@/components/ExportSnapshotButton';
 import { Reveal } from '@/components/reveal';
+import { CountUpNumber } from '@/components/truthnet/CountUpNumber';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { MarkdownRenderer } from '@/components/markdown-renderer';
@@ -749,7 +750,19 @@ export default function CompanyProfilePage() {
           {/* 概览区块 · Hero 头部 */}
           <div ref={sectionRefs.overview} className="mb-8">
             <Reveal>
-              <div className="relative mb-6 overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8">
+              <div className="tn-card-sheen relative mb-6 overflow-hidden rounded-2xl border border-border bg-card p-6 sm:p-8">
+                {/* Unsplash 素材：深色 K 线图，浅色主题下大幅降透明度保持可读性 */}
+                <img
+                  src="/assets/hero-finance.jpg"
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.10] dark:opacity-[0.32]"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 bg-gradient-to-r from-card via-card/90 to-card/35 dark:via-card/75 dark:to-card/25"
+                />
+                <div aria-hidden="true" className="tn-noise pointer-events-none absolute inset-0 opacity-[0.05] dark:opacity-[0.09]" />
                 <div
                   aria-hidden="true"
                   className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-primary/10 blur-3xl"
@@ -758,7 +771,7 @@ export default function CompanyProfilePage() {
                   aria-hidden="true"
                   className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-primary/[0.06] blur-3xl"
                 />
-                <div className="relative">
+                <div className="relative text-card-foreground">
                   <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.3em] text-muted-foreground sm:text-xs">
                     财报反欺诈画像 · 多源交叉验证
                   </p>
@@ -768,6 +781,17 @@ export default function CompanyProfilePage() {
                     </h1>
                     <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
                     <span className="font-mono text-sm text-muted-foreground">{profile.wind_code}</span>
+                    {riskData !== null && (
+                      <span className="flex items-baseline gap-1.5 font-mono text-sm text-muted-foreground">
+                        <span className="text-[10px] uppercase tracking-[0.2em]">score</span>
+                        <CountUpNumber
+                          value={riskData.overall_score}
+                          decimals={3}
+                          active={riskData !== null}
+                          className="text-base font-semibold text-foreground"
+                        />
+                      </span>
+                    )}
                   </div>
                   <div className="mt-5 flex flex-wrap items-center gap-2">
                     <ExportSnapshotButton className="gap-1.5" />
@@ -808,35 +832,41 @@ export default function CompanyProfilePage() {
                 <>
                 {/* 风险概览指标（bento 网格） */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div className="col-span-2 flex flex-col justify-center rounded-xl border border-border bg-gradient-to-br from-primary/15 to-primary/5 p-5">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <div className="tn-card-sheen tn-lift relative col-span-2 flex flex-col justify-center overflow-hidden rounded-xl border border-border p-5">
+                    <img src="/assets/hero-abstract.jpg" alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.07] mix-blend-luminosity dark:opacity-[0.14]" />
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5" />
+                    <p className="relative mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       综合风险等级
                     </p>
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative flex flex-wrap items-center gap-3">
                       <p className="text-3xl font-bold leading-none text-foreground">{riskConfig.label}</p>
                       <Badge className={riskConfig.color}>{riskConfig.label}</Badge>
                     </div>
                   </div>
-                  <div className="flex flex-col justify-center rounded-xl bg-muted/50 p-5 text-center">
+                  <div className="tn-card-sheen tn-lift flex flex-col justify-center rounded-xl bg-muted/50 p-5 text-center">
                     <p className="mb-1 text-xs text-muted-foreground">触发规则数</p>
-                    <p className="text-2xl font-bold">{triggeredRules.length}</p>
+                    <p className="text-2xl font-bold">
+                      <CountUpNumber value={triggeredRules.length} active={riskData !== null} />
+                    </p>
                   </div>
-                  <div className="flex flex-col justify-center rounded-xl bg-muted/50 p-5 text-center">
+                  <div className="tn-card-sheen tn-lift flex flex-col justify-center rounded-xl bg-muted/50 p-5 text-center">
                     <p className="mb-1 text-xs text-muted-foreground">舆情事件数</p>
-                    <p className="text-2xl font-bold">{sentimentEvents.length}</p>
+                    <p className="text-2xl font-bold">
+                      <CountUpNumber value={sentimentEvents.length} active={eventsHasData} />
+                    </p>
                   </div>
                   {/* A3（8/9 老师要求）：数据截止日 / 数据模块 / 覆盖状态
                       （2026-08-16 口径整改：截止日由后端从库内真实期次推导；
                       覆盖率不再显示百分比，改为真实数据模块数 x/4） */}
-                  <div className="flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
+                  <div className="tn-card-sheen tn-lift flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
                     <p className="mb-1 text-xs text-muted-foreground">数据截止日</p>
                     <p className="text-sm font-semibold">{riskData?.as_of || '-'}</p>
                   </div>
-                  <div className="flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
+                  <div className="tn-card-sheen tn-lift flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
                     <p className="mb-1 text-xs text-muted-foreground">数据模块</p>
                     <p className="text-sm font-semibold">{coverageModulesText}</p>
                   </div>
-                  <div className="col-span-2 flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
+                  <div className="tn-card-sheen tn-lift col-span-2 flex flex-col justify-center rounded-xl border border-border/60 p-4 text-center">
                     <p className="mb-1 text-xs text-muted-foreground">覆盖状态</p>
                     <p className="text-sm font-semibold">{coverageStatusText}</p>
                   </div>
@@ -1447,9 +1477,25 @@ export default function CompanyProfilePage() {
                 }}
               />
             ) : (
-              <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  暂无舆情事件数据
+              <Card className="relative overflow-hidden">
+                <img
+                  src="/assets/hero-globe.jpg"
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.07] dark:opacity-[0.22]"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 bg-gradient-to-b from-card/70 via-card/40 to-card/80 dark:from-card/60 dark:via-card/30 dark:to-card/70"
+                />
+                <CardContent className="relative py-10 text-center">
+                  <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card/80 backdrop-blur-sm">
+                    <Newspaper className="h-5 w-5 text-primary" />
+                  </div>
+                  <p className="text-sm text-foreground/80">舆情事件数据源待接入（需 full profile）</p>
+                  <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.25em] text-muted-foreground">
+                    global monitoring · standby
+                  </p>
                 </CardContent>
               </Card>
             )}
