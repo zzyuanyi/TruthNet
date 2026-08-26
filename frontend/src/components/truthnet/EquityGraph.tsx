@@ -243,10 +243,10 @@ function nodeFill(d: GraphLayoutNode): string {
 
 function nodeInnerText(d: GraphLayoutNode): string {
   if (d.nodeType === 'target') return '目标';
-  if (d.direction === 'downstream') return '下';
+  if (d.direction === 'downstream') return '投';
   if (d.nodeType === 'person') return '人';
-  if (d.nodeType === 'fund') return '机构';
-  return '';
+  if (d.nodeType === 'fund') return '机';
+  return '企';
 }
 
 function formatOwnership(ownership: number | null): string {
@@ -312,6 +312,30 @@ function shouldShowEdgeLabel(
     (sourceNode !== undefined && sourceNode.nodeType !== 'target' && isRiskNode(sourceNode)) ||
     (targetNode !== undefined && targetNode.nodeType !== 'target' && isRiskNode(targetNode))
   );
+}
+
+function ownershipValue(edge: EquityEdgeDTO): number {
+  return edge.ownership_pct ?? edge.control_pct ?? 0;
+}
+
+function edgeWidth(edge: EquityEdgeDTO): number {
+  const ownership = ownershipValue(edge);
+  if (ownership >= 50) return 3.4;
+  if (ownership >= 20) return 2.7;
+  if (ownership >= KEY_OWNERSHIP_PCT) return 2.1;
+  return 1.15;
+}
+
+function layerLabels(layout: GraphLayout): string[] {
+  const labels: string[] = [];
+  for (let hop = layout.upstreamDepth; hop >= 1; hop -= 1) {
+    labels.push(hop === 1 ? '直接股东' : `上游第 ${hop} 层`);
+  }
+  labels.push('目标公司');
+  for (let hop = 1; hop <= layout.downstreamDepth; hop += 1) {
+    labels.push(hop === 1 ? '直接被投' : `下游第 ${hop} 层`);
+  }
+  return labels;
 }
 
 // 风险节点呼吸光环：创建后让 halo 光晕循环放大呼吸
@@ -418,6 +442,7 @@ export function EquityGraph({
     () => computeGraphLayout(merged.nodes, merged.edges, targetId, dimensions.width),
     [merged, targetId, dimensions.width],
   );
+  const lanes = useMemo(() => layerLabels(layout), [layout]);
 
   // 用 G6 渲染（Canvas 渲染器）；主题色经 getComputedStyle 读取，主题切换时需重新渲染
   useEffect(() => {
@@ -533,8 +558,12 @@ export function EquityGraph({
         type: 'line',
         style: {
           stroke: mutedColor,
-          lineWidth: 1.6,
-          strokeOpacity: 0.65,
+          lineWidth: (d: any) => edgeWidth(d.data as EquityEdgeDTO),
+          strokeOpacity: (d: any) =>
+            ownershipValue(d.data as EquityEdgeDTO) >= KEY_OWNERSHIP_PCT ? 0.78 : 0.42,
+          lineDash: (d: any) =>
+            ownershipValue(d.data as EquityEdgeDTO) < KEY_OWNERSHIP_PCT ? [4, 3] : [],
+          lineCap: 'round',
           endArrow: true,
           labelText: (d: any) => {
             if (!shouldShowEdgeLabel(d.data, nodeById, showAllEdgeLabels)) return '';
@@ -621,17 +650,46 @@ export function EquityGraph({
   const handleResetZoom = () => graphRef.current?.zoomTo(1);
 
   return (
-    <div ref={containerRef} className="relative border border-border rounded-md bg-muted/20">
+    <div ref={containerRef} className="relative overflow-hidden rounded-xl border border-border bg-muted/20 shadow-sm">
       {/* G6 canvas 将挂载于此容器，overlay 元素（图例/按钮）absolute 叠于其上 */}
 
-      {/* 与真实跳数同步的阅读动线，避免把多跳图误读为单层股东表 */}
+      {/* 以真实层级绘制淡色泳道：视觉上先读控制方向，再读主体与边。 */}
       <div
         aria-hidden
-        className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-3 py-1 text-[10px] font-medium tracking-wide text-muted-foreground shadow-sm backdrop-blur-sm"
+        className="pointer-events-none absolute inset-x-3 bottom-3 top-3 z-0 grid overflow-hidden rounded-lg border border-border/30"
+        style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
       >
-        上游 {layout.upstreamDepth} 层 <span className="px-1.5 text-primary">→</span>
-        <span className="text-foreground">目标公司</span>
-        <span className="px-1.5 text-primary">→</span> 下游 {layout.downstreamDepth} 层
+        {lanes.map((lane, index) => (
+          <div
+            key={lane}
+            className={
+              index === layout.upstreamDepth
+                ? 'border-x border-primary/20 bg-primary/[0.045]'
+                : index % 2 === 0
+                  ? 'bg-muted/25'
+                  : 'bg-background/[0.015]'
+            }
+          />
+        ))}
+      </div>
+
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-16 top-3 z-10 grid text-center text-[10px] font-medium tracking-wide text-muted-foreground"
+        style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
+      >
+        {lanes.map((lane, index) => (
+          <span
+            key={lane}
+            className={
+              index === layout.upstreamDepth
+                ? 'mx-1 rounded-full border border-primary/25 bg-primary/10 px-1.5 py-1 text-primary'
+                : 'px-1.5 py-1'
+            }
+          >
+            {lane}
+          </span>
+        ))}
       </div>
 
       {/* 风险等级图例（节点颜色语义） */}
@@ -645,6 +703,9 @@ export function EquityGraph({
         <span className="flex items-center gap-1">
           <span className="w-3 h-3 rounded-full" style={{ backgroundColor: '#94a3b8' }} />
           未评级
+        </span>
+        <span className="ml-1 border-l border-border pl-2 text-muted-foreground">
+          线宽 = 持股比例
         </span>
       </div>
 
@@ -688,11 +749,6 @@ export function EquityGraph({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
           </svg>
         </button>
-      </div>
-
-      {/* Hint */}
-      <div className="absolute top-3 right-3 z-10 bg-background/90 backdrop-blur-sm border border-border rounded-md px-2 py-1 text-xs text-muted-foreground">
-        分层穿透视图 · 悬停摘要 · 点击查看详情
       </div>
     </div>
   );
