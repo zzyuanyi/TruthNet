@@ -63,12 +63,40 @@ interface GraphLayout {
   nodes: GraphLayoutNode[];
   layerCount: number;
   maxHop: number;
+  upstreamDepth: number;
+  downstreamDepth: number;
   radiusScale: number;
+}
+
+const KEY_OWNERSHIP_PCT = 5;
+
+function riskPriority(riskLevel?: string | null): number {
+  return ({ red: 5, orange: 4, yellow: 3, blue: 2, green: 1, unknown: 0 })[
+    riskLevel || 'unknown'
+  ] ?? 0;
 }
 
 function truncateLabel(name: string, max = 10): string {
   if (!name) return '未命名';
   return name.length > max ? `${name.slice(0, max)}…` : name;
+}
+
+function relationLabel(relationType?: string): string {
+  const relation = relationType || '持股';
+  if (relation === 'OWNS') return '持股';
+  if (relation === 'CONTROLS') return '控制';
+  return relation;
+}
+
+function isTargetNode(node: EquityNodeDTO, targetId: string): boolean {
+  // 画像页传入的是 wind_code（如 603180.SH），图数据内部边使用 entity_id。
+  // 三种稳定标识都要识别，否则目标节点缺失会让所有节点退化到同一列。
+  return (
+    node.id === targetId ||
+    node.entity_id === targetId ||
+    node.wind_code === targetId ||
+    node.direction === 'target'
+  );
 }
 
 function computeGraphLayout(
@@ -77,73 +105,130 @@ function computeGraphLayout(
   targetId: string,
   containerWidth: number,
 ): GraphLayout {
-  // 无向 BFS 计算每个节点距目标公司的 hop（不可达节点排到最右）
-  const adj = new Map<string, string[]>();
-  nodes.forEach(n => adj.set(n.id, []));
+  // 股权边的语义为“持有人(source) → 被持有主体(target)”。因此不能用无向
+  // BFS：同为 1 跳的上游股东会被堆到目标公司的同一列。这里分别沿反向/正向
+  // 边搜索，得到“上游股东 → 目标公司 → 下游公司”的稳定层级。
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  nodes.forEach(n => {
+    incoming.set(n.id, []);
+    outgoing.set(n.id, []);
+  });
   edges.forEach(e => {
-    adj.get(e.source)?.push(e.target);
-    adj.get(e.target)?.push(e.source);
+    outgoing.get(e.source)?.push(e.target);
+    incoming.get(e.target)?.push(e.source);
   });
 
-  const hops = new Map<string, number>();
-  const targetNode = nodes.find(n => n.id === targetId || n.entity_id === targetId);
-  if (targetNode) {
+  const targetNode = nodes.find(n => isTargetNode(n, targetId));
+  const walk = (neighbours: Map<string, string[]>) => {
+    const hops = new Map<string, number>();
+    if (!targetNode) return hops;
     const queue: string[] = [targetNode.id];
     hops.set(targetNode.id, 0);
     while (queue.length > 0) {
       const cur = queue.shift()!;
       const curHop = hops.get(cur)!;
-      for (const nb of adj.get(cur) || []) {
+      for (const nb of neighbours.get(cur) || []) {
         if (!hops.has(nb)) {
           hops.set(nb, curHop + 1);
           queue.push(nb);
         }
       }
     }
-  }
-  const maxHop = Math.max(0, ...hops.values());
-  nodes.forEach(n => {
-    if (!hops.has(n.id)) hops.set(n.id, maxHop + 1);
+    return hops;
+  };
+
+  const upstreamHops = walk(incoming);
+  const downstreamHops = walk(outgoing);
+  const maxUpstreamHop = Math.max(0, ...upstreamHops.values());
+  const maxDownstreamHop = Math.max(0, ...downstreamHops.values());
+  const maxHop = Math.max(maxUpstreamHop, maxDownstreamHop);
+  const strongestOwnership = new Map<string, number>();
+  edges.forEach((edge) => {
+    const ownership = edge.ownership_pct ?? edge.control_pct ?? 0;
+    strongestOwnership.set(
+      edge.source,
+      Math.max(strongestOwnership.get(edge.source) ?? 0, ownership),
+    );
+    strongestOwnership.set(
+      edge.target,
+      Math.max(strongestOwnership.get(edge.target) ?? 0, ownership),
+    );
   });
 
-  const byHop = new Map<number, GraphLayoutNode[]>();
+  const byLayer = new Map<string, GraphLayoutNode[]>();
   nodes.forEach(n => {
-    const isTarget =
-      n.id === targetId || n.entity_id === targetId || n.direction === 'target';
-    const isDownstream = !isTarget && n.direction === 'downstream';
+    const isTarget = isTargetNode(n, targetId);
+    const isDownstream =
+      !isTarget &&
+      (n.direction === 'downstream' ||
+        (downstreamHops.has(n.id) && !upstreamHops.has(n.id)));
     const nodeType = isTarget ? 'target' : mapEntityType(n.entity_type || '');
     const direction: GraphLayoutNode['direction'] = isTarget
       ? 'target'
       : isDownstream
         ? 'downstream'
         : 'upstream';
-    const h = hops.get(n.id)!;
-    if (!byHop.has(h)) byHop.set(h, []);
-    byHop.get(h)!.push({ ...n, nodeType, direction, hop: h, x: 0, y: 0 });
+    const hop = isTarget
+      ? 0
+      : direction === 'downstream'
+        ? downstreamHops.get(n.id) || 1
+        : upstreamHops.get(n.id) || maxUpstreamHop + 1;
+    const layerKey = `${direction}:${hop}`;
+    if (!byLayer.has(layerKey)) byLayer.set(layerKey, []);
+    byLayer.get(layerKey)!.push({ ...n, nodeType, direction, hop, x: 0, y: 0 });
   });
 
-  const layerCount = Math.max(1, maxHop + 1);
-  const layerWidth = Math.max(190, (Math.max(containerWidth, 760) - 120) / layerCount);
-  const width = Math.max(containerWidth, 70 + layerCount * layerWidth + 90);
+  const layerCount = Math.max(1, maxUpstreamHop + maxDownstreamHop + 1);
+  const maxDepth = Math.max(1, maxUpstreamHop, maxDownstreamHop);
+  const width = Math.max(containerWidth, 160 + maxDepth * 240 * 2);
+  const centerX = width / 2;
+  const layerWidth = Math.min(220, (width - 140) / (maxDepth * 2));
 
-  // 每层节点纵向均布；节点多时动态加高并适度缩小节点半径，避免字符重叠
-  const maxPerLayer = Math.max(1, ...Array.from(byHop.values()).map(g => g.length));
-  const spacing = maxPerLayer <= 8 ? 84 : Math.max(56, Math.min(76, 720 / maxPerLayer));
-  const height = Math.max(560, 104 + maxPerLayer * spacing + 28);
+  // 同一层纵向均布，目标公司固定在垂直中心；10 个以上股东时仍保留可辨识的
+  // 行距，避免自动缩放后节点和持股标签重叠。
+  const maxPerLayer = Math.max(1, ...Array.from(byLayer.values()).map(g => g.length));
+  const spacing = maxPerLayer <= 6 ? 88 : Math.max(62, Math.min(74, 760 / maxPerLayer));
+  const height = Math.max(620, 120 + maxPerLayer * spacing);
   const radiusScale = maxPerLayer > 10 ? 0.78 : 1;
 
   const layoutNodes: GraphLayoutNode[] = [];
-  byHop.forEach((group, h) => {
-    const x = 70 + h * layerWidth;
+  byLayer.forEach(group => {
+    // 同层采用“风险优先、持股比例其次、名称兜底”的稳定顺序。多跳分支在
+    // 每次重渲染时不会随机跳位，且关键主体会更靠近视觉焦点。
+    group.sort((a, b) => {
+      const riskGap = riskPriority(b.risk_level) - riskPriority(a.risk_level);
+      if (riskGap !== 0) return riskGap;
+      const ownershipGap =
+        (strongestOwnership.get(b.id) ?? 0) - (strongestOwnership.get(a.id) ?? 0);
+      if (ownershipGap !== 0) return ownershipGap;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
     group.forEach((n, i) => {
-      const y = 64 + spacing * (i + 0.5);
+      const x =
+        n.direction === 'target'
+          ? centerX
+          : centerX + (n.direction === 'downstream' ? 1 : -1) * n.hop * layerWidth;
+      const y =
+        n.direction === 'target'
+          ? height / 2
+          : 70 + ((height - 140) * (i + 1)) / (group.length + 1);
       const placed = { ...n, x, y };
       layoutNodes.push(placed);
-      byHop.get(h)![i] = placed;
+      group[i] = placed;
     });
   });
 
-  return { width, height, nodes: layoutNodes, layerCount, maxHop, radiusScale };
+  return {
+    width,
+    height,
+    nodes: layoutNodes,
+    layerCount,
+    maxHop,
+    upstreamDepth: maxUpstreamHop,
+    downstreamDepth: maxDownstreamHop,
+    radiusScale,
+  };
 }
 
 function nodeFill(d: GraphLayoutNode): string {
@@ -188,6 +273,22 @@ function isRiskNode(d: GraphLayoutNode): boolean {
   return d.risk_level === 'red' || d.risk_level === 'orange' || d.risk_level === 'yellow';
 }
 
+function shouldShowEdgeLabel(
+  edge: EquityEdgeDTO,
+  nodeById: Map<string, GraphLayoutNode>,
+  showAll: boolean,
+): boolean {
+  if (showAll) return true;
+  if (relationLabel(edge.relation_type) === '控制') return true;
+  if ((edge.ownership_pct ?? edge.control_pct ?? 0) >= KEY_OWNERSHIP_PCT) return true;
+  const sourceNode = nodeById.get(edge.source);
+  const targetNode = nodeById.get(edge.target);
+  return (
+    (sourceNode !== undefined && sourceNode.nodeType !== 'target' && isRiskNode(sourceNode)) ||
+    (targetNode !== undefined && targetNode.nodeType !== 'target' && isRiskNode(targetNode))
+  );
+}
+
 // 风险节点呼吸光环：创建后让 halo 光晕循环放大呼吸
 class BreathingCircle extends Circle {
   onCreate() {
@@ -219,6 +320,7 @@ export function EquityGraph({
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 520 });
+  const [showAllEdgeLabels, setShowAllEdgeLabels] = useState(false);
 
   // Handle resize
   useEffect(() => {
@@ -240,9 +342,7 @@ export function EquityGraph({
     const relations = downstreamRelations ?? [];
     if (relations.length === 0) return { nodes, edges };
     // 边 source/target 的语义是 node.id；需定位目标节点的真实 id
-    const targetNode = nodes.find(
-      (n) => n.id === targetId || n.entity_id === targetId,
-    );
+    const targetNode = nodes.find((n) => isTargetNode(n, targetId));
     const actualTargetId = targetNode?.id ?? targetId;
 
     const dsNodes: EquityNodeDTO[] = relations.map((r, i) => {
@@ -310,12 +410,17 @@ export function EquityGraph({
     // disposed 标记 + 强制清空容器 canvas 兜底。
     let disposed = false;
     const container = containerRef.current;
+    const nodeById = new Map(layout.nodes.map((node) => [node.id, node]));
 
     const graph = new Graph({
       container,
       width: layout.width,
       height: layout.height,
       autoFit: 'view',
+      // 为顶部阅读动线、底部图例和节点名称保留画布安全边距，避免首尾节点
+      // 被覆盖或裁切；缩放后仍能一屏读出股东层级。
+      padding: [68, 128, 140, 120],
+      animation: false,
       data: {
         nodes: layout.nodes.map(n => ({
           id: n.id,
@@ -329,23 +434,48 @@ export function EquityGraph({
         })),
       },
       node: {
-        type: (d: any) =>
-          isRiskNode(d.data as GraphLayoutNode) ? 'breathing-circle' : 'circle',
+        type: (d: any) => {
+          const node = d.data as GraphLayoutNode;
+          if (node.nodeType === 'target') return 'rect';
+          return isRiskNode(node) ? 'breathing-circle' : 'circle';
+        },
         style: {
           x: (d: any) => d.data.x as number,
           y: (d: any) => d.data.y as number,
+          size: (d: any) =>
+            d.data.nodeType === 'target'
+              ? [142, 58]
+              : (NODE_RADIUS[d.data.nodeType] || 20) * 2 * layout.radiusScale,
           r: (d: any) => (NODE_RADIUS[d.data.nodeType] || 20) * layout.radiusScale,
+          radius: (d: any) => (d.data.nodeType === 'target' ? 14 : 0),
           fill: (d: any) => nodeFill(d.data as GraphLayoutNode),
           stroke: '#ffffff',
-          lineWidth: (d: any) => (isRiskNode(d.data as GraphLayoutNode) ? 3.5 : 2.5),
+          lineWidth: (d: any) =>
+            d.data.nodeType === 'target'
+              ? 3.5
+              : isRiskNode(d.data as GraphLayoutNode)
+                ? 3.5
+                : 2.5,
           fillOpacity: 0.92,
-          labelText: (d: any) =>
-            truncateLabel(d.data.name, layout.radiusScale < 1 ? 8 : 10),
-          labelPlacement: 'bottom',
-          labelFill: textColor,
-          labelFontSize: layout.radiusScale < 1 ? 10 : 11,
+          labelText: (d: any) => {
+            const node = d.data as GraphLayoutNode;
+            return node.nodeType === 'target'
+              ? `${truncateLabel(node.name, 10)}\n目标公司`
+              : truncateLabel(node.name, layout.radiusScale < 1 ? 8 : 10);
+          },
+          labelPlacement: (d: any) =>
+            d.data.nodeType === 'target' ? 'center' : 'bottom',
+          labelFill: (d: any) =>
+            d.data.nodeType === 'target' ? '#ffffff' : textColor,
+          labelFontSize: (d: any) =>
+            d.data.nodeType === 'target' ? 12 : layout.radiusScale < 1 ? 10 : 11,
+          labelFontWeight: (d: any) => (d.data.nodeType === 'target' ? 600 : 400),
+          labelLineHeight: 17,
           labelOffsetY: 6,
-          iconText: (d: any) => nodeInnerText(d.data as GraphLayoutNode),
+          iconText: (d: any) =>
+            d.data.nodeType === 'target'
+              ? ''
+              : nodeInnerText(d.data as GraphLayoutNode),
           iconFill: '#ffffff',
           iconFontSize: 10,
           halo: (d: any) => isRiskNode(d.data as GraphLayoutNode),
@@ -372,7 +502,8 @@ export function EquityGraph({
           strokeOpacity: 0.65,
           endArrow: true,
           labelText: (d: any) => {
-            const rel = d.data.relation_type || '持股';
+            if (!shouldShowEdgeLabel(d.data, nodeById, showAllEdgeLabels)) return '';
+            const rel = relationLabel(d.data.relation_type);
             const pct = d.data.ownership_pct != null ? ` ${d.data.ownership_pct.toFixed(1)}%` : '';
             return `${rel}${pct}`;
           },
@@ -408,7 +539,7 @@ export function EquityGraph({
             const d = first.data as GraphLayoutNode;
             if (d.hop === undefined) {
               const e = first.data as EquityEdgeDTO & { relation_type?: string };
-              const rel = e.relation_type || '持股';
+              const rel = relationLabel(e.relation_type);
               const pct = e.ownership_pct != null ? `${e.ownership_pct.toFixed(1)}%` : '';
               return `<div style="font-weight:600">${rel}${pct ? ` ${pct}` : ''}</div>`;
             }
@@ -420,7 +551,7 @@ export function EquityGraph({
 
     // render 为异步：销毁后完成的 promise 属预期（.catch 吞掉 rejection），
     // 未销毁时若失败则静默降级（图不渲染但页面不崩）。
-    graph.render().catch(() => {
+    const renderPromise = graph.render().catch(() => {
       if (disposed) return;
       // 非销毁导致的失败：清空容器 canvas，避免残留半渲染状态
       container?.querySelectorAll('canvas').forEach(c => c.remove());
@@ -430,24 +561,25 @@ export function EquityGraph({
     // 节点点击 → 页面级详情弹窗（hover 轻提示已由 tooltip 提供）
     graph.on('node:click', (evt: any) => {
       const id = String(evt?.target?.id ?? '');
-      const node = nodes.find(n => String(n.id) === id);
+      const node = merged.nodes.find(n => String(n.id) === id);
       if (node) onNodeClick?.(node);
     });
 
     return () => {
       disposed = true;
       if (graphRef.current === graph) graphRef.current = null;
-      try {
-        graph.destroy();
-      } catch {
-        /* 已销毁 */
-      }
-      // 兜底：清空容器内残留 canvas（G6 destroy 与异步 render 竞态时可能遗留）
-      if (container) {
-        container.querySelectorAll('canvas').forEach(c => c.remove());
-      }
+      // G6 v5 render() 异步完成前销毁会在内部打印 “graph instance has been
+      // destroyed”。等待当前 render 收束后再清理，避免页面切换时的竞态噪声。
+      void renderPromise.finally(() => {
+        try {
+          graph.destroy();
+        } catch {
+          /* 已销毁 */
+        }
+        container?.querySelectorAll('canvas').forEach(c => c.remove());
+      });
     };
-  }, [layout, merged]);
+  }, [layout, merged, showAllEdgeLabels]);
 
   const handleZoomIn = () => graphRef.current?.zoomBy(1.3);
   const handleZoomOut = () => graphRef.current?.zoomBy(0.7);
@@ -456,6 +588,16 @@ export function EquityGraph({
   return (
     <div ref={containerRef} className="relative border border-border rounded-md bg-muted/20">
       {/* G6 canvas 将挂载于此容器，overlay 元素（图例/按钮）absolute 叠于其上 */}
+
+      {/* 与真实跳数同步的阅读动线，避免把多跳图误读为单层股东表 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-3 py-1 text-[10px] font-medium tracking-wide text-muted-foreground shadow-sm backdrop-blur-sm"
+      >
+        上游 {layout.upstreamDepth} 层 <span className="px-1.5 text-primary">→</span>
+        <span className="text-foreground">目标公司</span>
+        <span className="px-1.5 text-primary">→</span> 下游 {layout.downstreamDepth} 层
+      </div>
 
       {/* 风险等级图例（节点颜色语义） */}
       <div className="absolute bottom-3 left-3 z-10 flex flex-wrap gap-2 bg-background/90 backdrop-blur-sm border border-border rounded-md p-2 text-xs">
@@ -470,6 +612,17 @@ export function EquityGraph({
           未评级
         </span>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setShowAllEdgeLabels((value) => !value)}
+        className="absolute bottom-3 right-3 z-10 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+        title={showAllEdgeLabels ? '仅保留关键持股比例标签' : '显示全部持股比例标签'}
+      >
+        {showAllEdgeLabels
+          ? '隐藏次要比例'
+          : `关键比例 ≥ ${KEY_OWNERSHIP_PCT}%`}
+      </button>
 
       {/* Zoom controls */}
       <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
