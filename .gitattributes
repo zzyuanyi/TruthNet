@@ -57,4 +57,5 @@
 # 部署归档不包含本地智能体/平台协作配置；源码仓库仍保留供开发与 CI 使用
 /.claude export-ignore
 /.coze export-ignore
+/frontend/.coze export-ignore
 /CLAUDE.md export-ignore
