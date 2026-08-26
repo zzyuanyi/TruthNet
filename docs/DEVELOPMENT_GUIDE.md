@@ -102,14 +102,14 @@ python scripts/doctor.py                   # 环境检测
 python -m pytest backend/tests -v          # 现有测试（29 个）
 
 # ===== 后端 · 启动服务 =====
-python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8000
-# 浏览器打开 http://localhost:8000/docs 看到 Swagger 页面
+python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8001
+# 浏览器打开 http://127.0.0.1:8001/docs 看到 Swagger 页面
 
 # ===== 前端 =====
 cd frontend
 pnpm install
 pnpm build && pnpm typecheck              # 构建 + 类型检查
-pnpm dev                                   # 启动开发服务器（默认 http://localhost:5173）
+pnpm dev                                   # 启动开发服务器（默认 http://127.0.0.1:5000）
 ```
 
 ---
@@ -311,7 +311,7 @@ pnpm dev                                   # 启动开发服务器（默认 http
 | 数据迁移 | Alembic | 最新 | MySQL schema 管理 |
 | 行业数据 | akshare | 最新 | 行业分类补全 |
 | 前端 WS | WebSocket API | — | 浏览器原生 |
-| D3 图谱 | D3.js | 7.x | 股权穿透图 |
+| G6 图谱 | AntV G6 | 5.x | 股权穿透图 |
 
 ---
 
@@ -617,7 +617,7 @@ pnpm dev                                   # 启动开发服务器（默认 http
 | Phase | 前端 | 后端 | 数据 |
 |:--:|------|------|------|
 | A | openapi-typescript, Prettier | FastAPI, Pydantic V2, OpenAPI 3.1, RFC 9457 | 数据字段映射, `RULES_SPEC.md` |
-| B | WebSocket API, D3.js | MySQL 8.0, Neo4j 5.x, ChromaDB, DeepSeek V4, LangGraph | MySQL 全量入库, Neo4j 全量图, 行业补全, 康美 fixture |
+| B | WebSocket API, AntV G6 | MySQL 8.0, Neo4j 5.x, ChromaDB, DeepSeek, LangGraph | MySQL 全量入库, Neo4j 全量图, 行业补全, 康美 fixture |
 | C | 面板联动, 证据展示, Recharts | 7 规则引擎, 交叉验证, Claim/Evidence, 风险评分 | 事件聚类, 评级拐点, 分位计算, 造假模式库, 评测框架 |
 | D | 错误状态, 重连, 响应式, 报告页 | 降级, 幂等, 性能, PDF, Docker | 评测脚本, 白皮书 |
 | E | 视频录制, 打磨 | Bug 修复, 部署 | 跑分, 白皮书终稿, PPT |

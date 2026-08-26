@@ -43,9 +43,9 @@ ruff check .                                 # 代码检查
 ## 6. 启动后端
 
 ```bash
-python -m uvicorn app.main:app --app-dir backend --reload
-# http://127.0.0.1:8000/healthz
-# http://127.0.0.1:8000/api/v1/companies?query=茅台
+python -m uvicorn app.main:app --app-dir backend --reload --port 8001
+# http://127.0.0.1:8001/api/v1/healthz
+# http://127.0.0.1:8001/api/v1/companies?query=茅台
 ```
 
 ## 不需要

@@ -1,14 +1,12 @@
-# API 接口契约 V1 — V12 Baseline
+# API 接口契约 V1
 
-> **版本**: 1.0 | **基线**: V12 (2026-07-15) | **状态**: 🔶 MVP
-> 设计依据: `TruthNet_综合设计方案_V12(2).md` §11 REST API 契约
-> 旧文档: `docs/API_CONTRACT.md` 保留作为历史参考（deprecated）
+> **更新**: 2026-08 | 本文描述当前服务接口；V12 与 `docs/API_CONTRACT.md` 均保留为设计/历史参考。
 
 ---
 
 ## 基础信息
 
-- 基础 URL: `http://localhost:8000`
+- 本地演示基础 URL: `http://127.0.0.1:8001`（Docker 容器内部仍监听 `8000`）
 - API 前缀: `/api/v1/`
 - Content-Type: `application/json`
 

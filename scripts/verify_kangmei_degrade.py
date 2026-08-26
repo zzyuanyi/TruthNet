@@ -8,7 +8,7 @@
 
 用法:
   python scripts/verify_kangmei_degrade.py
-  python scripts/verify_kangmei_degrade.py --url http://127.0.0.1:8000
+  python scripts/verify_kangmei_degrade.py --url http://127.0.0.1:8001
   （需在 truthnet 环境执行，见 CLAUDE.md 环境约定）
 
 注意:

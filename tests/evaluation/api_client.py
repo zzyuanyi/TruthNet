@@ -1,11 +1,12 @@
 """TruthNet 评测 API 客户端 — Phase D 真实化."""
 
+import os
 import time
 from typing import Any
 
 import requests
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("TRUTHNET_API_BASE_URL", "http://127.0.0.1:8001")
 REQUEST_TIMEOUT = 30
 
 
@@ -178,7 +179,7 @@ def call_chat_ws(question: str, session_id: str = "eval_ws") -> dict[str, Any]:
 
         try:
             async with websockets.connect(
-                "ws://127.0.0.1:8000/api/v1/chat/ws",
+                f"{BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://')}/api/v1/chat/ws",
                 open_timeout=10,
                 close_timeout=5,
             ) as ws:

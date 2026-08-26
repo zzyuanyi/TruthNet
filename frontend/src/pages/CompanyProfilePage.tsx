@@ -138,6 +138,37 @@ function uniqueEvidenceClaims(
   });
 }
 
+/**
+ * 画像页各数据模块共用的空态：明确区分“尚未生成”“数据未覆盖”和“加载失败”，
+ * 避免用“暂无数据”掩盖数据边界或接口状态。
+ */
+function ModuleAvailabilityState({
+  icon,
+  title,
+  description,
+  detail,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  detail?: string;
+}) {
+  return (
+    <Card className="border-dashed">
+      <CardContent className="flex min-h-32 flex-col items-center justify-center px-6 py-8 text-center">
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-muted/40">
+          <i className={`ph ph-duotone ${icon} text-xl text-primary`} aria-hidden="true" />
+        </div>
+        <p className="text-sm font-medium text-foreground">{title}</p>
+        <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+          {description}
+        </p>
+        {detail && <p className="mt-2 text-[11px] text-muted-foreground">{detail}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -194,6 +225,7 @@ import type {
   EventsResponseData,
   EquityResponseData,
   EquityNodeDTO,
+  EquityEdgeDTO,
   RiskResponseData,
   RiskLevel,
   FinanceRuleItem,
@@ -326,6 +358,7 @@ export default function CompanyProfilePage() {
     null,
   );
   const [impactAdviceLoading, setImpactAdviceLoading] = useState(false);
+  const [impactAdviceError, setImpactAdviceError] = useState<string | null>(null);
   const [derivationChains, setDerivationChains] = useState<DerivationChain[]>(
     [],
   );
@@ -336,6 +369,8 @@ export default function CompanyProfilePage() {
   const [announcementsAvailable, setAnnouncementsAvailable] = useState<
     boolean | null
   >(null);
+  const [eventWarnings, setEventWarnings] = useState<string[]>([]);
+  const [eventMonthsCovered, setEventMonthsCovered] = useState<number | null>(null);
   // 会7：规则配置参数（GET /rules/definitions），画像页呈现参数与触发规则对应关系
   const [ruleDefinitions, setRuleDefinitions] = useState<RuleDefinition[]>([]);
   // 8/23 会7 深化：阈值编辑草稿 + 保存/重置状态
@@ -348,8 +383,90 @@ export default function CompanyProfilePage() {
   const [ruleDefsOverridden, setRuleDefsOverridden] = useState(false);
   // 8/23 分步渲染：区分「未加载」与「无数据」（区块级骨架 vs 暂无）
   const [financeLoaded, setFinanceLoaded] = useState(false);
+  const [financeError, setFinanceError] = useState<string | null>(null);
+  const [equityLoaded, setEquityLoaded] = useState(false);
+  const [equityError, setEquityError] = useState<string | null>(null);
   const [eventsLoaded, setEventsLoaded] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [riskLoaded, setRiskLoaded] = useState(false);
+  const [riskError, setRiskError] = useState<string | null>(null);
   const [orbitDetail, setOrbitDetail] = useState<EquityNodeDTO | null>(null);
+
+  // 下游节点由 EquityGraph 合并到画布中，后端的 equity_chains 仅描述上游穿透。
+  // 因此在详情抽屉中补回下游的直接持股边与一跳链路，避免出现“图上有、详情为 0 条”。
+  const orbitDetailEdges = useMemo<EquityEdgeDTO[]>(() => {
+    if (!equityData || !orbitDetail) return [];
+    const directEdges = equityData.edges.filter(
+      (edge) => edge.source === orbitDetail.id || edge.target === orbitDetail.id,
+    );
+    if (directEdges.length > 0 || orbitDetail.direction !== "downstream") {
+      return directEdges;
+    }
+
+    const relation = (equityData.downstream_relations ?? []).find((item, index) => {
+      const key = item.entity_id || item.wind_code || `ds${index}`;
+      return orbitDetail.id === `downstream:${key}`;
+    });
+    if (!relation) return [];
+
+    const targetNode = equityData.nodes.find(
+      (node) =>
+        node.id === equityData.target.entity_id ||
+        node.entity_id === equityData.target.entity_id ||
+        node.wind_code === equityData.target.wind_code,
+    );
+    return [
+      {
+        id: `downstream:edge:${relation.entity_id || relation.wind_code}`,
+        source: targetNode?.id ?? equityData.target.entity_id,
+        target: orbitDetail.id,
+        relation_type: relation.relation || "持股",
+        ownership_pct: relation.ownership_pct,
+        control_pct: null,
+        valid_from: null,
+        valid_to: null,
+        source_id: null,
+        match_confidence: null,
+        relationship_id: null,
+        source_record_id: null,
+        report_period: null,
+        ann_dt: null,
+        is_latest: true,
+        mock: true,
+        source_system: "downstream",
+      },
+    ];
+  }, [equityData, orbitDetail]);
+
+  const orbitDetailChains = useMemo<Array<Record<string, unknown>>>(() => {
+    if (!equityData || !orbitDetail) return [];
+    const upstreamChains = (equityData.equity_chains ?? []).filter((chain) =>
+      Array.isArray((chain as Record<string, unknown>).path_names)
+        ? ((chain as Record<string, unknown>).path_names as string[]).some(
+            (name) => name === orbitDetail.name,
+          )
+        : false,
+    );
+    if (upstreamChains.length > 0) return upstreamChains;
+    const directEdge = orbitDetailEdges[0];
+    if (!directEdge) return [];
+    const nameForNode = (nodeId: string) => {
+      if (nodeId === orbitDetail.id) return orbitDetail.name;
+      return (
+        equityData.nodes.find((node) => node.id === nodeId)?.name ??
+        (nodeId === equityData.target.entity_id ? equityData.target.name : nodeId)
+      );
+    };
+    return [
+      {
+        path_names: [nameForNode(directEdge.source), nameForNode(directEdge.target)],
+        depth: 1,
+        final_control_pct: directEdge.ownership_pct ?? directEdge.control_pct,
+        path_type: "downstream_ownership",
+        source_system: "downstream",
+      },
+    ];
+  }, [equityData, orbitDetail, orbitDetailEdges]);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = {
@@ -581,13 +698,22 @@ export default function CompanyProfilePage() {
     setEventClusters([]);
     setRiskData(null);
     setImpactAdvice(null);
+    setImpactAdviceError(null);
     setDerivationChains([]);
     setFinanceQuality(null);
     setAnnouncementsAvailable(null);
+    setEventWarnings([]);
+    setEventMonthsCovered(null);
     setRuleDefinitions([]);
     setRuleEvidenceSummary({});
     setFinanceLoaded(false);
+    setFinanceError(null);
+    setEquityLoaded(false);
+    setEquityError(null);
     setEventsLoaded(false);
+    setEventsError(null);
+    setRiskLoaded(false);
+    setRiskError(null);
     // 8/23 分步渲染：先取公司基础信息（页头/概览依赖），其余请求并行发起，
     // 各数据到达即渲染对应区块——页面渐进填充，总耗时 = 最慢请求。
     try {
@@ -613,14 +739,25 @@ export default function CompanyProfilePage() {
         .catch((err) => {
           if (loadForCode.current !== myCode) return;
           console.warn("财务数据加载失败:", err);
+          setFinanceError("未能读取财务规则与报表数据");
         })
         .finally(() => {
           if (loadForCode.current === myCode) setFinanceLoaded(true);
         }),
-      truthnetAPI.getEquity(code).then((res) => {
-        if (loadForCode.current !== myCode) return;
-        setEquityData(res.data);
-      }),
+      truthnetAPI
+        .getEquity(code)
+        .then((res) => {
+          if (loadForCode.current !== myCode) return;
+          setEquityData(res.data);
+        })
+        .catch((err) => {
+          if (loadForCode.current !== myCode) return;
+          console.warn("股权数据加载失败:", err);
+          setEquityError("未能读取股权关系数据");
+        })
+        .finally(() => {
+          if (loadForCode.current === myCode) setEquityLoaded(true);
+        }),
       truthnetAPI
         .getEvents(code, true, riskData?.as_of)
         .then((res) => {
@@ -628,34 +765,54 @@ export default function CompanyProfilePage() {
           setSentimentEvents(res.data?.timeline || []);
           setEventClusters(res.data?.event_clusters || []);
           setAnnouncementsAvailable(res.data?.announcements_available ?? null);
+          setEventWarnings(res.data?.warnings || []);
+          setEventMonthsCovered(res.data?.months_covered ?? null);
         })
         .catch((err) => {
           if (loadForCode.current !== myCode) return;
           console.warn("舆情数据加载失败:", err);
+          setEventsError("未能读取公告与事件数据");
         })
         .finally(() => {
           if (loadForCode.current === myCode) setEventsLoaded(true);
         }),
-      truthnetAPI.getRisk(code).then((res) => {
-        if (loadForCode.current !== myCode) return;
-        setRiskData(res.data);
-        const allChains = res.data?.derivation_chains || [];
-        setDerivationChains([
-          ...allChains.filter((c) => c.conclusion_type === "risk_level"),
-          ...allChains
-            .filter((c) => c.conclusion_type === "pattern_match")
-            .slice(0, 3),
-        ]);
-      }),
+      truthnetAPI
+        .getRisk(code)
+        .then((res) => {
+          if (loadForCode.current !== myCode) return;
+          setRiskData(res.data);
+          const allChains = res.data?.derivation_chains || [];
+          setDerivationChains([
+            ...allChains.filter((c) => c.conclusion_type === "risk_level"),
+            ...allChains
+              .filter((c) => c.conclusion_type === "pattern_match")
+              .slice(0, 3),
+          ]);
+        })
+        .catch((err) => {
+          if (loadForCode.current !== myCode) return;
+          console.warn("风险数据加载失败:", err);
+          setRiskError("未能读取风险结论与证据链");
+        })
+        .finally(() => {
+          if (loadForCode.current === myCode) setRiskLoaded(true);
+        }),
       truthnetAPI.getRuleDefinitions().then((res) => {
         if (loadForCode.current !== myCode) return;
         setRuleDefinitions(res.data?.rules || []);
         setRuleDefsOverridden(res.data?.is_overridden ?? false);
       }),
-      truthnetAPI.getImpactAdvice(code).then((res) => {
-        if (loadForCode.current !== myCode) return;
-        setImpactAdvice(res.data);
-      }),
+      truthnetAPI
+        .getImpactAdvice(code)
+        .then((res) => {
+          if (loadForCode.current !== myCode) return;
+          setImpactAdvice(res.data);
+        })
+        .catch((err) => {
+          if (loadForCode.current !== myCode) return;
+          console.warn("影响建议加载失败:", err);
+          setImpactAdviceError("未能读取综合影响与核查建议");
+        }),
     ];
     // 其余单个请求失败不整页报错（区块保持空/占位），仅记录。
     others.forEach((p) =>
@@ -847,6 +1004,12 @@ export default function CompanyProfilePage() {
     (segment) =>
       !["财务建议", "股权建议", "舆情建议", "综合建议"].includes(segment.title),
   );
+  const eventCoverageDescription = eventsError
+    ? "公告与事件接口本次加载失败；请刷新后重试，系统未将失败结果当作“无舆情”。"
+    : announcementsAvailable === false
+      ? `当前数据集未覆盖该公司近 ${eventMonthsCovered ?? 36} 个月的公告与事件簇，暂无法生成舆情时间线。`
+      : eventWarnings[0] ||
+        "已完成当前已接入数据的检索，但未形成可展示的舆情事件时间线。";
   const verificationNavigation = impactAdvice?.verification_navigation || [];
 
   // 8/23 分步渲染：profile 未到达时显示加载中（不得落入「加载失败」分支——
@@ -1191,7 +1354,7 @@ export default function CompanyProfilePage() {
                 核心结论
               </h2>
             </Reveal>
-            {riskData === null ? (
+            {!riskLoaded ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
                   <Skeleton className="h-10 w-full" />
@@ -1289,14 +1452,15 @@ export default function CompanyProfilePage() {
                 ))}
               </div>
             ) : (
-              <Card className="border-dashed">
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  <p>暂无结论数据</p>
-                  <p className="text-xs mt-1">
-                    选择公司后将自动加载风险分析结论
-                  </p>
-                </CardContent>
-              </Card>
+              <ModuleAvailabilityState
+                icon="ph-file-text"
+                title={riskError ? "核心结论加载失败" : "当前未生成风险结论"}
+                description={
+                  riskError
+                    ? "未能读取风险引擎结果，请刷新后重试；系统不会以空结论代替分析结果。"
+                    : "当前数据尚不足以生成带推导链的风险结论，系统不输出推断性结论。"
+                }
+              />
             )}
           </div>
 
@@ -1485,11 +1649,15 @@ export default function CompanyProfilePage() {
                 )}
               </div>
             ) : (
-              <Card className="border-dashed">
-                <CardContent className="py-6 text-sm text-muted-foreground">
-                  当前未生成可回查的综合影响建议。
-                </CardContent>
-              </Card>
+              <ModuleAvailabilityState
+                icon="ph-shield-star"
+                title={impactAdviceError ? "影响与建议加载失败" : "当前未生成核查建议"}
+                description={
+                  impactAdviceError
+                    ? "未能读取综合影响与核查建议，请刷新后重试。"
+                    : "需要先获得风险信号及其可回查证据，系统才会生成影响说明与核查动作。"
+                }
+              />
             )}
           </div>
 
@@ -1727,11 +1895,17 @@ export default function CompanyProfilePage() {
                 )}
               </>
             ) : (
-              <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  暂无财务异常数据
-                </CardContent>
-              </Card>
+              <ModuleAvailabilityState
+                icon="ph-chart-line-up"
+                title={financeError ? "财务数据加载失败" : financeHasData ? "未返回可展示的财务规则" : "当前数据集未覆盖财务报表"}
+                description={
+                  financeError
+                    ? "未能读取财务规则与报表数据，请刷新后重试。"
+                    : financeHasData
+                      ? "已读取财务报表，但当前未返回可展示的跨科目勾稽规则结果。"
+                      : "当前没有可用于 R1–R7 勾稽计算的财务报表期次，系统不生成异常结论。"
+                }
+              />
             )}
           </div>
 
@@ -1745,14 +1919,14 @@ export default function CompanyProfilePage() {
                 股权穿透图
               </h2>
             </Reveal>
-            {equityData === null ? (
+            {!equityLoaded ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
                   <Skeleton className="h-14 w-full" />
                   <Skeleton className="h-48 w-full" />
                 </CardContent>
               </Card>
-            ) : equityData ? (
+            ) : equityData && equityData.nodes.length > 0 ? (
               <>
                 <Card>
                   <CardContent className="p-4">
@@ -1930,16 +2104,10 @@ export default function CompanyProfilePage() {
                           <div className="space-y-3">
                             <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
                               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                                直接关联（{equityData.edges.filter(
-                                  (e) => e.source === orbitDetail.id || e.target === orbitDetail.id,
-                                ).length} 条）
+                                直接关联（{orbitDetailEdges.length} 条）
                               </div>
                               <div className="space-y-1.5">
-                                {equityData.edges
-                                  .filter(
-                                    (e) => e.source === orbitDetail.id || e.target === orbitDetail.id,
-                                  )
-                                  .map((e, i) => {
+                                {orbitDetailEdges.map((e, i) => {
                                     const isSource = e.source === orbitDetail.id;
                                     const otherId = isSource ? e.target : e.source;
                                     const other =
@@ -1950,29 +2118,30 @@ export default function CompanyProfilePage() {
                                         className="flex items-center justify-between gap-2 rounded border border-border/40 bg-card/60 px-2.5 py-1.5"
                                       >
                                         <span className="min-w-0 truncate text-xs text-foreground">
-                                          {isSource ? "持股 → " : "← 持股 "}
-                                          {other}
+                                          {isSource
+                                            ? `${orbitDetail.name} 持有 ${other}`
+                                            : `${other} 持有 ${orbitDetail.name}`}
                                         </span>
                                         <span className="shrink-0 font-mono text-[11px] font-semibold text-primary">
-                                          {e.ownership_pct != null ? `${e.ownership_pct}%` : (e.relation_type ?? "—")}
+                                          {e.ownership_pct != null
+                                            ? `${e.ownership_pct}%`
+                                            : (e.relation_type ?? "—")}
                                         </span>
                                       </div>
                                     );
                                   })}
+                                {orbitDetailEdges.length === 0 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    未返回与该主体直接相连的股权记录。
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
                               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                                 所在穿透链路
                               </div>
-                              {(equityData.equity_chains as Array<Record<string, unknown>> || [])
-                                .filter((c) =>
-                                  Array.isArray(c.path_names)
-                                    ? (c.path_names as string[]).some(
-                                        (nm) => nm === orbitDetail.name,
-                                      )
-                                    : false,
-                                )
+                              {orbitDetailChains
                                 .slice(0, 4)
                                 .map((c, i) => (
                                   <div
@@ -1989,15 +2158,9 @@ export default function CompanyProfilePage() {
                                     </span>
                                   </div>
                                 ))}
-                              {(equityData.equity_chains || []).filter((c) =>
-                                Array.isArray(c.path_names)
-                                  ? (c.path_names as unknown as string[]).some(
-                                      (nm) => nm === orbitDetail.name,
-                                    )
-                                  : false,
-                              ).length === 0 && (
+                              {orbitDetailChains.length === 0 && (
                                 <div className="text-xs text-muted-foreground">
-                                  未出现在多跳穿透链中（仅直接持股）
+                                  未返回包含该主体的穿透链路。
                                 </div>
                               )}
                             </div>
@@ -2020,11 +2183,15 @@ export default function CompanyProfilePage() {
                 </div>
               </>
             ) : (
-              <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  暂无股权穿透数据
-                </CardContent>
-              </Card>
+              <ModuleAvailabilityState
+                icon="ph-tree-structure"
+                title={equityError ? "股权关系加载失败" : "当前数据集未覆盖股权关系"}
+                description={
+                  equityError
+                    ? "未能读取股东与关联方关系，请刷新后重试。"
+                    : "当前未返回可用于直接持股或多跳穿透的关系记录，系统不绘制股权链路。"
+                }
+              />
             )}
           </div>
 
@@ -2058,29 +2225,16 @@ export default function CompanyProfilePage() {
                 }}
               />
             ) : (
-              <Card className="relative overflow-hidden">
-                <img
-                  src="/assets/hero-globe.jpg"
-                  alt=""
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center opacity-[0.18] dark:opacity-[0.4]"
-                />
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 bg-gradient-to-b from-card/50 via-card/20 to-card/75 dark:from-card/45 dark:via-card/15 dark:to-card/60"
-                />
-                <CardContent className="relative flex min-h-[260px] flex-col items-center justify-center py-10 text-center">
-                  <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card/80 backdrop-blur-sm">
-                    <i className="ph-duotone ph-newspaper text-[22px] text-primary" aria-hidden="true" />
-                  </div>
-                  <p className="text-sm text-foreground/80">
-                    舆情事件数据源待接入（需 full profile）
-                  </p>
-                  <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.25em] text-muted-foreground">
-                    global monitoring · standby
-                  </p>
-                </CardContent>
-              </Card>
+              <ModuleAvailabilityState
+                icon="ph-newspaper"
+                title={eventsError ? "舆情模块加载失败" : announcementsAvailable === false ? "当前数据集未覆盖舆情数据" : "当前未形成舆情时间线"}
+                description={eventCoverageDescription}
+                detail={
+                  eventWarnings.length > 1
+                    ? `数据说明：${eventWarnings.slice(1).join("；")}`
+                    : undefined
+                }
+              />
             )}
           </div>
 
@@ -2094,7 +2248,7 @@ export default function CompanyProfilePage() {
                 证据引用
               </h2>
             </Reveal>
-            {riskData === null ? (
+            {!riskLoaded ? (
               <Card>
                 <CardContent className="py-6 space-y-3">
                   <Skeleton className="h-14 w-full" />
@@ -2112,11 +2266,15 @@ export default function CompanyProfilePage() {
                 }}
               />
             ) : (
-              <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  暂无证据数据
-                </CardContent>
-              </Card>
+              <ModuleAvailabilityState
+                icon="ph-files"
+                title={riskError ? "证据链加载失败" : "当前分析未产生可回查证据"}
+                description={
+                  riskError
+                    ? "未能读取风险结论与证据链，请刷新后重试。"
+                    : "当前风险结果没有绑定原始记录，系统不以推断性文本替代可回查证据。"
+                }
+              />
             )}
           </div>
         </div>

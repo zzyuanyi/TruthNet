@@ -5,7 +5,7 @@
   python scripts/demo_multi_turn.py --session-id ses_demo    # 复用指定会话
   python scripts/demo_multi_turn.py --session-id ses_demo --cleanup --yes
                                                              # 清理后从零演示
-  python scripts/demo_multi_turn.py --url http://127.0.0.1:8000  # 连已启动的 uvicorn
+  python scripts/demo_multi_turn.py --url http://127.0.0.1:8001  # 连已启动的 uvicorn
 
 清理安全:
   - 默认不清理、自动生成唯一会话；--cleanup 才允许删除指定会话

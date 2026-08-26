@@ -2,7 +2,7 @@
 
 ## 项目概览
 
-TruthNet（织网鉴真）前端，财报反欺诈智能问答系统。与后端 FastAPI（8000 端口）+ WebSocket 协作，前端通过 Vite proxy 转发 `/api/*` 与 `/ws/*`。
+TruthNet（织网鉴真）前端，财报反欺诈智能问答系统。与后端 FastAPI（演示默认 8001 端口）+ WebSocket 协作，前端通过 Vite proxy 转发 `/api/*` 与 `/ws/*`。
 
 ## 技术栈
 
@@ -32,9 +32,8 @@ frontend/src/
 cd frontend
 pnpm install               # 安装依赖（仅允许 pnpm，禁止 npm/yarn）
 pnpm dev                   # 开发（Vite HMR）
-pnpm ts-check              # tsc -p tsconfig.app.json --noEmit（类型检查）
+pnpm typecheck             # tsc -p tsconfig.app.json --noEmit（类型检查）
 pnpm build                 # vite build（生产构建）
-pnpm lint                  # ESLint
 ```
 
 ## 关键约定与红线
@@ -55,5 +54,5 @@ pnpm lint                  # ESLint
 
 ## 端口与代理
 
-- 前端 dev 端口由 `${DEPLOY_RUN_PORT}` 决定，代理 `http://127.0.0.1:8000`。
+- 前端 dev 端口由 `${DEPLOY_RUN_PORT}` 决定（默认 5000），代理 `http://127.0.0.1:8001`；可由 `VITE_API_BASE_URL` 覆盖。
 - 沙箱预览仅跑前端，后端未运行时 `/api/*` 会 ECONNREFUSED（属预期）。

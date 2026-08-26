@@ -1,7 +1,6 @@
-# 架构设计 — V12 Baseline
+# 架构设计与实现对照
 
-> **版本**: 2.0 | **基线**: V12 (2026-07-15)
-> 设计依据: `TruthNet_综合设计方案_V12(2).md` §6 系统总体架构
+> **更新**: 2026-08 | 本文以当前可运行实现为准；V12 为设计来源，未实现的并行化能力不作为当前承诺。
 
 ## 架构全景
 
@@ -24,7 +23,7 @@
                             │
 ┌───────────────────────────▼────────────────────────────────────┐
 │ LangGraph Agent 层                                             │
-│ LoadContext → ResolveEntity → Plan → Parallel Modules           │
+│ LoadContext → ResolveEntity → Plan → On-demand Modules          │
 │ → CrossValidate → BuildClaims → Generate → Validate → Persist   │
 └──────────────┬──────────────────┬──────────────────┬────────────┘
                │                  │                  │
@@ -73,7 +72,7 @@
 ## Agent 节点流程
 
 ```text
-LoadContext → ResolveEntity → PlanModules → ParallelModules
+LoadContext → ResolveEntity → PlanModules → On-demand Modules
 → CrossValidate → BuildClaimsAndEvidence → GenerateAnswer
 → ValidateEvidenceAndSchema → PersistTurn
 ```
@@ -97,16 +96,16 @@ LoadContext → ResolveEntity → PlanModules → ParallelModules
 | 领域 | 决策 | 状态 |
 |------|------|:---:|
 | Web 后端 | FastAPI | ✅ 已实施 |
-| Agent 编排 | LangGraph StateGraph | 🔸 骨架已建 |
+| Agent 编排 | LangGraph StateGraph | ✅ 已实现按需模块调度；当前按稳定顺序执行，保留并行扩展接口 |
 | 数据契约 | Pydantic V2 | ✅ 已实施 |
 | 结构化存储 | MySQL 8.0 (full) / SQLite (lite) | ✅ 已实施 |
 | 图存储 | Neo4j (full) / NetworkX (lite) | ✅ 已实施 |
 | 向量存储 | ChromaDB | ✅ 已实施 |
 | LLM | Provider Adapter; DeepSeek/Qwen/Mock | ✅ Adapter 已建 |
-| 前端 | React + Vite + TypeScript | ✅ 已初始化 |
-| UI | shadcn/ui + Tailwind CSS | 🔸 待接入 |
-| 图表 | Recharts | 🔸 待接入 |
-| 图谱 | D3.js | 🔸 待接入 |
+| 前端 | React + Vite + TypeScript | ✅ 已实现 |
+| UI | shadcn/ui + Tailwind CSS | ✅ 已使用 |
+| 图表 | Recharts | ✅ 已使用 |
+| 图谱 | AntV G6 | ✅ 已使用 |
 | 测试 | pytest, Ruff, pre-commit, CI | ✅ 已实施 |
 | 编码路径 | UTF-8, LF, pathlib.Path | ✅ 已实施 |
 | Git | 成员分支 → PR → main | ✅ 已实施 |
