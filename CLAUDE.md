@@ -40,7 +40,7 @@
 | 数据契约 | Pydantic V2 | API、Agent State、Port 边界 |
 | 前端 | React 18 / Vite / TypeScript 5 | shadcn/ui + Tailwind CSS |
 | 图表 | Recharts | 财务趋势、行业分位 |
-| 图谱 | D3.js | 股权穿透图 |
+| 图谱 | AntV G6 | 股权穿透图 |
 | 测试 | pytest / Ruff / pre-commit / CI | PR 合并门禁 |
 | 协作 | Git / GitHub / Claude Code | |
 
@@ -231,7 +231,7 @@ python -m pytest backend/tests -v
 pre-commit run --all-files
 
 # ===== 后端 =====
-python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8001
 
 # ===== 前端 =====
 cd frontend && pnpm install && pnpm dev

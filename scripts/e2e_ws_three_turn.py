@@ -6,7 +6,7 @@
 
 用法：
     python scripts/e2e_ws_three_turn.py                          # 自启隔离服务（默认）
-    python scripts/e2e_ws_three_turn.py --base-url http://127.0.0.1:8000 --confirm-target-db
+    python scripts/e2e_ws_three_turn.py --base-url http://127.0.0.1:8001 --confirm-target-db
     # 连已有服务：必须显式指定 + 确认目标库（脚本提示核对）
 
 安全边界（v3.1 + v3.4）：

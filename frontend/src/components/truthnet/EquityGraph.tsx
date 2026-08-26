@@ -326,7 +326,7 @@ function edgeWidth(edge: EquityEdgeDTO): number {
   return 1.15;
 }
 
-interface GraphLane {
+interface GraphLane extends Record<string, unknown> {
   id: string;
   label: string;
   direction: GraphLayoutNode['direction'];

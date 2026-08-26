@@ -32,8 +32,8 @@ class MockLLMProvider:
         )
         return (
             f"Mock 回答：关于「{user_msg[:50]}...」的问题，"
-            "当前使用 Mock LLM Provider（lite profile）。"
-            "V12 基线已就绪，待接入 DeepSeek/Qwen 真实 Provider。"
+            "当前使用本地 Mock LLM Provider（lite profile），"
+            "仅用于开发与测试；正式分析请以规则计算和可回查证据为准。"
         )
 
     async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
