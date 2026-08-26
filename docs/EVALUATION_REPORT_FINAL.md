@@ -4,7 +4,7 @@
 > 日期：2026-08-22 ｜ 执行人：数据组 B
 > **8/23 最终代码复核**：2026-08-23 在代码定稿 SHA `6bacf31`（PR #59/#60 合并后 main）上重跑 77 题 + 语义裁判，结果见 §4.2 更新；人工标签（§4.4/§4.5）基于 8/22 基线采集，系统输出已随修复变化，标签复核为后续工作
 > 状态：✅ 完成（验收标准：77 题逐题有系统输出与人工标签对照；报告含版本记录四要素）
-> 审查整改记录：本报告为 `docs/EVALUATION_REPORT_FINAL_V1.md` 的正式交付版（路径/版本记录/统计口径/标签细节按《任务1评测真实化_交付物审查意见》整改），`_V1` 版留档于 `docs/`。
+> 审查整改记录：本报告为评测结果的当前正式交付版；整改前版本保留在 Git 历史中，不再作为仓库内的并列口径。
 
 ---
 
@@ -84,8 +84,7 @@
 | 指标 3 逐题证据 | `data/annotations/metric3_entity_retention_v1.json` | 30 题 expected_company 逐轮 codes 判定（23/30 命中） |
 | 指标 3/6 补算脚本 | `tests/evaluation/compute_missing_metrics.py` | 复用 official_runner 守卫，采集 codes + module_status 耗时 |
 | 指标 3/6 补算报告 | `tests/evaluation/official_metrics_missing_v1.txt` | 23/30 = 76.7% + 全模块 0 超时 |
-| 本次报告 | `docs/reports/EVALUATION_REPORT_FINAL.md` | 本文档（正式交付路径） |
-| 报告留档（审查对照） | `docs/EVALUATION_REPORT_FINAL_V1.md` | 整改前版本留档 |
+| 本次报告 | `docs/EVALUATION_REPORT_FINAL.md` | 本文档（正式交付路径） |
 
 ---
 
@@ -128,7 +127,7 @@ scored_count:      0（全部 data_status=to_verify，无官方标准答案，�
 - 可接受率 `accepted_rate`（正确 + 合理拒答）= **92.2%**（71/77）
 - 可用率 `usable_rate`（非「错误/无法核验」）= **97.4%**（75/77）
 
-> 📈 **8/22 基线 → 8/23 最终版对比**：错误 10→2、可接受率 81.8%→**92.2%**（+10.4pp）、无法核验 1→0。8/23 词表机制化/指代修复/业务追问延续批直接兑现：青岛金王×3、雷柏、连云港、德瑞锂电等 7 条实体失败中 5 条转为「检测到疑似公司但未能识别」的诚实引导（裁判认可为合理拒答），仅亨迪药业（301211.SZ）仍实体未识别。完整逐条裁判见 `data/test-artifacts/official_report_77_final_6bacf31.txt`。
+> 📈 **8/22 基线 → 8/23 最终版对比**：错误 10→2、可接受率 81.8%→**92.2%**（+10.4pp）、无法核验 1→0。8/23 词表机制化/指代修复/业务追问延续批直接兑现：青岛金王×3、雷柏、连云港、德瑞锂电等 7 条实体失败中 5 条转为「检测到疑似公司但未能识别」的诚实引导（裁判认可为合理拒答），仅亨迪药业（301211.SZ）仍实体未识别。完整逐条裁判见 `tests/evaluation/official_report_77_final_6bacf31.txt`。
 
 > ⚠️ **可接受率口径补充**（审查整改项延续）：92.2% 的"合理拒答"中有 **1 题（亨迪药业 row26）根因是实体识别失败**——系统未识别出该真实上市公司而答"疑似公司但未能识别"。8/22 基线的 3 题（亨迪/青岛金王/宗申）中，青岛金王（row 246/248）与宗申动力（row 1117）在最终版已转为诚实边界说明（裁判认可），仅亨迪药业仍属能力缺陷。严格口径下亨迪 1 题应视为能力缺陷（详见 §5.2）。裁判 4.2 分类不重算，以保持与 observed 输出逐条可复现。
 
@@ -246,11 +245,10 @@ MACD/控盘度/K线/量价等 5 题在 8/22 基线有 4 题被当财务分析处
 | 产物 | 路径 | 状态 |
 |---|---|---|
 | 官方 runner 报告（77 条系统输出 + 语义裁判） | `tests/evaluation/official_report_v1.txt` | ✅ |
-| **8/23 最终代码复核报告（6bacf31，77 条 + 语义裁判）** | `data/test-artifacts/official_report_77_final_6bacf31.txt` | ✅（8/23 复核新增） |
+| **8/23 最终代码复核报告（6bacf31，77 条 + 语义裁判）** | `tests/evaluation/official_report_77_final_6bacf31.txt` | ✅（8/23 复核新增） |
 | 77 题 sidecar | `tests/evaluation/official_questions_v1.jsonl` | ✅ |
 | 小样本人工语义标签 | `data/annotations/labels_sample_v2.json` | ✅（v2.0） |
 | 可评估性标注 + 人工风险标签 | `data/annotations/labels_77.json` | ✅（**v1.1.0，含 8 条风险标签**） |
-| 本次终版报告 | `docs/reports/EVALUATION_REPORT_FINAL.md` | ✅（正式交付路径） |
-| 报告留档（审查对照） | `docs/EVALUATION_REPORT_FINAL_V1.md` | 留档 |
+| 本次终版报告 | `docs/EVALUATION_REPORT_FINAL.md` | ✅（正式交付路径） |
 | 测试库备份 | `data/backups/truthnet_before_testdb_20260822.sql` | ✅ |
 | 测试库数据修复 | 康美/乐视/康得新名称（演示库 + 测试库） | ✅ |

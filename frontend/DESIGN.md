@@ -152,7 +152,6 @@
 ### 素材（公开素材库，Unsplash 免费可商用，已下载至 `public/assets/`）
 - `hero-finance.jpg`（深色 K 线蜡烛图）：hero 头部底图，`opacity-10` + 深色渐变遮罩，浅色主题下同样保留（低透明度不干扰）。
 - `hero-abstract.jpg`（发光电路板）：风险概览 bento 区底图，`opacity-5`，只做质感不做信息。
-- `hero-globe.jpg`（太空地球夜景）：舆情时间线区底图，`opacity-10` + 自下而上渐隐，隐喻"全局监控"。
 
 ### 金融级微交互（ui-ux-pro-max 情报落地）
 - 数字滚动（`CountUpNumber`）：hero 综合评分（0→score，800ms）+ bento 指标卡（规则数/舆情数/时间线事件数），`requestAnimationFrame` + ease-out，`prefers-reduced-motion` 时直接显示终值。
