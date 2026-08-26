@@ -433,7 +433,9 @@ export function RuleCard({
                       : "正常"}
             </Badge>
           }
-          defaultOpen={rule.status === "triggered" && rule.severity === "red"}
+          // 核查页以阅读完整证据为主：所有已触发规则默认展开，避免关键
+          // 原因、趋势与证据被折叠在二级入口中。
+          defaultOpen={rule.status === "triggered"}
         >
           {/* 触发原因置顶：先解释为什么触发，再看指标/证据 */}
           {rule.status === "triggered" && (
@@ -553,7 +555,7 @@ export function RuleCard({
 
           {rule.calculation_trace &&
             rule.calculation_trace.inputs.length > 0 && (
-              <details className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+              <details open className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
                 <summary className="cursor-pointer text-xs font-medium text-foreground">
                   查看核查计算依据
                 </summary>
@@ -602,7 +604,7 @@ export function RuleCard({
                       </tbody>
                     </table>
                   </div>
-                  <details className="pt-1">
+                  <details open className="pt-1">
                     <summary className="cursor-pointer text-[10px] text-muted-foreground">
                       技术口径（公式与版本）
                     </summary>

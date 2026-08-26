@@ -299,7 +299,7 @@ const navItems = [
   { id: "overview", label: "概览", ph: "ph-gauge" },
   { id: "conclusions", label: "核心结论", ph: "ph-file-text" },
   { id: "impact", label: "影响与建议", ph: "ph-shield-star" },
-  { id: "financial", label: "财务异常", ph: "ph-chart-bar-up" },
+  { id: "financial", label: "财务异常", ph: "ph-chart-line-up" },
   { id: "equity", label: "股权穿透", ph: "ph-tree-structure" },
   { id: "sentiment", label: "舆情时间线", ph: "ph-newspaper" },
   { id: "evidence", label: "证据引用", ph: "ph-files" },
@@ -1499,7 +1499,7 @@ export default function CompanyProfilePage() {
           <div ref={sectionRefs.financial} className="mb-8">
             <Reveal>
               <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-foreground">
-                <i className="ph ph-duotone ph-chart-bar-up text-[20px] text-primary" />
+                <i className="ph ph-duotone ph-chart-line-up text-[20px] text-primary" />
                 财务异常
               </h2>
             </Reveal>
