@@ -326,16 +326,39 @@ function edgeWidth(edge: EquityEdgeDTO): number {
   return 1.15;
 }
 
-function layerLabels(layout: GraphLayout): string[] {
-  const labels: string[] = [];
+interface GraphLane {
+  id: string;
+  label: string;
+  direction: GraphLayoutNode['direction'];
+}
+
+// 泳道作为 G6 Combo（而非 DOM 覆盖层）参与画布变换。这样无论缩放、拖拽还是
+// 适配窗口，层级标题与其节点始终保持在同一个坐标系内。
+function graphLanes(layout: GraphLayout): GraphLane[] {
+  const lanes: GraphLane[] = [];
   for (let hop = layout.upstreamDepth; hop >= 1; hop -= 1) {
-    labels.push(hop === 1 ? '直接股东' : `上游第 ${hop} 层`);
+    lanes.push({
+      id: `upstream:${hop}`,
+      label: hop === 1 ? '直接股东' : `上游第 ${hop} 层`,
+      direction: 'upstream',
+    });
   }
-  labels.push('目标公司');
+  lanes.push({ id: 'target:0', label: '目标公司', direction: 'target' });
   for (let hop = 1; hop <= layout.downstreamDepth; hop += 1) {
-    labels.push(hop === 1 ? '直接被投' : `下游第 ${hop} 层`);
+    lanes.push({
+      id: `downstream:${hop}`,
+      label: hop === 1 ? '直接被投' : `下游第 ${hop} 层`,
+      direction: 'downstream',
+    });
   }
-  return labels;
+  return lanes;
+}
+
+function isDarkColor(color: string): boolean {
+  const hex = color.trim().match(/^#([0-9a-f]{6})$/i)?.[1];
+  if (!hex) return false;
+  const [red, green, blue] = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  return red * 0.299 + green * 0.587 + blue * 0.114 < 140;
 }
 
 // 风险节点呼吸光环：创建后让 halo 光晕循环放大呼吸
@@ -442,7 +465,7 @@ export function EquityGraph({
     () => computeGraphLayout(merged.nodes, merged.edges, targetId, dimensions.width),
     [merged, targetId, dimensions.width],
   );
-  const lanes = useMemo(() => layerLabels(layout), [layout]);
+  const lanes = useMemo(() => graphLanes(layout), [layout]);
 
   // 用 G6 渲染（Canvas 渲染器）；主题色经 getComputedStyle 读取，主题切换时需重新渲染
   useEffect(() => {
@@ -452,6 +475,7 @@ export function EquityGraph({
     const textColor = cs.getPropertyValue('--color-foreground').trim() || '#0a0a0a';
     const mutedColor = cs.getPropertyValue('--color-muted-foreground').trim() || '#64748b';
     const bgColor = cs.getPropertyValue('--color-background').trim() || '#ffffff';
+    const darkSurface = isDarkColor(bgColor);
 
     // P0-3 修复：render() 为异步（G6 v5 generator，内部 await animation/autoFit）。
     // effect 重跑（layout 变化）时 cleanup 会 destroy 旧实例，旧 render 恢复时
@@ -485,6 +509,7 @@ export function EquityGraph({
       data: {
         nodes: layout.nodes.map(n => ({
           id: n.id,
+          combo: `${n.direction}:${n.hop}`,
           data: { ...n },
         })),
         edges: merged.edges.map(e => ({
@@ -493,6 +518,51 @@ export function EquityGraph({
           target: e.target,
           data: { ...e },
         })),
+        combos: lanes.map(lane => ({
+          id: lane.id,
+          data: lane,
+        })),
+      },
+      // Combo 是可随视口缩放/拖拽的“层级容器”。它不承担关系计算，只负责把
+      // 同一跳数的主体放在可阅读的分区中，避免固定 DOM 泳道与画布错位。
+      combo: {
+        type: 'rect',
+        style: {
+          padding: [42, 30, 30, 30],
+          radius: 16,
+          fill: (d: any) =>
+            d.data.direction === 'target'
+              ? darkSurface
+                ? '#17375f'
+                : '#eff6ff'
+              : d.data.direction === 'downstream'
+                ? darkSurface
+                  ? '#123a35'
+                  : '#f0fdfa'
+                : darkSurface
+                  ? '#182838'
+                  : '#f8fafc',
+          fillOpacity: 1,
+          stroke: (d: any) =>
+            d.data.direction === 'target'
+              ? '#93c5fd'
+              : d.data.direction === 'downstream'
+                ? '#99f6e4'
+                : '#dbe3ee',
+          lineWidth: 1,
+          lineDash: (d: any) => (d.data.direction === 'target' ? [] : [4, 4]),
+          labelText: (d: any) => d.data.label,
+          labelPlacement: 'top',
+          labelFill: (d: any) =>
+            d.data.direction === 'target'
+              ? '#1d4ed8'
+              : d.data.direction === 'downstream'
+                ? '#0f766e'
+                : '#475569',
+          labelFontSize: 12,
+          labelFontWeight: 600,
+          labelOffsetY: 14,
+        },
       },
       node: {
         type: (d: any) => {
@@ -651,46 +721,7 @@ export function EquityGraph({
 
   return (
     <div ref={containerRef} className="relative overflow-hidden rounded-xl border border-border bg-muted/20 shadow-sm">
-      {/* G6 canvas 将挂载于此容器，overlay 元素（图例/按钮）absolute 叠于其上 */}
-
-      {/* 以真实层级绘制淡色泳道：视觉上先读控制方向，再读主体与边。 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-3 bottom-3 top-3 z-0 grid overflow-hidden rounded-lg border border-border/30"
-        style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
-      >
-        {lanes.map((lane, index) => (
-          <div
-            key={lane}
-            className={
-              index === layout.upstreamDepth
-                ? 'border-x border-primary/20 bg-primary/[0.045]'
-                : index % 2 === 0
-                  ? 'bg-muted/25'
-                  : 'bg-background/[0.015]'
-            }
-          />
-        ))}
-      </div>
-
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-16 top-3 z-10 grid text-center text-[10px] font-medium tracking-wide text-muted-foreground"
-        style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
-      >
-        {lanes.map((lane, index) => (
-          <span
-            key={lane}
-            className={
-              index === layout.upstreamDepth
-                ? 'mx-1 rounded-full border border-primary/25 bg-primary/10 px-1.5 py-1 text-primary'
-                : 'px-1.5 py-1'
-            }
-          >
-            {lane}
-          </span>
-        ))}
-      </div>
+      {/* G6 canvas 将挂载于此容器；层级泳道作为画布内 Combo，图例/按钮才使用绝对定位。 */}
 
       {/* 风险等级图例（节点颜色语义） */}
       <div className="absolute bottom-3 left-3 z-10 flex flex-wrap gap-2 bg-background/90 backdrop-blur-sm border border-border rounded-md p-2 text-xs">
