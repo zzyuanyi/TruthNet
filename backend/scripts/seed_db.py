@@ -48,6 +48,12 @@ def main() -> int:
             print(f"[seed] {db} 已存在且有 {n} 张表，跳过（--force 可强制重建）")
             return 0
 
+    if exists and args.force:
+        # 先移除旧库及其 WAL 伴随文件，否则 seed SQL 中的 CREATE TABLE 会因
+        # 原有表仍在而失败，--force 也就失去了“重建”的意义。
+        for path in (db, Path(f"{db}-wal"), Path(f"{db}-shm")):
+            path.unlink(missing_ok=True)
+
     sql = SEED.read_text(encoding="utf-8")
     conn = sqlite3.connect(db)
     conn.executescript(sql)

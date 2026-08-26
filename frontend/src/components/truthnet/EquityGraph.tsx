@@ -316,6 +316,7 @@ export function EquityGraph({
       width: layout.width,
       height: layout.height,
       autoFit: 'view',
+      animation: false,
       data: {
         nodes: layout.nodes.map(n => ({
           id: n.id,
@@ -420,7 +421,7 @@ export function EquityGraph({
 
     // render 为异步：销毁后完成的 promise 属预期（.catch 吞掉 rejection），
     // 未销毁时若失败则静默降级（图不渲染但页面不崩）。
-    graph.render().catch(() => {
+    const renderPromise = graph.render().catch(() => {
       if (disposed) return;
       // 非销毁导致的失败：清空容器 canvas，避免残留半渲染状态
       container?.querySelectorAll('canvas').forEach(c => c.remove());
@@ -437,15 +438,16 @@ export function EquityGraph({
     return () => {
       disposed = true;
       if (graphRef.current === graph) graphRef.current = null;
-      try {
-        graph.destroy();
-      } catch {
-        /* 已销毁 */
-      }
-      // 兜底：清空容器内残留 canvas（G6 destroy 与异步 render 竞态时可能遗留）
-      if (container) {
-        container.querySelectorAll('canvas').forEach(c => c.remove());
-      }
+      // G6 v5 render() 异步完成前销毁会在内部打印 “graph instance has been
+      // destroyed”。等待当前 render 收束后再清理，避免页面切换时的竞态噪声。
+      void renderPromise.finally(() => {
+        try {
+          graph.destroy();
+        } catch {
+          /* 已销毁 */
+        }
+        container?.querySelectorAll('canvas').forEach(c => c.remove());
+      });
     };
   }, [layout, merged]);
 

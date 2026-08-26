@@ -115,9 +115,9 @@ _SOURCES: tuple[PulseSource, ...] = (
         lng=121.47,
     ),
     PulseSource(
-        key="36kr",
-        name="36氪",
-        url="https://36kr.com/feed",
+        key="chinanews-finance",
+        name="中新网财经",
+        url="https://www.chinanews.com.cn/rss/finance.xml",
         region_code="CN",
         country="中国",
         lat=39.90,
@@ -349,7 +349,9 @@ def _store_items(items: list[dict[str, object]], fetched_at: datetime) -> int:
 async def crawl_once() -> dict[str, object]:
     """爬一轮全部源并入库。返回统计信息。"""
     fetched_at = datetime.now(timezone.utc)
-    async with httpx.AsyncClient(follow_redirects=True) as client:
+    # RSS 是公共外部数据源，不应继承桌面工具或终端注入的代理 / CA 环境变量。
+    # 否则 SSL_CERT_FILE 等本机配置会让所有源同时降级为空。
+    async with httpx.AsyncClient(follow_redirects=True, trust_env=False) as client:
         results = await asyncio.gather(*(_fetch_one(client, src) for src in _SOURCES))
 
     ok_sources = 0

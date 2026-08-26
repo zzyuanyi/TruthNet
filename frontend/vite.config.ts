@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 // TruthNet 后端服务地址（开发模式下通过 Vite proxy 转发）
-const BACKEND_API = process.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+const BACKEND_API = process.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -17,7 +17,7 @@ export default defineConfig({
     port: parseInt(process.env.DEPLOY_RUN_PORT || process.env.FRONTEND_PORT || '5000'),
     host: true,
     proxy: {
-      // TruthNet 后端 API (端口 8000)
+      // TruthNet 后端 API（完整演示默认端口 8001，可由 VITE_API_BASE_URL 覆盖）
       '/api/v1': { target: BACKEND_API, changeOrigin: true },
 
       // WebSocket 对话

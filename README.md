@@ -40,7 +40,7 @@
 | 项 | 版本 | 说明 |
 |---|---|---|
 | Node.js | ≥ 20 | 前端 |
-| pnpm | 任意较新 | **必须用 pnpm**，禁用 npm/yarn |
+| pnpm | 9.0.0 | 使用 `corepack pnpm@9.0.0`；锁文件暂不兼容 pnpm 11 |
 | Python | 3.11+ | 后端 |
 | SQLite | 内置 | 无需装数据库服务，`data/*.db` 即库 |
 
@@ -48,24 +48,24 @@
 
 ```bash
 cd backend
-pip install -r requirements.txt          # 依赖清单（约 14 项）
+pip install -r requirements.txt          # 统一使用仓库根目录的锁版本依赖清单
 python scripts/seed_db.py                # 一键灌演示数据（康美画像 + 6 簇舆情），库存在则自动跳过
-python -m uvicorn app.main:app --app-dir backend --port 8000
+python -m uvicorn app.main:app --port 8001
 ```
 
-- 健康检查：`curl http://127.0.0.1:8000/healthz`
-- 样例接口：`curl "http://127.0.0.1:8000/api/v1/companies?query=康美"`
+- 健康检查：`curl http://127.0.0.1:8001/healthz`
+- 样例接口：`curl "http://127.0.0.1:8001/api/v1/companies?query=康美"`
 - **演示数据**：不含 seed 时画像页是空壳。`seed_db.py` 会从 `data/fixtures/truthnet_seed.sqlite.sql` 重建 `data/truthnet.db`，包含：康美药业完整画像、财务异常规则、股权穿透（上下穿透 + 风险着色）、2018-10 存货质疑 → 2019-08 顶格处罚的 6 簇舆情时间线。测试验收用它。
 
 ### 3. 前端（1 分钟，零配置）
 
 ```bash
 cd ../frontend
-pnpm install
+corepack pnpm@9.0.0 install --frozen-lockfile
 pnpm dev                                   # http://localhost:5173（或 .coze 指定端口）
 ```
 
-- **前后端自动打通**：`vite.config.ts` 已把 `/api/v1` 代理到 `http://127.0.0.1:8000`，本地后端跑在 8000 即可直接用，无需再配。
+- **前后端自动打通**：`vite.config.ts` 默认把 `/api/v1` 代理到 `http://127.0.0.1:8001`；如需连接其他环境，可设置 `VITE_API_BASE_URL` 覆盖。
 - **默认主题**：深色 + 中字号，可在右上角设置切换。
 
 ### 4. 即插即用（clone 后就能看到效果）vs 需操作
@@ -74,7 +74,7 @@ pnpm dev                                   # http://localhost:5173（或 .coze �
 |---|---|---|
 | 智能问答（本地可跑） | 🟢 即插即用 | 底层走 SQLite + 内置规则 |
 | 企业画像 / 股权穿透 / 舆情时间线 | 🟢 即插即用 | `seed` 已灌好康美演示数据 |
-| 全球舆情脉搏（地球 + 10min 爬取） | 🟢 即插即用 | 首次启动后约 10 分钟爬到首批 RSS（CNBC/华尔街见闻等） |
+| 全球舆情脉搏（地球 + 10min 爬取） | 🟢 即插即用 | 启动后立即拉取 RSS，后台每 10 分钟增量更新；网络不可用时如实显示为空 |
 | **联网深挖**（点国家亮点实时搜） | 🟡 需配置 Key | 见下节 |
 | 聪明问答·大模型生成式回答 | 🟡 需配置 Key | 沙箱内置；本地需配 LLM Key |
 
@@ -100,8 +100,8 @@ WEB_SEARCH_BACKEND=off                  # 本地默认关闭，演示时按需�
 
 ```bash
 # 后端
-curl http://127.0.0.1:8000/api/v1/market-pulse        # 全球舆情（含 clusters）
-curl "http://127.0.0.1:8000/api/v1/companies/600518.SH/equity"  # 股权穿透
+curl http://127.0.0.1:8001/api/v1/market-pulse        # 全球舆情（含 clusters）
+curl "http://127.0.0.1:8001/api/v1/companies/600518.SH/equity"  # 股权穿透
 # 前端浏览器
 http://localhost:5173/company/600518.SH               # 康美画像直达
 ```
