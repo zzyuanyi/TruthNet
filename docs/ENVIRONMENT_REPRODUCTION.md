@@ -209,8 +209,8 @@ mkdir E:\project\TruthNet\.local\mysql_data
 # 创建数据库和用户
 mysql -u root --host 127.0.0.1 --port 3307 -e "
 CREATE DATABASE truthnet CHARACTER SET utf8mb4;
-CREATE USER 'truthnet'@'127.0.0.1' IDENTIFIED BY 'truthnet_v12_dev';
-GRANT ALL ON truthnet.* TO 'truthnet'@'127.0.0.1';
+CREATE USER '<local-db-user>'@'127.0.0.1' IDENTIFIED BY '<local-db-password>';
+GRANT ALL ON truthnet.* TO '<local-db-user>'@'127.0.0.1';
 FLUSH PRIVILEGES;
 "
 
@@ -223,7 +223,7 @@ $env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot"
 $env:NEO4J_HOME="E:\project\TruthNet\.local\neo4j\neo4j-community-2025.06.1"
 & "$env:NEO4J_HOME\bin\neo4j.bat" console
 
-# 首次连接 http://127.0.0.1:7474 修改密码（neo4j → truthnet_v12_dev）
+# 首次连接 http://127.0.0.1:7474 后设置本地 Neo4j 密码
 
 # 配置 .env
 TRUTHNET_PROFILE=full
@@ -232,11 +232,11 @@ MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3307
 MYSQL_DATABASE=truthnet
 MYSQL_USER=truthnet
-MYSQL_PASSWORD=truthnet_v12_dev
+MYSQL_PASSWORD=<local-db-password>
 GRAPH_BACKEND=neo4j
 NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=truthnet_v12_dev
+NEO4J_PASSWORD=<local-neo4j-password>
 ```
 
 ### Step 6：验证 full profile

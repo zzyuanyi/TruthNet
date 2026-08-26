@@ -22,6 +22,10 @@ env/
 # IDE
 .vscode/
 .idea/
+.agents/
+.codex/
+.claude/skills/
+AGENTS.md
 *.swp
 *.swo
 *~
@@ -80,6 +84,7 @@ logs/
 
 # Testing
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -111,6 +116,16 @@ data/backups/
 .codegraph
 
 frontend/public/*.tar.gz
+
+# 仅本机诊断、验收与评测工件（正式评测报告保留在 tests/evaluation/）
+/_*.py
+scripts/_*.py
+scripts/acceptance_*.py
+data/test-artifacts/
+data/reports/company_entity_linking_suggest_*.jsonl
+tests/evaluation/official_report_81_*.txt
+tests/evaluation/official_report_81_*.manifest.json
+tests/evaluation/official_report_postfix*.txt
 
 # CI 诊断日志（勿入库）
 assets/Skip to content*.txt

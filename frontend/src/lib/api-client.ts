@@ -4,7 +4,8 @@
  * 对接后端 13 个 REST 端点 + WebSocket
  * 响应格式: V12 { data, meta, warnings } 信封
  *
- * 开发模式通过 Vite proxy 转发到 http://localhost:8000
+ * 开发模式默认通过 Vite proxy 转发到 http://127.0.0.1:8001；
+ * 部署时可由 VITE_API_BASE_URL / VITE_WS_BASE_URL 显式配置。
  */
 
 import type {
@@ -30,6 +31,7 @@ import type {
   CompanyRiskSummary,
   ImpactAdviceData,
 } from '@/types/truthnet';
+import { apiV1Base, websocketEndpoint } from '@/config';
 
 // 会话列表响应（V12 envelope: data.sessions + data.total）
 interface SessionListData {
@@ -195,7 +197,7 @@ type ChatResponse = ChatDataV1;
 // 基础请求函数
 // ---------------------------------------------------------------------------
 
-const API_BASE = '/api/v1';
+const API_BASE = apiV1Base;
 
 async function request<T>(
   method: string,
@@ -462,7 +464,7 @@ export interface WSMessage {
 
 export const wsClient = {
   create: (sessionId: string, onMessage: (msg: WSMessage) => void) => {
-    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/chat/ws?session_id=${sessionId}`;
+    const wsUrl = websocketEndpoint(`/api/v1/chat/ws?session_id=${encodeURIComponent(sessionId)}`);
     const ws = new WebSocket(wsUrl);
     const pendingQuestions: string[] = [];
     let closeRequested = false;
