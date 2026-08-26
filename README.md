@@ -141,7 +141,7 @@ TruthNet/
 | [PROVENANCE_CONTRACT.md](docs/PROVENANCE_CONTRACT.md) | 结论、证据和计算输入的追溯约定 |
 | [DATA_CONTRACT.md](docs/DATA_CONTRACT.md) | 数据对象与存储约定 |
 | [FRONTEND_DESIGN.md](docs/FRONTEND_DESIGN.md) | 前端页面与交互设计 |
-| [EVALUATION_REPORT_FINAL_V1.md](docs/EVALUATION_REPORT_FINAL_V1.md) | 评测口径与结果记录 |
+| [EVALUATION_REPORT_FINAL.md](docs/EVALUATION_REPORT_FINAL.md) | 评测口径与结果记录 |
 | [SETUP_FULL_PROFILE_WINDOWS.md](docs/SETUP_FULL_PROFILE_WINDOWS.md) | Windows 完整环境配置 |
 
 ## 许可证
