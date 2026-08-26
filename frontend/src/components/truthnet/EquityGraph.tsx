@@ -63,7 +63,17 @@ interface GraphLayout {
   nodes: GraphLayoutNode[];
   layerCount: number;
   maxHop: number;
+  upstreamDepth: number;
+  downstreamDepth: number;
   radiusScale: number;
+}
+
+const KEY_OWNERSHIP_PCT = 5;
+
+function riskPriority(riskLevel?: string | null): number {
+  return ({ red: 5, orange: 4, yellow: 3, blue: 2, green: 1, unknown: 0 })[
+    riskLevel || 'unknown'
+  ] ?? 0;
 }
 
 function truncateLabel(name: string, max = 10): string {
@@ -133,6 +143,18 @@ function computeGraphLayout(
   const maxUpstreamHop = Math.max(0, ...upstreamHops.values());
   const maxDownstreamHop = Math.max(0, ...downstreamHops.values());
   const maxHop = Math.max(maxUpstreamHop, maxDownstreamHop);
+  const strongestOwnership = new Map<string, number>();
+  edges.forEach((edge) => {
+    const ownership = edge.ownership_pct ?? edge.control_pct ?? 0;
+    strongestOwnership.set(
+      edge.source,
+      Math.max(strongestOwnership.get(edge.source) ?? 0, ownership),
+    );
+    strongestOwnership.set(
+      edge.target,
+      Math.max(strongestOwnership.get(edge.target) ?? 0, ownership),
+    );
+  });
 
   const byLayer = new Map<string, GraphLayoutNode[]>();
   nodes.forEach(n => {
@@ -172,6 +194,16 @@ function computeGraphLayout(
 
   const layoutNodes: GraphLayoutNode[] = [];
   byLayer.forEach(group => {
+    // 同层采用“风险优先、持股比例其次、名称兜底”的稳定顺序。多跳分支在
+    // 每次重渲染时不会随机跳位，且关键主体会更靠近视觉焦点。
+    group.sort((a, b) => {
+      const riskGap = riskPriority(b.risk_level) - riskPriority(a.risk_level);
+      if (riskGap !== 0) return riskGap;
+      const ownershipGap =
+        (strongestOwnership.get(b.id) ?? 0) - (strongestOwnership.get(a.id) ?? 0);
+      if (ownershipGap !== 0) return ownershipGap;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
     group.forEach((n, i) => {
       const x =
         n.direction === 'target'
@@ -187,7 +219,16 @@ function computeGraphLayout(
     });
   });
 
-  return { width, height, nodes: layoutNodes, layerCount, maxHop, radiusScale };
+  return {
+    width,
+    height,
+    nodes: layoutNodes,
+    layerCount,
+    maxHop,
+    upstreamDepth: maxUpstreamHop,
+    downstreamDepth: maxDownstreamHop,
+    radiusScale,
+  };
 }
 
 function nodeFill(d: GraphLayoutNode): string {
@@ -232,6 +273,22 @@ function isRiskNode(d: GraphLayoutNode): boolean {
   return d.risk_level === 'red' || d.risk_level === 'orange' || d.risk_level === 'yellow';
 }
 
+function shouldShowEdgeLabel(
+  edge: EquityEdgeDTO,
+  nodeById: Map<string, GraphLayoutNode>,
+  showAll: boolean,
+): boolean {
+  if (showAll) return true;
+  if (relationLabel(edge.relation_type) === '控制') return true;
+  if ((edge.ownership_pct ?? edge.control_pct ?? 0) >= KEY_OWNERSHIP_PCT) return true;
+  const sourceNode = nodeById.get(edge.source);
+  const targetNode = nodeById.get(edge.target);
+  return (
+    (sourceNode !== undefined && sourceNode.nodeType !== 'target' && isRiskNode(sourceNode)) ||
+    (targetNode !== undefined && targetNode.nodeType !== 'target' && isRiskNode(targetNode))
+  );
+}
+
 // 风险节点呼吸光环：创建后让 halo 光晕循环放大呼吸
 class BreathingCircle extends Circle {
   onCreate() {
@@ -263,6 +320,7 @@ export function EquityGraph({
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 520 });
+  const [showAllEdgeLabels, setShowAllEdgeLabels] = useState(false);
 
   // Handle resize
   useEffect(() => {
@@ -352,6 +410,7 @@ export function EquityGraph({
     // disposed 标记 + 强制清空容器 canvas 兜底。
     let disposed = false;
     const container = containerRef.current;
+    const nodeById = new Map(layout.nodes.map((node) => [node.id, node]));
 
     const graph = new Graph({
       container,
@@ -375,23 +434,48 @@ export function EquityGraph({
         })),
       },
       node: {
-        type: (d: any) =>
-          isRiskNode(d.data as GraphLayoutNode) ? 'breathing-circle' : 'circle',
+        type: (d: any) => {
+          const node = d.data as GraphLayoutNode;
+          if (node.nodeType === 'target') return 'rect';
+          return isRiskNode(node) ? 'breathing-circle' : 'circle';
+        },
         style: {
           x: (d: any) => d.data.x as number,
           y: (d: any) => d.data.y as number,
+          size: (d: any) =>
+            d.data.nodeType === 'target'
+              ? [142, 58]
+              : (NODE_RADIUS[d.data.nodeType] || 20) * 2 * layout.radiusScale,
           r: (d: any) => (NODE_RADIUS[d.data.nodeType] || 20) * layout.radiusScale,
+          radius: (d: any) => (d.data.nodeType === 'target' ? 14 : 0),
           fill: (d: any) => nodeFill(d.data as GraphLayoutNode),
           stroke: '#ffffff',
-          lineWidth: (d: any) => (isRiskNode(d.data as GraphLayoutNode) ? 3.5 : 2.5),
+          lineWidth: (d: any) =>
+            d.data.nodeType === 'target'
+              ? 3.5
+              : isRiskNode(d.data as GraphLayoutNode)
+                ? 3.5
+                : 2.5,
           fillOpacity: 0.92,
-          labelText: (d: any) =>
-            truncateLabel(d.data.name, layout.radiusScale < 1 ? 8 : 10),
-          labelPlacement: 'bottom',
-          labelFill: textColor,
-          labelFontSize: layout.radiusScale < 1 ? 10 : 11,
+          labelText: (d: any) => {
+            const node = d.data as GraphLayoutNode;
+            return node.nodeType === 'target'
+              ? `${truncateLabel(node.name, 10)}\n目标公司`
+              : truncateLabel(node.name, layout.radiusScale < 1 ? 8 : 10);
+          },
+          labelPlacement: (d: any) =>
+            d.data.nodeType === 'target' ? 'center' : 'bottom',
+          labelFill: (d: any) =>
+            d.data.nodeType === 'target' ? '#ffffff' : textColor,
+          labelFontSize: (d: any) =>
+            d.data.nodeType === 'target' ? 12 : layout.radiusScale < 1 ? 10 : 11,
+          labelFontWeight: (d: any) => (d.data.nodeType === 'target' ? 600 : 400),
+          labelLineHeight: 17,
           labelOffsetY: 6,
-          iconText: (d: any) => nodeInnerText(d.data as GraphLayoutNode),
+          iconText: (d: any) =>
+            d.data.nodeType === 'target'
+              ? ''
+              : nodeInnerText(d.data as GraphLayoutNode),
           iconFill: '#ffffff',
           iconFontSize: 10,
           halo: (d: any) => isRiskNode(d.data as GraphLayoutNode),
@@ -418,6 +502,7 @@ export function EquityGraph({
           strokeOpacity: 0.65,
           endArrow: true,
           labelText: (d: any) => {
+            if (!shouldShowEdgeLabel(d.data, nodeById, showAllEdgeLabels)) return '';
             const rel = relationLabel(d.data.relation_type);
             const pct = d.data.ownership_pct != null ? ` ${d.data.ownership_pct.toFixed(1)}%` : '';
             return `${rel}${pct}`;
@@ -494,7 +579,7 @@ export function EquityGraph({
         container?.querySelectorAll('canvas').forEach(c => c.remove());
       });
     };
-  }, [layout, merged]);
+  }, [layout, merged, showAllEdgeLabels]);
 
   const handleZoomIn = () => graphRef.current?.zoomBy(1.3);
   const handleZoomOut = () => graphRef.current?.zoomBy(0.7);
@@ -504,14 +589,14 @@ export function EquityGraph({
     <div ref={containerRef} className="relative border border-border rounded-md bg-muted/20">
       {/* G6 canvas 将挂载于此容器，overlay 元素（图例/按钮）absolute 叠于其上 */}
 
-      {/* 固定三段式阅读动线：股东/关联方 → 目标公司 → 子公司/被投资企业 */}
+      {/* 与真实跳数同步的阅读动线，避免把多跳图误读为单层股东表 */}
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-3 py-1 text-[10px] font-medium tracking-wide text-muted-foreground shadow-sm backdrop-blur-sm"
       >
-        股东 / 关联方 <span className="px-1.5 text-primary">→</span>
+        上游 {layout.upstreamDepth} 层 <span className="px-1.5 text-primary">→</span>
         <span className="text-foreground">目标公司</span>
-        <span className="px-1.5 text-primary">→</span> 下游企业
+        <span className="px-1.5 text-primary">→</span> 下游 {layout.downstreamDepth} 层
       </div>
 
       {/* 风险等级图例（节点颜色语义） */}
@@ -527,6 +612,17 @@ export function EquityGraph({
           未评级
         </span>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setShowAllEdgeLabels((value) => !value)}
+        className="absolute bottom-3 right-3 z-10 rounded-md border border-border bg-background/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+        title={showAllEdgeLabels ? '仅保留关键持股比例标签' : '显示全部持股比例标签'}
+      >
+        {showAllEdgeLabels
+          ? '隐藏次要比例'
+          : `关键比例 ≥ ${KEY_OWNERSHIP_PCT}%`}
+      </button>
 
       {/* Zoom controls */}
       <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
