@@ -194,6 +194,7 @@ import type {
   EventsResponseData,
   EquityResponseData,
   EquityNodeDTO,
+  EquityEdgeDTO,
   RiskResponseData,
   RiskLevel,
   FinanceRuleItem,
@@ -350,6 +351,82 @@ export default function CompanyProfilePage() {
   const [financeLoaded, setFinanceLoaded] = useState(false);
   const [eventsLoaded, setEventsLoaded] = useState(false);
   const [orbitDetail, setOrbitDetail] = useState<EquityNodeDTO | null>(null);
+
+  // 下游节点由 EquityGraph 合并到画布中，后端的 equity_chains 仅描述上游穿透。
+  // 因此在详情抽屉中补回下游的直接持股边与一跳链路，避免出现“图上有、详情为 0 条”。
+  const orbitDetailEdges = useMemo<EquityEdgeDTO[]>(() => {
+    if (!equityData || !orbitDetail) return [];
+    const directEdges = equityData.edges.filter(
+      (edge) => edge.source === orbitDetail.id || edge.target === orbitDetail.id,
+    );
+    if (directEdges.length > 0 || orbitDetail.direction !== "downstream") {
+      return directEdges;
+    }
+
+    const relation = (equityData.downstream_relations ?? []).find((item, index) => {
+      const key = item.entity_id || item.wind_code || `ds${index}`;
+      return orbitDetail.id === `downstream:${key}`;
+    });
+    if (!relation) return [];
+
+    const targetNode = equityData.nodes.find(
+      (node) =>
+        node.id === equityData.target.entity_id ||
+        node.entity_id === equityData.target.entity_id ||
+        node.wind_code === equityData.target.wind_code,
+    );
+    return [
+      {
+        id: `downstream:edge:${relation.entity_id || relation.wind_code}`,
+        source: targetNode?.id ?? equityData.target.entity_id,
+        target: orbitDetail.id,
+        relation_type: relation.relation || "持股",
+        ownership_pct: relation.ownership_pct,
+        control_pct: null,
+        valid_from: null,
+        valid_to: null,
+        source_id: null,
+        match_confidence: null,
+        relationship_id: null,
+        source_record_id: null,
+        report_period: null,
+        ann_dt: null,
+        is_latest: true,
+        mock: true,
+        source_system: "downstream",
+      },
+    ];
+  }, [equityData, orbitDetail]);
+
+  const orbitDetailChains = useMemo<Array<Record<string, unknown>>>(() => {
+    if (!equityData || !orbitDetail) return [];
+    const upstreamChains = (equityData.equity_chains ?? []).filter((chain) =>
+      Array.isArray((chain as Record<string, unknown>).path_names)
+        ? ((chain as Record<string, unknown>).path_names as string[]).some(
+            (name) => name === orbitDetail.name,
+          )
+        : false,
+    );
+    if (upstreamChains.length > 0) return upstreamChains;
+    const directEdge = orbitDetailEdges[0];
+    if (!directEdge) return [];
+    const nameForNode = (nodeId: string) => {
+      if (nodeId === orbitDetail.id) return orbitDetail.name;
+      return (
+        equityData.nodes.find((node) => node.id === nodeId)?.name ??
+        (nodeId === equityData.target.entity_id ? equityData.target.name : nodeId)
+      );
+    };
+    return [
+      {
+        path_names: [nameForNode(directEdge.source), nameForNode(directEdge.target)],
+        depth: 1,
+        final_control_pct: directEdge.ownership_pct ?? directEdge.control_pct,
+        path_type: "downstream_ownership",
+        source_system: "downstream",
+      },
+    ];
+  }, [equityData, orbitDetail, orbitDetailEdges]);
 
   const getRiskColor = (level: string) => {
     const colors: Record<string, string> = {
@@ -1930,16 +2007,10 @@ export default function CompanyProfilePage() {
                           <div className="space-y-3">
                             <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
                               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                                直接关联（{equityData.edges.filter(
-                                  (e) => e.source === orbitDetail.id || e.target === orbitDetail.id,
-                                ).length} 条）
+                                直接关联（{orbitDetailEdges.length} 条）
                               </div>
                               <div className="space-y-1.5">
-                                {equityData.edges
-                                  .filter(
-                                    (e) => e.source === orbitDetail.id || e.target === orbitDetail.id,
-                                  )
-                                  .map((e, i) => {
+                                {orbitDetailEdges.map((e, i) => {
                                     const isSource = e.source === orbitDetail.id;
                                     const otherId = isSource ? e.target : e.source;
                                     const other =
@@ -1950,29 +2021,30 @@ export default function CompanyProfilePage() {
                                         className="flex items-center justify-between gap-2 rounded border border-border/40 bg-card/60 px-2.5 py-1.5"
                                       >
                                         <span className="min-w-0 truncate text-xs text-foreground">
-                                          {isSource ? "持股 → " : "← 持股 "}
-                                          {other}
+                                          {isSource
+                                            ? `${orbitDetail.name} 持有 ${other}`
+                                            : `${other} 持有 ${orbitDetail.name}`}
                                         </span>
                                         <span className="shrink-0 font-mono text-[11px] font-semibold text-primary">
-                                          {e.ownership_pct != null ? `${e.ownership_pct}%` : (e.relation_type ?? "—")}
+                                          {e.ownership_pct != null
+                                            ? `${e.ownership_pct}%`
+                                            : (e.relation_type ?? "—")}
                                         </span>
                                       </div>
                                     );
                                   })}
+                                {orbitDetailEdges.length === 0 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    未返回与该主体直接相连的股权记录。
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
                               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                                 所在穿透链路
                               </div>
-                              {(equityData.equity_chains as Array<Record<string, unknown>> || [])
-                                .filter((c) =>
-                                  Array.isArray(c.path_names)
-                                    ? (c.path_names as string[]).some(
-                                        (nm) => nm === orbitDetail.name,
-                                      )
-                                    : false,
-                                )
+                              {orbitDetailChains
                                 .slice(0, 4)
                                 .map((c, i) => (
                                   <div
@@ -1989,15 +2061,9 @@ export default function CompanyProfilePage() {
                                     </span>
                                   </div>
                                 ))}
-                              {(equityData.equity_chains || []).filter((c) =>
-                                Array.isArray(c.path_names)
-                                  ? (c.path_names as unknown as string[]).some(
-                                      (nm) => nm === orbitDetail.name,
-                                    )
-                                  : false,
-                              ).length === 0 && (
+                              {orbitDetailChains.length === 0 && (
                                 <div className="text-xs text-muted-foreground">
-                                  未出现在多跳穿透链中（仅直接持股）
+                                  未返回包含该主体的穿透链路。
                                 </div>
                               )}
                             </div>

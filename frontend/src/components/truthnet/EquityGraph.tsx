@@ -18,12 +18,13 @@ interface EquityGraphProps {
 }
 
 const RISK_LEVEL_COLORS: Record<string, string> = {
-  red: '#ef4444',
-  orange: '#f97316',
-  yellow: '#eab308',
+  red: '#dc2626',
+  orange: '#ea580c',
+  yellow: '#ca8a04',
   blue: '#3b82f6',
-  green: '#22c55e',
-  unknown: '#6b7280',
+  // “正常”不再占用高饱和绿色；图中用中性石板色把视觉注意力留给风险节点。
+  green: '#64748b',
+  unknown: '#94a3b8',
 };
 
 const RISK_LEVEL_LABELS: Record<string, string> = {
@@ -232,8 +233,12 @@ function computeGraphLayout(
 }
 
 function nodeFill(d: GraphLayoutNode): string {
-  if (d.risk_level && RISK_LEVEL_COLORS[d.risk_level]) return RISK_LEVEL_COLORS[d.risk_level];
-  return d.nodeType === 'target' ? '#ef4444' : '#94a3b8';
+  // 目标公司始终用深蓝作为阅读锚点；风险级别才使用暖色，正常主体保持中性。
+  if (d.nodeType === 'target') return '#1d4ed8';
+  if (d.risk_level && ['red', 'orange', 'yellow'].includes(d.risk_level)) {
+    return RISK_LEVEL_COLORS[d.risk_level];
+  }
+  return d.direction === 'downstream' ? '#0f766e' : '#64748b';
 }
 
 function nodeInnerText(d: GraphLayoutNode): string {
@@ -244,7 +249,15 @@ function nodeInnerText(d: GraphLayoutNode): string {
   return '';
 }
 
-function tooltipContent(d: GraphLayoutNode): string {
+function formatOwnership(ownership: number | null): string {
+  return ownership != null ? ` ${ownership.toFixed(2)}%` : '';
+}
+
+function tooltipContent(
+  d: GraphLayoutNode,
+  nodeById: Map<string, GraphLayoutNode>,
+  relatedEdges: EquityEdgeDTO[],
+): string {
   const directionLabel =
     d.direction === 'downstream'
       ? '下游 · 子公司/被投资企业'
@@ -266,7 +279,19 @@ function tooltipContent(d: GraphLayoutNode): string {
           .map((s) => s.title)
           .join('；')}</div>`
       : '';
-  return `<div style="font-weight:600;margin-bottom:4px">${d.name}</div><div>${directionLabel} · ${typeLabel}</div>${risk ? `<div>${risk}</div>` : ''}${signals}`;
+  const relations = relatedEdges
+    .slice(0, 3)
+    .map((edge) => {
+      const isSource = edge.source === d.id;
+      const other = nodeById.get(isSource ? edge.target : edge.source)?.name || '关联主体';
+      const relation = relationLabel(edge.relation_type);
+      return `${isSource ? '持有' : '由'} ${other}${relation}${formatOwnership(edge.ownership_pct ?? edge.control_pct)}`;
+    })
+    .join('<br/>');
+  const relationBlock = relations
+    ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(128,128,128,.35)"><div style="font-size:11px;opacity:.75;margin-bottom:2px">直接股权关系</div>${relations}</div>`
+    : '';
+  return `<div style="font-weight:600;margin-bottom:4px">${d.name}</div><div>${directionLabel} · ${typeLabel}</div>${risk ? `<div>${risk}</div>` : ''}${relationBlock}${signals}`;
 }
 
 function isRiskNode(d: GraphLayoutNode): boolean {
@@ -411,6 +436,17 @@ export function EquityGraph({
     let disposed = false;
     const container = containerRef.current;
     const nodeById = new Map(layout.nodes.map((node) => [node.id, node]));
+    const relatedEdgesByNode = new Map<string, EquityEdgeDTO[]>();
+    merged.edges.forEach((edge) => {
+      relatedEdgesByNode.set(edge.source, [
+        ...(relatedEdgesByNode.get(edge.source) ?? []),
+        edge,
+      ]);
+      relatedEdgesByNode.set(edge.target, [
+        ...(relatedEdgesByNode.get(edge.target) ?? []),
+        edge,
+      ]);
+    });
 
     const graph = new Graph({
       container,
@@ -436,7 +472,7 @@ export function EquityGraph({
       node: {
         type: (d: any) => {
           const node = d.data as GraphLayoutNode;
-          if (node.nodeType === 'target') return 'rect';
+          if (node.nodeType === 'target') return 'hexagon';
           return isRiskNode(node) ? 'breathing-circle' : 'circle';
         },
         style: {
@@ -444,10 +480,9 @@ export function EquityGraph({
           y: (d: any) => d.data.y as number,
           size: (d: any) =>
             d.data.nodeType === 'target'
-              ? [142, 58]
+              ? [112, 76]
               : (NODE_RADIUS[d.data.nodeType] || 20) * 2 * layout.radiusScale,
           r: (d: any) => (NODE_RADIUS[d.data.nodeType] || 20) * layout.radiusScale,
-          radius: (d: any) => (d.data.nodeType === 'target' ? 14 : 0),
           fill: (d: any) => nodeFill(d.data as GraphLayoutNode),
           stroke: '#ffffff',
           lineWidth: (d: any) =>
@@ -460,7 +495,7 @@ export function EquityGraph({
           labelText: (d: any) => {
             const node = d.data as GraphLayoutNode;
             return node.nodeType === 'target'
-              ? `${truncateLabel(node.name, 10)}\n目标公司`
+              ? `${truncateLabel(node.name, 8)}\n目标公司`
               : truncateLabel(node.name, layout.radiusScale < 1 ? 8 : 10);
           },
           labelPlacement: (d: any) =>
@@ -543,7 +578,7 @@ export function EquityGraph({
               const pct = e.ownership_pct != null ? `${e.ownership_pct.toFixed(1)}%` : '';
               return `<div style="font-weight:600">${rel}${pct ? ` ${pct}` : ''}</div>`;
             }
-            return tooltipContent(d);
+            return tooltipContent(d, nodeById, relatedEdgesByNode.get(d.id) ?? []);
           },
         },
       ] as any,
