@@ -18,7 +18,7 @@ import random
 import threading
 import time
 
-from backend.app.application.services.industry_fill.constants import (
+from app.application.services.industry_fill.constants import (
     MAX_CONCURRENCY,
     MIN_CONCURRENCY,
 )

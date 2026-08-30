@@ -1,4 +1,4 @@
-<#!
+﻿<#
 .SYNOPSIS
 启动 TruthNet 前端开发服务。首次运行自动按 pnpm-lock.yaml 安装依赖。
 #>

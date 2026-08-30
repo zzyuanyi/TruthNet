@@ -36,22 +36,22 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
-from backend.app.application.services.industry_fill.constants import (
+from app.application.services.industry_fill.constants import (
     DEFAULT_RATE_LIMIT_SLEEP,
     PROVIDER_AKSHARE,
     MAX_CONCURRENCY,
     QueryStatus,
 )
-from backend.app.application.services.industry_fill.normalizer import (
+from app.application.services.industry_fill.normalizer import (
     map_l2_to_l1,
 )
-from backend.app.application.services.industry_fill.provider import (
+from app.application.services.industry_fill.provider import (
     ProgressCounter,
     ProviderResult,
     call_with_retry,
     raw_value_hash,
 )
-from backend.app.application.services.industry_fill.throttle import RateController
+from app.application.services.industry_fill.throttle import RateController
 
 log = logging.getLogger(__name__)
 

@@ -16,8 +16,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend.app.application.services.industry_fill.constants import QueryStatus
-from backend.app.application.services.industry_fill.provider import ProviderResult
+from app.application.services.industry_fill.constants import QueryStatus
+from app.application.services.industry_fill.provider import ProviderResult
 
 
 def _stable_digest(obj: object) -> str:

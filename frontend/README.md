@@ -1,6 +1,6 @@
 # TruthNet 前端
 
-React + Vite + TypeScript 前端，提供智能问答、公司画像、跨公司对比和报告入口。所有后端请求统一经 `src/config.ts` 配置，不在浏览器代码中保存数据库账号、模型密钥或服务器密码。
+React + Vite + TypeScript 前端，提供智能问答、公司画像、跨公司对比和报告入口。所有后端请求统一经 `src/config.js` 配置，不在浏览器代码中保存数据库账号、模型密钥或服务器密码。
 
 ## 目录
 
@@ -10,7 +10,7 @@ src/
 ├── components/   # 通用组件与业务组件
 ├── lib/          # API 客户端与前端工具
 ├── types/        # API 数据类型
-└── config.ts     # 前端运行配置
+└── config.js     # 前端运行配置
 public/           # 静态资源
 ```
 

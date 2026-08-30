@@ -1,4 +1,4 @@
-<#!
+﻿<#
 .SYNOPSIS
 启动 TruthNet FastAPI 后端。缺少运行依赖时按仓库 requirements.txt 安装。
 #>
@@ -31,7 +31,7 @@ if ($env:TRUTHNET_PYTHON) {
   $python = $pythonCommand.Source
 }
 
-& $python -c 'import fastapi, uvicorn' 2>$null
+& $python -c "import fastapi, uvicorn" 2>$null
 if ($LASTEXITCODE -ne 0) {
   Write-Host '首次启动：安装后端依赖…' -ForegroundColor Cyan
   & $python -m pip install -r (Join-Path $repoRoot 'requirements.txt')

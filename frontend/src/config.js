@@ -4,7 +4,7 @@
  * Vite 只会把 VITE_ 前缀变量暴露给浏览器。部署时通过 frontend/.env
  * 或宿主环境注入；不在前端代码中保存账号、密码或密钥。
  */
-function normalizeBaseUrl(value: string | undefined): string {
+function normalizeBaseUrl(value) {
   return value?.trim().replace(/\/+$/, '') ?? '';
 }
 
@@ -17,7 +17,7 @@ export const frontendConfig = Object.freeze({
 
 export const apiV1Base = `${frontendConfig.apiBaseUrl}/api/v1`;
 
-export function websocketEndpoint(path: string): string {
+export function websocketEndpoint(path) {
   const configuredBase = frontendConfig.wsBaseUrl || frontendConfig.apiBaseUrl;
   if (configuredBase) {
     const wsBase = configuredBase

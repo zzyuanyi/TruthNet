@@ -16,10 +16,10 @@ from datetime import date
 
 from sqlalchemy import Engine, text
 
-from backend.app.application.services.industry_fill.constants import (
+from app.application.services.industry_fill.constants import (
     SOURCE_RESEARCH_REPORT,
 )
-from backend.app.application.services.industry_fill.normalizer import (
+from app.application.services.industry_fill.normalizer import (
     normalize_optional_text,
 )
 

@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from backend.app.application.services.industry_fill.constants import QueryStatus
-from backend.app.application.services.industry_fill.normalizer import normalize_l1
-from backend.app.application.services.industry_fill.provider import ProviderResult
+from app.application.services.industry_fill.constants import QueryStatus
+from app.application.services.industry_fill.normalizer import normalize_l1
+from app.application.services.industry_fill.provider import ProviderResult
 
 
 @dataclass

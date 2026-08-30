@@ -7,18 +7,17 @@
     <title>织网鉴真 TruthNet - 财报反欺诈智能问答系统</title>
     <link rel="icon" href="/favicon.ico" />
     <script>
-      // 首屏主题/字号引导：默认深色 + 大字号；用户曾在设置页选过则以存储为准
+      // 首屏主题/字号引导：默认浅色 + 大字号；用户曾在设置页选过则以存储为准
       (function () {
         try {
           var saved = JSON.parse(localStorage.getItem('truthnet-settings') || 'null');
-          var theme = saved && saved.theme ? saved.theme : 'dark';
-          var fontSize = saved && saved.fontSize ? saved.fontSize : 'md';
+          var theme = saved && saved.theme ? saved.theme : 'light';
+          var fontSize = saved && saved.fontSize ? saved.fontSize : 'lg';
           if (theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.documentElement.classList.add('dark');
           }
           document.documentElement.style.fontSize = { sm: '14px', md: '16px', lg: '18px' }[fontSize] || '16px';
         } catch (e) {
-          document.documentElement.classList.add('dark');
           document.documentElement.style.fontSize = '16px';
         }
       })();

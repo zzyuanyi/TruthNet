@@ -1,6 +1,6 @@
 # TruthNet 后端
 
-FastAPI 后端，负责实体识别、任务编排、R1–R7 财务勾稽、股权关系、事件信息、证据追溯和报告生成。运行配置集中在 `app/core/config.py`，由根目录 `.env` 或系统环境变量读取。
+FastAPI 后端，负责实体识别、任务编排、R1–R7 财务勾稽、股权关系、事件信息、证据追溯和报告生成。运行配置集中在根目录 `config.py`，由根目录 `.env` 或系统环境变量读取；`app/core/config.py` 仅保留为既有导入的兼容入口。
 
 ## 目录
 
@@ -13,11 +13,12 @@ app/
 └── core/            # 配置、启动和通用约束
 scripts/             # 数据初始化与维护脚本
 tests/               # 后端测试
+config.py            # 后端运行配置（环境变量读取）
 ```
 
 ## 配置
 
-复制仓库根目录 `.env.example` 为 `.env` 后按环境填写。`config.py` 支持 SQLite/NetworkX/Mock 的轻量模式，也支持 MySQL、Neo4j 与外部模型服务；数据库账号、密码和 API Key 均只从环境变量读取。
+复制后端目录 `.env.example` 为同目录 `.env` 后按环境填写。`config.py` 支持 SQLite/NetworkX/Mock 的轻量模式，也支持 MySQL、Neo4j 与外部模型服务；数据库账号、密码和 API Key 均只从环境变量读取。开发仓库中若未创建 `backend/.env`，会兼容读取仓库根目录 `.env`。
 
 默认轻量模式无需外部数据库：
 

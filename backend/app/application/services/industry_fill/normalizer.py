@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from backend.app.application.services.industry_fill.constants import (
+from app.application.services.industry_fill.constants import (
     L2_TO_L1_MAPPING_VERSION,
     SW_L1_ALLOWED,
 )
