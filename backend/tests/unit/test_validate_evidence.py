@@ -78,3 +78,18 @@ def test_returns_empty_claims_increment():
     result = validate_evidence_node(state)
 
     assert result["claims"] == []
+
+
+def test_web_search_evidence_is_supported():
+    """联网回填证据属于允许来源，不应被校验节点降级。"""
+    evidence = EvidenceRef(
+        evidence_id="ev_web_01",
+        source_type="web_search",
+        source_record_id="https://example.test/source",
+        source_title="公开来源",
+    )
+    claims = [_claim("c_web", [evidence.evidence_id])]
+
+    validate_evidence_node(_make_state(claims, [evidence]))
+
+    assert claims[0].verification_status == "verified"

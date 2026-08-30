@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
-from backend.app.application.services.industry_fill.constants import (
+from app.application.services.industry_fill.constants import (
     RETRYABLE_EXC_TYPES,
     QueryStatus,
 )

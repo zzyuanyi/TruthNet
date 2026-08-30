@@ -4,12 +4,12 @@
 本包提供 provider / normalizer / staging / validation / guards / db / report / service。
 """
 
-from backend.app.application.services.industry_fill.constants import (  # noqa: F401
+from app.application.services.industry_fill.constants import (  # noqa: F401
     DEFAULT_CACHE_DIR,
     PROVIDER_AKSHARE,
     QueryStatus,
 )
-from backend.app.application.services.industry_fill.service import (  # noqa: F401
+from app.application.services.industry_fill.service import (  # noqa: F401
     RunConfig,
     run_pipeline,
 )

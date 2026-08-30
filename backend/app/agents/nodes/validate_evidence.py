@@ -23,6 +23,7 @@ _VALID_SOURCE_TYPES = {
     "event_cluster",
     "research_report",
     "company_registry",  # R11: 公司事实轻量查询的注册信息来源
+    "web_search",  # 联网回填/行情/新闻证据（WEB_SEARCH_FILL_FINANCE_METRIC 等）
 }
 
 

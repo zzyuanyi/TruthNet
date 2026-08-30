@@ -442,6 +442,9 @@ class AgentState(TypedDict, total=False):
     # v3.3.3 批次 B：本轮成功执行的指标（generate_answer 产出，persist_turn
     # 写入 response_meta.executed_metrics；失败/澄清/unsupported 轮不写入）
     executed_metric: Any
+    # v3.3.3 批次 C：轻量比较轮产出多指标（_answer_comparison 返回 executed_metrics，
+    # persist_turn 落 response_meta.executed_metrics；单指标轮此字段为空）
+    executed_metrics: list[Any] | None = None
     provenance_report: Any | None
     cross_validation: CrossValidationResult | None = None
     risk_output: Any | None = None

@@ -68,10 +68,7 @@ R1–R7 是一组面向非金融企业、固定母公司报表口径的跨科目
 ### 2. 启动后端
 
 ```powershell
-cd backend
-python -m pip install -r requirements.txt
-python scripts/seed_db.py             # 可选：初始化内置 SQLite 示例数据
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+.\backend\start.ps1
 ```
 
 健康检查：<http://127.0.0.1:8001/api/v1/healthz>
@@ -83,14 +80,12 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 另开一个终端：
 
 ```powershell
-cd frontend
-corepack enable
-corepack pnpm@9.0.0 install --frozen-lockfile
-$env:VITE_API_BASE_URL = "http://127.0.0.1:8001"
-pnpm dev
+.\frontend\start.ps1
 ```
 
 浏览器访问 <http://127.0.0.1:5000/>。`VITE_API_BASE_URL` 未设置时，开发代理也默认指向 `http://127.0.0.1:8001`；显式设置可避免多服务环境中连错端口。合并后端代码后，请重启 8001 进程再验收。
+
+前后端目录的用途、配置和手动启动命令分别见 [backend/README.md](backend/README.md) 与 [frontend/README.md](frontend/README.md)。
 
 ## 数据与使用边界
 

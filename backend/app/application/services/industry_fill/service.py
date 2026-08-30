@@ -22,14 +22,14 @@ from typing import Any
 
 from sqlalchemy import Engine
 
-from backend.app.application.services.industry_fill.constants import (
+from app.application.services.industry_fill.constants import (
     DEFAULT_CACHE_DIR,
     PROGRESS_EVERY,
     SOURCE_AKSHARE,
     SOURCE_RESEARCH_REPORT,
     QueryStatus,
 )
-from backend.app.application.services.industry_fill.db import (
+from app.application.services.industry_fill.db import (
     apply_industry_fill,
     compute_missing_codes,
     current_database,
@@ -37,19 +37,19 @@ from backend.app.application.services.industry_fill.db import (
     fetch_coverage_stats,
     fetch_report_industry_map,
 )
-from backend.app.application.services.industry_fill.normalizer import normalize_l1
-from backend.app.application.services.industry_fill.provider import IndustryProvider
-from backend.app.application.services.industry_fill.report import build_report
-from backend.app.application.services.industry_fill.staging import (
+from app.application.services.industry_fill.normalizer import normalize_l1
+from app.application.services.industry_fill.provider import IndustryProvider
+from app.application.services.industry_fill.report import build_report
+from app.application.services.industry_fill.staging import (
     RunMetadata,
     StagingStore,
 )
-from backend.app.application.services.industry_fill.universe import (
+from app.application.services.industry_fill.universe import (
     CurrentUniverseSnapshot,
     bare_security_code,
     partition_missing_codes,
 )
-from backend.app.application.services.industry_fill.validation import (
+from app.application.services.industry_fill.validation import (
     check_apply_readiness,
     check_dry_run_no_change,
     validate_staging,
